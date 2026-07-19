@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from scripts.complexity_hotspot_audit import (
     HOTSPOT_BUDGETS,
+    LARGE_FUNCTION_LINE_THRESHOLD,
     LEGACY_SOURCE_MOVES,
     MCCABE_COMPLEXITY_BUDGETS,
     REPO_ROOT,
@@ -92,18 +93,21 @@ class Worker:
 
 def test_default_hotspot_budgets_cover_known_refactor_targets():
     rps_functions = _collect_functions(REPO_ROOT / "core" / "rps_precomputer.py")
-    rps_node = rps_functions["RPSPrecomputer.run_f5_pipeline"]
-    rps_line_count = int(getattr(rps_node, "end_lineno", rps_node.lineno)) - int(rps_node.lineno) + 1
 
-    assert rps_line_count == 176
-    assert HOTSPOT_BUDGETS["core/rps_precomputer.py"]["RPSPrecomputer.run_f5_pipeline"] == 176
-    assert HOTSPOT_BUDGETS["app/bootstrap/startup_orchestrator.py"]["StartupOrchestrator.deferred_data_load"] == 187
-    assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 194
-    assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 244
+    assert "RPSPrecomputer.run_f5_pipeline" not in rps_functions
+    assert "RPSPrecomputer.run_f5_job" in rps_functions
+    assert "core/rps_precomputer.py" not in HOTSPOT_BUDGETS
+    assert "app/bootstrap/startup_orchestrator.py" not in HOTSPOT_BUDGETS
+    assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 13
+    assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 222
     assert HOTSPOT_BUDGETS["ui/kline_chart_payload.py"]["build_kline_html"] == 28
     assert HOTSPOT_BUDGETS["ui/tabs/asian_market_tab.py"]["build_asian_market_local_cache_payload"] == 171
     assert HOTSPOT_BUDGETS["ui/theme_tokens.py"]["build_ui_tokens"] == 192
-    assert HOTSPOT_BUDGETS["ui/workers/central_quotes_worker.py"]["CentralQuotesService._trigger_fetch_for_reason"] == 171
+    central_functions = _collect_functions(REPO_ROOT / "ui" / "workers" / "central_quotes_worker.py")
+    central_trigger = central_functions["CentralQuotesService._trigger_fetch_for_reason"]
+    central_trigger_lines = int(getattr(central_trigger, "end_lineno", central_trigger.lineno)) - central_trigger.lineno + 1
+    assert central_trigger_lines < LARGE_FUNCTION_LINE_THRESHOLD
+    assert "ui/workers/central_quotes_worker.py" not in HOTSPOT_BUDGETS
     assert HOTSPOT_BUDGETS["ui/workers/scan_worker.py"]["ScanWorker.run"] == 58
     workspace_functions = _collect_functions(REPO_ROOT / "ui" / "workspaces" / "classic_workspace.py")
     workspace_node = workspace_functions["ClassicWorkspace.__init__"]
@@ -135,10 +139,7 @@ def test_mccabe_budget_rejects_unbudgeted_complexity_over_25(tmp_path):
 
 def test_default_mccabe_budgets_cover_current_complexity_over_25():
     assert scan_mccabe_complexity_budgets() == []
-    assert len(MCCABE_COMPLEXITY_BUDGETS) == 2
-    assert MCCABE_COMPLEXITY_BUDGETS["app/bootstrap/startup_orchestrator.py"] == {
-        "StartupOrchestrator.deferred_data_load": 26
-    }
+    assert len(MCCABE_COMPLEXITY_BUDGETS) == 1
 
 
 def test_legacy_source_moves_follow_canonical_app_entrypoints():

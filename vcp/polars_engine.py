@@ -1,10 +1,12 @@
 # polars_engine.py - 高性能加速引擎 v2
 # 三大优化: ①numpy 并行 pct_change+rank ②Parquet 缓存 ③增量 RPS
 
+import contextvars
 import os
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -138,6 +140,12 @@ def _to_pldf(df) -> pl.DataFrame | None:
     return None
 
 
+def _as_date(value, dtype):
+    if dtype == pl.String:
+        return value.str.to_date(strict=False)
+    return value.cast(pl.Date)
+
+
 def build_prices_matrix_fast(
     data_dict: dict,
     min_start,
@@ -179,7 +187,7 @@ def build_prices_matrix_fast(
             # 统一 datetime 为 Date 类型
             sub = pldf.select(
                 [
-                    pl.col("datetime").cast(pl.Date).alias("date"),
+                    _as_date(pl.col("datetime"), pldf.schema.get("datetime")).alias("date"),
                     pl.col("close"),
                 ]
             )
@@ -229,7 +237,24 @@ def build_prices_matrix_fast(
 # ================================================================
 
 # 增量 RPS 价格矩阵磁盘缓存路径
-_PRICES_MATRIX_CACHE = os.path.join(CACHE_DIR, "vcp_prices_matrix.parquet")
+_PRICES_MATRIX_CACHE = os.environ.get(
+    "VCP_RPS_MATRIX_CACHE",
+    os.path.join(CACHE_DIR, "vcp_prices_matrix.parquet"),
+)
+_PRICES_MATRIX_CACHE_OVERRIDE = contextvars.ContextVar("vcp_prices_matrix_cache", default="")
+
+
+def _prices_matrix_cache_path() -> str:
+    return _PRICES_MATRIX_CACHE_OVERRIDE.get() or _PRICES_MATRIX_CACHE
+
+
+@contextmanager
+def prices_matrix_cache_scope(path: str):
+    token = _PRICES_MATRIX_CACHE_OVERRIDE.set(str(path or ""))
+    try:
+        yield
+    finally:
+        _PRICES_MATRIX_CACHE_OVERRIDE.reset(token)
 
 
 def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarray) -> None:
@@ -240,19 +265,21 @@ def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarra
         for i, col_name in enumerate(columns):
             data_dict[col_name] = matrix[:, i]
         save_df = pl.DataFrame(data_dict)
+        cache_path = _prices_matrix_cache_path()
         with _PRICES_MATRIX_LOCK:
-            _atomic_parquet_write(save_df, _PRICES_MATRIX_CACHE, compression="zstd")
+            _atomic_parquet_write(save_df, cache_path, compression="zstd")
     except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] 价格矩阵缓存保存失败: {e}")
 
 
 def _load_prices_matrix() -> tuple[np.ndarray, list[str], np.ndarray] | None:
     """从 Parquet 加载历史价格矩阵 — 纯 Polars"""
-    if not os.path.exists(_PRICES_MATRIX_CACHE):
+    cache_path = _prices_matrix_cache_path()
+    if not os.path.exists(cache_path):
         return None
     try:
         with _PRICES_MATRIX_LOCK:
-            df = pl.read_parquet(_PRICES_MATRIX_CACHE)
+            df = pl.read_parquet(cache_path)
         if df.height == 0:
             return None
         dates = df["date"].to_numpy()
@@ -572,7 +599,7 @@ def build_sector_rps_pl(
                 continue
 
             # 找到 target_date 对应的位置
-            dates_col = pldf["datetime"].cast(pl.Date)
+            dates_col = _as_date(pldf["datetime"], pldf.schema.get("datetime"))
             valid_indices = [index for index, is_valid in enumerate((dates_col <= target_dt).to_list()) if is_valid]
             if not valid_indices:
                 continue

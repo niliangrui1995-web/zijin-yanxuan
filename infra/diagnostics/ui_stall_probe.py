@@ -126,6 +126,9 @@ class UiStallProbe(QObject):
         for key in self._stall_counts:
             self._stall_counts[key] = 0
         self._max_elapsed_ms = 0.0
+        self._last_tick = time.perf_counter()
+        self._last_span_context = {}
+        self._last_event_loop_record_at = 0.0
 
     def _poll_event_loop(self) -> None:
         now = time.perf_counter()

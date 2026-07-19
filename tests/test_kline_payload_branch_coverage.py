@@ -165,7 +165,12 @@ def test_chart_date_number_peak_and_marker_helpers(monkeypatch):
     assert chart._event_date_key("20260715 anything") == "20260715"
     assert chart._event_date_key("July 15, 2026") == "20260715"
     assert chart._event_date_key("invalid") == ""
-    monkeypatch.setattr(chart.pd, "to_datetime", lambda *args, **kwargs: (_ for _ in ()).throw(TypeError("bad")))
+    pandas_module = chart._pandas_module()
+    monkeypatch.setattr(
+        pandas_module,
+        "to_datetime",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TypeError("bad")),
+    )
     assert chart._event_date_key(object()) == ""
     assert chart._event_date_text(None) == ""
     assert chart._find_last_visible_date_idx_on_or_before(None, ["2026-01-01"]) == -1

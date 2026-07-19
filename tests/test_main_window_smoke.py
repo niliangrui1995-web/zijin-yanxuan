@@ -5,7 +5,6 @@ import inspect
 from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS
 from ui.main_window_qt import MainWindowQT
 
 
@@ -33,6 +32,26 @@ class _FakeTaskManager:
     def __init__(self):
         self.shutdown_calls = 0
 
+    def run_in_background(self, fn, *, on_success=None, on_error=None, task_id=None, **_kwargs):
+        try:
+            result = fn()
+        except Exception as exc:
+            if on_error is not None:
+                on_error(str(exc))
+        else:
+            if on_success is not None:
+                on_success(result)
+        return str(getattr(task_id, "task_id", task_id) or "fake-task")
+
+    def cancel_task(self, _task_id, **_kwargs):
+        return True
+
+    def abandon_task(self, _task_id, **_kwargs):
+        return True
+
+    def wait_for_tasks(self, _task_ids, **_kwargs):
+        return True
+
     def shutdown(self):
         self.shutdown_calls += 1
 
@@ -51,7 +70,7 @@ def test_main_window_keeps_data_prewarm_and_kline_preflight_by_default():
     assert signature.parameters["kline_prewarm_enabled"].default is True
 
 
-def test_main_window_schedules_default_kline_preflight(monkeypatch, qt_application):
+def test_main_window_schedules_default_kline_preflight_only_after_post_paint(monkeypatch, qt_application):
     task_manager = _FakeTaskManager()
     prewarm_calls = []
     monkeypatch.setattr("ui.main_window_qt.create_data_provider", lambda *, offline=True: _DummyProvider())
@@ -61,6 +80,7 @@ def test_main_window_schedules_default_kline_preflight(monkeypatch, qt_applicati
         "ui.main_window_qt.kline_manager.prewarm",
         lambda **kwargs: prewarm_calls.append(kwargs) or True,
     )
+    monkeypatch.setattr("ui.main_window_qt.WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS", 0)
 
     window = MainWindowQT(
         startup_enabled=False,
@@ -69,9 +89,12 @@ def test_main_window_schedules_default_kline_preflight(monkeypatch, qt_applicati
         restore_last_tab_enabled=False,
     )
     try:
-        _process_events()
+        assert prewarm_calls == []
 
-        assert prewarm_calls == [{"delay_ms": WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS}]
+        window.show()
+        _process_events(rounds=24)
+
+        assert prewarm_calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
     finally:
         if not window._is_closing:
             window.close()
@@ -119,9 +142,10 @@ def test_main_window_builds_and_closes_with_controlled_background_services(monke
 
         assert window._workspace is not None
         assert window.tabs is not None
-        assert window.lbl_code_count.text() == "标的池: 1 只"
-        assert window.startup_orchestrator._deferred_timer.isActive() is False
-        assert window.startup_orchestrator._smart_timer.isActive() is False
+        assert window.lbl_code_count.text() == "标的池: 0"
+        assert window.data_provider is None
+        assert window.engine is None
+        assert window.startup_orchestrator is None
         assert window.auto_refresh_scheduler is None
         assert window.na_daily_service is None
         assert window.asian_market_service is None

@@ -431,4 +431,4 @@ def get_state_tone(tone: str, theme: dict | None = None, density: str | None = N
     return tokens["state"].get(tone, tokens["state"]["neutral"])
 
 
-theme_manager.sig_theme_changed.connect(lambda _theme_name: invalidate_ui_token_cache())
+theme_manager.sig_theme_changed.connect(invalidate_ui_token_cache)

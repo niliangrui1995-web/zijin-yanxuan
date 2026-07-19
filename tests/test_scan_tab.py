@@ -4,6 +4,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
+from ui.tabs import scan_tab as scan_module
 from ui.tabs.scan_tab import ScanTab
 from ui.theme import theme_manager
 
@@ -44,6 +45,90 @@ def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
         assert tab.scan_search.accessibleName() == "VCP 扫描筛选"
         assert tab.btn_scan_settings.accessibleName() == "VCP 扫描参数设置"
     finally:
+        tab.deleteLater()
+
+
+def test_scan_background_preload_deduplicates_timer_and_prepares_hidden_rows(monkeypatch):
+    submissions = []
+    cache_reads = []
+
+    class _Provider(_DummyProvider):
+        def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+            assert refresh_missing is False
+            return super().ensure_code_name_map(codes, refresh_missing=refresh_missing)
+
+    class _Lifecycle:
+        active_names = ()
+
+        def run_background(self, name, fn, **kwargs):
+            submissions.append((name, fn, kwargs))
+
+        def shutdown(self, *, timeout_ms):
+            return timeout_ms >= 0
+
+    class _Token:
+        def raise_if_cancelled(self):
+            return None
+
+    monkeypatch.setattr(
+        scan_module,
+        "load_scan_cache",
+        lambda: cache_reads.append("read")
+        or (
+            {
+                "results": [
+                    {"代码": "300093", "名称": "300093", "触发日期": "2026-07-14", "评分": 80},
+                    {"代码": "300093", "名称": "300093", "触发日期": "2026-07-15", "评分": 92},
+                ]
+            },
+            False,
+        ),
+    )
+
+    tab = ScanTab(data_provider=_Provider(), engine=None)
+    tab._task_lifecycle = _Lifecycle()
+    monkeypatch.setattr(tab, "isVisible", lambda: False)
+    try:
+        assert tab._initial_cache_load_timer.isActive() is True
+        assert tab.prime_background_load() is True
+        assert tab.prime_background_load() is False
+        assert len(submissions) == 1
+        assert tab.is_background_preload_complete() is False
+
+        task_name, background_fn, kwargs = submissions[0]
+        assert task_name == "scan_cache_load"
+        kwargs["on_success"](background_fn(_Token()))
+
+        assert cache_reads == ["read"]
+        assert tab.is_background_preload_complete() is True
+        assert tab.get_scan_results() == [
+            {"代码": "300093", "名称": "*ST金刚", "触发日期": "2026-07-15", "评分": 92}
+        ]
+        assert tab._scan_cache_preload.deferred_payload is None
+        assert tab._scan_cache_preload.prepared_rows is None
+        assert tab._scan_cache_preload.committed is True
+        assert tab.source_model.rowCount() == 1
+        assert tab.proxy_model.rowCount() == 1
+        assert tab.source_model.row_data[0]["代码"] == "300093"
+
+        tab._initial_cache_load_timer.timeout.emit()
+        assert len(submissions) == 1
+        assert cache_reads == ["read"]
+        assert tab._prime_visible_local_quote_snapshot() is False
+
+        late_applies = []
+        provider_requests = list(tab.data_provider.requests)
+        monkeypatch.setattr(tab, "isVisible", lambda: True)
+        monkeypatch.setattr(
+            tab,
+            "_apply_scan_cache_payload",
+            lambda *args, **kwargs: late_applies.append((args, kwargs)),
+        )
+        tab.on_workspace_tab_activated()
+        assert late_applies == []
+        assert tab.data_provider.requests == provider_requests
+    finally:
+        tab.shutdown()
         tab.deleteLater()
 
 
@@ -122,13 +207,11 @@ def test_scan_tab_auto_f5_incremental_scan_starts_when_idle(monkeypatch):
 
 
 def test_scan_tab_refresh_data_after_f5_loads_cache_and_starts_incremental(monkeypatch):
-    scheduled = []
-    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
     tab = ScanTab(data_provider=None, engine=None)
     calls = []
     try:
-        scheduled.clear()
         tab._load_scan_cache = lambda: calls.append("load_cache")
         tab.refresh_table_from_latest_snapshot = lambda current_model=None, *, async_local=True: calls.append(
             (current_model, async_local)
@@ -137,9 +220,12 @@ def test_scan_tab_refresh_data_after_f5_loads_cache_and_starts_incremental(monke
 
         assert tab.refresh_data_after_f5() is True
         assert calls == ["load_cache", (tab.source_model, True)]
-        assert scheduled[0][0] == ScanTab.F5_AUTO_INCREMENTAL_DELAY_MS
+        assert tab._f5_auto_incremental_timer.isSingleShot()
+        assert tab._f5_auto_incremental_timer.isActive()
+        assert tab._f5_auto_incremental_timer.interval() == ScanTab.F5_AUTO_INCREMENTAL_DELAY_MS
 
-        assert scheduled[0][1]() is True
+        assert tab._run_pending_auto_incremental_scan_after_f5() is True
+        assert not tab._f5_auto_incremental_timer.isActive()
         assert calls == ["load_cache", (tab.source_model, True), "incremental"]
     finally:
         tab.deleteLater()
@@ -189,8 +275,7 @@ def test_scan_tab_lineage_and_local_snapshot_hydration_use_existing_snapshot(mon
         assert len(snapshot_calls) == 2
         assert snapshot_calls[0]["current_model"] is tab.source_model
         assert local_snapshot_calls == [tab.source_model, tab.source_model]
-        assert lineage["key"] == "scan"
-        assert lineage["provider"] == "scan_runtime_service"
+        assert {"key", "view", "source", "provider", "cache_refs", "network_capable"}.isdisjoint(lineage)
         assert lineage["trade_date"] == "2026-04-24"
         assert lineage["triggered_network"] is False
         assert lineage["row_count"] == 1

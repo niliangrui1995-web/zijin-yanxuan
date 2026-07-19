@@ -16,6 +16,12 @@ from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
 from infra.storage.json_cache_repository import cache_file_signature as _dbf_signature
+from infra.tasks.lifecycle import (
+    TaskCancelledError,
+    TaskDeadlineExceeded,
+    bounded_io_timeout,
+    raise_if_cancelled,
+)
 from vcp.constants import CACHE_DIR, MAX_HISTORY_BARS
 from vcp.utils import ensure_pandas_dataframe, read_tdx_day_file
 
@@ -368,80 +374,137 @@ def tdx_day_path(tdx_vipdoc: str | None, code) -> str:
     return os.path.join(tdx_vipdoc or "", sub)
 
 
-def apply_forward_adjustment(api, market, code, df, local_gbbq: dict | None):
+def _get_xdxr_info_with_deadline(api, market, code, *, cancellation_token=None):
+    """Read pytdx adjustment metadata within the owning task's I/O deadline."""
+    raise_if_cancelled(cancellation_token)
+    client = getattr(api, "client", None)
+    set_timeout = getattr(client, "settimeout", None)
+    get_timeout = getattr(client, "gettimeout", None)
+    timeout_changed = callable(set_timeout) and callable(get_timeout)
+    previous_timeout = get_timeout() if timeout_changed else None
+    if timeout_changed:
+        set_timeout(bounded_io_timeout(5, cancellation_token))
+    try:
+        try:
+            result = api.get_xdxr_info(market, code)
+        except Exception:
+            raise_if_cancelled(cancellation_token)
+            raise
+    finally:
+        if timeout_changed:
+            set_timeout(previous_timeout)
+    raise_if_cancelled(cancellation_token)
+    return result
+
+
+def _build_adjustment_events(api, market, code, local_gbbq, cancellation_token):
+    if code in (local_gbbq or {}):
+        events = local_gbbq[code].copy()
+        events["dt"] = pd.to_datetime(
+            events["datetime"].astype(str),
+            format="%Y%m%d",
+            errors="coerce",
+        ).dt.date
+        events = events.dropna(subset=["dt"])
+        return events.set_index("dt").sort_index(ascending=False)
+    if api is None:
+        return None
+    raw_events = _get_xdxr_info_with_deadline(
+        api,
+        market,
+        code,
+        cancellation_token=cancellation_token,
+    )
+    if not raw_events:
+        return None
+    events = pd.DataFrame(raw_events)
+    events = events[events["category"] == 1]
+    if events.empty:
+        return events
+    events["dt"] = pd.to_datetime(
+        events[["year", "month", "day"]].astype(str).agg("-".join, axis=1)
+    ).dt.date
+    return events.set_index("dt").sort_index(ascending=False)
+
+
+def _prepare_adjustment_frame(df):
+    work_df = df.reset_index() if df.index.name == "datetime" else df.copy()
+    adjusted_cols = [
+        column
+        for column in ("open", "high", "low", "close", "vol", "volume")
+        if column in work_df.columns
+    ]
+    for column in adjusted_cols:
+        work_df[column] = pd.to_numeric(work_df[column], errors="coerce").astype(float)
+    dt_col = pd.to_datetime(work_df["datetime"]).dt.date if "datetime" in work_df.columns else None
+    return work_df, dt_col
+
+
+def _adjustment_terms(row) -> tuple[float, float]:
+    if "songgu_qianzongguben" in row.index:
+        return (
+            float(row.get("songgu_qianzongguben", 0) or 0) / 10.0,
+            float(row.get("hongli_panqianliutong", 0) or 0) / 10.0,
+        )
+    return (
+        (float(row.get("songgu", 0) or 0) + float(row.get("houzhen", 0) or 0)) / 10.0,
+        float(row.get("fenhong", 0) or 0) / 10.0,
+    )
+
+
+def _adjustment_date(value):
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, str):
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    return value
+
+
+def _apply_adjustment_events(work_df, dt_col, events, cancellation_token) -> None:
+    if dt_col is None:
+        return
+    for index in range(len(events)):
+        raise_if_cancelled(cancellation_token)
+        row = events.iloc[index]
+        stock_ratio, dividend = _adjustment_terms(row)
+        mask = dt_col < _adjustment_date(events.index[index])
+        if not mask.any():
+            continue
+        for column in ("open", "high", "low", "close"):
+            if column in work_df.columns:
+                work_df.loc[mask, column] = (work_df.loc[mask, column] - dividend) / (
+                    1 + stock_ratio
+                )
+        for column in ("vol", "volume"):
+            if column in work_df.columns:
+                work_df.loc[mask, column] = work_df.loc[mask, column] * (1 + stock_ratio)
+
+
+def apply_forward_adjustment(
+    api,
+    market,
+    code,
+    df,
+    local_gbbq: dict | None,
+    *,
+    cancellation_token=None,
+):
     """Apply forward adjustment using local gbbq data first, then fall back to online API."""
 
+    raise_if_cancelled(cancellation_token)
     try:
-        xdxr_df = None
-        if code in (local_gbbq or {}):
-            local = local_gbbq[code]
-            xdxr_df = local.copy()
-            xdxr_df["dt"] = pd.to_datetime(
-                xdxr_df["datetime"].astype(str),
-                format="%Y%m%d",
-                errors="coerce",
-            ).dt.date
-            xdxr_df = xdxr_df.dropna(subset=["dt"])
-            xdxr_df = xdxr_df.set_index("dt").sort_index(ascending=False)
-        elif api is not None:
-            xdxr_data = api.get_xdxr_info(market, code)
-            if not xdxr_data:
-                return df
-            xdxr_df = pd.DataFrame(xdxr_data)
-            xdxr_df = xdxr_df[xdxr_df["category"] == 1]
-            if xdxr_df.empty:
-                return df
-            xdxr_df["dt"] = pd.to_datetime(xdxr_df[["year", "month", "day"]].astype(str).agg("-".join, axis=1)).dt.date
-            xdxr_df = xdxr_df.set_index("dt").sort_index(ascending=False)
-        else:
+        events = _build_adjustment_events(api, market, code, local_gbbq, cancellation_token)
+        if events is None or events.empty:
             return df
-
-        if xdxr_df is None or xdxr_df.empty:
-            return df
-
-        work_df = df.reset_index() if df.index.name == "datetime" else df.copy()
-        adjusted_cols = [col for col in ("open", "high", "low", "close", "vol", "volume") if col in work_df.columns]
-        for col in adjusted_cols:
-            work_df[col] = pd.to_numeric(work_df[col], errors="coerce").astype(float)
-
-        if "datetime" in work_df.columns:
-            dt_col = pd.to_datetime(work_df["datetime"]).dt.date
-        else:
-            dt_col = None
-
-        for i in range(len(xdxr_df)):
-            row = xdxr_df.iloc[i]
-            if "songgu_qianzongguben" in row.index:
-                sz = float(row.get("songgu_qianzongguben", 0) or 0) / 10.0
-                fh = float(row.get("hongli_panqianliutong", 0) or 0) / 10.0
-            else:
-                sz = (float(row.get("songgu", 0) or 0) + float(row.get("houzhen", 0) or 0)) / 10.0
-                fh = float(row.get("fenhong", 0) or 0) / 10.0
-
-            dt = xdxr_df.index[i]
-            if isinstance(dt, pd.Timestamp):
-                dt = dt.date()
-            elif isinstance(dt, str):
-                dt = datetime.strptime(dt, "%Y-%m-%d").date()
-
-            if dt_col is None:
-                continue
-
-            mask = dt_col < dt
-            if not mask.any():
-                continue
-
-            for col in ["open", "high", "low", "close"]:
-                if col in work_df.columns:
-                    work_df.loc[mask, col] = (work_df.loc[mask, col] - fh) / (1 + sz)
-            for vol_col in ["vol", "volume"]:
-                if vol_col in work_df.columns:
-                    work_df.loc[mask, vol_col] = work_df.loc[mask, vol_col] * (1 + sz)
-
+        work_df, dt_col = _prepare_adjustment_frame(df)
+        _apply_adjustment_events(work_df, dt_col, events, cancellation_token)
         if "datetime" in work_df.columns:
             work_df["datetime"] = pd.to_datetime(work_df["datetime"])
             work_df = work_df.set_index("datetime")
+        raise_if_cancelled(cancellation_token)
         return work_df
+    except (TaskCancelledError, TaskDeadlineExceeded):
+        raise
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         _log.error(f"[数据中台] 前复权计算异常: {exc}", exc_info=True)
         raise ValueError(f"除权除息因子计算失败: {exc}") from exc
@@ -480,29 +543,87 @@ def fetch_from_local_tdx(
     return df, warn_printed
 
 
+def _pandas_history_tail_rows(hist_df) -> tuple[dict, dict, object] | None:
+    if not isinstance(hist_df, pd.DataFrame) or hist_df.empty:
+        return None
+    last_row = hist_df.iloc[-1].to_dict()
+    prev_row = hist_df.iloc[-2].to_dict() if len(hist_df) > 1 else last_row
+    quote_date = last_row.get("datetime")
+    return prev_row, last_row, hist_df.index[-1] if quote_date is None else quote_date
+
+
+def _native_row_api_tail_rows(hist_df) -> tuple[dict, dict, object] | None:
+    row_getter = getattr(hist_df, "row", None)
+    if not callable(row_getter):
+        return None
+    try:
+        row_count = int(getattr(hist_df, "height", 0))
+        if row_count <= 0:
+            return None
+        last_row = dict(row_getter(row_count - 1, named=True))
+        prev_row = dict(row_getter(row_count - 2, named=True)) if row_count > 1 else last_row
+        return prev_row, last_row, last_row.get("datetime")
+    except (AttributeError, IndexError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _native_dict_api_tail_rows(hist_df) -> tuple[dict, dict, object] | None:
+    to_dicts = getattr(hist_df, "to_dicts", None)
+    if not callable(to_dicts):
+        return None
+    try:
+        tail = getattr(hist_df, "tail", None)
+        rows = (tail(2) if callable(tail) else hist_df).to_dicts()
+        if not rows:
+            return None
+        last_row = dict(rows[-1])
+        prev_row = dict(rows[-2]) if len(rows) > 1 else last_row
+        return prev_row, last_row, last_row.get("datetime")
+    except (AttributeError, IndexError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _normalized_history_tail_rows(hist_df) -> tuple[dict, dict, object] | None:
+    normalized = ensure_pandas_dataframe(hist_df)
+    return _pandas_history_tail_rows(normalized)
+
+
+def _native_history_tail_rows(hist_df) -> tuple[dict, dict, object] | None:
+    """Return the last two bars without converting an entire native frame."""
+    if hist_df is None:
+        return None
+    for extractor in (_pandas_history_tail_rows, _native_row_api_tail_rows, _native_dict_api_tail_rows):
+        rows = extractor(hist_df)
+        if rows is not None:
+            return rows
+    return _normalized_history_tail_rows(hist_df)
+
+
+def _format_quote_date(value) -> str | None:
+    try:
+        return pd.Timestamp(value).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+
+
 def build_offline_quotes(codes, get_data) -> dict:
-    """离线模式或无服务器节点时，利用内存中既有的最新日线数据充当当天的最新报价字典进行兜底返回"""
+    """Use the final two cached bars as quotes without whole-frame conversion."""
 
     res = {}
     for code in codes:
-        hist_df = ensure_pandas_dataframe(get_data(code))
-        if hist_df is not None and len(hist_df) > 0:
-            last_row = hist_df.iloc[-1]
-            prev_row = hist_df.iloc[-2] if len(hist_df) > 1 else last_row
-            last_close = float(prev_row["close"]) if len(hist_df) > 1 else float(last_row["open"])
-            quote_date = None
-            try:
-                quote_date = pd.Timestamp(hist_df.index[-1]).strftime("%Y-%m-%d")
-            except (TypeError, ValueError):
-                quote_date = None
-            res[code] = {
-                "open": float(last_row.get("open", 0)),
-                "high": float(last_row.get("high", 0)),
-                "low": float(last_row.get("low", 0)),
-                "close": float(last_row.get("close", 0)),
-                "volume": float(last_row.get("volume", 0)),
-                "amount": float(last_row.get("amount", 0)),
-                "last_close": last_close,
-                "date": quote_date,
-            }
+        rows = _native_history_tail_rows(get_data(code))
+        if rows is None:
+            continue
+        prev_row, last_row, quote_date_value = rows
+        last_close = float(prev_row.get("close", 0)) if prev_row is not last_row else float(last_row.get("open", 0))
+        res[code] = {
+            "open": float(last_row.get("open", 0)),
+            "high": float(last_row.get("high", 0)),
+            "low": float(last_row.get("low", 0)),
+            "close": float(last_row.get("close", 0)),
+            "volume": float(last_row.get("volume", 0)),
+            "amount": float(last_row.get("amount", 0)),
+            "last_close": last_close,
+            "date": _format_quote_date(quote_date_value),
+        }
     return res

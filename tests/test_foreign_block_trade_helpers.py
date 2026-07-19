@@ -1,7 +1,7 @@
-import datetime
 from types import SimpleNamespace
 
 import pandas as pd
+from PyQt6.QtGui import QHideEvent
 
 import app.services.foreign_block_market_data_service as foreign_market_service
 from app.services.foreign_block_market_data_service import (
@@ -391,8 +391,14 @@ def test_block_trade_delete_later_has_no_auto_timers(monkeypatch):
     try:
         assert not hasattr(tab, "_auto_timer")
         assert not hasattr(tab, "_auto_initial_check_timer")
+        tab._post_f5_online_timer.start(60_000)
+        tab._visible_online_timer.start(60_000)
 
         tab.deleteLater()
+        assert tab._closing is True
+        assert tab._foreign_runtime_cleanup_done is True
+        assert tab._post_f5_online_timer.isActive() is False
+        assert tab._visible_online_timer.isActive() is False
         tab = None
     finally:
         if tab is not None:
@@ -410,7 +416,8 @@ def test_block_trade_delays_initial_local_cache_load(monkeypatch):
     tab = ForeignBlockTradeTab(object())
     try:
         assert scheduled
-        assert (foreign_module.LOCAL_CACHE_LOAD_DELAY_MS, tab._load_local_cache) in scheduled
+        assert scheduled[-1][0] == foreign_module.LOCAL_CACHE_LOAD_DELAY_MS
+        assert callable(scheduled[-1][1])
     finally:
         tab.deleteLater()
 
@@ -425,64 +432,111 @@ def test_block_trade_can_defer_initial_local_cache_load(monkeypatch):
 
     tab = ForeignBlockTradeTab(object(), autoload=False)
     try:
-        local_cache_jobs = [
-            item for item in scheduled if item == (foreign_module.LOCAL_CACHE_LOAD_DELAY_MS, tab._load_local_cache)
-        ]
+        local_cache_jobs = [item for item in scheduled if item[0] == foreign_module.LOCAL_CACHE_LOAD_DELAY_MS]
         assert local_cache_jobs == []
 
         assert tab.prime_background_load() is True
-        assert (foreign_module.LOCAL_CACHE_LOAD_DELAY_MS, tab._load_local_cache) in scheduled
+        assert tab.is_background_preload_complete() is False
+        assert scheduled[-1][0] == foreign_module.LOCAL_CACHE_LOAD_DELAY_MS
+        assert callable(scheduled[-1][1])
         assert tab.prime_background_load() is False
-        local_cache_jobs = [
-            item for item in scheduled if item == (foreign_module.LOCAL_CACHE_LOAD_DELAY_MS, tab._load_local_cache)
-        ]
+        local_cache_jobs = [item for item in scheduled if item[0] == foreign_module.LOCAL_CACHE_LOAD_DELAY_MS]
         assert len(local_cache_jobs) == 1
+
+        tab._local_cache_loading = True
+        tab._finish_local_cache_load()
+        assert tab.is_background_preload_complete() is True
     finally:
         tab.deleteLater()
 
 
-def test_should_trigger_auto_refresh_only_after_20_on_trade_day():
-    now = datetime.datetime(2026, 4, 20, 20, 5, 0)
-    before_20 = datetime.datetime(2026, 4, 20, 19, 59, 0)
-    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
-        before_20,
-        is_trade_day=True,
-        last_auto_refresh_date="",
-        last_success_at=datetime.datetime(2026, 4, 20, 14, 30, 0),
-        pending_auto_refresh_date="",
+def test_block_trade_cancel_invalidates_queued_preload_and_activation_retries(monkeypatch):
+    scheduled = []
+    loads = []
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
     )
-    assert ForeignBlockTradeTab._should_trigger_auto_refresh(
-        now,
-        is_trade_day=True,
-        last_auto_refresh_date="",
-        last_success_at=datetime.datetime(2026, 4, 20, 14, 30, 0),
-        pending_auto_refresh_date="",
+    monkeypatch.setattr(
+        foreign_module,
+        "_schedule_pending_visible_online_refresh",
+        lambda owner: loads.append(("visible", owner)) or True,
     )
+    tab = ForeignBlockTradeTab(object(), autoload=False)
+    tab._load_local_cache = lambda: loads.append("cache")
+    try:
+        assert tab.prime_background_load() is True
+        stale_callback = scheduled[-1][1]
+        receipt = tab.cancel_background_preload(reason="step_timeout")
+        assert receipt.is_settled() is True
+
+        stale_callback()
+        assert loads == []
+
+        tab.on_workspace_tab_activated()
+        retry_callback = scheduled[-1][1]
+        retry_callback()
+        assert loads == [("visible", tab), "cache"]
+    finally:
+        tab.deleteLater()
 
 
-def test_should_trigger_auto_refresh_skips_when_today_after_20_already_saved_or_pending():
-    now = datetime.datetime(2026, 4, 20, 20, 5, 0)
-    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
-        now,
-        is_trade_day=True,
-        last_auto_refresh_date="",
-        last_success_at=datetime.datetime(2026, 4, 20, 20, 1, 0),
-        pending_auto_refresh_date="",
+def test_block_trade_cancel_invalidates_post_f5_cache_callback(monkeypatch):
+    scheduled = []
+    loads = []
+    monkeypatch.setattr(foreign_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
     )
-    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
-        now,
-        is_trade_day=True,
-        last_auto_refresh_date="20260420",
-        last_success_at=None,
-        pending_auto_refresh_date="",
+
+    tab = ForeignBlockTradeTab(object(), autoload=False)
+    tab._load_local_cache = lambda **kwargs: loads.append(kwargs)
+    try:
+        tab._post_f5_local_cache_defer_until = 15.0
+        assert tab._schedule_post_f5_local_cache_load(emit_event=False) is True
+        stale_callback = scheduled[-1][1]
+
+        receipt = tab.cancel_background_preload(reason="step_timeout")
+
+        assert receipt.is_settled() is True
+        assert tab._post_f5_local_cache_pending is False
+        assert stale_callback() is False
+        assert loads == []
+    finally:
+        tab.deleteLater()
+
+
+def test_block_trade_cancelled_generation_drops_queued_cache_commit(monkeypatch):
+    queued = []
+    calls = []
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda _delay, callback: queued.append(callback),
     )
-    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
-        now,
-        is_trade_day=True,
-        last_auto_refresh_date="",
-        last_success_at=None,
-        pending_auto_refresh_date="20260420",
+
+    class DummyTab:
+        _local_cache_generation = 5
+        _runtime_cleanup_done = False
+
+        @staticmethod
+        def _finish_local_cache_load():
+            calls.append("finish")
+
+    tab = DummyTab()
+    foreign_module.ForeignBlockTradeTab._apply_local_cache_payload(
+        tab,
+        {"rows": [], "raw_count": 0, "emit_event": False},
     )
+    assert len(queued) == 1
+
+    tab._local_cache_generation += 1
+    queued[0]()
+
+    assert calls == []
 
 
 def test_extract_cache_filter_options_and_save_gate():
@@ -561,9 +615,13 @@ def test_foreign_block_trade_f5_online_refresh_runs_after_delay(monkeypatch):
         "singleShot",
         lambda delay, callback: scheduled.append((delay, callback)),
     )
-    tab = ForeignBlockTradeTab.__new__(ForeignBlockTradeTab)
-    tab._pending_f5_online_refresh = False
-    tab.run_post_online_refresh = lambda: calls.append("online") or True
+    tab = SimpleNamespace(
+        _pending_f5_online_refresh=False,
+        _pending_visible_online_refresh=False,
+        isVisible=lambda: True,
+        _is_current_workspace_tab=lambda: True,
+        run_post_online_refresh=lambda: calls.append("online") or True,
+    )
 
     assert ForeignBlockTradeTab.schedule_post_online_refresh_after_f5(tab) is True
     assert tab._pending_f5_online_refresh is True
@@ -587,3 +645,57 @@ def test_foreign_block_trade_refresh_after_ai_chain_update_reloads_without_reemi
 
     assert ForeignBlockTradeTab.refresh_data_after_ai_industry_chain_update(tab) is True
     assert calls == [("local_cache", {"emit_event": False}), ("snapshot", tab.model, True), "online"]
+
+
+def test_foreign_block_trade_hidden_ai_chain_update_defers_online_fetch():
+    calls = []
+    tab = SimpleNamespace(
+        _pending_visible_online_refresh=False,
+        isVisible=lambda: False,
+        _load_local_cache=lambda **kwargs: calls.append(("local_cache", kwargs)),
+        model=object(),
+        refresh_table_from_latest_snapshot=(
+            lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
+        ),
+        run_post_online_refresh=lambda: calls.append("online") or True,
+    )
+
+    assert ForeignBlockTradeTab.refresh_data_after_ai_industry_chain_update(tab) is True
+    assert calls == [("local_cache", {"emit_event": False}), ("snapshot", tab.model, True)]
+    assert tab._pending_visible_online_refresh is True
+
+
+def test_foreign_block_trade_hide_cancels_active_fetch_and_keeps_resume_intent():
+    calls = []
+    tab = SimpleNamespace(
+        _closing=False,
+        _is_loading=True,
+        _fetch_generation=4,
+        _task_lifecycle=SimpleNamespace(cancel=lambda name, **kwargs: calls.append((name, kwargs)) or True),
+        btn_refresh=SimpleNamespace(setEnabled=lambda enabled: calls.append(("enabled", enabled))),
+        _pending_visible_online_refresh=False,
+    )
+
+    assert foreign_module._cancel_online_fetch(tab, reason="owner_hidden", resume_when_visible=True) is True
+    assert tab._is_loading is False
+    assert tab._fetch_generation == 5
+    assert tab._pending_visible_online_refresh is True
+    assert calls == [("fetch", {"reason": "owner_hidden"}), ("enabled", True)]
+
+
+def test_foreign_block_trade_hide_event_cancels_active_fetch():
+    calls = []
+    tab = ForeignBlockTradeTab(object(), autoload=False)
+    try:
+        tab._is_loading = True
+        tab._fetch_generation = 1
+        tab._task_lifecycle = SimpleNamespace(
+            cancel=lambda name, **kwargs: calls.append((name, kwargs)) or True,
+            shutdown=lambda **_kwargs: True,
+        )
+        tab.hideEvent(QHideEvent())
+        assert tab._is_loading is False
+        assert tab._pending_visible_online_refresh is True
+        assert calls == [("fetch", {"reason": "owner_hidden"})]
+    finally:
+        tab.deleteLater()

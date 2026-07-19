@@ -33,6 +33,15 @@ def quarter_mode_from_filter(latest_only: bool, selected_quarters: Iterable[str]
     return SELECTED_QUARTER_MODE if selected else ALL_QUARTER_MODE
 
 
+def initial_quarter_query_scope(state: FundHoldingsViewState) -> tuple[str, set[str]]:
+    values = {str(item).strip() for item in state.quarter_values if str(item).strip()}
+    if state.quarter_mode == ALL_QUARTER_MODE:
+        return ALL_QUARTER_MODE, set()
+    if state.quarter_mode == SELECTED_QUARTER_MODE and values:
+        return SELECTED_QUARTER_MODE, values
+    return LATEST_QUARTER_MODE, set()
+
+
 def sort_order_to_int(order, default: int = 0) -> int:
     value = getattr(order, "value", order)
     try:

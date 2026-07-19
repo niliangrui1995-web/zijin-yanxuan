@@ -262,6 +262,23 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
         tab.deleteLater()
 
 
+def test_asian_market_delete_stops_owned_delayed_runtime_callbacks(monkeypatch):
+    tab = _build_empty_asian_tab(monkeypatch)
+    service = tab._asian_market_service
+    tab._runtime_state_sync_timer.start(1000)
+    tab._auto_cache_sync_timer.start(1000)
+    tab._pending_auto_cache_sync = True
+
+    tab.deleteLater()
+
+    assert tab._asian_shutting_down is True
+    assert tab._pending_auto_cache_sync is False
+    assert not tab._runtime_state_sync_timer.isActive()
+    assert not tab._auto_cache_sync_timer.isActive()
+    assert service._closed is True
+    assert asian_runtime.continue_auto_cache_sync(tab) is None
+
+
 def test_asian_market_table_suppresses_left_rails(monkeypatch):
     tab = _build_empty_asian_tab(monkeypatch)
     try:
@@ -687,6 +704,38 @@ def test_asian_market_apply_local_cache_payload_defers_table_update(monkeypatch)
 
     assert ("update", [{"代码": "2330.TW"}]) in calls
     assert "finish" in calls
+
+
+def test_asian_market_cancelled_generation_drops_queued_cache_commit(monkeypatch):
+    queued = []
+    calls = []
+    monkeypatch.setattr(asian_module.QTimer, "singleShot", lambda _delay, callback: queued.append(callback))
+
+    class DummyTab:
+        row_data = []
+        _local_cache_generation = 7
+        _runtime_cleanup_done = False
+
+        @staticmethod
+        def _sync_worker_codes():
+            calls.append("sync")
+
+        @staticmethod
+        def update_table_ui():
+            calls.append("update")
+
+        @staticmethod
+        def _finish_local_cache_load():
+            calls.append("finish")
+
+    tab = DummyTab()
+    asian_module.AsianMarketTab._apply_local_cache_payload(tab, {"rt_updates": {}, "rows": []})
+    assert len(queued) == 1
+
+    tab._local_cache_generation += 1
+    queued[0]()
+
+    assert calls == ["sync"]
 
 
 def test_asian_market_display_uses_taiwan_label_for_tw_codes():
@@ -1259,6 +1308,35 @@ def test_manual_refresh_starts_lazy_runtime_worker(monkeypatch):
         assert tab._status_primary == "刷新已触发"
     finally:
         tab.deleteLater()
+
+
+def test_asian_background_preload_reads_local_cache_without_starting_runtime():
+    class DummyTab:
+        def __init__(self):
+            self._background_preload_requested = False
+            self._background_preload_done = False
+            self._load_cache_in_progress = False
+            self._load_cache_pending = False
+            self._asian_shutting_down = False
+            self.calls = []
+
+        def _load_local_cache(self):
+            self.calls.append("local_cache")
+            self._load_cache_in_progress = True
+            return True
+
+        def _ensure_runtime_started(self):
+            raise AssertionError("background preload must not start Asian realtime runtime")
+
+    tab = DummyTab()
+    assert asian_module.AsianMarketTab.prime_background_load(tab) is True
+    assert tab.calls == ["local_cache"]
+    assert asian_module.AsianMarketTab.is_background_preload_complete(tab) is False
+    assert asian_module.AsianMarketTab._run_initial_local_cache_load(tab) is False
+    assert tab.calls == ["local_cache"]
+
+    asian_module.AsianMarketTab._finish_local_cache_load(tab)
+    assert asian_module.AsianMarketTab.is_background_preload_complete(tab) is True
 
 
 def test_asian_market_minute_tick_uses_tracked_market_refresh_window(monkeypatch):

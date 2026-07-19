@@ -37,6 +37,8 @@ PERF_REPORT_OPTIONS = (
 
 RUNTIME_HEALTH_SHORT_OUTPUT = "tmp/runtime_health_stability_short.json"
 RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_short_samples"
+RUNTIME_HEALTH_PRODUCTION_OUTPUT = "tmp/runtime_health_stability_production.json"
+RUNTIME_HEALTH_PRODUCTION_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_production_samples"
 COMPLEXITY_HOTSPOT_AUDIT_OUTPUT = "tmp/complexity_hotspot_audit.json"
 COLD_IMPORT_BUDGET_OUTPUT = "tmp/cold_import_budget.json"
 DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
@@ -56,10 +58,12 @@ TYPE_CHECK_TARGETS = (
 
 UI_STALL_SMOKE_TESTS = (
     "tests/test_workspace_quote_codes.py::test_workspace_collect_stock_context_schedules_lhb_snapshot_without_blocking",
-    "tests/test_workspace_quote_codes.py::test_workspace_fund_holding_context_schedules_snapshot_without_blocking",
-    "tests/test_workspace_quote_codes.py::test_workspace_background_prewarm_primes_context_without_forcing_current_tab",
-    "tests/test_workspace_quote_codes.py::test_workspace_background_prewarm_can_preload_whitelisted_current_tab",
-    "tests/test_workspace_quote_codes.py::test_workspace_background_prewarm_creates_whitelisted_current_tab_first_without_restore",
+    "tests/test_workspace_quote_codes.py::test_workspace_target_fund_context_schedules_snapshot_without_blocking",
+    "tests/test_workspace_background_preload.py::test_preload_uses_registry_order_and_waits_for_each_data_completion",
+    "tests/test_workspace_background_preload.py::test_preload_waits_for_runtime_and_initial_real_tab_without_pending_fanout",
+    "tests/test_workspace_background_preload.py::test_interactive_activation_promotes_preloaded_widget_without_reconstruction",
+    "tests/test_workspace_background_preload.py::test_interactive_click_prioritizes_future_step_without_duplicate_construct_or_prime",
+    "tests/test_workspace_background_preload.py::test_shutdown_stops_owned_preload_timer_and_clears_active_step",
     "tests/test_stock_candidate_tab.py::test_stock_candidate_refresh_collects_context_without_lhb_compute",
     "tests/test_fund_holdings_tab.py::test_fund_holdings_update_event_reloads_current_scope_async",
 )
@@ -158,6 +162,62 @@ def _coverage_audit_commands(python: str) -> list[AuditCommand]:
     ]
 
 
+def _runtime_health_short_command(python: str) -> AuditCommand:
+    return AuditCommand(
+        "runtime-health-short",
+        [
+            python,
+            "scripts/runtime_health_stability_suite.py",
+            "--mode",
+            "short",
+            "--background-prewarm",
+            "--allow-controlled-probe-tab-loads",
+            "--show-window",
+            "--fail-on-budget",
+            "--output",
+            RUNTIME_HEALTH_SHORT_OUTPUT,
+            "--sample-output-dir",
+            RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR,
+        ],
+    )
+
+
+def _runtime_health_production_command(python: str) -> AuditCommand:
+    return AuditCommand(
+        "runtime-health-production",
+        [
+            python,
+            "scripts/runtime_health_stability_suite.py",
+            "--mode",
+            "short",
+            "--native-qt",
+            "--startup-enabled",
+            "--background-prewarm",
+            "--kline-prewarm-enabled",
+            "--central-quotes-enabled",
+            "--allow-controlled-probe-tab-loads",
+            "--show-window",
+            "--kline-cycles",
+            "1",
+            "--real-f5",
+            "--fail-on-budget",
+            "--output",
+            RUNTIME_HEALTH_PRODUCTION_OUTPUT,
+            "--sample-output-dir",
+            RUNTIME_HEALTH_PRODUCTION_SAMPLE_OUTPUT_DIR,
+        ],
+    )
+
+
+def _runtime_health_audit_commands(args: argparse.Namespace, python: str) -> list[AuditCommand]:
+    commands = []
+    if args.runtime_health_short:
+        commands.append(_runtime_health_short_command(python))
+    if args.runtime_health_production:
+        commands.append(_runtime_health_production_command(python))
+    return commands
+
+
 def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
     python = _python(args)
     commands = [
@@ -218,23 +278,7 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             runtime_command.append("--skip-webengine-preflight")
         commands.append(AuditCommand("runtime-self-check", runtime_command))
 
-    if args.runtime_health_short:
-        commands.append(
-            AuditCommand(
-                "runtime-health-short",
-                [
-                    python,
-                    "scripts/runtime_health_stability_suite.py",
-                    "--mode",
-                    "short",
-                    "--fail-on-budget",
-                    "--output",
-                    RUNTIME_HEALTH_SHORT_OUTPUT,
-                    "--sample-output-dir",
-                    RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR,
-                ],
-            )
-        )
+    commands.extend(_runtime_health_audit_commands(args, python))
 
     if args.ui_stall_budget:
         commands.append(
@@ -319,6 +363,19 @@ def _add_result_reporting_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_runtime_health_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--runtime-health-short",
+        action="store_true",
+        help="Run the short runtime health stability suite with its budget gate.",
+    )
+    parser.add_argument(
+        "--runtime-health-production",
+        action="store_true",
+        help="Run a visible native-Qt startup/runtime gate with production services enabled.",
+    )
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the standard Zijin Yanxuan project audit gate.",
@@ -327,6 +384,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--quick", action="store_true", help="Skip full pytest and WebEngine preflight.")
     parser.add_argument("--list", action="store_true", help="Print planned commands without running them.")
     _add_result_reporting_args(parser)
+    _add_runtime_health_args(parser)
     parser.add_argument("--skip-ruff", action="store_true", help="Skip the Ruff style/lint gate.")
     parser.add_argument("--skip-full-pytest", action="store_true")
     parser.add_argument("--skip-runtime-self-check", action="store_true")
@@ -335,11 +393,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--extended-ruff",
         action="store_true",
         help="Run phased-in Bugbear, simplify, comprehensions, and Ruff rules that currently pass.",
-    )
-    parser.add_argument(
-        "--runtime-health-short",
-        action="store_true",
-        help="Run the short runtime health stability suite with its budget gate.",
     )
     parser.add_argument(
         "--ui-stall-budget",

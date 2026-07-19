@@ -51,6 +51,19 @@ def test_qapplication_is_created_before_ui_modules_are_imported():
     assert app_created < source.index("from ui.theme import theme_manager")
 
 
+def test_search_filter_runtime_is_preheated_after_splash_before_main_window():
+    source = (Path(__file__).resolve().parents[1] / "vcp_hunter_qt.pyw").read_text(encoding="utf-8")
+
+    splash_shown = source.index("splash.show()")
+    splash_events_processed = source.index("app.processEvents()", splash_shown)
+    search_runtime_initialized = source.index("initialize_search_filter_runtime()")
+    main_window_imported = source.index("from ui.main_window_qt import MainWindowQT")
+    main_window_constructed = source.index("window = MainWindowQT(splash=splash)")
+
+    assert splash_shown < splash_events_processed < search_runtime_initialized
+    assert search_runtime_initialized < main_window_imported < main_window_constructed
+
+
 def test_silent_startup_disables_tqdm_before_project_imports():
     source = (Path(__file__).resolve().parents[1] / "vcp_hunter_qt.pyw").read_text(encoding="utf-8")
 
@@ -64,6 +77,8 @@ def test_runtime_requirements_target_python314_scipy():
 
     assert "# Python 3.14+" in requirements
     assert "scipy>=1.17.1" in requirements
+    assert "polars>=1.42.1" in requirements
+    assert "pyarrow>=25.0.0" in requirements
     assert "python_version" not in requirements
 
 

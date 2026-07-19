@@ -42,13 +42,15 @@ def test_account_trade_record_modules_stay_removed():
         assert not (REPO_ROOT / relative_path).exists()
 
 
-def test_docs_match_eleven_lazy_tabs_and_disabled_real_tab_prewarm():
+def test_docs_match_eleven_staged_eager_dependency_ordered_preload_tabs():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     architecture = (REPO_ROOT / "docs" / "technical-architecture.md").read_text(encoding="utf-8")
 
     assert "装配了 11 个主 Tab" in readme
     assert "装配 11 个主 Tab" in architecture
-    assert "所有 Tab 首先挂载 `LazyTabPlaceholder`" in readme
-    assert "`BACKGROUND_PREWARM_KEYS` 当前为空" in architecture
+    assert "首开分阶段后台全量预载" in readme
+    assert "无需点击" in readme
+    assert "自动按 registry 的 `startup_order` 单步创建并预载全部 11 个真实 Tab" in architecture
+    assert "stock_candidates`" in architecture
     assert "装配了 12 个主 Tab" not in readme
     assert "装配 12 个主 Tab" not in architecture

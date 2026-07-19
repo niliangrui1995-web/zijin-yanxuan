@@ -366,13 +366,17 @@ def test_asian_runtime_cache_sync_all_result_shapes(monkeypatch):
     monkeypatch.setattr(
         runtime_module,
         "sync_asian_kline_cache",
-        lambda **_kwargs: (True, "ok", {"written_count": "bad", "rows": [1, 2], "missing": ["x"]}),
+        lambda **kwargs: sync_calls.append(kwargs)
+        or (True, "ok", {"written_count": "bad", "rows": [1, 2], "missing": ["x"]}),
     )
-    result = service.run_cache_sync_if_stale()
+    token = SimpleNamespace(raise_if_cancelled=lambda: None)
+    sync_calls = []
+    result = service.run_cache_sync_if_stale(cancellation_token=token)
     assert result["status"] == "success"
     assert result["records"] == 0
     assert result["missing"] == ["x"]
     assert emissions == [True]
+    assert sync_calls == [{"max_workers": 3, "period": "1y", "cancellation_token": token}]
 
     monkeypatch.setattr(runtime_module, "sync_asian_kline_cache", lambda **_kwargs: (False, "failed", None))
     result = service.run_cache_sync_if_stale(emit_event=False)
@@ -546,8 +550,8 @@ def test_auto_refresh_runtime_sync_cache_and_earnings(monkeypatch):
             self.calls.append(("sync",))
             return "started"
 
-        def run_cache_sync_if_stale(self, emit_event=False):
-            self.calls.append(("cache", emit_event))
+        def run_cache_sync_if_stale(self, emit_event=False, cancellation_token=None):
+            self.calls.append(("cache", emit_event, cancellation_token))
             return {"status": "success"}
 
     asian = _Asian()
@@ -563,8 +567,10 @@ def test_auto_refresh_runtime_sync_cache_and_earnings(monkeypatch):
     asian.calls.clear()
     assert service.sync_asian_market_runtime(None)["status"] == "started"
     assert asian.calls == [("sync",)]
-    result = service.run_asian_market_cache_sync(" 20260715 ")
+    token = SimpleNamespace(raise_if_cancelled=lambda: None)
+    result = service.run_asian_market_cache_sync(" 20260715 ", cancellation_token=token)
     assert result == {"status": "success", "trade_date": "20260715"}
+    assert asian.calls[-1] == ("cache", False, token)
 
     import app.services.earnings_refresh_process_service as earnings_module
 

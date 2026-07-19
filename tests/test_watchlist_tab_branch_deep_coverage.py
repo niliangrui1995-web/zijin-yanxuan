@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.stock_context_model_service import StockContextSnapshot
 from core.buy_point import BUY_POINT_TEXT
+from core.exceptions import CacheIOError
 from ui.tabs import watchlist_tab as watch
 
 
@@ -62,13 +64,20 @@ def test_module_helpers_cancellation_generation_and_commit(monkeypatch):
     owner = SimpleNamespace(
         _closing=False,
         _vcp_task_generation=2,
-        _refresh_vcp_indicators=lambda values, cancellation_token=None: (
-            calls.append((values, cancellation_token)) or {"ok": 1}
-        ),
-        _persist_watchlist_metrics=lambda value, cancellation_token=None: calls.append((value, cancellation_token)),
     )
-    assert watch._run_vcp_refresh(owner, [(0, "x")], token) == {"ok": 1}
-    watch._run_metrics_persist(owner, {"x": {}}, token)
+    monkeypatch.setattr(
+        watch,
+        "build_watchlist_indicator_results",
+        lambda values, **kwargs: calls.append((values, kwargs)) or {"ok": 1},
+    )
+    monkeypatch.setattr(
+        watch,
+        "persist_watchlist_metrics",
+        lambda value, **kwargs: calls.append((value, kwargs)),
+    )
+    empty_radar = ({}, {}, {}, {}, {}, None)
+    assert watch._run_vcp_refresh([(0, "x")], None, empty_radar, token) == {"ok": 1}
+    watch._run_metrics_persist({"x": {}}, token)
 
     signal = _Signal()
     monkeypatch.setattr(watch, "event_bus", SimpleNamespace(sig_vcp_watchlist_ready=signal))
@@ -88,6 +97,52 @@ def test_module_helpers_cancellation_generation_and_commit(monkeypatch):
     assert patched == [({"x": {}}, ["催化剂", "美股日报", "热点板块"])]
 
 
+def test_vcp_refresh_loads_rps_off_thread_when_snapshot_omits_bundle(monkeypatch):
+    bundle = {"rps120": {"000001": 80}, "rps250": {"000001": 90}}
+    load_calls = []
+    monkeypatch.setattr(
+        watch,
+        "load_active_rps_payload",
+        lambda: load_calls.append("rps") or bundle,
+    )
+
+    embedded_result = watch._run_vcp_refresh(
+        [(0, "000001")],
+        StockContextSnapshot(rps_bundle=bundle),
+        None,
+        None,
+    )
+    assert load_calls == []
+
+    fallback_result = watch._run_vcp_refresh(
+        [(0, "000001")],
+        StockContextSnapshot(),
+        None,
+        None,
+    )
+
+    assert fallback_result == embedded_result
+    assert fallback_result["000001"]["rps"] == "90/80"
+    assert load_calls == ["rps"]
+
+
+def test_vcp_refresh_degrades_when_active_rps_payload_is_not_an_object(monkeypatch):
+    monkeypatch.setattr(
+        watch,
+        "load_active_rps_payload",
+        lambda: (_ for _ in ()).throw(ValueError("active F5 RPS payload must be an object")),
+    )
+
+    result = watch._run_vcp_refresh(
+        [(0, "000001")],
+        StockContextSnapshot(),
+        None,
+        None,
+    )
+
+    assert result["000001"]["rps"] == "--"
+
+
 def test_signature_delay_touch_and_trade_date_error(monkeypatch):
     assert watch.WatchlistTab._coerce_delay_ms("bad", 5) == 5
     assert watch.WatchlistTab._coerce_delay_ms(-1, 5) == 0
@@ -102,7 +157,13 @@ def test_signature_delay_touch_and_trade_date_error(monkeypatch):
     monkeypatch.setattr(
         watch.MarketCalendar,
         "get_latest_trade_date",
-        classmethod(lambda cls, market: None),
+        classmethod(
+            lambda cls, market, *, allow_refresh=True: (
+                None
+                if allow_refresh is False
+                else (_ for _ in ()).throw(AssertionError("lineage date must stay cache-only"))
+            )
+        ),
     )
     monkeypatch.setattr(
         watch.MarketCalendar,
@@ -286,6 +347,17 @@ def test_gather_radar_coalesced_and_vcp_refresh_variants(monkeypatch):
         watch.WatchlistTab._run_coalesced_model_update(tab, lambda: (_ for _ in ()).throw(RuntimeError("bad")))
     assert toggles[-1] is True
 
+    idle_toggles = []
+    tab.proxy_model = SimpleNamespace(
+        dynamicSortFilter=lambda: True,
+        sortColumn=lambda: -1,
+        _filter_text="",
+        _exact_column_filters={},
+        setDynamicSortFilter=lambda value: idle_toggles.append(value),
+    )
+    assert watch.WatchlistTab._run_coalesced_model_update(tab, lambda: 8) == 8
+    assert idle_toggles == []
+
     radar = (
         {"000001": "remark"},
         {"000001": "sector"},
@@ -298,7 +370,11 @@ def test_gather_radar_coalesced_and_vcp_refresh_variants(monkeypatch):
     results = watch.WatchlistTab._refresh_vcp_indicators(tab, [(0, "000001")])
     assert results["000001"]["rps"] == "90/80"
 
-    monkeypatch.setattr(watch, "load_json_file", lambda path: (_ for _ in ()).throw(watch.CacheIOError("bad")))
+    monkeypatch.setattr(
+        watch,
+        "load_active_rps_payload",
+        lambda: (_ for _ in ()).throw(CacheIOError("bad")),
+    )
     tab._gather_radar_data = lambda codes: ({}, {}, {}, {}, {}, None)
     assert watch.WatchlistTab._refresh_vcp_indicators(tab, [(0, "000002")])["000002"]["rps"] == "--"
 
@@ -348,6 +424,7 @@ def test_apply_and_persist_metrics_branches(monkeypatch):
         },
     )
     assert commits[-1]["000001"]["龙虎榜"] == BUY_POINT_TEXT
+    assert "龙榜" not in commits[-1]["000001"]
     assert commits[-1]["000002"]["龙虎榜"] == "legacy"
 
 
@@ -527,7 +604,11 @@ def test_show_hide_deferred_payload_and_pending_calc(monkeypatch):
 
 
 def test_lineage_load_guard_reset_apply_quote_and_debounce(monkeypatch):
-    result = SimpleNamespace(signature="sig", lineage=SimpleNamespace(as_dict=lambda: {"ok": 1}), rows=[])
+    result = SimpleNamespace(
+        signature="sig",
+        lineage=SimpleNamespace(as_dynamic_dict=lambda: {"ok": 1}),
+        rows=[],
+    )
     tab = SimpleNamespace(
         _last_watchlist_result=None,
         _last_watchlist_signature="",
@@ -579,8 +660,8 @@ def test_vcp_refresh_non_dict_sources_per_code_and_outer_error(monkeypatch):
     tab = SimpleNamespace(_gather_radar_data=lambda codes: None)
     monkeypatch.setattr(
         watch,
-        "load_json_file",
-        lambda path: {"rps120": {"000001": 70}, "rps250": {"000001": 80}},
+        "load_active_rps_payload",
+        lambda: {"rps120": {"000001": 70}, "rps250": {"000001": 80}},
     )
     radar = ({}, {}, {"000001": "block"}, {"000001": "earn"}, {}, None)
     result = watch.WatchlistTab._refresh_vcp_indicators(tab, [(0, "000001")], radar_data_tuple=radar)

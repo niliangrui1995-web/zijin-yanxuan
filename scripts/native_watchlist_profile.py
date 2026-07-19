@@ -516,29 +516,45 @@ def _build_environment_report(app) -> dict:
     }
 
 
-def run_profile(args: argparse.Namespace) -> tuple[dict, Path]:
-    output_dir = (args.output_dir or _default_output_dir()).resolve()
-    database_info = _configure_isolated_runtime(output_dir, args.source_db)
-
+def _create_native_qt_application():
+    from app.services.runtime_services import (
+        initialize_native_dataframe_runtime,
+        is_native_dataframe_runtime_ready,
+    )
     from core.runtime_env import configure_qt_webengine_runtime
 
     configure_qt_webengine_runtime()
     QAbstractEventDispatcher, QCoreApplication, QEvent, _QObject, Qt, QTimer, QApplication = _qt_types()
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication.instance() or QApplication([sys.argv[0]])
+    native_runtime_started = time.perf_counter()
+    initialize_native_dataframe_runtime()
     environment = _build_environment_report(app)
-    platform_error = _native_platform_error(
-        requested=environment["requested_qt_platform"],
-        actual=environment["actual_qt_platform"],
-    )
+    environment["native_dataframe_runtime"] = {
+        "ready": is_native_dataframe_runtime_ready(),
+        "initialization_ms": round((time.perf_counter() - native_runtime_started) * 1000.0, 3),
+    }
+    platform_error = _native_platform_error(**{
+        "requested": environment["requested_qt_platform"],
+        "actual": environment["actual_qt_platform"],
+    })
     if platform_error:
         raise RuntimeError(platform_error)
+    return app, environment, QAbstractEventDispatcher, QEvent, Qt, QTimer
 
-    report_path = output_dir / "native_watchlist_profile.json"
-    startup_profile_path = output_dir / "startup.prof"
-    watchlist_activation_profile_path = output_dir / "watchlist_activation.prof"
-    watchlist_settle_profile_path = output_dir / "watchlist_settle.prof"
-    report = {
+
+def _profile_paths(output_dir: Path) -> dict[str, Path]:
+    return {
+        "report": output_dir / "native_watchlist_profile.json",
+        "startup": output_dir / "startup.prof",
+        "activation": output_dir / "watchlist_activation.prof",
+        "settle": output_dir / "watchlist_settle.prof",
+    }
+
+
+def _build_profile_report(args, environment, database_info, paths) -> dict:
+    enabled = not bool(args.no_cprofile)
+    return {
         "schema_version": 1,
         "report_type": "native_watchlist_profile",
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -558,18 +574,19 @@ def run_profile(args: argparse.Namespace) -> tuple[dict, Path]:
             "settle_ms": int(args.settle_ms),
             "load_timeout_ms": int(args.load_timeout_ms),
             "heartbeat_ms": int(args.heartbeat_ms),
-            "cprofile_enabled": not bool(args.no_cprofile),
+            "cprofile_enabled": enabled,
         },
         "timings": {},
         "profiles": {
-            "startup": str(startup_profile_path) if not args.no_cprofile else None,
-            "watchlist_activation": str(watchlist_activation_profile_path) if not args.no_cprofile else None,
-            "watchlist_settle": str(watchlist_settle_profile_path) if not args.no_cprofile else None,
+            "startup": str(paths["startup"]) if enabled else None,
+            "watchlist_activation": str(paths["activation"]) if enabled else None,
+            "watchlist_settle": str(paths["settle"]) if enabled else None,
         },
         "errors": [],
     }
 
-    origin = time.perf_counter()
+
+def _build_profiled_main_window(app, qevent_type, args, report, paths, origin):
     startup_profiler = cProfile.Profile()
     if not args.no_cprofile:
         startup_profiler.enable()
@@ -587,9 +604,11 @@ def run_profile(args: argparse.Namespace) -> tuple[dict, Path]:
         restore_last_tab_enabled=False,
         controlled_startup_probe_guard=False,
     )
-    window.startup_orchestrator.schedule_startup = lambda: None
+    # The Watchlist factory retains its production startup flags while the
+    # later post-paint startup orchestrator remains suppressed for isolation.
+    window._startup_enabled = False
     report["timings"]["window_construct_ms"] = round((time.perf_counter() - construct_started) * 1000.0, 3)
-    paint_probe = _FirstPaintProbe(app, window, QEvent.Type, origin=origin)
+    paint_probe = _FirstPaintProbe(app, window, qevent_type, origin=origin)
     show_started = time.perf_counter()
     window.show()
     window.raise_()
@@ -597,22 +616,44 @@ def run_profile(args: argparse.Namespace) -> tuple[dict, Path]:
     report["timings"]["window_show_call_ms"] = round((time.perf_counter() - show_started) * 1000.0, 3)
     if not args.no_cprofile:
         startup_profiler.disable()
-        startup_profiler.dump_stats(str(startup_profile_path))
+        startup_profiler.dump_stats(str(paths["startup"]))
+    return window, paint_probe
 
-    dispatcher = QAbstractEventDispatcher.instance()
+
+def _append_profile_summaries(report, args, paths) -> None:
+    if args.no_cprofile:
+        return
+    for report_key, path_key in (
+        ("startup_top_cumulative", "startup"),
+        ("watchlist_activation_top_cumulative", "activation"),
+        ("watchlist_settle_top_cumulative", "settle"),
+    ):
+        report["profiles"][report_key] = _profile_top_functions(paths[path_key], limit=args.top_functions)
+
+
+def run_profile(args: argparse.Namespace) -> tuple[dict, Path]:
+    output_dir = (args.output_dir or _default_output_dir()).resolve()
+    database_info = _configure_isolated_runtime(output_dir, args.source_db)
+    app, environment, dispatcher_type, qevent_type, qt_type, qtimer_type = _create_native_qt_application()
+    paths = _profile_paths(output_dir)
+    report = _build_profile_report(args, environment, database_info, paths)
+
+    origin = time.perf_counter()
+    window, paint_probe = _build_profiled_main_window(app, qevent_type.Type, args, report, paths, origin)
+    dispatcher = dispatcher_type.instance()
     if dispatcher is None:
         raise RuntimeError("native Qt event dispatcher unavailable")
     dispatcher_probe = _DispatcherPhaseProbe(dispatcher)
     controller = _NativeProfileController(
         app=app,
         window=window,
-        qtimer_type=QTimer,
-        qt_timer_type=Qt.TimerType,
+        qtimer_type=qtimer_type,
+        qt_timer_type=qt_type.TimerType,
         dispatcher_probe=dispatcher_probe,
         paint_probe=paint_probe,
         args=args,
-        activation_profile_path=watchlist_activation_profile_path,
-        settle_profile_path=watchlist_settle_profile_path,
+        activation_profile_path=paths["activation"],
+        settle_profile_path=paths["settle"],
         report=report,
         origin=origin,
         cprofile_enabled=not args.no_cprofile,
@@ -620,19 +661,10 @@ def run_profile(args: argparse.Namespace) -> tuple[dict, Path]:
     controller.start()
     exit_code = app.exec()
     report["qt_exit_code"] = int(exit_code)
-    if not args.no_cprofile:
-        report["profiles"]["startup_top_cumulative"] = _profile_top_functions(
-            startup_profile_path, limit=args.top_functions
-        )
-        report["profiles"]["watchlist_activation_top_cumulative"] = _profile_top_functions(
-            watchlist_activation_profile_path, limit=args.top_functions
-        )
-        report["profiles"]["watchlist_settle_top_cumulative"] = _profile_top_functions(
-            watchlist_settle_profile_path, limit=args.top_functions
-        )
+    _append_profile_summaries(report, args, paths)
     report["status"] = "ok" if not report["errors"] and "watchlist_loaded_ms" in report["timings"] else "error"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return report, report_path
+    paths["report"].write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report, paths["report"]
 
 
 def main(argv: list[str] | None = None) -> int:

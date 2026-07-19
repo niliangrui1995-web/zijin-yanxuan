@@ -41,11 +41,24 @@ class AdjustmentService:
     def get_market_code(stock_code):
         return get_market_code(stock_code)
 
-    def apply_forward_adjustment(self, api, market, code, df, *, local_gbbq: dict | None = None):
+    def apply_forward_adjustment(
+        self,
+        api,
+        market,
+        code,
+        df,
+        *,
+        local_gbbq: dict | None = None,
+        cancellation_token=None,
+    ):
+        cancellation_kwargs = (
+            {"cancellation_token": cancellation_token} if cancellation_token is not None else {}
+        )
         return apply_forward_adjustment_impl(
             api,
             market,
             code,
             df,
             getattr(self.provider, "_local_gbbq", {}) if local_gbbq is None else local_gbbq,
+            **cancellation_kwargs,
         )

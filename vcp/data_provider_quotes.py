@@ -9,9 +9,26 @@ from contextlib import suppress
 from core.logger import get_logger
 from domains.quotes.snapshot import coerce_number
 from infra.http_safety import urlopen_https
+from infra.tasks.lifecycle import (
+    bounded_io_timeout,
+    raise_if_cancelled,
+    reraise_task_cancellation,
+)
 from vcp.realtime_quote_batch import normalize_error_text
 
 log = get_logger(__name__)
+
+
+def _read_json_response(response, cancellation_token=None):
+    payload = json.loads(response.read().decode("utf-8"))
+    raise_if_cancelled(cancellation_token)
+    return payload
+
+
+def _read_text_response(response, encoding: str, cancellation_token=None) -> str:
+    text = response.read().decode(encoding, errors="ignore")
+    raise_if_cancelled(cancellation_token)
+    return text
 
 
 _EASTMONEY_EDGE_FAILURE_TOKENS = (
@@ -108,11 +125,10 @@ def coerce_quote_number(value) -> float:
     return coerce_number(value)
 
 
-def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
+def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str, *, cancellation_token=None):
     normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
-
     fields = "f12,f13,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18"
     secids = ",".join(to_eastmoney_secid(code) for code in normalized_codes)
     hosts = list(
@@ -143,9 +159,9 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
         )
 
         try:
-            resp = urlopen_https(req, timeout=timeout_sec)
+            resp = urlopen_https(req, timeout=bounded_io_timeout(timeout_sec, cancellation_token))
             try:
-                payload = json.loads(resp.read().decode("utf-8"))
+                payload = _read_json_response(resp, cancellation_token)
             finally:
                 with suppress(AttributeError, OSError, RuntimeError, TypeError):
                     resp.close()
@@ -193,6 +209,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
             register_eastmoney_success(provider)
             return quotes
         except (AttributeError, json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            reraise_task_cancellation(exc)
             last_error = exc
             fast_fail_edge_error = bool(getattr(provider, "_rt_eastmoney_fast_fail_on_edge_error", False)) and (
                 _is_eastmoney_edge_failure(exc)
@@ -206,7 +223,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
     raise RuntimeError("东方财富实时报价返回空结果")
 
 
-def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
+def request_sina_quote_batch(provider, codes, inferred_trade_date: str, *, cancellation_token=None):
     normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
@@ -221,9 +238,9 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
             "Connection": "close",
         },
     )
-    resp = urlopen_https(req, timeout=timeout_sec)
+    resp = urlopen_https(req, timeout=bounded_io_timeout(timeout_sec, cancellation_token))
     try:
-        text = resp.read().decode("gbk", errors="ignore")
+        text = _read_text_response(resp, "gbk", cancellation_token)
     finally:
         with suppress(AttributeError, OSError, RuntimeError, TypeError):
             resp.close()
@@ -272,7 +289,7 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
     return quotes
 
 
-def request_tencent_quote_batch(provider, codes, inferred_trade_date: str):
+def request_tencent_quote_batch(provider, codes, inferred_trade_date: str, *, cancellation_token=None):
     normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
@@ -287,9 +304,9 @@ def request_tencent_quote_batch(provider, codes, inferred_trade_date: str):
             "Connection": "close",
         },
     )
-    resp = urlopen_https(req, timeout=timeout_sec)
+    resp = urlopen_https(req, timeout=bounded_io_timeout(timeout_sec, cancellation_token))
     try:
-        text = resp.read().decode("gbk", errors="ignore")
+        text = _read_text_response(resp, "gbk", cancellation_token)
     finally:
         with suppress(AttributeError, OSError, RuntimeError, TypeError):
             resp.close()

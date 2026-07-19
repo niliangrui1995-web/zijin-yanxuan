@@ -13,6 +13,15 @@ class _TaskManager:
         return task_id
 
 
+class _F5Controller:
+    def __init__(self):
+        self.starts = []
+
+    def start(self, request, *, on_event=None, on_finished=None):
+        self.starts.append((request, on_event, on_finished))
+        return True
+
+
 def _make_window(*, current_tab="system_log", last_system_log_nav_at=100.0):
     state = {"current_tab": current_tab}
     return SimpleNamespace(
@@ -20,8 +29,9 @@ def _make_window(*, current_tab="system_log", last_system_log_nav_at=100.0):
         _current_workspace_tab_key=lambda: state["current_tab"],
         _tab_state=state,
         _f5_cancelled=False,
-        data_provider=object(),
+        data_provider=SimpleNamespace(tdx_vipdoc=""),
         engine=object(),
+        _f5_job_controller=_F5Controller(),
         _call_in_ui=lambda callback: callback(),
         _on_f5_done=lambda _count, _elapsed: None,
     )
@@ -35,7 +45,7 @@ def test_start_f5_precompute_defers_after_system_log_shell_nav(monkeypatch):
     monkeypatch.setattr(runtime.time, "perf_counter", lambda: 105.0)
     monkeypatch.setattr(runtime.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
 
-    runtime.start_f5_precompute(window, task_manager=manager)
+    runtime.start_f5_precompute(window)
 
     assert scheduled and scheduled[0][0] == 5000
     assert manager.calls == []
@@ -46,10 +56,8 @@ def test_start_f5_precompute_defers_after_system_log_shell_nav(monkeypatch):
     scheduled[0][1]()
 
     assert window._f5_precompute_start_pending is False
-    assert len(manager.calls) == 1
-    assert manager.calls[0][1] == runtime.WINDOW_F5_PRECOMPUTE
-    assert manager.calls[0][2]["task_priority"] == runtime.F5_BACKGROUND_TASK_PRIORITY
-    assert manager.calls[0][2]["thread_priority"] == runtime.F5_BACKGROUND_THREAD_PRIORITY
+    assert manager.calls == []
+    assert len(window._f5_job_controller.starts) == 1
     assert window._f5_precompute_ui_grace_until == 117.0
 
 
@@ -61,7 +69,7 @@ def test_start_f5_precompute_holds_while_system_log_stays_foreground(monkeypatch
     monkeypatch.setattr(runtime.time, "perf_counter", lambda: 105.0)
     monkeypatch.setattr(runtime.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
 
-    runtime.start_f5_precompute(window, task_manager=manager)
+    runtime.start_f5_precompute(window)
     scheduled[0][1]()
 
     assert manager.calls == []
@@ -72,9 +80,8 @@ def test_start_f5_precompute_holds_while_system_log_stays_foreground(monkeypatch
     scheduled[-1][1]()
 
     assert window._f5_precompute_start_pending is False
-    assert len(manager.calls) == 1
-    assert manager.calls[0][2]["task_priority"] == runtime.F5_BACKGROUND_TASK_PRIORITY
-    assert manager.calls[0][2]["thread_priority"] == runtime.F5_BACKGROUND_THREAD_PRIORITY
+    assert manager.calls == []
+    assert len(window._f5_job_controller.starts) == 1
 
 
 def test_start_f5_precompute_runs_immediately_outside_system_log_nav_grace(monkeypatch):
@@ -85,11 +92,9 @@ def test_start_f5_precompute_runs_immediately_outside_system_log_nav_grace(monke
     monkeypatch.setattr(runtime.time, "perf_counter", lambda: 105.0)
     monkeypatch.setattr(runtime.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
 
-    runtime.start_f5_precompute(window, task_manager=manager)
+    runtime.start_f5_precompute(window)
 
     assert scheduled == []
-    assert len(manager.calls) == 1
-    assert manager.calls[0][1] == runtime.WINDOW_F5_PRECOMPUTE
-    assert manager.calls[0][2]["task_priority"] == runtime.F5_BACKGROUND_TASK_PRIORITY
-    assert manager.calls[0][2]["thread_priority"] == runtime.F5_BACKGROUND_THREAD_PRIORITY
+    assert manager.calls == []
+    assert len(window._f5_job_controller.starts) == 1
     assert getattr(window, "_f5_precompute_start_pending") is False

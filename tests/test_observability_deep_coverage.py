@@ -70,6 +70,10 @@ def test_event_summary_variants(event, fields, needle):
     assert needle in module._format_event_summary(event, fields)
 
 
+def test_event_summary_omits_empty_fallback_fields():
+    assert module._format_event_summary("custom", {"empty": "", "none": None}) == "[事件] custom"
+
+
 def test_emit_structured_log_filters_fields_and_falls_back_to_info():
     logger = _Logger()
     payload = module.emit_structured_log("", logger=logger, level="missing", **{"": 1, "ok": 2})

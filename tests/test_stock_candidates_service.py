@@ -4,6 +4,7 @@ import time
 from types import SimpleNamespace
 
 from app.services.stock_candidates_service import KEY_RECENT_TIME, StockCandidatesDataService, _iter_signals
+from app.services.stock_context_model_service import StockSignal
 
 
 def test_stock_candidates_service_returns_rows_and_lineage():
@@ -40,8 +41,7 @@ def test_stock_candidates_service_returns_rows_and_lineage():
 
     assert result.rows[0]["code"] == "300750"
     assert result.signature
-    assert lineage["key"] == "stock_candidates"
-    assert lineage["provider"] == "workspace_stock_context"
+    assert {"key", "view", "source", "provider", "cache_refs", "network_capable"}.isdisjoint(lineage)
     assert lineage["trade_date"] == "2026-05-08"
     assert lineage["triggered_network"] is False
     assert lineage["fallback_or_degraded"] is False
@@ -49,6 +49,25 @@ def test_stock_candidates_service_returns_rows_and_lineage():
     assert lineage["signal_count"] == 1
     assert lineage["source_tabs"] == ["na_daily"]
     assert lineage["provider_fault_tolerance"]["recent_cache_hit_count"] == 2
+
+
+def test_stock_candidates_service_builds_immutable_signal_index_in_worker_result():
+    signal = StockSignal(
+        code="300750",
+        source_tab="scan",
+        signal_type="vcp_scan",
+        summary="VCP",
+        payload={"峰值": [1, 2]},
+    )
+    service = StockCandidatesDataService(
+        context_reader=lambda: {"300750": [signal]},
+        row_builder=lambda _context: [],
+    )
+
+    result = service.load()
+
+    assert result.signal_index.codes == ("300750",)
+    assert result.signal_index.signals_for("300750")[0].payload["峰值"] == (1, 2)
 
 
 def test_stock_candidates_service_marks_provider_fallback_or_degraded():

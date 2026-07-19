@@ -2,7 +2,7 @@
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication
 
-from ui.components.thread_shutdown import pending_thread_count, request_thread_shutdown
+import ui.components.thread_shutdown as shutdown_module
 
 
 class _PollingThread(QThread):
@@ -23,14 +23,14 @@ def test_request_thread_shutdown_keeps_thread_alive_until_finished():
     thread = _PollingThread()
     thread.start()
 
-    assert request_thread_shutdown(thread, label="test", stop=thread.stop, timeout_ms=50) is True
+    assert shutdown_module.request_thread_shutdown(thread, label="test", stop=thread.stop, timeout_ms=50) is True
 
     for _ in range(100):
         app.processEvents()
-        if not thread.isRunning() and pending_thread_count() == 0:
+        if thread not in shutdown_module._PENDING_THREADS:
             break
         QThread.msleep(5)
 
     assert thread.stop_requested is True
-    assert thread.isRunning() is False
-    assert pending_thread_count() == 0
+    assert shutdown_module._is_thread_running(thread) is False
+    assert thread not in shutdown_module._PENDING_THREADS

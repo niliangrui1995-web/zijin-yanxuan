@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from typing import Any
 
 from core.exceptions import CacheIOError, DataFormatError
@@ -52,7 +53,7 @@ def save_json_file(path: str, payload: object) -> None:
     """Atomically write a normalized JSON cache."""
 
     parent_dir = os.path.dirname(path)
-    temp_path = f"{path}.tmp"
+    temp_path = f"{path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
     try:
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)

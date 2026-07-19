@@ -1,25 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import datetime as dt
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
 
 from ui import kline_window_qt as kline
-
-
-class _Log:
-    def __init__(self):
-        self.debugs = []
-        self.warnings = []
-
-    def debug(self, message):
-        self.debugs.append(message)
-
-    def warning(self, message):
-        self.warnings.append(message)
+from ui.kline_load_controller import KlineLoadController
 
 
 class _Style:
@@ -73,31 +60,11 @@ class _Page:
 
 
 class _Browser:
-    def __init__(self, *, page_raises=False, html_raises=False):
+    def __init__(self, *, page_raises=False):
         self._page = _Page(raises=page_raises)
-        self.html = []
-        self.html_raises = html_raises
 
     def page(self):
         return self._page
-
-    def setHtml(self, *args):
-        if self.html_raises:
-            raise RuntimeError("browser gone")
-        self.html.append(args)
-
-
-def _frame(periods=6):
-    return pd.DataFrame(
-        {
-            "open": [10.0 + index for index in range(periods)],
-            "high": [11.0 + index for index in range(periods)],
-            "low": [9.0 + index for index in range(periods)],
-            "close": [10.5 + index for index in range(periods)],
-            "volume": [100.0 + index for index in range(periods)],
-        },
-        index=pd.date_range("2026-07-01", periods=periods),
-    )
 
 
 def test_favorite_status_toggle_success_and_errors(monkeypatch):
@@ -116,8 +83,10 @@ def test_favorite_status_toggle_success_and_errors(monkeypatch):
     assert window.is_fav is True and button.properties["watching"] is True and refreshes
 
     monkeypatch.setattr(kline.watchlist_vm, "is_in_watchlist", lambda code: (_ for _ in ()).throw(RuntimeError("bad")))
+    refresh_count = len(refreshes)
     kline.KLineChartWindow._check_fav_status(window)
     assert window.is_fav is False and button.properties["watching"] is False
+    assert len(refreshes) == refresh_count + 1
 
     toggles = []
     monkeypatch.setattr(kline.watchlist_vm, "toggle_stock", lambda *args: toggles.append(args))
@@ -336,35 +305,59 @@ def test_fullscreen_enter_leave_and_toggle():
     kline.KLineChartWindow._enter_fullscreen(window)
 
 
-def test_market_date_quote_normalize_and_load_delegates(monkeypatch):
+def test_market_date_quote_normalize_and_load_begins_owned_generation(monkeypatch):
     monkeypatch.setattr(kline.MarketCalendar, "infer_market", lambda code: "TW")
-    monkeypatch.setattr(kline.MarketCalendar, "get_latest_trade_date", lambda market: dt.date(2026, 7, 15))
+    monkeypatch.setattr(kline.MarketCalendar, "get_latest_trade_date", lambda market: "latest")
     monkeypatch.setattr(kline, "get_cn_target_trade_date", lambda: "target")
     monkeypatch.setattr(kline, "build_asian_rt_quote", lambda *args, **kwargs: {"args": args, "kwargs": kwargs})
-    monkeypatch.setattr(kline, "normalize_daily_df_index", lambda df, logger: (df, logger))
     loads = []
-    monkeypatch.setattr(kline, "load_and_draw", lambda window: loads.append(window))
+    monkeypatch.setattr(kline, "can_begin_chart_load", lambda window: True)
+    monkeypatch.setattr(kline, "load_and_draw", lambda window, *, identity: loads.append((window, identity)))
     import ui.tabs.asian_market_tab as asian_tab
 
     monkeypatch.setattr(asian_tab, "GLOBAL_ASIAN_RT_CACHE", {"2330.TW": {"close": 1}})
-    window = SimpleNamespace(code="2330.TW", _log="log", _render_generation=1)
+    controller = KlineLoadController(window_id="window-a")
+    window = SimpleNamespace(
+        code="2330.TW",
+        _log="log",
+        _closing=False,
+        _load_controller=controller,
+        _render_generation=0,
+    )
     window._get_market = lambda: kline.KLineChartWindow._get_market(window)
     assert kline.KLineChartWindow._get_market(window) == "TW"
     assert kline.KLineChartWindow._get_cn_target_trade_date(window) == "target"
     assert kline.KLineChartWindow._build_asian_rt_quote(window)["args"][0] == "2330.TW"
-    assert kline.KLineChartWindow._normalize_daily_df_index(window, "df") == ("df", "log")
+
     kline.KLineChartWindow._load_and_draw(window)
-    assert window._render_generation == 2 and loads == [window]
+    identity = controller.current_identity
+    assert identity is not None
+    assert loads == [(window, identity)]
+    assert window._active_load_identity == identity
+    assert window._render_generation == identity.generation == 1
+    assert controller.task_id("history", identity=identity) == "kline:window-a:1:history"
+
+    window._closing = True
+    kline.KLineChartWindow._load_and_draw(window)
+    assert controller.current_identity == identity
+    assert loads == [(window, identity)]
 
 
-def test_pending_chart_status_and_load_finished_paths():
+def test_pending_chart_status_and_load_finished_uses_js_readiness(monkeypatch):
     statuses = []
-    calls = []
+    probes = []
+    browser = _Browser()
+    monkeypatch.setattr(
+        kline,
+        "begin_js_readiness_probe",
+        lambda window, owned_browser, epoch: probes.append((window, owned_browser, epoch)),
+    )
     window = SimpleNamespace(
         _closing=False,
+        browser=browser,
+        sender=lambda: browser,
+        _browser_epoch=3,
         _set_status_message=lambda text, tone="info": statuses.append((text, tone)),
-        _apply_chart_market_state=lambda: calls.append("market"),
-        _apply_chart_glass_mode=lambda: calls.append("glass"),
     )
     kline.KLineChartWindow._set_pending_chart_status(window, " done ", "")
     assert window._pending_chart_status == ("done", "info")
@@ -372,206 +365,65 @@ def test_pending_chart_status_and_load_finished_paths():
     assert statuses == [("done", "info")] and window._pending_chart_status is None
     kline.KLineChartWindow._finish_pending_chart_status(window)
     window._pending_chart_status = ("ok", "success")
-    window._finish_pending_chart_status = lambda: kline.KLineChartWindow._finish_pending_chart_status(window)
     kline.KLineChartWindow._on_chart_load_finished(window, True)
-    assert calls == ["market", "glass"] and statuses[-1] == ("ok", "success")
+    assert probes == [(window, browser, 3)]
+    assert window._pending_chart_status == ("ok", "success")
+
     window._pending_chart_status = ("bad", "info")
     kline.KLineChartWindow._on_chart_load_finished(window, False)
+    assert window._pending_chart_status is None
     assert statuses[-1][1] == "error"
+
     window._pending_chart_status = None
     kline.KLineChartWindow._on_chart_load_finished(window, False)
+    window.sender = lambda: object()
+    kline.KLineChartWindow._on_chart_load_finished(window, True)
+    assert len(probes) == 1
+
+    window.sender = lambda: browser
     window._closing = True
     kline.KLineChartWindow._on_chart_load_finished(window, True)
 
 
-def _capture_asian_task(monkeypatch):
+def test_chart_shell_delegate_selects_data_free_or_preheated_pool_builder(monkeypatch):
     calls = []
+    monkeypatch.setattr(kline, "build_kline_theme_colors", lambda: {"bg": "black"})
+    monkeypatch.setattr(kline, "load_chart_shell", lambda window, **kwargs: calls.append((window, kwargs)) or True)
+    window = SimpleNamespace(_pool_shell_mode=False)
+
+    assert kline.KLineChartWindow._load_chart_shell(window) is True
+    assert calls[0][0] is window
+    assert calls[0][1]["shell_builder"] is kline.build_kline_shell_html
+    assert calls[0][1]["theme_colors"] == {"bg": "black"}
+    assert "echarts_data" not in calls[0][1]
+
+    window._pool_shell_mode = True
+    assert kline.KLineChartWindow._load_chart_shell(window) is True
+    assert calls[1][1]["shell_builder"] is kline.build_kline_preheated_shell_html
+
+
+def test_render_chart_guards_short_frames_and_delegates_preparation(monkeypatch):
+    statuses = []
+    submissions = []
     monkeypatch.setattr(
         kline,
-        "_submit_owned_kline_task",
-        lambda window, name, fn, success, error, task_id, timeout: calls.append(
-            SimpleNamespace(fn=fn, success=success, error=error, task_id=task_id, timeout=timeout)
-        ),
+        "prepare_and_render_frame",
+        lambda window, frame, *, loading: submissions.append((window, frame, loading)),
     )
-    return calls
-
-
-def test_load_asian_chart_background_fetch_and_success_paths(monkeypatch):
-    calls = _capture_asian_task(monkeypatch)
-    import ui.tabs.asian_market_tab as asian_tab
-    import ui.tabs.asian_market_workers as workers
-
-    monkeypatch.setattr(asian_tab, "GLOBAL_ASIAN_RT_CACHE", {})
-    monkeypatch.setattr(asian_tab, "JSON_CACHE", "cache.json")
-    monkeypatch.setattr(kline.MarketCalendar, "get_latest_trade_date", lambda market: dt.date(2026, 7, 15))
-    stock = {
-        "klines": [
-            {"date": "bad"},
-            {"date": "2026-07-14", "open": 1, "high": 2, "low": 1, "close": 2},
-        ]
-    }
-    monkeypatch.setattr(kline, "load_cached_asian_stock", lambda path, code: stock)
-    monkeypatch.setattr(workers, "fetch_asian_realtime_quote", lambda code: {"date": "2026-07-15", "close": 3})
-    monkeypatch.setattr(kline, "_runtime_is_current_request", lambda *args: True)
-    monkeypatch.setattr(kline, "build_asian_history_df", lambda *args, **kwargs: _frame())
-    monkeypatch.setattr(kline, "apply_asian_live_quote", lambda df, quote, market: df.assign(close=99))
-    statuses = []
-    renders = []
     window = SimpleNamespace(
-        code="2330.TW",
-        _render_generation=2,
-        _get_market=lambda: "TW",
-        _log=_Log(),
-        vcp_data={},
-        _refresh_header_context=lambda: None,
-        _normalize_daily_df_index=lambda df: df,
-        _render_chart=lambda df, loading=False: renders.append(df),
         _set_status_message=lambda text, tone="info": statuses.append((text, tone)),
     )
-    kline.KLineChartWindow._load_asian_chart(window)
-    result = calls[-1].fn(None)
-    assert result[2] is True and result[1]["close"] == 3
-    calls[-1].success(result)
-    assert renders and float(renders[-1].iloc[0]["close"]) == 99
-    assert asian_tab.GLOBAL_ASIAN_RT_CACHE["2330.TW"]["close"] == 3
-    calls[-1].error("bad cache")
-    assert statuses[-1][1] == "error"
 
-
-def test_load_asian_chart_missing_history_error_and_stale_paths(monkeypatch):
-    calls = _capture_asian_task(monkeypatch)
-    import ui.tabs.asian_market_tab as asian_tab
-
-    monkeypatch.setattr(asian_tab, "GLOBAL_ASIAN_RT_CACHE", {})
-    monkeypatch.setattr(asian_tab, "JSON_CACHE", "cache.json")
-    monkeypatch.setattr(kline.MarketCalendar, "get_latest_trade_date", lambda market: dt.date(2026, 7, 15))
-    monkeypatch.setattr(kline, "load_cached_asian_stock", lambda path, code: None)
-    monkeypatch.setattr(kline, "_runtime_is_current_request", lambda *args: True)
-    scheduled = []
-    monkeypatch.setattr(
-        kline, "schedule_asian_history_backfill", lambda *args, **kwargs: scheduled.append((args, kwargs))
-    )
-    statuses = []
-    window = SimpleNamespace(
-        code="7203.T",
-        _render_generation=1,
-        _get_market=lambda: "T",
-        _log=_Log(),
-        vcp_data={},
-        _refresh_header_context=lambda: None,
-        _normalize_daily_df_index=lambda df: df,
-        _render_chart=lambda *args, **kwargs: None,
-        _set_status_message=lambda text, tone="info": statuses.append((text, tone)),
-    )
-    kline.KLineChartWindow._load_asian_chart(window)
-    calls[-1].success((None, None, False, None))
-    assert scheduled
-    monkeypatch.setattr(kline, "build_asian_history_df", lambda *args, **kwargs: None)
-    for exc in (RuntimeError("ordinary"), RuntimeError("429")):
-        monkeypatch.setattr(kline, "is_yf_rate_limit_error", lambda value, exc=exc: value is exc and "429" in str(exc))
-        monkeypatch.setattr(kline, "mark_yf_rate_limited", lambda value: 30)
-        calls[-1].success(({}, None, False, exc))
-    assert window._log.warnings
-    calls[-1].success(({}, None, False, None))
+    kline.KLineChartWindow._render_chart(window, [1, 2, 3, 4], loading=False)
     assert statuses[-1][1] == "warning"
-    with pytest.raises(AssertionError):
-        calls[-1].success(({}, None, False, AssertionError("unexpected")))
-    monkeypatch.setattr(kline, "_runtime_is_current_request", lambda *args: False)
-    before = len(statuses)
-    calls[-1].success(None)
-    calls[-1].error("late")
-    assert len(statuses) == before
+    assert submissions == []
 
+    kline.KLineChartWindow._render_chart(window, [1, 2, 3, 4], loading=True)
+    assert len(statuses) == 1
 
-def test_render_chart_guards_first_incremental_and_loading(monkeypatch):
-    monkeypatch.setattr(kline, "calculate_scan_indicators", lambda df: df)
-    monkeypatch.setattr(kline, "build_kline_echarts_payload", lambda *args, **kwargs: {"dates": ["d"], "values": [1]})
-    monkeypatch.setattr(kline, "build_kline_html", lambda **kwargs: "<html>chart</html>")
-    monkeypatch.setattr(kline, "build_kline_theme_colors", lambda: {"theme": True})
-    statuses = []
-    pending = []
-    starts = []
-    browser = _Browser()
-    window = SimpleNamespace(
-        _closing=False,
-        browser=browser,
-        _normalize_daily_df_index=lambda df: df,
-        _set_status_message=lambda text, tone="info": statuses.append((text, tone)),
-        _set_pending_chart_status=lambda text, tone: pending.append((text, tone)),
-        _start_rt_timer=lambda: starts.append(True),
-        _replace_chart_data_or_reload=lambda *args, **kwargs: starts.append("replace"),
-        code="1",
-        name="one",
-        vcp_data={},
-    )
-    kline.KLineChartWindow._render_chart(window, _frame(4), loading=False)
-    assert statuses[-1][1] == "warning"
-    statuses.clear()
-    kline.KLineChartWindow._render_chart(window, _frame(), loading=True)
-    assert browser.html and starts == [] and pending[-1][1] == "info"
-    assert window._last_chart_points == 1 and window._last_chart_payload_bytes > 0
-    kline.KLineChartWindow._render_chart(window, _frame(), loading=False)
-    assert "replace" in starts and starts[-1] is True and pending[-1][1] == "success"
-    window._closing = True
-    before = len(browser.html)
-    kline.KLineChartWindow._render_chart(window, _frame(), loading=False)
-    assert len(browser.html) == before
-
-
-def test_render_chart_converts_date_column_and_polars_like(monkeypatch):
-    class PolarsLike:
-        def to_pandas(self):
-            frame = _frame().reset_index().rename(columns={"index": "date"})
-            frame.index = range(len(frame))
-            return frame
-
-    monkeypatch.setattr(kline, "calculate_scan_indicators", lambda df: df)
-    monkeypatch.setattr(kline, "build_kline_echarts_payload", lambda *args, **kwargs: {"dates": []})
-    monkeypatch.setattr(kline, "build_kline_html", lambda **kwargs: "html")
-    monkeypatch.setattr(kline, "build_kline_theme_colors", lambda: {})
-    browser = _Browser()
-    window = SimpleNamespace(
-        _closing=False,
-        browser=browser,
-        _normalize_daily_df_index=lambda df: df,
-        _set_status_message=lambda *args, **kwargs: None,
-        _set_pending_chart_status=lambda *args: None,
-        _start_rt_timer=lambda: None,
-        code="1",
-        name="one",
-        vcp_data={},
-    )
-    kline.KLineChartWindow._render_chart(window, PolarsLike(), loading=False)
-    assert isinstance(window.df.index, pd.DatetimeIndex)
-
-
-def test_replace_chart_data_incremental_callbacks_and_fallback_errors():
-    finished = []
-    log = _Log()
-    browser = _Browser()
-    window = SimpleNamespace(
-        _closing=False,
-        browser=browser,
-        _finish_pending_chart_status=lambda: finished.append(True),
-        _log=log,
-    )
-    kline.KLineChartWindow._replace_chart_data_or_reload(window, "html", "url", title="t", echarts_data={})
-    callback = browser._page.calls[-1][1]
-    callback(True)
-    callback(False)
-    assert finished and browser.html[-1] == ("html", "url")
-    window._closing = True
-    callback(False)
-    window._closing = False
-    window.browser = None
-    callback(False)
-
-    window.browser = _Browser(page_raises=True)
-    kline.KLineChartWindow._replace_chart_data_or_reload(window, "html", "url", title="t", echarts_data={})
-    assert log.debugs
-    window.browser = _Browser(page_raises=True, html_raises=True)
-    kline.KLineChartWindow._replace_chart_data_or_reload(window, "html", "url", title="t", echarts_data={})
-    assert len(log.debugs) >= 3
+    frame = [1, 2, 3, 4, 5]
+    kline.KLineChartWindow._render_chart(window, frame, loading=True)
+    assert submissions == [(window, frame, True)]
 
 
 class _Timer:
@@ -587,6 +439,62 @@ class _Timer:
         self.stopped = True
 
 
+def test_header_resize_refresh_is_frame_coalesced_and_visibility_owned(monkeypatch):
+    class _ResizeTimer:
+        def __init__(self, *_args):
+            self.active = False
+            self.starts = 0
+            self.timeout = SimpleNamespace(connect=lambda callback: setattr(self, "callback", callback))
+
+        def setSingleShot(self, _single):
+            return None
+
+        def isActive(self):
+            return self.active
+
+        def start(self, _interval):
+            self.active = True
+            self.starts += 1
+
+        def stop(self):
+            self.active = False
+
+        def fire(self):
+            self.active = False
+            self.callback()
+
+    monkeypatch.setattr(kline, "QTimer", _ResizeTimer)
+    state = {"hidden": False}
+    refreshes = []
+    window = SimpleNamespace(
+        _closing=False,
+        _runtime_active=True,
+        _header_resize_timer=None,
+        _header_resize_pending=False,
+        summary_cards=[],
+        isHidden=lambda: state["hidden"],
+        _refresh_header_context=lambda: refreshes.append(True),
+    )
+    for _ in range(100):
+        kline._schedule_header_resize_refresh(window)
+    assert window._header_resize_timer.starts == 1
+    window._header_resize_timer.fire()
+    assert refreshes == [True]
+
+    state["hidden"] = True
+    for _ in range(10):
+        kline._schedule_header_resize_refresh(window)
+    assert refreshes == [True]
+    state["hidden"] = False
+    kline._schedule_header_resize_refresh(window)
+    window._header_resize_timer.fire()
+    assert refreshes == [True, True]
+
+    window._closing = True
+    kline._cancel_header_resize_refresh(window)
+    assert window._header_resize_pending is False
+
+
 def test_realtime_timer_global_quotes_and_navigation(monkeypatch):
     monkeypatch.setattr(kline, "QTimer", _Timer)
     states = []
@@ -597,6 +505,10 @@ def test_realtime_timer_global_quotes_and_navigation(monkeypatch):
         _apply_chart_market_state=lambda: states.append(True),
         _rt_timer=_Timer(),
     )
+    window._runtime_active = False
+    kline.KLineChartWindow._start_rt_timer(window)
+    assert window._rt_timer.stopped
+    window._runtime_active = True
     kline.KLineChartWindow._start_rt_timer(window)
     assert window._rt_timer.stopped
     monkeypatch.setattr(kline.MarketCalendar, "is_quote_refresh_time", lambda market: True)
@@ -686,14 +598,21 @@ def test_abandon_and_timer_delegates(monkeypatch):
     assert len(calls) == 2
 
 
-def test_abandon_owned_tasks_cancels_lifecycle_and_all_transient_keys(monkeypatch):
+def test_symbol_switch_cancels_owned_tasks_without_abandoning_running_workers():
     cancelled = []
-    abandoned = []
     lifecycle = SimpleNamespace(cancel=lambda *args, **kwargs: cancelled.append((args, kwargs)))
-    monkeypatch.setattr(kline.background_job_runner, "abandon", lambda key: abandoned.append(str(key)))
-    window = SimpleNamespace(_task_lifecycle=lifecycle)
+    window = SimpleNamespace(
+        _task_lifecycle=lifecycle,
+        _load_controller=KlineLoadController(window_id="window-a"),
+    )
     kline._abandon_owned_kline_tasks(window, " 000001 ", 7)
-    assert len(cancelled) == 4 and len(abandoned) == 4
+    assert [args[0] for args, _kwargs in cancelled] == [
+        "history_load",
+        "render_prepare",
+        "realtime_quote",
+        "realtime_prepare",
+        "asian_history_backfill",
+    ]
     kline._abandon_owned_kline_tasks(SimpleNamespace(_task_lifecycle=None), "", 1)
 
 
@@ -722,12 +641,6 @@ def test_real_kline_widget_event_and_close_lifecycle(monkeypatch):
         def stop(self):
             self.stopped = True
 
-    class ImmediateTimer:
-        @staticmethod
-        def singleShot(delay, callback):
-            return None
-
-    monkeypatch.setattr(kline, "QTimer", ImmediateTimer)
     monkeypatch.setattr(kline.KLineChartWindow, "_resolve_vcp_context", lambda self, *args: {})
     monkeypatch.setattr(kline.KLineChartWindow, "_apply_qt_theme", lambda self: None)
     monkeypatch.setattr(kline.KLineChartWindow, "_check_fav_status", lambda self: setattr(self, "is_fav", False))

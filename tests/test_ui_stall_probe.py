@@ -108,11 +108,18 @@ def test_ui_stall_probe_exposes_cumulative_stall_snapshot(monkeypatch, qt_applic
     assert snapshot["critical_count"] == 1
     assert snapshot["method_critical_count"] == 1
     assert snapshot["max_elapsed_ms"] == 125.0
+    probe._last_tick = 1.0
+    probe._last_span_context = {"method": "stale"}
+    probe._last_event_loop_record_at = 2.0
+    monkeypatch.setattr(probe_module.time, "perf_counter", lambda: 10.0)
     probe.reset_stall_snapshot()
     reset_snapshot = probe.stall_snapshot()
     assert reset_snapshot["total_count"] == 0
     assert reset_snapshot["critical_count"] == 0
     assert reset_snapshot["max_elapsed_ms"] == 0.0
+    assert probe._last_tick == 10.0
+    assert probe._last_span_context == {}
+    assert probe._last_event_loop_record_at == 0.0
     probe.deleteLater()
 
 

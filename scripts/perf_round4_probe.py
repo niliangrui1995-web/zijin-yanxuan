@@ -30,18 +30,9 @@ from app.services.ui_task_service import background_job_runner as task_manager
 from scripts.perf_memory_probe import collect_process_snapshot
 from ui.main_window_qt import MainWindowQT
 from ui.main_window_runtime import finish_f5_reload
+from ui.workspaces.tab_registry import health_probe_tab_keys
 
-DEFAULT_TABS = (
-    "stock_candidates",
-    "watchlist",
-    "scan",
-    "fund_holdings",
-    "asian_market",
-    "system_log",
-    "foreign_block",
-    "earnings",
-    "lhb",
-)
+DEFAULT_TABS = health_probe_tab_keys()
 
 
 def _now_ms(started_at: float) -> float:

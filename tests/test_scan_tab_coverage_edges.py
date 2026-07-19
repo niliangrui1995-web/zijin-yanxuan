@@ -240,7 +240,7 @@ def test_scan_dialog_handlers_and_pending_schedule(monkeypatch, scan_tab):
         def selected_range(self):
             return "2026-07-01", "2026-07-14"
 
-    monkeypatch.setattr(scan_module, "VCPScanRangeDialog", _RangeDialog)
+    monkeypatch.setattr("ui.components.scan_dialogs.VCPScanRangeDialog", _RangeDialog)
     scan_tab.start_scan = lambda *args, **kwargs: calls.append((args, kwargs)) or True
     scan_tab._on_scan_action_clicked()
     assert calls == []
@@ -266,7 +266,7 @@ def test_scan_dialog_handlers_and_pending_schedule(monkeypatch, scan_tab):
         def user_presets(self):
             return {"saved": {"rps": 92}}
 
-    monkeypatch.setattr(scan_module, "VCPScanSettingsDialog", _SettingsDialog)
+    monkeypatch.setattr("ui.components.scan_dialogs.VCPScanSettingsDialog", _SettingsDialog)
     monkeypatch.setattr(scan_module, "show_toast", lambda *args: calls.append(args))
     scan_tab._show_scan_settings()
     _SettingsDialog.result = 1
@@ -275,12 +275,13 @@ def test_scan_dialog_handlers_and_pending_schedule(monkeypatch, scan_tab):
     assert scan_tab.spn_scan_rps.value() == 92
     assert any(call and call[0] == "VCP 扫描参数已保存" for call in calls if isinstance(call, tuple))
 
-    scheduled = []
-    monkeypatch.setattr(scan_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
     assert scan_tab.schedule_auto_incremental_scan_after_f5()
     assert not scan_tab.schedule_auto_incremental_scan_after_f5()
+    assert scan_tab._f5_auto_incremental_timer.isActive()
+    assert scan_tab._f5_auto_incremental_timer.interval() == ScanTab.F5_AUTO_INCREMENTAL_DELAY_MS
     scan_tab.run_auto_incremental_scan_after_f5 = lambda: calls.append("auto") or True
-    assert scheduled[0][1]() is True
+    assert scan_tab._run_pending_auto_incremental_scan_after_f5() is True
+    assert not scan_tab._f5_auto_incremental_timer.isActive()
     assert scan_tab._pending_f5_auto_incremental is False
     assert scan_tab.open_scan_settings()
 
@@ -315,7 +316,7 @@ def test_scan_start_cancel_finish_and_shutdown(monkeypatch, scan_tab):
 
     scan_tab._task_lifecycle = lifecycle
     scan_tab._settings = _Settings()
-    monkeypatch.setattr(scan_module, "ScanWorker", _worker_factory)
+    monkeypatch.setattr("ui.workers.scan_worker.ScanWorker", _worker_factory)
     scan_tab._set_scan_action_state = lambda state: lifecycle.calls.append(("state", state))
 
     assert scan_tab.start_scan("20260701", "20260714", merge_mode=True)
@@ -341,16 +342,25 @@ def test_scan_start_cancel_finish_and_shutdown(monkeypatch, scan_tab):
 
     worker2 = _Worker()
     scan_tab.worker = worker2
+    revived = []
+    scan_tab.run_auto_incremental_scan_after_f5 = lambda: revived.append(True) or True
+    assert scan_tab.schedule_auto_incremental_scan_after_f5()
+    assert scan_tab._f5_auto_incremental_timer.isActive()
     shutdown_calls = []
     monkeypatch.setattr(scan_module, "request_thread_shutdown", lambda *args, **kwargs: shutdown_calls.append((args, kwargs)))
     scan_tab.shutdown()
     assert shutdown_calls[0][1]["label"] == "Scan worker"
     assert ("shutdown", 2000) in lifecycle.calls
+    assert not scan_tab._f5_auto_incremental_timer.isActive()
+    assert scan_tab._pending_f5_auto_incremental is False
+    assert scan_tab._run_pending_auto_incremental_scan_after_f5() is False
+    assert revived == []
 
     scan_tab.worker = None
     scan_tab._scan_token = None
-    assert scan_tab.start_scan("2026-07-01", "2026-07-14", merge_mode=False)
-    assert created[-1].args[2:4] == ("2026-07-01", "2026-07-14")
+    assert not scan_tab.start_scan("2026-07-01", "2026-07-14", merge_mode=False)
+    assert not scan_tab.refresh_data_after_f5()
+    assert len(created) == 1
 
     scan_tab._scan_mode = "full"
     scan_tab._on_scan_results([{"代码": "000003", "名称": "测试", "触发日期": "2026-07-14"}])
@@ -388,22 +398,45 @@ def test_scan_result_render_finish_and_cache_paths(monkeypatch, scan_tab):
     scan_tab._save_scan_cache([])
 
     applied = []
-    monkeypatch.setattr(scan_module.QTimer, "singleShot", lambda _delay, callback: callback())
+    background_calls = []
+
+    class _CacheLifecycle:
+        def run_background(self, name, fn, **kwargs):
+            background_calls.append((name, fn, kwargs))
+
+        def shutdown(self, *, timeout_ms):
+            return timeout_ms >= 0
+
+    class _Token:
+        def raise_if_cancelled(self):
+            return None
+
+    scan_tab._task_lifecycle = _CacheLifecycle()
     scan_tab._apply_scan_cache_payload = lambda payload, rows: applied.append((payload, rows))
     monkeypatch.setattr(scan_module, "load_scan_cache", lambda: ({"results": [{"代码": "000001"}]}, True))
-    scan_tab._load_scan_cache()
+    monkeypatch.setattr(scan_tab, "isVisible", lambda: True)
+
+    assert scan_tab._load_scan_cache() is True
+    assert applied == []
+    task_name, background_fn, submit_kwargs = background_calls.pop()
+    assert task_name == "scan_cache_load"
+    submit_kwargs["on_success"](background_fn(_Token()))
     assert applied[0][1][0]["代码"] == "000001"
-    monkeypatch.setattr(scan_module, "load_scan_cache", lambda: ([], False))
-    scan_tab._load_scan_cache()
-    monkeypatch.setattr(scan_module, "load_scan_cache", lambda: ({"results": []}, False))
-    scan_tab._load_scan_cache()
 
-    def _raise_load():
-        raise OSError("broken")
-
-    monkeypatch.setattr(scan_module, "load_scan_cache", _raise_load)
-    scan_tab._load_scan_cache()
+    scan_tab._on_scan_cache_loaded(([], False))
+    scan_tab._on_scan_cache_loaded(({"results": []}, False))
+    submit_kwargs["on_error"]("broken")
     assert len(system_log) >= 2
+
+    monkeypatch.setattr(scan_tab, "isVisible", lambda: False)
+    scan_tab._on_scan_cache_loaded(({"results": [{"代码": "000002"}]}, False))
+    assert scan_tab._scan_cache_preload.deferred_payload is None
+    assert len(applied) == 2
+    assert applied[-1][1] == [{"代码": "000002"}]
+    monkeypatch.setattr(scan_tab, "isVisible", lambda: True)
+    scan_tab._apply_deferred_scan_cache()
+    assert applied[-1][1] == [{"代码": "000002"}]
+    assert scan_tab._scan_cache_preload.deferred_payload is None
 
     rendered = []
     scan_tab._refresh_scan_result_names = lambda rows: list(rows)

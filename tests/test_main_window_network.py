@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from ui.main_window_network import toggle_network, update_network_ui
+from ui.main_window_network import force_reconnect, toggle_network, update_network_ui
 
 
 class _DummyAction:
@@ -77,3 +77,17 @@ def test_toggle_network_reads_the_public_online_port_only():
     toggle_network(window)
 
     assert calls == [("set_online_mode", False), ("update_ui", False)]
+
+
+def test_network_actions_are_safe_while_provider_is_initializing():
+    messages = []
+    window = _DummyWindow()
+    window.data_provider = None
+    window.lbl_status = type("Status", (), {"setText": lambda _self, text: messages.append(text)})()
+    window._status_bar_widget = _DummyStatusBar()
+
+    toggle_network(window)
+    force_reconnect(window)
+
+    assert messages == ["数据服务初始化中，请稍后再试"] * 2
+    assert window._status_bar_widget.tones == ["busy", "busy"]

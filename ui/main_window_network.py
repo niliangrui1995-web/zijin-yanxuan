@@ -27,11 +27,27 @@ def _set_status_tone(main_window, tone: str):
         status_dot.set_color(_resolve_status_dot_color(tone))
 
 
+def _runtime_data_provider(main_window):
+    provider = getattr(main_window, "data_provider", None)
+    if provider is not None:
+        return provider
+    message = "数据服务初始化中，请稍后再试"
+    status = getattr(main_window, "lbl_status", None)
+    if status is not None and hasattr(status, "setText"):
+        status.setText(message)
+    _set_status_tone(main_window, "busy")
+    log.info("[网络] %s", message)
+    return None
+
+
 def toggle_network(main_window):
-    if not main_window.data_provider.is_online():
+    provider = _runtime_data_provider(main_window)
+    if provider is None:
+        return
+    if not provider.is_online():
 
         def _go_online(_cancellation_token):
-            main_window.data_provider.set_online_mode(True)
+            provider.set_online_mode(True)
             return True
 
         def _on_error(error_message: str):
@@ -53,7 +69,7 @@ def toggle_network(main_window):
         )
         return
 
-    main_window.data_provider.set_online_mode(False)
+    provider.set_online_mode(False)
     main_window._update_network_ui(False)
 
 
@@ -72,15 +88,16 @@ def update_network_ui(main_window, online: bool, detail: str = ""):
 
 def force_reconnect(main_window):
     """主站强制重置东方财富实时行情连接。"""
-    if not main_window.data_provider.is_online():
+    provider = _runtime_data_provider(main_window)
+    if provider is None or not provider.is_online():
         return
     if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
         main_window._status_bar_widget.set_status_tone("busy")
 
     def _reconnect_task(_cancellation_token):
         try:
-            main_window.data_provider.force_reconnect_servers()
-            return main_window.data_provider.test_network(timeout=2)
+            provider.force_reconnect_servers()
+            return provider.test_network(timeout=2)
         except (
             ConnectionError,
             OSError,

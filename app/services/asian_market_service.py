@@ -28,8 +28,16 @@ def fetch_single_kline(
     ticker: str,
     period: str = "1y",
     session=None,
+    *,
+    cancellation_token=None,
 ):
-    return asian_fetcher_module.fetch_single_kline(name, ticker, period=period, session=session)
+    return asian_fetcher_module.fetch_single_kline(
+        name,
+        ticker,
+        period=period,
+        session=session,
+        cancellation_token=cancellation_token,
+    )
 
 
 def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:

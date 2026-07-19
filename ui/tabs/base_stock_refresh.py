@@ -21,8 +21,6 @@ except ImportError:  # pragma: no cover - PyQt runtime always provides sip.
 from PyQt6.QtCore import QCoreApplication, QTimer
 
 from app.services.runtime_constants import FINANCE_CACHE_FILE
-from app.services.runtime_services import load_local_tdx_capital_snapshot
-from app.services.scan_runtime_service import batch_get_finance_info
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_json_cache_service import cache_file_signature, load_json_file
 from app.services.ui_quote_service import (
@@ -45,6 +43,18 @@ _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
 _FINANCE_CACHE_SIGNATURE: tuple[int, int] | None = None
 _FINANCE_CACHE_PAYLOAD: dict | None = None
+
+
+def load_local_tdx_capital_snapshot(codes, tdx_vipdoc):
+    from app.services.runtime_services import load_local_tdx_capital_snapshot as load_snapshot
+
+    return load_snapshot(codes, tdx_vipdoc)
+
+
+def batch_get_finance_info(codes):
+    from app.services.scan_runtime_service import batch_get_finance_info as load_finance
+
+    return load_finance(codes)
 
 
 def _is_qt_object_deleted(obj) -> bool:
@@ -232,6 +242,19 @@ def _resolve_cached_finance_loader(owner):
     return _load
 
 
+def _quote_entry_has_price(entry: dict | None) -> bool:
+    payload = dict(entry or {})
+    return coerce_number(payload.get("close")) > 0 or coerce_number(payload.get("last_close")) > 0
+
+
+def _quote_entry_has_cap(entry: dict | None) -> bool:
+    payload = dict(entry or {})
+    return (
+        coerce_number(payload.get("_zongguben") or payload.get("zongguben")) > 0
+        or coerce_number(payload.get("market_cap")) > 0
+    )
+
+
 def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None) -> list[str]:
     latest_quotes = latest_quotes or {}
     target_codes: list[str] = []
@@ -239,60 +262,108 @@ def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None
         if not is_a_share_code(code):
             continue
         snapshot_entry = dict(latest_quotes.get(code) or {})
-        has_price = (
-            coerce_number(snapshot_entry.get("close")) > 0 or coerce_number(snapshot_entry.get("last_close")) > 0
-        )
-        has_cap = (
-            coerce_number(snapshot_entry.get("_zongguben") or snapshot_entry.get("zongguben")) > 0
-            or coerce_number(snapshot_entry.get("market_cap")) > 0
-        )
-        if not has_price or not has_cap:
+        if not _quote_entry_has_price(snapshot_entry) or not _quote_entry_has_cap(snapshot_entry):
             target_codes.append(code)
     return list(dict.fromkeys(target_codes))
 
 
-def _build_local_quote_payload(owner, target_codes: list[str]) -> dict:
+def _quote_subset_for_codes(snapshot: dict, codes: list[str]) -> dict:
+    return {code: dict(snapshot[code]) for code in codes if snapshot.get(code)}
+
+
+def _prepare_local_quote_prime(owner, current_model=None) -> tuple[list[str], dict] | None:
     if not _is_owner_runtime_active(owner):
-        return {}
-
-    try:
-        provider = owner.data_provider
-    except RuntimeError:
-        return {}
-    offline_quotes = build_offline_quotes(provider, target_codes)
-
-    finance_loader = _resolve_cached_finance_loader(owner)
-    try:
-        finance_snapshot = finance_loader(target_codes) or {}
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        finance_snapshot = {}
-
-    return enrich_quotes_with_finance(offline_quotes, finance_snapshot)
-
-
-def prime_local_quote_snapshot(owner, current_model=None) -> dict:
-    if not _is_owner_runtime_active(owner):
-        return {}
-
+        return None
     if current_model is not None:
         owner._active_model_ref = current_model
 
     model = current_model or owner._resolve_active_quote_model()
     if not model or not hasattr(model, "row_data"):
-        return {}
+        return None
 
-    try:
-        from core.global_store import global_store
-
-        latest_quotes = global_store.get_latest_quotes() or {}
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        latest_quotes = {}
-
+    latest_quotes = _latest_quote_snapshot()
     target_codes = _collect_local_quote_targets(owner, model, latest_quotes)
     if not target_codes:
+        return None
+    return target_codes, _quote_subset_for_codes(latest_quotes, target_codes)
+
+
+def _owner_data_provider(owner) -> tuple[bool, object | None]:
+    try:
+        return True, owner.data_provider
+    except RuntimeError:
+        return False, None
+
+
+def _build_missing_offline_quotes(provider, target_codes: list[str], latest_quotes: dict) -> dict:
+    missing_price_codes = [
+        code for code in target_codes if not _quote_entry_has_price(latest_quotes.get(code))
+    ]
+    return build_offline_quotes(provider, missing_price_codes) if missing_price_codes else {}
+
+
+def _load_local_finance_snapshot(owner, target_codes: list[str]) -> dict:
+    finance_loader = _resolve_cached_finance_loader(owner)
+    try:
+        return finance_loader(target_codes) or {}
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return {}
 
-    warm_payload = _build_local_quote_payload(owner, target_codes)
+
+def _quote_entry_copy(snapshot: dict, code: str) -> dict:
+    entry = snapshot.get(code)
+    return dict(entry) if entry else {}
+
+
+def _fresh_quotes_for_merge(latest_quotes: dict, payload_codes: set[str]) -> dict:
+    if not latest_quotes or not payload_codes:
+        return {}
+    return _latest_quote_snapshot()
+
+
+def _merge_local_quote_payload(latest_quotes: dict, offline_quotes: dict, finance_snapshot: dict) -> dict:
+    payload_codes = set(offline_quotes) | set(finance_snapshot)
+    current_quotes = _fresh_quotes_for_merge(latest_quotes, payload_codes)
+    quote_payload = {}
+    for code in payload_codes:
+        current_entry = _quote_entry_copy(current_quotes, code) or _quote_entry_copy(latest_quotes, code)
+        offline_entry = _quote_entry_copy(offline_quotes, code)
+        if offline_entry and not _quote_entry_has_price(current_entry):
+            current_entry.update(offline_entry)
+        if current_entry:
+            quote_payload[code] = current_entry
+    return enrich_quotes_with_finance(quote_payload, finance_snapshot)
+
+
+def _build_local_quote_payload(
+    owner,
+    target_codes: list[str],
+    *,
+    latest_quotes: dict | None = None,
+) -> dict:
+    if not _is_owner_runtime_active(owner):
+        return {}
+
+    provider_available, provider = _owner_data_provider(owner)
+    if not provider_available:
+        return {}
+
+    latest_quotes = dict(latest_quotes or {})
+    offline_quotes = _build_missing_offline_quotes(provider, target_codes, latest_quotes)
+    finance_snapshot = _load_local_finance_snapshot(owner, target_codes)
+    return _merge_local_quote_payload(latest_quotes, offline_quotes, finance_snapshot)
+
+
+def prime_local_quote_snapshot(owner, current_model=None) -> dict:
+    prepared = _prepare_local_quote_prime(owner, current_model)
+    if prepared is None:
+        return {}
+    target_codes, latest_target_quotes = prepared
+    warm_payload = _build_local_quote_payload(
+        owner,
+        target_codes,
+        latest_quotes=latest_target_quotes,
+    )
     if not warm_payload:
         return {}
 
@@ -314,55 +385,34 @@ def _run_owner_background(owner, runner, name, fn, *, task_id, timeout_sec, on_s
     )
 
 
-def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
-    if not _is_owner_runtime_active(owner):
-        return False
-
-    if current_model is not None:
-        owner._active_model_ref = current_model
-
-    model = current_model or owner._resolve_active_quote_model()
-    if not model or not hasattr(model, "row_data"):
-        return False
-
-    try:
-        from core.global_store import global_store
-
-        latest_quotes = global_store.get_latest_quotes() or {}
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        latest_quotes = {}
-
-    target_codes = _collect_local_quote_targets(owner, model, latest_quotes)
-    if not target_codes:
-        return False
-
+def _qt_runtime_available() -> bool:
     app = QCoreApplication.instance()
-    if app is None or app.closingDown():
-        return False
+    return app is not None and not app.closingDown()
 
-    from app.services.ui_task_service import background_job_runner as task_manager
 
+def _local_quote_task_key(owner, target_codes: list[str], *, scope: str = "visible"):
     task_signature = abs(hash(tuple(target_codes)))
-    task_key = task_registry.quote_refresh(
-        f"{owner.__class__.__name__.lower()}_{id(owner)}_local_quote_snapshot_{task_signature}"
+    normalized_scope = str(scope or "visible").strip().lower()
+    scope_suffix = "" if normalized_scope == "visible" else f"_{normalized_scope}"
+    return task_registry.quote_refresh(
+        f"{owner.__class__.__name__.lower()}_{id(owner)}_local_quote_snapshot{scope_suffix}_{task_signature}"
     )
-    is_active_task = getattr(task_manager, "is_active_task", None)
-    if callable(is_active_task) and is_active_task(task_key):
-        return True
 
+
+def _local_quote_task_callbacks(owner, target_codes: list[str], latest_target_quotes: dict):
     owner_ref = weakref.ref(owner)
     owner_class_name = owner.__class__.__name__
-    target_codes = list(target_codes)
 
     def _bg_local_quote(_cancellation_token):
         owner_obj = owner_ref()
-        if not _is_owner_runtime_active(owner_obj):
-            return {}
-        app_obj = QCoreApplication.instance()
-        if app_obj is None or app_obj.closingDown():
+        if not _is_owner_runtime_active(owner_obj) or not _qt_runtime_available():
             return {}
         try:
-            return _build_local_quote_payload(owner_obj, target_codes)
+            return _build_local_quote_payload(
+                owner_obj,
+                target_codes,
+                latest_quotes=latest_target_quotes,
+            )
         except RuntimeError:
             return {}
 
@@ -374,20 +424,52 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
             warm_payload,
             source=f"{owner_class_name}.local_cache_async",
         )
-        if published:
-            try:
-                owner_obj._apply_quote_snapshot(published)
-                _invoke_after_market_caps_updated(owner_obj)
-            except RuntimeError:
-                pass
+        if not published:
+            return
+        try:
+            owner_obj._apply_quote_snapshot(published)
+            _invoke_after_market_caps_updated(owner_obj)
+        except RuntimeError:
+            pass
 
     def _on_error(error_message: str):
         if error_message:
-            logging.getLogger(__name__).debug(f"[{owner_class_name}] local quote snapshot task failed: {error_message}")
+            logging.getLogger(__name__).debug(
+                f"[{owner_class_name}] local quote snapshot task failed: {error_message}"
+            )
+
+    return _bg_local_quote, _on_success, _on_error
+
+
+def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
+    prepared = _prepare_local_quote_prime(owner, current_model)
+    if prepared is None or not _qt_runtime_available():
+        return False
+    target_codes, latest_target_quotes = prepared
+
+    from app.services.ui_task_service import background_job_runner as task_manager
+
+    task_key = _local_quote_task_key(owner, target_codes)
+    is_active_task = getattr(task_manager, "is_active_task", None)
+    if callable(is_active_task) and is_active_task(task_key):
+        return True
+
+    target_codes = list(target_codes)
+    background, on_success, on_error = _local_quote_task_callbacks(
+        owner,
+        target_codes,
+        latest_target_quotes,
+    )
 
     _run_owner_background(
-        owner, task_manager, "local_quote_snapshot", _bg_local_quote,
-        task_id=task_key, timeout_sec=60.0, on_success=_on_success, on_error=_on_error,
+        owner,
+        task_manager,
+        "local_quote_snapshot",
+        background,
+        task_id=task_key,
+        timeout_sec=60.0,
+        on_success=on_success,
+        on_error=on_error,
     )
     return True
 
@@ -586,12 +668,13 @@ def _apply_cache_snapshot_payload(owner, payload: dict, *, signal: str) -> None:
 class CacheSnapshotApplyQueue:
     """Apply cache snapshot hits by tab and small code batches across event-loop turns."""
 
+    _continue_interval_ms = 16
     _scheduled = False
     _pending: dict[int, tuple[weakref.ReferenceType, dict, bool]] = {}
 
     @classmethod
-    def enqueue(cls, owner, payload: dict, *, async_local: bool) -> bool:
-        force_apply = bool(getattr(owner, "_f5_cache_snapshot_apply", False))
+    def enqueue(cls, owner, payload: dict, *, async_local: bool, force_apply: bool = False) -> bool:
+        force_apply = bool(force_apply or getattr(owner, "_f5_cache_snapshot_apply", False))
         if not payload or not _should_defer_cache_snapshot_apply(
             owner,
             async_local=async_local,
@@ -613,7 +696,15 @@ class CacheSnapshotApplyQueue:
         return True
 
     @classmethod
-    def _schedule(cls) -> None:
+    def is_pending(cls, owner) -> bool:
+        return id(owner) in cls._pending
+
+    @classmethod
+    def discard(cls, owner) -> None:
+        cls._pending.pop(id(owner), None)
+
+    @classmethod
+    def _schedule(cls, delay_ms: int = 0) -> None:
         if cls._scheduled:
             return
 
@@ -623,7 +714,7 @@ class CacheSnapshotApplyQueue:
             return
 
         cls._scheduled = True
-        QTimer.singleShot(0, cls.flush_one)
+        QTimer.singleShot(max(0, int(delay_ms or 0)), cls.flush_one)
 
     @classmethod
     def flush_one(cls) -> None:
@@ -646,7 +737,7 @@ class CacheSnapshotApplyQueue:
             _apply_cache_snapshot_payload(owner, chunk, signal="cache_snapshot")
 
         if cls._pending:
-            cls._schedule()
+            cls._schedule(cls._continue_interval_ms)
 
 
 class MarketCapRefreshBatcher:
@@ -814,6 +905,7 @@ def _submit_owner_quote_refresh(owner, task_manager, task_id: str, target_codes:
     owner_ref = weakref.ref(owner)
     provider = owner.data_provider
     owner_class_name = owner.__class__.__name__
+    owner._runtime_network_triggered = True
 
     def _bg_task(_cancellation_token):
         return provider.fetch_realtime_quotes_batch(target_codes)
@@ -899,8 +991,26 @@ def refresh_table_from_latest_snapshot(owner, current_model=None, *, async_local
         _refresh_table_from_latest_snapshot_impl(owner, current_model=current_model, async_local=async_local)
 
 
-def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async_local: bool = True) -> None:
-    prepared = _prepare_table_refresh(owner, current_model, async_local)
+def _prepare_snapshot_refresh(owner, current_model, async_local: bool, prime_local: bool):
+    if prime_local:
+        return _prepare_table_refresh(owner, current_model, async_local)
+    if current_model is not None:
+        owner._active_model_ref = current_model
+    model = current_model or owner._resolve_active_quote_model()
+    if model is None:
+        return None
+    codes = collect_table_codes(owner, model)
+    return (model, codes) if codes else None
+
+
+def _refresh_table_from_latest_snapshot_impl(
+    owner,
+    current_model=None,
+    *,
+    async_local: bool = True,
+    prime_local: bool = True,
+) -> None:
+    prepared = _prepare_snapshot_refresh(owner, current_model, async_local, prime_local)
     if prepared is None:
         return
     model, codes = prepared
@@ -917,6 +1027,149 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
             quote_subset,
             signal="cache_snapshot" if async_local else "cache_snapshot_sync",
         )
+
+
+def _finish_workspace_background_snapshot(owner, table_codes: list[str], warm_payload: dict | None = None) -> None:
+    if not _is_owner_runtime_active(owner):
+        return
+    published = {}
+    if warm_payload:
+        published = publish_rt_quotes(
+            warm_payload,
+            source=f"{owner.__class__.__name__}.workspace_preload_local_cache",
+        )
+
+    latest = _latest_quote_snapshot()
+    payload = _quote_subset_for_codes(latest, table_codes)
+    for code, quote in dict(published or warm_payload or {}).items():
+        if code in table_codes:
+            payload[code] = dict(quote or {})
+
+    if payload and not CacheSnapshotApplyQueue.enqueue(
+        owner,
+        payload,
+        async_local=True,
+        force_apply=True,
+    ):
+        _apply_cache_snapshot_payload(owner, payload, signal="workspace_background_preload")
+    owner._workspace_background_snapshot_io_done = True
+
+
+def _workspace_background_snapshot_callbacks(owner, table_codes, target_codes, latest_target_quotes):
+    owner_ref = weakref.ref(owner)
+
+    def _build(_cancellation_token):
+        owner_obj = owner_ref()
+        if not _is_owner_runtime_active(owner_obj):
+            return {}
+        return _build_local_quote_payload(
+            owner_obj,
+            list(target_codes),
+            latest_quotes=latest_target_quotes,
+        )
+
+    def _complete(warm_payload) -> None:
+        owner_obj = owner_ref()
+        if _is_owner_runtime_active(owner_obj):
+            _finish_workspace_background_snapshot(owner_obj, table_codes, warm_payload)
+
+    def _failed(_error_message: str) -> None:
+        owner_obj = owner_ref()
+        if _is_owner_runtime_active(owner_obj):
+            _finish_workspace_background_snapshot(owner_obj, table_codes)
+
+    return _build, _complete, _failed
+
+
+def _submit_workspace_background_snapshot(owner, table_codes, target_codes, latest_quotes) -> None:
+    from app.services.ui_task_service import background_job_runner as task_manager
+
+    latest_target_quotes = _quote_subset_for_codes(latest_quotes, target_codes)
+    task_key = _local_quote_task_key(owner, target_codes, scope="workspace_background")
+    owner._workspace_background_snapshot_task_id = task_id_of(task_key)
+    build, complete, failed = _workspace_background_snapshot_callbacks(
+        owner,
+        table_codes,
+        target_codes,
+        latest_target_quotes,
+    )
+    _run_owner_background(
+        owner,
+        task_manager,
+        "workspace_background_snapshot",
+        build,
+        task_id=task_key,
+        timeout_sec=60.0,
+        on_success=complete,
+        on_error=failed,
+    )
+
+
+def prime_workspace_background_snapshot(owner, current_model=None) -> bool:
+    """Prepare local quote/finance data while a staged eager-preload tab is hidden."""
+    if getattr(owner, "_workspace_background_snapshot_started", False):
+        return True
+    if not _is_owner_runtime_active(owner):
+        return False
+
+    if current_model is not None:
+        owner._active_model_ref = current_model
+    model = current_model or owner._resolve_active_quote_model()
+    table_codes = collect_table_codes(owner, model) if model is not None else []
+    owner._workspace_background_snapshot_started = True
+    owner._workspace_background_snapshot_io_done = False
+    owner._workspace_background_snapshot_ready = False
+    owner._workspace_background_snapshot_cancelled = False
+    if not table_codes:
+        owner._workspace_background_snapshot_io_done = True
+        return True
+
+    latest_quotes = _latest_quote_snapshot()
+    target_codes = _collect_local_quote_targets(owner, model, latest_quotes)
+    if not target_codes:
+        _finish_workspace_background_snapshot(owner, table_codes)
+        return True
+
+    _submit_workspace_background_snapshot(owner, table_codes, target_codes, latest_quotes)
+    return True
+
+
+def workspace_background_snapshot_complete(owner) -> bool:
+    if not getattr(owner, "_workspace_background_snapshot_started", False):
+        return False
+    if not getattr(owner, "_workspace_background_snapshot_io_done", False):
+        return False
+    if CacheSnapshotApplyQueue.is_pending(owner):
+        return False
+    owner._workspace_background_snapshot_ready = True
+    return True
+
+
+def cancel_workspace_background_snapshot(owner) -> None:
+    CacheSnapshotApplyQueue.discard(owner)
+    owner._workspace_background_snapshot_started = False
+    owner._workspace_background_snapshot_ready = False
+    owner._workspace_background_snapshot_cancelled = True
+
+
+def workspace_background_snapshot_cancellation_settled(owner) -> bool:
+    if CacheSnapshotApplyQueue.is_pending(owner):
+        return False
+    return bool(
+        getattr(owner, "_workspace_background_snapshot_io_done", False)
+        or getattr(owner, "_workspace_background_snapshot_cancelled", False)
+    )
+
+
+def refresh_workspace_preloaded_snapshot(owner, current_model=None) -> None:
+    owner._deferred_quote_refresh = False
+    _refresh_table_from_latest_snapshot_impl(
+        owner,
+        current_model=current_model,
+        async_local=True,
+        prime_local=False,
+    )
+    owner._workspace_background_snapshot_ready = False
 
 
 def subscribe_global_quotes(owner, current_model=None) -> None:
@@ -977,12 +1230,17 @@ def replay_deferred_quotes(owner) -> None:
             return
 
         owner._deferred_quote_refresh = False
-        try:
-            from core.global_store import global_store
-
-            owner._apply_quote_snapshot(global_store.get_latest_quotes())
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        model = owner._resolve_active_quote_model()
+        if model is None or not hasattr(model, "row_data"):
+            snapshot = _latest_quote_snapshot()
+            if snapshot:
+                owner._apply_quote_snapshot(snapshot)
+            return
+        _refresh_table_from_latest_snapshot_impl(
+            owner,
+            async_local=True,
+            prime_local=False,
+        )
 
 
 def async_update_market_caps(owner) -> None:

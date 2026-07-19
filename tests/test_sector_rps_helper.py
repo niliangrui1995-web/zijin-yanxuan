@@ -24,6 +24,11 @@ def test_load_sector_rps_snapshot_uses_matching_cache(tmp_path, monkeypatch):
 
     manager = FakeSectorManager()
     monkeypatch.setattr(helper, "SECTOR_RPS_CACHE_FILE", str(cache_path))
+    monkeypatch.setattr(
+        helper,
+        "read_active_sector_rps_bundle",
+        lambda path: (path, json.loads(cache_path.read_text(encoding="utf-8"))),
+    )
     monkeypatch.setattr(helper, "_get_sector_manager", lambda _provider: manager)
 
     sector_manager, sector_rps, trade_date, source = helper.load_sector_rps_snapshot(
@@ -47,6 +52,11 @@ def test_load_sector_rps_snapshot_rebuilds_stale_cache(tmp_path, monkeypatch):
     all_data = {"000001": ["dummy"]}
     manager = FakeSectorManager(build_result={"新板块": {20: 93.0}})
     monkeypatch.setattr(helper, "SECTOR_RPS_CACHE_FILE", str(cache_path))
+    monkeypatch.setattr(
+        helper,
+        "read_active_sector_rps_bundle",
+        lambda path: (path, json.loads(cache_path.read_text(encoding="utf-8"))),
+    )
     monkeypatch.setattr(helper, "_get_sector_manager", lambda _provider: manager)
 
     sector_manager, sector_rps, trade_date, source = helper.load_sector_rps_snapshot(

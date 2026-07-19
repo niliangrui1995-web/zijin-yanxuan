@@ -9,6 +9,7 @@ import pytest
 
 from ui import kline_window_asian as asian
 from ui import main_window_network as network
+from ui.kline_load_controller import KlineLoadController
 
 
 def _daily_frame(date: str = "2026-07-14") -> pd.DataFrame:
@@ -39,28 +40,7 @@ def _vendor_frame(*, tz: str | None = None, volume: bool = True) -> pd.DataFrame
     return pd.DataFrame(data, index=index)
 
 
-def test_asian_cache_dataframe_and_context_helpers(monkeypatch):
-    monkeypatch.setattr(asian, "_load_cached_asian_stock", lambda path, code: {"path": path, "code": code})
-    assert asian.load_cached_asian_stock("cache.json", "2330.TW") == {
-        "path": "cache.json",
-        "code": "2330.TW",
-    }
-    assert asian.build_asian_df_from_klines([], lambda frame: frame) is None
-    assert asian.build_asian_df_from_klines(iter(()), lambda frame: frame) is None
-
-    normalized = []
-    frame = asian.build_asian_df_from_klines(
-        [
-            {"date": "2026-07-14 12:00", "open": "10", "high": "11", "low": "9", "close": "10.5", "volume": "7"},
-            {"date": "2026-07-15 00:00", "open": "bad", "high": 12, "low": 10, "close": 11, "ignored": "x"},
-        ],
-        lambda value: normalized.append(value.copy()) or value,
-    )
-    assert list(frame.index) == [pd.Timestamp("2026-07-14"), pd.Timestamp("2026-07-15")]
-    assert float(frame.iloc[0]["volume"]) == 7.0
-    assert pd.isna(frame.iloc[1]["open"])
-    assert normalized
-
+def test_asian_context_merge_only_updates_present_metadata():
     vcp_data = {}
     refreshes = []
     asian.merge_asian_context_payload(vcp_data, {}, lambda: refreshes.append(True))
@@ -74,65 +54,45 @@ def test_asian_cache_dataframe_and_context_helpers(monkeypatch):
     assert vcp_data["market"] == "Taiwan"
     assert vcp_data["currency"] == "TWD"
     assert refreshes == [True]
-    assert (
-        asian.build_asian_history_df(
-            None,
-            vcp_data=vcp_data,
-            refresh_header_context=lambda: None,
-            normalize_daily_df_index=lambda value: value,
-        )
-        is None
-    )
 
 
-def test_render_asian_history_payload_all_outcomes():
-    statuses = []
-    renders = []
-    base = dict(
-        vcp_data={},
-        _refresh_header_context=lambda: None,
-        _normalize_daily_df_index=lambda frame: frame,
-        _set_status_message=lambda message, **kwargs: statuses.append((message, kwargs)),
-        _render_chart=lambda frame, **kwargs: renders.append((frame, kwargs)),
-    )
-    assert asian.render_asian_history_payload(SimpleNamespace(_closing=True, **base), {}) is False
-    assert asian.render_asian_history_payload(SimpleNamespace(_closing=False, **base), None) is False
-    assert asian.render_asian_history_payload(SimpleNamespace(_closing=False, **base), {"klines": []}) is False
-    assert (
-        asian.render_asian_history_payload(
-            SimpleNamespace(_closing=False, **base),
-            {"track": "AI", "klines": [{"date": "2026-07-15", "open": 1, "high": 2, "low": 1, "close": 2}]},
-        )
-        is True
-    )
-    assert len(renders) == 1
-    assert renders[0][1] == {"loading": False}
-    assert statuses[-1][1]["tone"] == "success"
-
-
-class _CapturedLifecycle:
+class _CapturedOwnedTask:
     def __init__(self):
         self.kwargs = None
 
-    def run_background(self, name, fn, **kwargs):
+    def __call__(
+        self,
+        _window,
+        name,
+        fn,
+        on_success,
+        task_id,
+        timeout_sec,
+        **kwargs,
+    ):
         self.name = name
         self.fn = fn
-        self.kwargs = kwargs
+        self.kwargs = {
+            "on_success": on_success,
+            "task_id": task_id,
+            "timeout_sec": timeout_sec,
+            **kwargs,
+        }
 
 
-def test_schedule_asian_backfill_success_error_and_stale(monkeypatch):
-    lifecycle = _CapturedLifecycle()
-    monkeypatch.setattr(asian, "task_lifecycle_for", lambda *args, **kwargs: lifecycle)
+def test_schedule_asian_backfill_success_error_and_stale():
+    submission = _CapturedOwnedTask()
     statuses = []
     rendered = []
+    controller = KlineLoadController(window_id="asian-branch-window")
+    identity = controller.begin("2330.TW")
     window = SimpleNamespace(
         _closing=False,
-        code=" 2330.TW ",
+        _load_controller=controller,
+        code=identity.code,
         name=" TSMC ",
-        _render_generation=3,
         vcp_data={},
         _refresh_header_context=lambda: None,
-        _normalize_daily_df_index=lambda frame: frame,
         _set_status_message=lambda message, **kwargs: statuses.append((message, kwargs)),
         _render_chart=lambda frame, **kwargs: rendered.append(frame),
     )
@@ -140,19 +100,28 @@ def test_schedule_asian_backfill_success_error_and_stale(monkeypatch):
     def fetch(name, code, period):
         return {"klines": [{"date": "2026-07-15", "open": 1, "high": 2, "low": 1, "close": 2}]}
 
-    asian.schedule_asian_history_backfill(window, task_manager=object(), fetch_single_kline=fetch)
-    assert lifecycle.name == "asian_history_backfill"
-    assert lifecycle.fn(None)["klines"]
-    assert lifecycle.kwargs["timeout_sec"] == 120.0
-    lifecycle.kwargs["on_success"](lifecycle.fn(None))
+    asian.schedule_asian_history_backfill(
+        window,
+        task_manager=object(),
+        fetch_single_kline=fetch,
+        submit_owned_task=submission,
+    )
+    assert submission.name == "asian_history_backfill"
+    stock_payload, frame = submission.fn(None)
+    assert stock_payload["klines"]
+    assert frame.iloc[-1]["close"] == 2
+    assert submission.kwargs["timeout_sec"] == 120.0
+    assert str(submission.kwargs["task_id"]) == "kline:asian-branch-window:1:asian-history"
+    submission.kwargs["on_success"]((stock_payload, frame))
     assert rendered
-    lifecycle.kwargs["on_error"]("network")
+    submission.kwargs["on_error"]("network")
     assert statuses[-1][1]["tone"] == "error"
 
+    controller.begin("7203.T")
     window.code = "7203.T"
     before = len(statuses)
-    lifecycle.kwargs["on_success"](None)
-    lifecycle.kwargs["on_error"]("late")
+    submission.kwargs["on_success"](None)
+    submission.kwargs["on_error"]("late")
     assert len(statuses) == before
     asian.schedule_asian_history_backfill(
         SimpleNamespace(_closing=True), task_manager=object(), fetch_single_kline=fetch

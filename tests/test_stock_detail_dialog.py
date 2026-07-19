@@ -4,10 +4,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QDialog, QFrame, QLabel, QToolButton
 
+from app.services.stock_context_model_service import StockSignal
 from app.services.ui_event_service import ui_signals
 from ui.components import stock_detail_dialog as stock_detail_module
 from ui.components.stock_detail_dialog import StockDetailDialog, build_signal_rows
-from ui.workspaces.stock_signal import StockSignal
 
 
 def test_build_signal_rows_uses_tab_titles_and_numeric_formatting():
@@ -120,5 +120,26 @@ def test_stock_detail_dialog_cells_expose_full_text_tooltips():
         assert item.text() == long_summary
         assert item.toolTip() == long_summary
         assert item.data(Qt.ItemDataRole.ToolTipRole) == long_summary
+    finally:
+        dialog.close()
+
+
+def test_stock_detail_dialog_updates_async_signal_snapshot_in_place():
+    dialog = StockDetailDialog("300750", "宁德时代", [], tab_titles={"fund_holdings": "基金持仓"})
+    signal = StockSignal(
+        code="300750",
+        source_tab="fund_holdings",
+        signal_type="fund_holding",
+        summary="睿远基金 | 增持 | 2026Q1",
+    )
+    try:
+        assert dialog.table.item(0, 0).text() == "暂无跨 Tab 信号"
+
+        dialog.update_signals([signal])
+
+        assert dialog.table.rowCount() == 1
+        assert dialog.table.item(0, 0).text() == "基金持仓"
+        assert dialog.table.item(0, 2).text() == signal.summary
+        assert dialog.lbl_meta.text() == "1 条信号 | 1 个来源"
     finally:
         dialog.close()

@@ -195,6 +195,60 @@ def test_local_quote_snapshot_async_runs_in_background(monkeypatch):
     assert tasks and "_local_quote_snapshot_" in tasks[0]
 
 
+def test_workspace_snapshot_uses_distinct_task_id_while_visible_snapshot_is_active(monkeypatch):
+    from app.services.ui_task_service import background_job_runner as task_manager
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    class DummyOwner:
+        def __init__(self):
+            self.data_provider = object()
+            self._runtime_cleanup_done = False
+
+        @staticmethod
+        def _resolve_active_quote_model():
+            return SimpleNamespace(row_data=[{}])
+
+    scheduled = []
+
+    def capture_background(_owner, _runner, name, fn, **kwargs):
+        scheduled.append(
+            {
+                "name": name,
+                "fn": fn,
+                "task_id": kwargs["task_id"],
+                "on_success": kwargs["on_success"],
+            }
+        )
+
+    owner = DummyOwner()
+    monkeypatch.setattr(refresh_module, "_qt_runtime_available", lambda: True)
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "_latest_quote_snapshot", lambda: {})
+    monkeypatch.setattr(refresh_module, "_run_owner_background", capture_background)
+    monkeypatch.setattr(task_manager, "is_active_task", lambda _task_id: False)
+
+    assert refresh_module.prime_local_quote_snapshot_async(owner) is True
+    visible = scheduled[0]
+    visible_task_id = str(getattr(visible["task_id"], "task_id", visible["task_id"]))
+    monkeypatch.setattr(
+        task_manager,
+        "is_active_task",
+        lambda task_id: str(getattr(task_id, "task_id", task_id)) == visible_task_id,
+    )
+
+    assert refresh_module.prime_workspace_background_snapshot(owner) is True
+    workspace = scheduled[1]
+    workspace_task_id = str(getattr(workspace["task_id"], "task_id", workspace["task_id"]))
+
+    assert visible["name"] == "local_quote_snapshot"
+    assert workspace["name"] == "workspace_background_snapshot"
+    assert visible_task_id != workspace_task_id
+    assert owner._workspace_background_snapshot_task_id == workspace_task_id
+
+    workspace["on_success"]({})
+    assert owner._workspace_background_snapshot_io_done is True
+
+
 def test_refresh_table_quotes_and_market_caps_can_prime_local_snapshot_async(monkeypatch):
     from ui.tabs import base_stock_refresh as refresh_module
 
@@ -387,10 +441,13 @@ def test_cache_snapshot_apply_queue_slices_payload_by_batch(monkeypatch):
         payload = {f"{idx:06d}": {"close": float(idx)} for idx in range(1, 6)}
 
         assert refresh_module.CacheSnapshotApplyQueue.enqueue(owner, payload, async_local=True) is True
+        scheduled_delays = []
         while scheduled:
-            _, callback = scheduled.pop(0)
+            delay, callback = scheduled.pop(0)
+            scheduled_delays.append(delay)
             callback()
 
+        assert scheduled_delays == [0, 16, 16]
         assert calls == [
             ("000001", "000002"),
             ("000003", "000004"),
@@ -487,6 +544,57 @@ def test_cache_snapshot_apply_queue_skips_unchanged_payload(monkeypatch):
         scheduled.pop(0)[1]()
 
         assert calls == [{"000001": {"close": 10.0}}]
+    finally:
+        _reset_cache_snapshot_apply_queue(refresh_module)
+
+
+def test_workspace_background_snapshot_cancellation_discards_pending_apply_queue(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    _reset_cache_snapshot_apply_queue(refresh_module)
+    scheduled = []
+
+    class DummyOwner:
+        def __init__(self):
+            self._runtime_cleanup_done = False
+            self._workspace_background_snapshot_started = True
+            self._workspace_background_snapshot_io_done = False
+            self._workspace_background_snapshot_ready = False
+            self._workspace_background_snapshot_cancelled = False
+            self._workspace_background_snapshot_task_id = "workspace-snapshot"
+
+        def isVisible(self):
+            return False
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda ms, callback: scheduled.append((ms, callback))),
+    )
+
+    try:
+        owner = DummyOwner()
+        assert refresh_module.CacheSnapshotApplyQueue.enqueue(
+            owner,
+            {"000001": {"close": 10.0}},
+            async_local=True,
+            force_apply=True,
+        ) is True
+        assert refresh_module.CacheSnapshotApplyQueue.is_pending(owner) is True
+        assert refresh_module.workspace_background_snapshot_cancellation_settled(owner) is False
+
+        refresh_module.cancel_workspace_background_snapshot(owner)
+
+        assert refresh_module.CacheSnapshotApplyQueue.is_pending(owner) is False
+        assert owner._workspace_background_snapshot_started is False
+        assert owner._workspace_background_snapshot_ready is False
+        assert owner._workspace_background_snapshot_cancelled is True
+        assert refresh_module.workspace_background_snapshot_cancellation_settled(owner) is True
     finally:
         _reset_cache_snapshot_apply_queue(refresh_module)
 

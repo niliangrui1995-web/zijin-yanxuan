@@ -8,7 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect
 
-from app.services.kline_open_service import merge_workspace_earnings_context
+from app.services.kline_open_service import merge_workspace_kline_context
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_quote_service import is_provider_online
 from app.services.ui_watchlist_service import watchlist_vm
@@ -223,33 +223,80 @@ def resolve_vcp_context(window, code: str, name: str, item_data: dict | None = N
         watchlist_entry = {}
 
     workspace = getattr(getattr(window, "main_window", None), "_workspace", None)
-    if workspace is not None:
-        try:
-            scan_results = workspace.get_scan_results()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug(f"[KLine] read scan context failed: {exc}")
-            scan_results = []
-    else:
-        scan_results = []
-
     resolved = resolve_kline_vcp_context(
         code=code,
         name=name,
         item_data=item_data,
         watchlist_entry=watchlist_entry,
-        scan_results=scan_results,
+        scan_results=[],
     )
     if workspace is not None:
-        merge_workspace_earnings_context(
+        merge_workspace_kline_context(
             vcp_data=resolved,
             code_text=str(code or "").strip(),
             workspace=workspace,
+            source_tab_key=str((item_data or {}).get("__source_tab_key") or "").strip(),
         )
     return resolved
 
 
-def apply_qt_theme(window) -> None:
+def _apply_browser_theme(window, *, chart_shell_bg: str, chart_bg: str, glass_attached: bool) -> None:
+    browser = getattr(window, "browser", None)
+    if browser is None:
+        return
+    browser.setStyleSheet(f"background-color: {chart_shell_bg};")
+    try:
+        browser.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        browser.page().setBackgroundColor(QColor(0, 0, 0, 0) if glass_attached else QColor(chart_bg))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+
+def apply_browser_surface_theme(window) -> None:
+    """Apply only the WebEngine surface colors after a deferred browser attach."""
     theme = theme_manager.current_theme
+    is_dark = theme_manager.is_dark()
+    chart_bg = build_kline_window_palette(theme, is_dark)["chart_bg"]
+    glass_attached = bool(getattr(window, "_magnetically_attached", False))
+    chart_shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else chart_bg
+    _apply_browser_theme(
+        window,
+        chart_shell_bg=chart_shell_bg,
+        chart_bg=chart_bg,
+        glass_attached=glass_attached,
+    )
+
+
+def _qt_theme_signature(window) -> tuple[str, bool]:
+    return (
+        str(theme_manager.current_theme_name),
+        bool(getattr(window, "_magnetically_attached", False)),
+    )
+
+
+def _qt_theme_for_restyle(window) -> dict | None:
+    if getattr(window, "_kline_qt_theme_signature", None) == _qt_theme_signature(window):
+        return None
+    return theme_manager.current_theme
+
+
+def _finish_qt_theme_restyle(window, *, chart_bg: str, glass_attached: bool) -> bool:
+    chart_shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else chart_bg
+    _apply_browser_theme(window, chart_shell_bg=chart_shell_bg, chart_bg=chart_bg, glass_attached=glass_attached)
+    window._kline_qt_theme_signature = _qt_theme_signature(window)
+    return True
+
+
+def _kline_shell_surface(widget_bg: str, depth_line: str, glass_attached: bool) -> tuple[str, str]:
+    shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else widget_bg
+    shell_border = "rgba(0, 0, 0, 0)" if glass_attached else depth_line
+    return shell_bg, shell_border
+
+
+def apply_qt_theme(window) -> bool:
+    theme = _qt_theme_for_restyle(window)
+    if theme is None:
+        return False
     tokens = build_ui_tokens(theme)
     is_dark = tokens["is_dark"]
     palette = build_kline_window_palette(theme, is_dark)
@@ -273,8 +320,7 @@ def apply_qt_theme(window) -> None:
     neutral_tone = tokens["state"]["neutral"]
     action_height = control["button_height"]
     glass_attached = bool(getattr(window, "_magnetically_attached", False))
-    shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else widget_bg
-    shell_border = "rgba(0, 0, 0, 0)" if glass_attached else depth_line
+    shell_bg, shell_border = _kline_shell_surface(widget_bg, depth_line, glass_attached)
     shell_radius = radius["lg"]
 
     window.setStyleSheet(
@@ -440,13 +486,7 @@ def apply_qt_theme(window) -> None:
             label.setStyleSheet(f"font-size: {font['size_sm']}px; font-weight: {font['weight_medium']};")
 
     apply_info_styles(window, widget_text=widget_text, info_color=info_color, is_dark=is_dark)
-    chart_shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else chart_bg
-    window.browser.setStyleSheet(f"background-color: {chart_shell_bg};")
-    try:
-        window.browser.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        window.browser.page().setBackgroundColor(QColor(0, 0, 0, 0) if glass_attached else QColor(chart_bg))
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    return _finish_qt_theme_restyle(window, chart_bg=chart_bg, glass_attached=glass_attached)
 
 
 def apply_info_styles(

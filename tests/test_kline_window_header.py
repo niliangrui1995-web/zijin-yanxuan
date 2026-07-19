@@ -3,20 +3,20 @@ import datetime as dt
 import json
 
 import pandas as pd
-from PyQt6.QtCore import QEvent, Qt, QUrl
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QWidget
 
 from core.task_manager import task_manager
 from ui import kline_window_header as header_module
 from ui import kline_window_qt as kline_module
+from ui import kline_window_runtime as runtime_module
 from ui.components import kline_window_manager as manager_module
 from ui.components.kline_window_manager import KLineWindowManager
-from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
+from ui.kline_chart_payload import build_kline_shell_html, build_kline_theme_colors
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs import asian_market_workers as asian_workers_module
 from ui.theme import THEME_YAOHEI, theme_manager
 from ui.theme_tokens import build_ui_tokens
-from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 
 
 class _DummyProvider:
@@ -38,6 +38,11 @@ class _WarmBrowser:
         self.parent = "old"
         self.hidden = False
         self.deleted = False
+        self.updates_enabled = None
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
 
     def hide(self):
         self.hidden = True
@@ -47,6 +52,9 @@ class _WarmBrowser:
 
     def deleteLater(self):
         self.deleted = True
+
+    def setUpdatesEnabled(self, enabled):
+        self.updates_enabled = bool(enabled)
 
 
 def _dispose_kline_window(window):
@@ -93,9 +101,14 @@ class _FakeMouseEvent:
 
 
 class _FakeWebPage:
-    def __init__(self):
+    def __init__(self, parent=None):
         self.deleted = False
         self.script_callback = None
+        self._parent = parent
+        self.renderProcessTerminated = _FakeSignal()
+
+    def parent(self):
+        return self._parent
 
     def deleteLater(self):
         self.deleted = True
@@ -111,7 +124,7 @@ class _FakeWebEngineView(QWidget):
         super().__init__()
         type(self).last_instance = self
         self.loadFinished = _FakeSignal()
-        self._page = _FakeWebPage()
+        self._page = _FakeWebPage(self)
         self.html_calls = []
         self.url_calls = []
         self.stopped = False
@@ -142,7 +155,7 @@ def _build_fake_webengine_kline(monkeypatch):
         "_check_fav_status",
         lambda self: setattr(self, "is_fav", False),
     )
-    return kline_module.KLineChartWindow(
+    window = kline_module.KLineChartWindow(
         None,
         "000001",
         "平安银行",
@@ -150,21 +163,19 @@ def _build_fake_webengine_kline(monkeypatch):
         vcp_data={},
         code_list=[{"代码": "000001", "名称": "平安银行"}],
         current_idx=0,
+        browser=_FakeWebEngineView(),
     )
+    window._context_init_timer.stop()
+    window._open_stages.finish_deferred_context()
+    window._browser_init_timer.stop()
+    window._open_stages.initialize_browser()
+    return window
 
 
 def test_kline_close_stops_webengine_view_without_manual_delete(monkeypatch):
     window = _build_fake_webengine_kline(monkeypatch)
     browser = _FakeWebEngineView.last_instance
     page = browser.page()
-    abandoned = []
-
-    class _Runner:
-        def abandon(self, task_key):
-            abandoned.append(str(task_key))
-            return True
-
-    monkeypatch.setattr(kline_module, "background_job_runner", _Runner())
     browser.html_calls.clear()
     browser.url_calls.clear()
     window._render_generation = 7
@@ -177,30 +188,24 @@ def test_kline_close_stops_webengine_view_without_manual_delete(monkeypatch):
 
         assert window.browser is None
         assert browser.stopped is True
-        assert browser.deleted is False
+        assert browser.deleted is True
         assert page.deleted is False
         assert browser.html_calls == []
         assert browser.url_calls == []
-        assert set(abandoned) == {
-            "kline_000001_7",
-            "kline_rt_000001_7",
-            "kline_asian_cache_000001_7",
-            "kline_asian_000001_7",
-        }
+        assert window._active_kline_task_tickets == set()
     finally:
         _dispose_kline_window(window)
 
 
-def test_kline_switch_abandons_all_tasks_for_old_code_and_generation(monkeypatch):
+def test_kline_switch_cancels_all_owned_task_stages(monkeypatch):
     window = _build_fake_webengine_kline(monkeypatch)
-    abandoned = []
-
-    class _Runner:
-        def abandon(self, task_key):
-            abandoned.append(str(task_key))
-            return True
-
-    monkeypatch.setattr(kline_module, "background_job_runner", _Runner())
+    cancellations = []
+    lifecycle = runtime_module.task_lifecycle_for(window)
+    monkeypatch.setattr(
+        lifecycle,
+        "cancel",
+        lambda name, **kwargs: cancellations.append((name, kwargs)) or True,
+    )
     window.code_list.append({"代码": "000002", "名称": "万科A"})
     window._render_generation = 5
 
@@ -208,12 +213,14 @@ def test_kline_switch_abandons_all_tasks_for_old_code_and_generation(monkeypatch
         window._switch_to_stock(1)
 
         assert window.code == "000002"
-        assert set(abandoned) == {
-            "kline_000001_5",
-            "kline_rt_000001_5",
-            "kline_asian_cache_000001_5",
-            "kline_asian_000001_5",
+        assert {name for name, _kwargs in cancellations} == {
+            "history_load",
+            "render_prepare",
+            "realtime_quote",
+            "realtime_prepare",
+            "asian_history_backfill",
         }
+        assert all(kwargs == {"reason": "symbol_switched"} for _name, kwargs in cancellations)
     finally:
         _dispose_kline_window(window)
 
@@ -243,55 +250,72 @@ def test_kline_late_render_callback_is_ignored_after_close(monkeypatch):
 
 
 def test_kline_js_fallback_ignores_callback_after_close(monkeypatch):
+    from app.services.kline_render_preparer import PreparedKlineRender
+    from ui.kline_window_rendering import queue_prepared_render
+
     window = _build_fake_webengine_kline(monkeypatch)
     browser = _FakeWebEngineView.last_instance
-    browser.html_calls.clear()
+    identity = window._load_controller.begin(window.code)
+    frame = pd.DataFrame(
+        {"open": [10.0], "high": [10.5], "low": [9.8], "close": [10.2], "volume": [1000.0]},
+        index=pd.to_datetime(["2026-04-14"]),
+    )
+    prepared = PreparedKlineRender(
+        owner_id=identity.window_id,
+        generation=identity.generation,
+        code=identity.code,
+        title="平安银行 (000001) 日线",
+        snapshot_version=1,
+        payload_json=(
+            '{"windowId":"%s","generation":%d,"snapshotVersion":1,'
+            '"code":"000001","points":1,"data":{"dates":["2026-04-14"]}}'
+            % (identity.window_id, identity.generation)
+        ),
+        point_count=1,
+        _display_frame=frame,
+        _history_frame=frame,
+    )
 
     try:
-        window._replace_chart_data_or_reload(
-            "<html>reload</html>",
-            QUrl("about:blank"),
-            title="平安银行 (000001) 日线",
-            echarts_data={"dates": []},
-        )
-
+        window._shell_loaded = True
+        assert queue_prepared_render(window, prepared, loading=False) is True
         callback = browser.page().script_callback
         assert callback is not None
 
         window._closing = True
-        callback(False)
+        window._load_controller.close()
+        callback(
+            {
+                "ok": True,
+                "applied": True,
+                "windowId": identity.window_id,
+                "generation": identity.generation,
+                "code": identity.code,
+                "points": 1,
+            }
+        )
 
-        assert browser.html_calls == []
+        assert window.df is None
+        assert "chart_ready" not in window._open_stages.recorded_stages
     finally:
         _dispose_kline_window(window)
 
 
-def test_kline_html_exposes_incremental_replace_bridge():
-    payload = {
-        "dates": ["2026-04-24"],
-        "klines": [[10.0, 11.0, 9.8, 11.2]],
-        "vols": [{"value": 1000}],
-        "ma10": [10.5],
-        "ma20": [10.5],
-        "ma50": [10.5],
-        "ma150": [10.5],
-        "ma200": [10.5],
-        "volMa20": [1000],
-        "macd": [0.1],
-        "diff": [0.1],
-        "dea": [0.1],
-    }
-
-    html = build_kline_html("T", payload, __file__, build_kline_theme_colors())
+def test_kline_html_exposes_static_snapshot_shell():
+    html = build_kline_shell_html("T", __file__, build_kline_theme_colors())
 
     assert "let rawData =" in html
+    assert '"dates": []' in html
+    assert "2026-04-24" not in html
+    assert "window.applySnapshot" in html
     assert "window.applyTheme" in html
     assert "themeState.crosshair_line" in html
     assert "themeState.datazoom_bg" in html
     assert "scrollbar_handle" in html
     assert "themeState.mono_font_family" in html
     assert 'font-feature-settings: "tnum" 1' in html
-    assert "window.replaceKlineData" in html
+    assert "window.replaceKlineData" not in html
+    assert "window.updateLastBar" not in html
     build_option_body = html[html.index("function buildOption()") : html.index("chart.setOption(buildOption());")]
     assert "const data = splitData(rawData);" in build_option_body
     assert html.count("const data = splitData(rawData);") == 1
@@ -629,10 +653,7 @@ def test_kline_window_has_no_widget_pill_mode(monkeypatch):
 
 
 def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
-    scheduled = []
     load_calls = []
-    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
-    monkeypatch.setattr(kline_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
     monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: load_calls.append(self.code))
     monkeypatch.setattr(
         kline_module.KLineChartWindow,
@@ -648,22 +669,28 @@ def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
         vcp_data={},
         code_list=[{"代码": "000001", "名称": "平安银行"}],
         current_idx=0,
+        browser=_FakeWebEngineView(),
     )
     try:
         assert load_calls == []
-        assert any(
-            delay == kline_module.KLINE_INITIAL_LOAD_DELAY_MS and callback == window._load_and_draw
-            for delay, callback in scheduled
-        )
+        assert window._context_init_timer.parent() is window
+        assert window._context_init_timer.isActive()
+        window._context_init_timer.stop()
+        window._open_stages.finish_deferred_context()
+        assert window._browser_init_timer.isActive()
+        window._browser_init_timer.stop()
+        window._open_stages.initialize_browser()
+        assert window._initial_load_timer.parent() is window
+        assert window._initial_load_timer.isActive()
+        assert window._initial_load_timer.interval() == kline_module.KLINE_INITIAL_LOAD_DELAY_MS
         assert window.info_lbl.text() == "正在准备图表..."
     finally:
         _dispose_kline_window(window)
 
 
 def test_kline_window_constructor_does_not_load_webengine_placeholder(monkeypatch):
-    scheduled = []
+    _FakeWebEngineView.last_instance = None
     monkeypatch.setattr(kline_module, "QWebEngineView", _FakeWebEngineView)
-    monkeypatch.setattr(kline_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
     monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
     monkeypatch.setattr(
         kline_module.KLineChartWindow,
@@ -680,18 +707,125 @@ def test_kline_window_constructor_does_not_load_webengine_placeholder(monkeypatc
         code_list=[{"代码": "002851", "名称": "麦格米特"}],
         current_idx=0,
     )
-    browser = _FakeWebEngineView.last_instance
     try:
-        assert browser.html_calls == []
-        assert any(
-            delay == kline_module.KLINE_INITIAL_LOAD_DELAY_MS and callback == window._load_and_draw
-            for delay, callback in scheduled
-        )
+        assert window.browser is None
+        assert _FakeWebEngineView.last_instance is None
+        assert window.chart_placeholder is not None
+        assert window._context_init_timer.isActive()
+
+        window._context_init_timer.stop()
+        window._open_stages.finish_deferred_context()
+        assert window._browser_init_timer.isActive()
+        assert window._browser_init_timer.interval() == kline_module.KLINE_BROWSER_ATTACH_DELAY_MS
+        assert _FakeWebEngineView.last_instance is None
+
+        window._browser_init_timer.stop()
+        window._open_stages.initialize_browser()
+        browser = _FakeWebEngineView.last_instance
+        assert window.browser is browser
+        assert len(browser.html_calls) == 1
+        assert "<!DOCTYPE html>" in browser.html_calls[0][0]
+        assert window.chart_placeholder is None
+        assert window._initial_load_timer.isActive()
     finally:
         _dispose_kline_window(window)
 
 
-def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
+def test_kline_open_stage_metrics_are_one_shot_and_stage_timers_are_owned(monkeypatch):
+    metrics = []
+    logs = []
+    monkeypatch.setattr(kline_module, "record_metric", lambda *args, **kwargs: metrics.append((args, kwargs)))
+    monkeypatch.setattr(kline_module, "emit_structured_log", lambda *args, **kwargs: logs.append((args, kwargs)))
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+    monkeypatch.setattr(kline_module, "enable_windows_native_shadow", lambda _window: None)
+    monkeypatch.setattr(kline_module, "enable_windows_system_backdrop", lambda *args, **kwargs: None)
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "000001",
+        "平安银行",
+        _DummyProvider(),
+        vcp_data={},
+        browser=_FakeWebEngineView(),
+    )
+    try:
+        window.show()
+        window._open_stages.record("shell_ready")
+        window._open_stages.record("browser_ready")
+        window._on_chart_load_finished(False)
+        window._open_stages.record("data_ready")
+        window._open_stages.record("js_ready")
+        window._on_chart_load_finished(True)
+        window._on_chart_load_finished(True)
+        window._open_stages.record("chart_ready")
+        window._open_stages.record("chart_ready")
+        window._open_stages.record("first_interaction")
+        window._open_stages.record("first_interaction")
+
+        metric_names = [args[0] for args, _kwargs in metrics]
+        expected_metrics = (
+            "kline_open_shell_ready_ms",
+            "kline_open_browser_ready_ms",
+            "kline_open_data_ready_ms",
+            "kline_open_js_ready_ms",
+            "kline_open_chart_ready_ms",
+            "kline_open_first_interaction_ms",
+        )
+        assert all(metric_names.count(metric) == 1 for metric in expected_metrics)
+        assert sum(args[0] == "kline.open_stage" for args, _kwargs in logs) == 6
+        assert window._context_init_timer.parent() is window
+        assert window._browser_init_timer.parent() is window
+        assert window._initial_load_timer.parent() is window
+
+        window.close()
+        assert not window._context_init_timer.isActive()
+        assert not window._browser_init_timer.isActive()
+        assert not window._initial_load_timer.isActive()
+    finally:
+        if not window._closing:
+            _dispose_kline_window(window)
+
+
+def test_kline_close_before_stages_prevents_browser_resurrection(monkeypatch):
+    _FakeWebEngineView.last_instance = None
+    monkeypatch.setattr(kline_module, "QWebEngineView", _FakeWebEngineView)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+
+    warm_browser = _FakeWebEngineView()
+    window = kline_module.KLineChartWindow(
+        None,
+        "000001",
+        "平安银行",
+        _DummyProvider(),
+        vcp_data={},
+        browser=warm_browser,
+    )
+    stages = window._open_stages
+    window.close()
+
+    stages.finish_deferred_context()
+    stages.initialize_browser()
+
+    assert window.browser is None
+    assert _FakeWebEngineView.last_instance is warm_browser
+    assert warm_browser.stopped is True and warm_browser.deleted is True
+    assert stages.pending_browser is None
+    assert not stages.context_timer.isActive()
+    assert not stages.browser_timer.isActive()
+    assert not stages.initial_load_timer.isActive()
+
+
+def test_kline_manager_discards_invalid_legacy_keeper_and_opens_with_fresh_view(monkeypatch):
     captured = {}
 
     class _Chart:
@@ -713,12 +847,13 @@ def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
 
     manager = KLineWindowManager()
     manager._charts = []
-    manager._prewarm_started = True
+    manager._prewarm_started = False
     manager._prewarm_cancelled = False
     manager._webengine_available = True
     manager._webengine_failure = ""
     warm_browser = _WarmBrowser()
     manager._prewarm_view = warm_browser
+    manager._prewarm_ready = True
     monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
 
     try:
@@ -734,46 +869,45 @@ def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
 
         assert chart is manager._charts[-1]
         assert captured["browser"] is None
-        assert warm_browser.hidden is True
-        assert warm_browser.parent is None
-        assert warm_browser.deleted is True
+        assert captured["open_started_at"] > 0
         assert manager._prewarm_view is None
+        assert warm_browser.deleted is True
         assert manager._prewarm_started is False
     finally:
         manager._charts = []
         manager._prewarm_view = None
+        manager._prewarm_ready = False
         manager._prewarm_started = False
         manager._prewarm_cancelled = False
-        manager._prewarm_expire_timer = None
         manager._webengine_available = None
         manager._webengine_failure = ""
         manager._webengine_preflight_started = False
 
 
-def test_kline_manager_expires_unused_prewarm_browser():
+def test_kline_manager_keeps_single_prewarm_view_until_shutdown():
     manager = KLineWindowManager()
     manager._charts = []
     manager._prewarm_started = True
     manager._prewarm_cancelled = False
-    manager._prewarm_expire_timer = None
+    manager._shutting_down = False
     warm_browser = _WarmBrowser()
     manager._prewarm_view = warm_browser
 
     try:
-        manager._expire_prewarm()
+        assert manager._prewarm_view is warm_browser
+        manager.shutdown()
 
-        assert warm_browser.hidden is True
-        assert warm_browser.parent is None
-        assert warm_browser.deleted is True
+        assert warm_browser.stopped is True
+        assert warm_browser.parent is None and warm_browser.deleted is True
         assert manager._prewarm_view is None
         assert manager._prewarm_started is False
-        assert manager._prewarm_cancelled is False
+        assert manager._prewarm_cancelled is True
     finally:
         manager._charts = []
         manager._prewarm_view = None
         manager._prewarm_started = False
         manager._prewarm_cancelled = False
-        manager._prewarm_expire_timer = None
+        manager._shutting_down = False
 
 
 def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
@@ -811,9 +945,6 @@ def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
     manager._webengine_available = True
     manager._webengine_failure = ""
     monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
-    scheduled = []
-    monkeypatch.setattr(manager, "_schedule_post_close_collect", lambda: scheduled.append(True))
-
     try:
         chart = manager.open_chart(
             main_window=None,
@@ -832,42 +963,19 @@ def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
         chart.destroyed.callback()
 
         assert manager._charts == []
-        assert scheduled == [True]
     finally:
         manager._charts = []
         manager._prewarm_view = None
         manager._prewarm_started = False
         manager._prewarm_cancelled = False
-        manager._prewarm_expire_timer = None
         manager._webengine_available = None
         manager._webengine_failure = ""
         manager._webengine_preflight_started = False
 
 
-def test_kline_manager_post_close_cleanup_skips_forced_gc(monkeypatch):
-    metrics = []
-
-    manager = KLineWindowManager()
-    manager._charts = []
-    manager._post_close_collect_scheduled = True
-    monkeypatch.setattr(
-        manager_module,
-        "record_metric",
-        lambda metric, value, unit="", tags=None: metrics.append((metric, value, unit, tags or {})),
-    )
-
-    try:
-        manager._run_post_close_collect()
-
-        assert manager._post_close_collect_scheduled is False
-        assert metrics == [("kline_post_close_gc_skipped", 1, "count", {"active_windows": "0"})]
-    finally:
-        manager._charts = []
-        manager._post_close_collect_scheduled = False
-
-
 def test_kline_manager_starts_async_preflight_before_prewarm(monkeypatch):
     started = []
+    retries = []
     manager = KLineWindowManager()
     manager._charts = []
     manager._prewarm_view = None
@@ -877,13 +985,15 @@ def test_kline_manager_starts_async_preflight_before_prewarm(monkeypatch):
     manager._webengine_failure = ""
     manager._webengine_preflight_started = False
     monkeypatch.setattr(manager, "_start_webengine_preflight_async", lambda: started.append(True) or True)
+    monkeypatch.setattr(manager_module, "_schedule_prewarm_retry", lambda target: retries.append(target))
 
     try:
         manager._run_prewarm()
 
         assert manager._prewarm_view is None
-        assert manager._prewarm_started is False
+        assert manager._prewarm_started is True
         assert started == [True]
+        assert retries == [manager]
     finally:
         manager._charts = []
         manager._prewarm_view = None
@@ -895,7 +1005,7 @@ def test_kline_manager_starts_async_preflight_before_prewarm(monkeypatch):
         manager._webengine_preflight_started = False
 
 
-def test_kline_manager_default_prewarm_is_preflight_only():
+def test_kline_manager_default_prewarm_can_be_preflight_only():
     manager = KLineWindowManager()
     manager._charts = []
     manager._prewarm_view = None
@@ -906,7 +1016,6 @@ def test_kline_manager_default_prewarm_is_preflight_only():
     manager._webengine_available = True
     manager._webengine_failure = ""
     manager._webengine_preflight_started = False
-
     try:
         manager._run_prewarm()
 
@@ -1108,15 +1217,24 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
         code_list=[{"代码": "000001", "名称": "平安银行"}],
         current_idx=0,
     )
+    window.browser = QWidget()
 
     captured = {}
 
-    def _fake_render(df, loading=False):
-        window.df = df.copy()
+    def _capture_prepared(_window, prepared, *, loading=False):
         if not loading:
-            captured["df"] = df.copy()
+            captured["df"] = prepared.display_frame
+        return True
 
-    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+    def _run_inline(
+        fn,
+        *args,
+        on_success=None,
+        on_error=None,
+        on_terminated=None,
+        task_id=None,
+        **kwargs,
+    ):
         try:
             result = fn(*args, **kwargs)
             if on_success:
@@ -1126,9 +1244,12 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
                 on_error(str(exc))
             else:
                 raise exc
+        finally:
+            if on_terminated:
+                on_terminated()
         return task_id or "test-kline-lunch"
 
-    monkeypatch.setattr(window, "_render_chart", _fake_render)
+    monkeypatch.setattr(runtime_module, "queue_prepared_render", _capture_prepared)
     monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
     monkeypatch.setattr(window, "_get_cn_target_trade_date", lambda: dt.date(2026, 4, 14))
     monkeypatch.setattr(
@@ -1206,6 +1327,7 @@ def test_kline_load_and_draw_defers_cached_render_to_background(monkeypatch):
         code_list=[{"代码": "002851", "名称": "麦格米特"}],
         current_idx=0,
     )
+    window.browser = QWidget()
     rendered = []
     queued = []
 
@@ -1213,7 +1335,11 @@ def test_kline_load_and_draw_defers_cached_render_to_background(monkeypatch):
         queued.append((fn, on_success, task_id))
         return task_id or "test-kline-deferred-cache"
 
-    monkeypatch.setattr(window, "_render_chart", lambda df, loading=False: rendered.append((df.copy(), loading)))
+    monkeypatch.setattr(
+        runtime_module,
+        "queue_prepared_render",
+        lambda _window, prepared, loading=False: rendered.append((prepared.display_frame, loading)) or True,
+    )
     monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
     monkeypatch.setattr(window, "_get_cn_target_trade_date", lambda: dt.date(2026, 3, 21))
     monkeypatch.setattr(task_manager, "run_in_background", _capture_background)
@@ -1285,10 +1411,19 @@ def test_kline_load_and_draw_ignores_stale_switch_result(monkeypatch):
         code_list=[{"浠ｇ爜": "000001", "鍚嶇О": "骞冲畨閾惰"}],
         current_idx=0,
     )
+    window.browser = QWidget()
     provider.window = window
     rendered = []
 
-    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+    def _run_inline(
+        fn,
+        *args,
+        on_success=None,
+        on_error=None,
+        on_terminated=None,
+        task_id=None,
+        **kwargs,
+    ):
         try:
             result = fn(*args, **kwargs)
             if on_success:
@@ -1298,6 +1433,9 @@ def test_kline_load_and_draw_ignores_stale_switch_result(monkeypatch):
                 on_error(str(exc))
             else:
                 raise exc
+        finally:
+            if on_terminated:
+                on_terminated()
         return task_id or "test-kline-stale"
 
     monkeypatch.setattr(window, "_render_chart", lambda df, loading=False: rendered.append((df, loading)))
@@ -1313,7 +1451,8 @@ def test_kline_load_and_draw_ignores_stale_switch_result(monkeypatch):
         _dispose_kline_window(window)
 
 
-def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, tmp_path):
+def test_kline_load_and_draw_asian_falls_back_to_single_ticket_fetch(monkeypatch, tmp_path):
+    original_load = kline_module.KLineChartWindow._load_and_draw
     cache_file = tmp_path / "asian_klines_latest.json"
     cache_file.write_text(json.dumps({"stocks": []}, ensure_ascii=False), encoding="utf-8")
 
@@ -1329,19 +1468,35 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
 
     def _fake_fetch_single_kline(name, ticker, period="1y"):
         assert ticker == "2330.TW"
+        klines = [
+            {
+                "date": value.strftime("%Y-%m-%d"),
+                "open": 820.0 + index,
+                "high": 828.0 + index,
+                "low": 818.0 + index,
+                "close": 828.0 + index,
+                "volume": 1000 + index,
+            }
+            for index, value in enumerate(pd.bdate_range("2026-04-08", periods=6))
+        ]
         return {
             "name": "TSMC",
             "ticker": "2330.TW",
             "market": "台湾",
             "track": "先进制程代工",
             "currency": "TWD",
-            "klines": [
-                {"date": "2026-04-14", "open": 820.0, "high": 828.0, "low": 818.0, "close": 826.0, "volume": 1000},
-                {"date": "2026-04-15", "open": 826.0, "high": 835.0, "low": 824.0, "close": 833.0, "volume": 1200},
-            ],
+            "klines": klines,
         }
 
-    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+    def _run_inline(
+        fn,
+        *args,
+        on_success=None,
+        on_error=None,
+        on_terminated=None,
+        task_id=None,
+        **kwargs,
+    ):
         try:
             result = fn(*args, **kwargs)
             if on_success:
@@ -1351,9 +1506,12 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
                 on_error(str(exc))
             else:
                 raise exc
+        finally:
+            if on_terminated:
+                on_terminated()
         return task_id or "test-kline-asian-fallback"
 
-    monkeypatch.setattr(asian_fetcher_module, "fetch_single_kline", _fake_fetch_single_kline)
+    monkeypatch.setattr(runtime_module, "fetch_single_kline", _fake_fetch_single_kline)
     monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
 
     window = kline_module.KLineChartWindow(
@@ -1368,17 +1526,19 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
 
     captured = {}
 
-    def _fake_render(df, loading=False):
-        captured["df"] = df.copy()
+    def _capture_prepared(_window, prepared, *, loading=False):
+        captured["df"] = prepared.display_frame
+        return True
 
     try:
-        monkeypatch.setattr(window, "_render_chart", _fake_render)
+        monkeypatch.setattr(runtime_module, "queue_prepared_render", _capture_prepared)
         monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
 
-        window._load_asian_chart()
+        original_load(window)
 
         assert "df" in captured
-        assert list(captured["df"].index.strftime("%Y-%m-%d")) == ["2026-04-14", "2026-04-15"]
+        assert len(captured["df"]) == 6
+        assert captured["df"].index[-1].strftime("%Y-%m-%d") == "2026-04-15"
         assert float(captured["df"].iloc[-1]["close"]) == 833.0
         assert window.vcp_data["赛道"] == "先进制程代工"
         assert window.vcp_data["货币"] == "TWD"
@@ -1386,7 +1546,8 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
         _dispose_kline_window(window)
 
 
-def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(monkeypatch, tmp_path):
+def test_kline_load_and_draw_asian_fetches_realtime_quote_when_history_is_stale(monkeypatch, tmp_path):
+    original_load = kline_module.KLineChartWindow._load_and_draw
     cache_file = tmp_path / "asian_klines_latest.json"
     cache_file.write_text(
         json.dumps(
@@ -1451,7 +1612,15 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
         classmethod(lambda cls, market="CN", ref_date=None: dt.date(2026, 4, 20)),
     )
 
-    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+    def _run_inline(
+        fn,
+        *args,
+        on_success=None,
+        on_error=None,
+        on_terminated=None,
+        task_id=None,
+        **kwargs,
+    ):
         try:
             result = fn(*args, **kwargs)
             if on_success:
@@ -1461,6 +1630,9 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
                 on_error(str(exc))
             else:
                 raise exc
+        finally:
+            if on_terminated:
+                on_terminated()
         return task_id or "test-kline-asian-realtime"
 
     monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
@@ -1477,14 +1649,15 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
 
     captured = {}
 
-    def _fake_render(df, loading=False):
-        captured["df"] = df.copy()
+    def _capture_prepared(_window, prepared, *, loading=False):
+        captured["df"] = prepared.display_frame
+        return True
 
     try:
-        monkeypatch.setattr(window, "_render_chart", _fake_render)
+        monkeypatch.setattr(runtime_module, "queue_prepared_render", _capture_prepared)
         monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
 
-        window._load_asian_chart()
+        original_load(window)
 
         assert "df" in captured
         assert list(captured["df"].index.strftime("%Y-%m-%d")) == [

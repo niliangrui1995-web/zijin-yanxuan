@@ -6,7 +6,10 @@ from contextlib import suppress
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.stock_candidate_builder_service import build_stock_candidate_rows
 from app.services.stock_candidates_service import StockCandidatesDataService
+from app.services.stock_context_model_service import StockContextReadPolicy, StockContextSnapshot, StockSignal
+from app.services.stock_context_query_service import StockContextQueryService
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
@@ -15,17 +18,51 @@ from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
-from ui.components.stock_detail_dialog import signal_source_label
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab
-from ui.workspaces.stock_signal import StockSignal
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.stock_context_widget_adapter import capture_workspace_stock_context
+
+_STOCK_CONTEXT_FUND_SNAPSHOT_TASK = task_registry.workspace("stock_context_fund_rows_snapshot")
+_STOCK_CONTEXT_LHB_SNAPSHOT_TASK = task_registry.workspace("stock_context_lhb_rows_snapshot")
+
+
+def _candidate_tab_titles(owner) -> dict[str, str]:
+    reader = getattr(owner, "_tab_titles", None)
+    if callable(reader):
+        return reader()
+    workspace_reader = getattr(owner, "_workspace", None)
+    workspace = workspace_reader() if callable(workspace_reader) else None
+    specs_reader = getattr(workspace, "tab_specs", None)
+    if not callable(specs_reader):
+        return {}
+    return {
+        str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
+        for spec in specs_reader()
+    }
+
+
+def _immutable_candidate_snapshot(context: dict[str, list[StockSignal]]) -> StockContextSnapshot:
+    signals = tuple(
+        signal
+        for source_signals in (context or {}).values()
+        for signal in (source_signals or [])
+        if isinstance(signal, StockSignal)
+    )
+    return StockContextSnapshot(
+        direct_source_keys=frozenset(signal.source_tab for signal in signals if signal.source_tab),
+        direct_signals=signals,
+    )
 
 
 class StockCandidateTab(BaseStockTab):
     HEADER_STATE_KEY = "header_state_stock_candidates_v2"
-    AUTO_REFRESH_DEBOUNCE_MS = 500
+    AUTO_REFRESH_DEBOUNCE_MS = 1500
     REFRESH_TASK_ID = "stock_candidates_context_refresh"
+    BACKGROUND_DEPENDENCY_POLL_MS = 50
+    BACKGROUND_REFRESH_TIMEOUT_SECONDS = 60.0
     REQUIRED_SOURCE_TABS = frozenset({"ai_industry_chain", "na_daily"})
+    SNAPSHOT_SOURCE_TABS = ("fund_holdings", "lhb")
     ANCHOR_SOURCE_GROUP = "ai_na_anchor"
     COLUMNS = [
         "代码",
@@ -41,17 +78,17 @@ class StockCandidateTab(BaseStockTab):
         "最近时间",
     ]
 
-    def __init__(self, data_provider, parent=None, *, runtime_start_delay_ms: int = 350):
+    def __init__(self, data_provider, parent=None, *, runtime_start_delay_ms: int = 1500):
         super().__init__(data_provider=data_provider, parent=parent)
         try:
             self._runtime_start_delay_ms = max(0, int(runtime_start_delay_ms))
         except (TypeError, ValueError):
-            self._runtime_start_delay_ms = 350
+            self._runtime_start_delay_ms = 1500
         self._status_primary = "等待综合候选"
         self._status_freshness = "待刷新"
         self._candidate_service = StockCandidatesDataService(
             context_reader=self._read_stock_context,
-            row_builder=self._build_candidate_rows,
+            row_builder=build_stock_candidate_rows,
             provider_status_reader=self._read_provider_status,
         )
         self._last_candidate_result = None
@@ -59,13 +96,25 @@ class StockCandidateTab(BaseStockTab):
         self._context_refresh_pending = False
         self._candidate_refresh_running = False
         self._candidate_refresh_pending = False
+        self._candidate_refresh_followup_scheduled = False
+        self._background_preload_requested = False
+        self._background_preload_done = False
+        self._background_preload_error = ""
+        self._background_preload_waiting_snapshots = False
+        self._background_preload_rebuild_started = False
+        self._background_preload_retry_pending = False
+        self._background_preload_reuses_ready_sources = False
         self._auto_refresh_connections = []
         self._init_ui()
         self.subscribe_global_quotes(self.model)
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.setSingleShot(True)
         self._auto_refresh_timer.setInterval(self.AUTO_REFRESH_DEBOUNCE_MS)
-        self._auto_refresh_timer.timeout.connect(self.refresh_candidates)
+        self._auto_refresh_timer.timeout.connect(self._refresh_candidates_if_current)
+        self._background_dependency_timer = QTimer(self)
+        self._background_dependency_timer.setSingleShot(True)
+        self._background_dependency_timer.setInterval(self.BACKGROUND_DEPENDENCY_POLL_MS)
+        self._background_dependency_timer.timeout.connect(self._poll_background_preload_dependencies)
         self._connect_auto_refresh_events()
         self._initial_refresh_started = False
 
@@ -73,10 +122,25 @@ class StockCandidateTab(BaseStockTab):
         if self._initial_refresh_started:
             return
         self._initial_refresh_started = True
-        QTimer.singleShot(self._runtime_start_delay_ms, self.refresh_candidates)
+        QTimer.singleShot(self._runtime_start_delay_ms, self._refresh_candidates_if_current)
+
+    def _refresh_candidates_if_current(self) -> None:
+        if not self._is_current_visible_workspace_tab():
+            self._context_refresh_pending = True
+            return
+        if not self._should_start_runtime_on_show():
+            self._context_refresh_pending = True
+            return
+        self.refresh_candidates()
 
     def _is_current_workspace_tab(self) -> bool:
         return _is_direct_workspace_tab(self)
+
+    def _is_current_visible_workspace_tab(self) -> bool:
+        try:
+            return bool(self.isVisible() and self._is_current_workspace_tab())
+        except RuntimeError:
+            return False
 
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
@@ -93,10 +157,145 @@ class StockCandidateTab(BaseStockTab):
             timer.stop()
             self._context_refresh_pending = True
 
-    def prime_background_load(self) -> None:
-        self._prime_anchor_source_tabs(workspace := self._workspace())
-        self._prime_stock_context_snapshots(workspace)
-        self._ensure_runtime_started()
+    def prime_background_load(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        if self._background_preload_done:
+            return False
+        if not self._background_preload_requested:
+            self._background_preload_requested = True
+            self._background_preload_error = ""
+            self._background_preload_reuses_ready_sources = self._preloaded_snapshot_sources_ready()
+            if not self._background_preload_reuses_ready_sources:
+                self._prime_stock_context_snapshots(self._workspace())
+        self._initial_refresh_started = True
+        self._context_refresh_pending = False
+        self._maybe_start_background_candidate_rebuild()
+        return True
+
+    def is_background_preload_complete(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return True
+        self._maybe_start_background_candidate_rebuild()
+        return bool(
+            self._background_preload_requested
+            and self._background_preload_done
+            and self._background_preload_rebuild_started
+            and not self._background_preload_waiting_snapshots
+            and not self._candidate_refresh_running
+            and not self._candidate_refresh_pending
+            and not self._candidate_refresh_followup_scheduled
+        )
+
+    def _stock_context_snapshots_settled(self) -> bool:
+        if self._background_preload_reuses_ready_sources:
+            return True
+        reader = getattr(self._workspace(), "stock_context_snapshots_settled", None)
+        if not callable(reader):
+            return True
+        try:
+            return bool(reader())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def _preloaded_snapshot_sources_ready(self) -> bool:
+        workspace = self._workspace()
+        status_reader = getattr(workspace, "background_preload_status", None)
+        if not callable(status_reader):
+            return False
+        try:
+            status = status_reader()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        if not isinstance(status, dict):
+            return False
+        ready_keys = status.get("ready_keys")
+        if not isinstance(ready_keys, (list, tuple, set, frozenset)):
+            return False
+        ready = {str(key or "").strip() for key in ready_keys}
+        return set(self.SNAPSHOT_SOURCE_TABS).issubset(ready)
+
+    def _schedule_background_dependency_poll(self) -> None:
+        timer = self._background_dependency_timer
+        if not timer.isActive() and not getattr(self, "_runtime_cleanup_done", False):
+            timer.start()
+
+    def _maybe_start_background_candidate_rebuild(self) -> bool:
+        if (
+            not self._background_preload_requested
+            or self._background_preload_done
+            or self._background_preload_rebuild_started
+            or getattr(self, "_runtime_cleanup_done", False)
+        ):
+            return False
+        if not self._stock_context_snapshots_settled():
+            self._background_preload_waiting_snapshots = True
+            self._schedule_background_dependency_poll()
+            return False
+        self._background_dependency_timer.stop()
+        self._background_preload_waiting_snapshots = False
+        self._background_preload_rebuild_started = True
+        self._start_candidate_refresh_async()
+        return True
+
+    def _poll_background_preload_dependencies(self) -> None:
+        if self._maybe_start_background_candidate_rebuild():
+            return
+        if self._background_preload_waiting_snapshots:
+            self._schedule_background_dependency_poll()
+
+    def cancel_background_preload(self, *, reason: str):
+        workspace = self._workspace()
+        reuses_ready_sources = self._background_preload_reuses_ready_sources
+        cancel_snapshots = getattr(workspace, "cancel_stock_context_snapshots", None)
+        if not reuses_ready_sources and callable(cancel_snapshots):
+            try:
+                cancel_snapshots(reason=reason)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+        def _reset() -> None:
+            self._background_dependency_timer.stop()
+            self._candidate_refresh_running = False
+            self._candidate_refresh_pending = False
+            self._candidate_refresh_followup_scheduled = False
+            self._background_preload_requested = False
+            self._background_preload_done = False
+            self._background_preload_error = ""
+            self._background_preload_waiting_snapshots = False
+            self._background_preload_rebuild_started = False
+            self._background_preload_retry_pending = True
+            self._background_preload_reuses_ready_sources = False
+            self._initial_refresh_started = False
+            self._context_refresh_pending = False
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("candidate_refresh",),
+            task_ids=(task_registry.workspace(self.REFRESH_TASK_ID),)
+            + (
+                ()
+                if reuses_ready_sources
+                else (_STOCK_CONTEXT_FUND_SNAPSHOT_TASK, _STOCK_CONTEXT_LHB_SNAPSHOT_TASK)
+            ),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._candidate_refresh_running
+            and not self._candidate_refresh_pending
+            and not self._candidate_refresh_followup_scheduled
+            and (reuses_ready_sources or self._stock_context_snapshots_settled()),
+            runner=task_manager,
+        )
+
+    def on_workspace_tab_activated(self) -> None:
+        if self._background_preload_retry_pending:
+            self._background_preload_retry_pending = False
+            self.prime_background_load()
+            return
+        if self._context_refresh_pending:
+            self._queue_context_refresh()
+        else:
+            self._ensure_runtime_started()
 
     @staticmethod
     def _prime_stock_context_snapshots(
@@ -117,50 +316,6 @@ class StockCandidateTab(BaseStockTab):
                     pass
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 pass
-
-    def _prime_anchor_source_tabs(self, workspace) -> None:
-        if workspace is None:
-            return
-        for key in ("na_daily", "ai_industry_chain"):
-            tab = self._load_anchor_source_tab(workspace, key)
-            self._prime_anchor_source_tab(key, tab)
-
-    @staticmethod
-    def _load_anchor_source_tab(workspace, key: str):
-        get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
-        tab = get_loaded_tab(key) if callable(get_loaded_tab) else None
-        if tab is not None:
-            return tab
-
-        ensure_tab_loaded = getattr(workspace, "ensure_tab_loaded", None)
-        if callable(ensure_tab_loaded):
-            try:
-                return ensure_tab_loaded(key, reason="stock_candidates_anchor")
-            except TypeError:
-                return ensure_tab_loaded(key)
-
-        get_tab = getattr(workspace, "get_tab", None)
-        return get_tab(key) if callable(get_tab) else None
-
-    @staticmethod
-    def _prime_anchor_source_tab(key: str, tab) -> None:
-        if tab is None:
-            return
-        method_names = {
-            "na_daily": (
-                "prime_background_load",
-                "run_post_online_refresh",
-                "_load_na_daily_report",
-                "_ensure_runtime_started",
-            ),
-            "ai_industry_chain": ("prime_background_load", "_load_chain_data", "_ensure_runtime_started"),
-        }.get(key, ("prime_background_load", "_ensure_runtime_started"))
-        for method_name in method_names:
-            method = getattr(tab, method_name, None)
-            if not callable(method):
-                continue
-            method()
-            return
 
     @staticmethod
     def _auto_refresh_signal_specs():
@@ -204,6 +359,11 @@ class StockCandidateTab(BaseStockTab):
 
     def _cleanup_runtime_state(self):
         self._context_refresh_pending = False
+        self._candidate_refresh_pending = False
+        self._candidate_refresh_followup_scheduled = False
+        dependency_timer = getattr(self, "_background_dependency_timer", None)
+        if dependency_timer is not None:
+            dependency_timer.stop()
         timer = getattr(self, "_auto_refresh_timer", None)
         if timer is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -222,6 +382,9 @@ class StockCandidateTab(BaseStockTab):
         include_fund: bool = True,
         include_lhb: bool = True,
     ) -> None:
+        if self._background_preload_requested and not self._background_preload_done:
+            self._maybe_start_background_candidate_rebuild()
+            return
         is_current = self._is_current_workspace_tab()
         allow_snapshot_refresh = self._allow_context_snapshot_refresh()
         if prime_snapshots and allow_snapshot_refresh:
@@ -329,91 +492,6 @@ class StockCandidateTab(BaseStockTab):
             ).as_dict()
         return result.lineage.as_dict()
 
-    @staticmethod
-    def _signal_time(signal: StockSignal) -> str:
-        return str(signal.observed_at or signal.refreshed_at or "").strip()
-
-    @staticmethod
-    def _signal_name(signal: StockSignal) -> str:
-        name = str(signal.name or "").strip()
-        if name:
-            return name
-        payload = dict(signal.payload or {})
-        return str(payload.get("名称") or payload.get("name") or "").strip()
-
-    @staticmethod
-    def _is_quote_value(value) -> bool:
-        text = str(value if value is not None else "").strip()
-        return text not in {"", "--", "-", "None", "nan", "NaN"}
-
-    @staticmethod
-    def _first_payload_value(signals: list[StockSignal], keys: tuple[str, ...]) -> str:
-        for signal in signals:
-            payload = dict(signal.payload or {})
-            for key in keys:
-                value = payload.get(key)
-                if StockCandidateTab._is_quote_value(value):
-                    return str(value).strip()
-        return "--"
-
-    @staticmethod
-    def _candidate_summary(signal: StockSignal) -> str:
-        signal_type = str(signal.signal_type or "").strip()
-        source_tab = str(signal.source_tab or "").strip()
-        if signal_type == "vcp_scan" or source_tab == "scan":
-            payload = dict(signal.payload or {})
-            trigger_date = str(payload.get("触发日期") or signal.observed_at or "").strip()
-            rps = str(payload.get("RPS强度") or "").strip()
-            parts = []
-            if trigger_date:
-                parts.append(f"触发日期 {trigger_date}")
-            if rps:
-                parts.append(f"RPS {rps}")
-            return " | ".join(parts) or "VCP扫描命中"
-        return str(signal.summary or "").strip()
-
-    @staticmethod
-    def _signal_sector(signal: StockSignal) -> str:
-        payload = dict(signal.payload or {})
-        for key in ("细分板块", "细分环节", "行业", "板块", "热门板块", "热点板块", "subsector"):
-            value = payload.get(key)
-            if StockCandidateTab._is_quote_value(value):
-                return str(value).strip()
-        if str(signal.signal_type or "").strip() == "subsector" and StockCandidateTab._is_quote_value(signal.summary):
-            return str(signal.summary).strip()
-        return ""
-
-    @staticmethod
-    def _candidate_sector(signals: list[StockSignal]) -> str:
-        for source_tab in ("ai_industry_chain", "na_daily"):
-            for signal in signals:
-                if str(signal.source_tab or "").strip() != source_tab:
-                    continue
-                sector = StockCandidateTab._signal_sector(signal)
-                if sector:
-                    return sector
-        return ""
-
-    @staticmethod
-    def _source_group_key(signal: StockSignal) -> str:
-        source_tab = str(signal.source_tab or "").strip()
-        if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
-            return StockCandidateTab.ANCHOR_SOURCE_GROUP
-        return source_tab
-
-    @staticmethod
-    def _effective_signal_count(signals: list[StockSignal]) -> int:
-        count = 0
-        anchor_seen = False
-        for signal in signals:
-            source_tab = str(signal.source_tab or "").strip()
-            if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
-                if anchor_seen:
-                    continue
-                anchor_seen = True
-            count += 1
-        return count
-
     def _tab_titles(self) -> dict[str, str]:
         workspace = self._workspace()
         if workspace is None or not hasattr(workspace, "tab_specs"):
@@ -428,123 +506,35 @@ class StockCandidateTab(BaseStockTab):
         context: dict[str, list[StockSignal]],
         tab_titles: dict[str, str] | None = None,
     ) -> list[dict]:
-        rows = []
-        if tab_titles is None:
-            read_tab_titles = getattr(self, "_tab_titles", None)
-            if callable(read_tab_titles):
-                tab_titles = read_tab_titles()
-            else:
-                workspace_reader = getattr(self, "_workspace", None)
-                workspace = workspace_reader() if callable(workspace_reader) else None
-                if workspace is not None and hasattr(workspace, "tab_specs"):
-                    tab_titles = {
-                        str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
-                        for spec in workspace.tab_specs()
-                    }
-                else:
-                    tab_titles = {}
-
-        for code, signals in sorted((context or {}).items()):
-            clean_signals = [signal for signal in signals or [] if isinstance(signal, StockSignal)]
-            if not clean_signals:
-                continue
-            if not any(
-                str(signal.source_tab or "").strip() in StockCandidateTab.REQUIRED_SOURCE_TABS
-                for signal in clean_signals
-            ):
-                continue
-
-            sources = []
-            for signal in clean_signals:
-                label = signal_source_label(signal, tab_titles)
-                if label and label not in sources:
-                    sources.append(label)
-
-            source_groups = []
-            for signal in clean_signals:
-                group_key = StockCandidateTab._source_group_key(signal)
-                if group_key and group_key not in source_groups:
-                    source_groups.append(group_key)
-
-            if len(source_groups) < 2:
-                continue
-
-            name = next(
-                (
-                    StockCandidateTab._signal_name(signal)
-                    for signal in clean_signals
-                    if StockCandidateTab._signal_name(signal)
-                ),
-                "",
-            )
-            source_text = "｜".join(sources)
-            sector_text = StockCandidateTab._candidate_sector(clean_signals)
-            summaries = []
-            for signal in clean_signals:
-                text = StockCandidateTab._candidate_summary(signal)
-                if text and text not in summaries:
-                    summaries.append(text)
-                if len(summaries) >= 3:
-                    break
-            latest_time = max((StockCandidateTab._signal_time(signal) for signal in clean_signals), default="")
-            effective_source_count = len(source_groups)
-            effective_signal_count = StockCandidateTab._effective_signal_count(clean_signals)
-            score_type_count = len(
-                {
-                    str(signal.signal_type or "").strip()
-                    for signal in clean_signals
-                    if str(signal.signal_type or "").strip()
-                }
-            )
-            score = len(sources) * 10 + len(clean_signals) + score_type_count
-
-            rows.append(
-                {
-                    "代码": code,
-                    "名称": name or code,
-                    "市价": StockCandidateTab._first_payload_value(
-                        clean_signals,
-                        ("市价", "现价", "最新价", "最新", "收盘"),
-                    ),
-                    "涨幅%": StockCandidateTab._first_payload_value(
-                        clean_signals,
-                        ("涨幅%", "涨幅", "涨跌%", "涨跌"),
-                    ),
-                    "市值": StockCandidateTab._first_payload_value(
-                        clean_signals,
-                        ("市值", "总市值"),
-                    ),
-                    "共振分": score,
-                    "来源数": effective_source_count,
-                    "信号数": effective_signal_count,
-                    "来源": source_text,
-                    "核心信号": "；".join(summaries),
-                    "最近时间": latest_time,
-                    "细分板块": sector_text,
-                    "_signals": clean_signals,
-                }
-            )
-
-        rows.sort(key=lambda row: (int(row.get("共振分", 0) or 0), int(row.get("来源数", 0) or 0)), reverse=True)
-        return rows
+        return build_stock_candidate_rows(
+            context,
+            tab_titles=tab_titles if tab_titles is not None else _candidate_tab_titles(self),
+        )
 
     def refresh_candidates(self):
         with ui_stall_span("StockCandidateTab.refresh_candidates", tab="stock_candidates", signal="context_refresh"):
             self._start_candidate_refresh_async()
 
     def _start_candidate_refresh_async(self) -> None:
-        if self._candidate_refresh_running:
+        if self._candidate_refresh_running or self._candidate_refresh_followup_scheduled:
             self._candidate_refresh_pending = True
             return
         self._candidate_refresh_running = True
         self._candidate_refresh_pending = False
         tab_titles = self._tab_titles()
+        provider_status = self._read_provider_status()
+        workspace = self._workspace()
+        snapshot = capture_workspace_stock_context(workspace)
+        if snapshot is None:
+            snapshot = _immutable_candidate_snapshot(self._read_stock_context())
+        read_policy = StockContextReadPolicy.build(allow_lhb_cache_compute=False)
 
         def _load_bg(_cancellation_token):
+            context = StockContextQueryService(snapshot).query_by_code(read_policy)
             return StockCandidatesDataService(
-                context_reader=self._read_stock_context,
-                row_builder=lambda context: self._build_candidate_rows(context, tab_titles=tab_titles),
-                provider_status_reader=self._read_provider_status,
+                context_reader=lambda: context,
+                row_builder=lambda context: build_stock_candidate_rows(context, tab_titles=tab_titles),
+                provider_status_reader=lambda: provider_status,
             ).load()
 
         task_lifecycle_for(self, runner=task_manager).run_background(
@@ -553,18 +543,42 @@ class StockCandidateTab(BaseStockTab):
             on_success=self._on_candidate_refresh_success,
             on_error=self._on_candidate_refresh_error,
             task_id=task_registry.workspace(self.REFRESH_TASK_ID),
-            timeout_sec=60.0,
+            timeout_sec=self.BACKGROUND_REFRESH_TIMEOUT_SECONDS,
             runner=task_manager,
         )
+
+    def _schedule_candidate_refresh_followup(self) -> None:
+        self._candidate_refresh_pending = False
+        if self._candidate_refresh_followup_scheduled:
+            return
+        self._candidate_refresh_followup_scheduled = True
+        QTimer.singleShot(0, self._run_candidate_refresh_followup)
+
+    def _run_candidate_refresh_followup(self) -> None:
+        if not self._candidate_refresh_followup_scheduled:
+            return
+        self._candidate_refresh_followup_scheduled = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._candidate_refresh_pending = False
+        self.refresh_candidates()
 
     def _on_candidate_refresh_success(self, result) -> None:
         self._candidate_refresh_running = False
         if getattr(self, "_runtime_cleanup_done", False):
             return
+        workspace = self._workspace()
+        publisher = getattr(workspace, "publish_stock_context_signal_index", None)
+        if callable(publisher):
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                publisher(result.signal_index)
         self._apply_candidate_result(result)
         if self._candidate_refresh_pending:
-            self._candidate_refresh_pending = False
-            QTimer.singleShot(0, self.refresh_candidates)
+            self._schedule_candidate_refresh_followup()
+            return
+        if self._background_preload_requested:
+            self._background_preload_done = True
+            self._background_preload_error = ""
 
     def _on_candidate_refresh_error(self, message: str) -> None:
         self._candidate_refresh_running = False
@@ -574,8 +588,11 @@ class StockCandidateTab(BaseStockTab):
         self._status_freshness = str(message or "").strip() or "后台刷新异常"
         self._refresh_status()
         if self._candidate_refresh_pending:
-            self._candidate_refresh_pending = False
-            QTimer.singleShot(0, self.refresh_candidates)
+            self._schedule_candidate_refresh_followup()
+            return
+        if self._background_preload_requested:
+            self._background_preload_done = True
+            self._background_preload_error = str(message or "").strip() or "后台刷新异常"
 
     def _apply_candidate_result(self, result) -> None:
         self._last_candidate_result = result

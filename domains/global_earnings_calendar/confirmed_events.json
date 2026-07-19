@@ -593,6 +593,24 @@
       "original_timezone": "Europe/Amsterdam",
       "call_time_source_url": "https://www.asml.com/en/investors/financial-results/q2-2026",
       "call_time_source_type": "official_ir_webcast"
+    },
+    {
+      "company": "TSMC",
+      "ticker": "TSM",
+      "sector": "先进制程代工",
+      "report_date": "2026-07-16",
+      "fiscal_period": "Jun/2026",
+      "time_label": "14:00 Taiwan time earnings conference",
+      "beijing_time": "2026-07-16 14:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "super_giant",
+      "conference_url": "https://investor.tsmc.com/english/quarterly-results/teleconference",
+      "market": "US",
+      "original_call_time_text": "Thursday, July 16, 2026, 02:00-03:30 a.m. Eastern Time / 14:00-15:30 Taiwan Time",
+      "original_timezone": "Asia/Taipei",
+      "call_time_source_url": "https://investor.tsmc.com/english/quarterly-results/teleconference",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }

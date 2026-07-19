@@ -18,6 +18,11 @@ class MainWindowHostPortMixin:
     def current_workspace(self):
         return getattr(self, "_workspace", None)
 
+    def cancel_pending_workspace_activation(self, workspace) -> None:
+        pending = getattr(self, "_pending_workspace_tab_activation", None)
+        if pending and pending[0] is workspace:
+            setattr(self, "_pending_workspace_tab_activation", None)
+
     def get_realtime_quote_codes(self) -> set[str]:
         workspace = self.current_workspace()
         supplier = getattr(workspace, "get_realtime_quote_codes", None)

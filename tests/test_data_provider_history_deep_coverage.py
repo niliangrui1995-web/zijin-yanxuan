@@ -288,6 +288,7 @@ def test_ensure_code_name_map_covers_full_scan_online_failure_and_store_failure(
     provider._offline = False
     provider.code2name = {"": "ignored", "000001": "cached-name", "600000": "600000"}
     monkeypatch.setattr(provider, "_get_codes_from_vipdoc", lambda: {"000001": "000001", "600000": "600000"})
+    monkeypatch.setattr(provider, "_load_local_tdx_name_map_for_codes", lambda _codes: {})
     provider.fetch_realtime_quotes_batch = lambda _codes: (_ for _ in ()).throw(RuntimeError("network down"))
     monkeypatch.setattr(data_store_module, "DataStore", lambda: _Store({}))
 
@@ -560,6 +561,55 @@ def test_get_data_batch_contains_warehouse_error_and_chart_delegates():
     provider._get_local_history_provider = lambda: local_history
     assert provider.get_data_fresh_for_chart("000001", force_sync=True) == "fresh"
     assert calls == [("000001", True)]
+
+
+def test_get_close_tail_batch_uses_memory_narrow_warehouse_and_local_fallbacks():
+    provider = _Provider()
+    provider.cache_data["memory"] = _polars_frame(25).reverse()
+    provider.local_by_code["local"] = _frame(25)
+    calls = []
+
+    class Warehouse:
+        def read_close_tails(self, codes, limit):
+            calls.append((tuple(codes), limit))
+            return SimpleNamespace(
+                status=_Status(True, active_layer="warehouse"),
+                data={"warehouse": tuple(float(value) for value in range(5, 26))},
+            )
+
+        def read_symbols(self, _codes):
+            raise AssertionError("narrow close-tail reads must not call the full-frame warehouse API")
+
+    provider._get_market_data_warehouse = lambda: Warehouse()
+
+    result = provider.get_close_tail_batch(
+        ["", None, "memory", "warehouse", "local", "missing", "memory"],
+        21,
+    )
+
+    assert calls == [(('warehouse', 'local', 'missing'), 21)]
+    assert result["memory"] == tuple(float(value) for value in range(5, 26))
+    assert result["warehouse"] == tuple(float(value) for value in range(5, 26))
+    assert result["local"] == tuple(float(value) for value in range(5, 26))
+    assert "missing" not in result
+
+
+@pytest.mark.parametrize("narrow_value", [AttributeError("old warehouse"), None])
+def test_get_close_tail_batch_falls_back_to_existing_batch_reader(narrow_value):
+    provider = _Provider()
+    calls = []
+
+    class Warehouse:
+        def read_close_tails(self, _codes, _limit):
+            if isinstance(narrow_value, Exception):
+                raise narrow_value
+            return narrow_value
+
+    provider._get_market_data_warehouse = lambda: Warehouse()
+    provider.get_data_batch = lambda codes: calls.append(tuple(codes)) or {"000001": _frame(4)}
+
+    assert provider.get_close_tail_batch(["000001"], 3) == {"000001": (2.0, 3.0, 4.0)}
+    assert calls == [("000001",)]
 
 
 def test_sync_market_data_contains_missing_polars_import(monkeypatch):

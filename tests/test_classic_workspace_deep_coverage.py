@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from app.services.stock_context_model_service import StockSignal
 from ui.workspaces import classic_workspace as workspace_module
-from ui.workspaces.stock_signal import StockSignal
 
 
 class _Tabs:
@@ -161,8 +161,10 @@ def test_classic_workspace_activate_tab_all_invalid_and_current_paths():
     fake = SimpleNamespace(
         tabs=tabs,
         _pending_tab_activation_reasons={},
+        _startup_last_allowed_index=-1,
         _spec_for_key_or_index=lambda index: None if index == 0 else {"key": "b", "loaded": False},
         _queue_lazy_tab_load=lambda *args, **kwargs: True,
+        _defer_interactive_activation_until_preload_ready=lambda *_args: False,
         _mark_system_log_shell_nav=lambda *_args: None,
         _notify_tab_activated=lambda *_args: None,
     )
@@ -216,9 +218,13 @@ def test_classic_workspace_event_wiring_prewarm_prime_and_copy_hook_errors(monke
     fake.prime_stock_context_snapshots = lambda **kwargs: facade_calls.append(kwargs)
     workspace_module.ClassicWorkspace._on_ai_industry_chain_source_updated(fake)
     workspace_module.ClassicWorkspace._on_fund_holdings_source_updated(fake)
-    assert facade_calls == ["refresh", {"force": True, "include_lhb": False}, {"force": True, "include_lhb": False}]
+    assert facade_calls == ["refresh", {"force": True, "include_lhb": False}]
 
-    started = SimpleNamespace(_background_prewarm_started=True)
+    started = SimpleNamespace(
+        _background_prewarm_started=True,
+        _startup_cache_bootstrap_required=False,
+        _startup_cache_bootstrap_ready=True,
+    )
     workspace_module.ClassicWorkspace._start_background_tab_prewarm(started)
 
     bad_widget = SimpleNamespace(prime_startup_state=lambda: (_ for _ in ()).throw(RuntimeError("prime")))
@@ -269,17 +275,8 @@ def test_classic_workspace_restore_timer_facade_delegates_and_tab_index(monkeypa
     assert stopped[:2] == ["stop", "delete"]
 
     class _Facade:
-        def nav_groups(self):
-            return ["g"]
-
         def get_scan_results(self):
             return [{"x": 1}]
-
-        def iter_refreshable_tabs(self):
-            return [1]
-
-        def select_scan_row(self, index):
-            return index == 1
 
         def run_incremental_scan(self):
             return True
@@ -302,11 +299,8 @@ def test_classic_workspace_restore_timer_facade_delegates_and_tab_index(monkeypa
     facade = _Facade()
     monkeypatch.setattr(workspace_module, "_resolve_workspace_facade", lambda _self: facade)
     shell = SimpleNamespace(tabs=_Tabs(current=1))
-    assert workspace_module.ClassicWorkspace.nav_groups(shell) == ["g"]
     assert workspace_module.ClassicWorkspace.current_tab_index(shell) == 1
     assert workspace_module.ClassicWorkspace.get_scan_results(shell) == [{"x": 1}]
-    assert workspace_module.ClassicWorkspace.iter_refreshable_tabs(shell) == [1]
-    assert workspace_module.ClassicWorkspace.select_scan_row(shell, 1)
     assert workspace_module.ClassicWorkspace.run_incremental_scan(shell)
     assert workspace_module.ClassicWorkspace.open_scan_settings(shell)
     assert workspace_module.ClassicWorkspace.refresh_lhb_history(shell)

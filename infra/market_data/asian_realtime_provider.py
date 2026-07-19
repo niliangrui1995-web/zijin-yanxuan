@@ -30,6 +30,13 @@ from infra.market_data.yfinance_session import (
     is_yf_rate_limit_error,
     mark_yf_rate_limited,
 )
+from infra.tasks.lifecycle import (
+    TaskCancelledError,
+    TaskDeadlineExceeded,
+    bounded_io_timeout,
+    raise_if_cancelled,
+)
+from infra.tasks.owner_lifecycle import invoke_with_cancellation
 
 log = get_logger(__name__)
 
@@ -82,6 +89,8 @@ def _call_yfinance(operation: Callable[[], _T]) -> _T:
 
     try:
         return operation()
+    except (TaskCancelledError, TaskDeadlineExceeded):
+        raise
     except Exception as exc:
         raise YFinanceOperationError(exc) from exc
 
@@ -119,6 +128,16 @@ def _ticker_base(code: object) -> str:
 
 def _ticker_suffix(code: object) -> str:
     return _text(code).split(".")[-1].strip().upper()
+
+
+def _currency_for_ticker(code: object) -> str:
+    return {
+        "TW": "TWD",
+        "TWO": "TWD",
+        "KS": "KRW",
+        "T": "JPY",
+        "HK": "HKD",
+    }.get(_ticker_suffix(code), "USD")
 
 
 def _first_present(*values: object) -> object | None:
@@ -378,7 +397,7 @@ def pick_twse_price(info: Mapping[str, Any], previous_close: float | None) -> tu
     return None, "missing"
 
 
-def fetch_tw_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | None:
+def fetch_tw_realtime_quote(code: str, http_session: Any, *, cancellation_token=None) -> dict[str, Any] | None:
     suffix = _ticker_suffix(code)
     base_code = _ticker_base(code)
     if not base_code:
@@ -390,6 +409,7 @@ def fetch_tw_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
         session=http_session,
         headers={**DEFAULT_HTTP_HEADERS, "Referer": "https://mis.twse.com.tw/"},
         timeout=15,
+        cancellation_token=cancellation_token,
     )
     data = load_realtime_json(response, source="twse_mis")
     info = _first_mapping_item(data.get("msgArray"))
@@ -402,7 +422,7 @@ def fetch_tw_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
     open_price = _first_positive(info.get("o"), previous_close, close_price)
     if open_price is None:
         return None
-    return {
+    result = {
         "date": normalize_trade_date(_first_present(info.get("d"), info.get("^"))),
         "close": close_price,
         "open": open_price,
@@ -414,6 +434,8 @@ def fetch_tw_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
         "source": "twse_mis",
         "quote_quality": quote_quality,
     }
+    raise_if_cancelled(cancellation_token)
+    return result
 
 
 def _kr_previous_close(info: Mapping[str, Any], close_price: float) -> float | None:
@@ -439,7 +461,7 @@ def _kr_previous_close(info: Mapping[str, Any], close_price: float) -> float | N
     return close_price / denominator if abs(denominator) > 1e-9 else None
 
 
-def fetch_kr_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | None:
+def fetch_kr_realtime_quote(code: str, http_session: Any, *, cancellation_token=None) -> dict[str, Any] | None:
     base_code = _ticker_base(code)
     if not base_code:
         return None
@@ -448,6 +470,7 @@ def fetch_kr_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
         session=http_session,
         headers={**DEFAULT_HTTP_HEADERS, "Referer": "https://finance.naver.com/"},
         timeout=15,
+        cancellation_token=cancellation_token,
     )
     data = load_realtime_json(response, source="naver_realtime")
     info = _first_mapping_item(data.get("datas"))
@@ -457,7 +480,7 @@ def fetch_kr_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
     if close_price is None:
         return None
     currency = _mapping(info.get("currencyType"))
-    return {
+    result = {
         "date": normalize_trade_date(info.get("localTradedAt")),
         "close": close_price,
         "open": _first_positive(info.get("openPriceRaw"), info.get("openPrice"), close_price),
@@ -473,6 +496,8 @@ def fetch_kr_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
         "source": "naver_realtime",
         "quote_quality": "last",
     }
+    raise_if_cancelled(cancellation_token)
+    return result
 
 
 def _decode_hk_response(response: Any) -> str:
@@ -482,7 +507,7 @@ def _decode_hk_response(response: Any) -> str:
     return str(getattr(response, "text", "") or "")
 
 
-def fetch_hk_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | None:
+def fetch_hk_realtime_quote(code: str, http_session: Any, *, cancellation_token=None) -> dict[str, Any] | None:
     base_code = _ticker_base(code)
     if not base_code:
         return None
@@ -492,6 +517,7 @@ def fetch_hk_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
         session=http_session,
         headers={**DEFAULT_HTTP_HEADERS, "Referer": "https://stockapp.finance.qq.com/"},
         timeout=15,
+        cancellation_token=cancellation_token,
     )
     matched = re.search(r'v_hk\d+="([^"]*)"', _decode_hk_response(response))
     if not matched:
@@ -505,7 +531,7 @@ def fetch_hk_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
     open_price = _first_positive(field(5), previous_close, close_price)
     if open_price is None:
         return None
-    return {
+    result = {
         "date": normalize_trade_date(field(30)),
         "close": close_price,
         "open": open_price,
@@ -517,6 +543,8 @@ def fetch_hk_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
         "source": "tencent_hk",
         "quote_quality": "free_delayed",
     }
+    raise_if_cancelled(cancellation_token)
+    return result
 
 
 def extract_jp_page_price(page_text: str) -> float | None:
@@ -617,12 +645,18 @@ def parse_jp_realtime_page(page_text: str) -> dict[str, Any] | None:
     return _parse_jp_preloaded_page(page_text) or _parse_jp_indicator_page(page_text)
 
 
-def fetch_jp_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | None:
+def fetch_jp_realtime_quote(code: str, http_session: Any, *, cancellation_token=None) -> dict[str, Any] | None:
     base_code = str(code or "").split(".")[0].strip()
     if not base_code:
         return None
     url = f"https://finance.yahoo.co.jp/quote/{base_code}.T"
-    response = asian_market_get(url, session=http_session, headers=DEFAULT_HTTP_HEADERS, timeout=HTTP_TIMEOUT_SEC)
+    response = asian_market_get(
+        url,
+        session=http_session,
+        headers=DEFAULT_HTTP_HEADERS,
+        timeout=HTTP_TIMEOUT_SEC,
+        cancellation_token=cancellation_token,
+    )
     page_text = response.text
     quote = parse_jp_realtime_page(page_text)
     if quote:
@@ -635,8 +669,11 @@ def fetch_jp_realtime_quote(code: str, http_session: Any) -> dict[str, Any] | No
             {"Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6", "Referer": "https://finance.yahoo.co.jp/"}
         ),
         timeout=HTTP_TIMEOUT_SEC,
+        cancellation_token=cancellation_token,
     )
-    return parse_jp_realtime_page(retry_response.text) if is_http_success(retry_response) else None
+    result = parse_jp_realtime_page(retry_response.text) if is_http_success(retry_response) else None
+    raise_if_cancelled(cancellation_token)
+    return result
 
 
 def fetch_yfinance_realtime_quote(
@@ -644,10 +681,20 @@ def fetch_yfinance_realtime_quote(
     yf_session: Any,
     *,
     yf_module: Any = yf,
+    cancellation_token=None,
 ) -> dict[str, Any] | None:
+    raise_if_cancelled(cancellation_token)
     ticker = yf_module.Ticker(code, session=yf_session)
-    fast_info = ticker.fast_info
-    frame = ticker.history(period="5d", interval="1d", timeout=15)
+    # ``fast_info`` issues its own unbounded history calls in current yfinance.
+    # K-line owner tasks therefore use the explicitly bounded history response;
+    # the legacy non-cancellable Asian-tab path keeps its richer fast-info fields.
+    fast_info = ticker.fast_info if cancellation_token is None else {}
+    frame = ticker.history(
+        period="5d",
+        interval="1d",
+        timeout=bounded_io_timeout(15, cancellation_token),
+    )
+    raise_if_cancelled(cancellation_token)
     if frame.empty:
         return None
     close_price = _first_positive(fast_info.get("lastPrice"), frame.iloc[-1]["Close"])
@@ -661,7 +708,7 @@ def fetch_yfinance_realtime_quote(
     if previous_close is None:
         history_index = -2 if len(frame) >= 2 else -1
         previous_close = float(frame.iloc[history_index]["Close"])
-    return {
+    result = {
         "date": resolve_quote_date(None, frame),
         "close": close_price,
         "open": _first_positive(fast_info.get("open"), frame.iloc[-1]["Open"]),
@@ -669,11 +716,13 @@ def fetch_yfinance_realtime_quote(
         "low": _first_positive(fast_info.get("dayLow"), frame.iloc[-1]["Low"]),
         "volume": _first_float(fast_info.get("lastVolume"), frame.iloc[-1].get("Volume", 0), 0.0),
         "previous_close": previous_close,
-        "currency": fast_info.get("currency", "USD"),
+        "currency": fast_info.get("currency", _currency_for_ticker(code)),
         "source": "yfinance",
         "quote_quality": "last",
         "df_today": frame,
     }
+    raise_if_cancelled(cancellation_token)
+    return result
 
 
 def _find_twse_pe(
@@ -874,6 +923,7 @@ def _direct_quote(
     hk_fetcher: QuoteFetcher,
     kr_fetcher: QuoteFetcher,
     jp_fetcher: QuoteFetcher,
+    cancellation_token=None,
 ) -> QuotePayload | None:
     suffix = normalized_code.split(".")[-1]
     fetcher = {
@@ -883,17 +933,27 @@ def _direct_quote(
         "KS": kr_fetcher,
         "T": jp_fetcher,
     }.get(suffix)
-    return fetcher(normalized_code, session) if fetcher is not None else None
+    if fetcher is None:
+        return None
+    return invoke_with_cancellation(fetcher, cancellation_token, normalized_code, session)
 
 
 def _safe_direct_quote(
     normalized_code: str,
     session: Any,
+    cancellation_token=None,
     **fetchers: QuoteFetcher,
 ) -> QuotePayload | None:
     try:
-        return _direct_quote(normalized_code, session, **fetchers)
+        return _direct_quote(
+            normalized_code,
+            session,
+            cancellation_token=cancellation_token,
+            **fetchers,
+        )
     except AsianRealtimePayloadError:
+        raise
+    except (TaskCancelledError, TaskDeadlineExceeded):
         raise
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
         log.debug("[AsianProvider] direct realtime source failed %s: %s", normalized_code, exc)
@@ -908,9 +968,18 @@ def _safe_yfinance_quote(
     yf_fetcher: QuoteFetcher,
     rate_limit_error: RateLimitPredicate,
     mark_rate_limited: RateLimitMarker,
+    cancellation_token=None,
 ) -> QuotePayload | None:
     try:
-        return _call_yfinance(lambda: yf_fetcher(normalized_code, session, yf_module=yf_module))
+        return _call_yfinance(
+            lambda: invoke_with_cancellation(
+                yf_fetcher,
+                cancellation_token,
+                normalized_code,
+                session,
+                yf_module=yf_module,
+            )
+        )
     except YFinanceOperationError as wrapped:
         exc = wrapped.cause
         if rate_limit_error(exc):
@@ -933,7 +1002,7 @@ def fetch_asian_realtime_quote(
     *,
     yf_session: Any = None,
     allow_yfinance_fallback: bool = True,
-    raise_on_source_payload_error: bool = False,
+    raise_on_source_payload_error: bool = False, cancellation_token=None,
     yf_module: Any = yf,
     rate_limit_status: RateLimitStatusGetter = get_yf_rate_limit_status,
     rate_limit_error: RateLimitPredicate = is_yf_rate_limit_error,
@@ -941,9 +1010,9 @@ def fetch_asian_realtime_quote(
     tw_fetcher: QuoteFetcher = fetch_tw_realtime_quote,
     hk_fetcher: QuoteFetcher = fetch_hk_realtime_quote,
     kr_fetcher: QuoteFetcher = fetch_kr_realtime_quote,
-    jp_fetcher: QuoteFetcher = fetch_jp_realtime_quote,
-    yf_fetcher: QuoteFetcher = fetch_yfinance_realtime_quote,
+    jp_fetcher: QuoteFetcher = fetch_jp_realtime_quote, yf_fetcher: QuoteFetcher = fetch_yfinance_realtime_quote,
 ) -> QuotePayload | None:
+    raise_if_cancelled(cancellation_token)
     normalized_code = str(code or "").strip().upper()
     if not normalized_code or "." not in normalized_code:
         return None
@@ -956,6 +1025,7 @@ def fetch_asian_realtime_quote(
             hk_fetcher=hk_fetcher,
             kr_fetcher=kr_fetcher,
             jp_fetcher=jp_fetcher,
+            cancellation_token=cancellation_token,
         )
     except AsianRealtimePayloadError as exc:
         if raise_on_source_payload_error:
@@ -963,6 +1033,7 @@ def fetch_asian_realtime_quote(
         log.debug("[AsianProvider] unusable direct payload %s: %s", normalized_code, exc)
         return None
     if quote or not allow_yfinance_fallback:
+        raise_if_cancelled(cancellation_token)
         return quote
     status = rate_limit_status()
     if status["active"]:
@@ -974,7 +1045,7 @@ def fetch_asian_realtime_quote(
         yf_module=yf_module,
         yf_fetcher=yf_fetcher,
         rate_limit_error=rate_limit_error,
-        mark_rate_limited=mark_rate_limited,
+        mark_rate_limited=mark_rate_limited, cancellation_token=cancellation_token,
     )
 
 

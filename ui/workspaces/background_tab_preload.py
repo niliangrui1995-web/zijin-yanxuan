@@ -1,0 +1,678 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import time
+from collections.abc import Mapping
+
+from PyQt6.QtCore import QObject, QTimer
+
+from app.services.ui_diagnostics_service import ui_stall_span
+from core.logger import get_logger
+from ui.workspaces.background_preload_receipt import BackgroundPreloadCancellationReceipt
+from ui.workspaces.tab_registry import (
+    TabConstructorProfile,
+    TabLoadReason,
+    is_interactive_tab_load_reason,
+    normalize_tab_load_reason,
+    preload_dependencies_for,
+)
+
+log = get_logger(__name__)
+
+
+def _priority_runtime_ready(workspace) -> bool:
+    return bool(
+        not getattr(workspace, "_shutting_down", False)
+        and workspace._background_prewarm_enabled
+        and not workspace._background_prewarm_finished
+    )
+
+
+def _priority_target_pending(workspace, key: str) -> bool:
+    return bool(
+        key == str(workspace._background_prewarm_active_key or "")
+        or key in workspace._background_prewarm_queue
+    )
+
+
+def _normalized_priority_request(workspace, key: object, reason: object) -> tuple[str, str] | None:
+    key_text = str(key or "").strip()
+    reason_text = normalize_tab_load_reason(reason)
+    if not key_text or not is_interactive_tab_load_reason(reason_text):
+        return None
+    if not _priority_runtime_ready(workspace):
+        return None
+    if workspace._background_prewarm_started:
+        target_available = _priority_target_pending(workspace, key_text)
+    else:
+        target_available = bool(
+            key_text in workspace.BACKGROUND_PREWARM_KEYS
+            and workspace._spec_for_key_or_index(key_text) is not None
+        )
+    if not target_available:
+        return None
+    return key_text, reason_text
+
+
+def _preload_key_ready(workspace, key: str) -> bool:
+    spec = workspace._spec_for_key_or_index(key)
+    if spec is None or not spec.get("loaded"):
+        return False
+    widget = spec.get("widget")
+    return bool(widget is not None and getattr(widget, "_workspace_background_preload_ready", False))
+
+
+def _ordered_unready_dependency_closure(workspace, key: str) -> tuple[str, ...]:
+    closure: set[str] = set()
+
+    def _visit(candidate: str) -> None:
+        if candidate in closure or _preload_key_ready(workspace, candidate):
+            return
+        closure.add(candidate)
+        for dependency in preload_dependencies_for(candidate):
+            _visit(dependency)
+
+    _visit(key)
+    active_key = str(workspace._background_prewarm_active_key or "")
+    pending_keys = set(workspace._background_prewarm_queue)
+    if active_key:
+        pending_keys.add(active_key)
+    return tuple(
+        candidate
+        for candidate in workspace.STARTUP_TAB_LOAD_ORDER
+        if candidate in closure and candidate in pending_keys
+    )
+
+
+def _move_priority_closure_to_front(workspace, closure: tuple[str, ...]) -> None:
+    queued_closure = [key for key in closure if key in workspace._background_prewarm_queue]
+    if not queued_closure:
+        return
+    prioritized = set(queued_closure)
+    workspace._background_prewarm_queue = queued_closure + [
+        queued_key
+        for queued_key in workspace._background_prewarm_queue
+        if queued_key not in prioritized
+    ]
+
+
+def _configured_preload_queue(workspace) -> list[str]:
+    allowed_keys = set(workspace.BACKGROUND_PREWARM_KEYS)
+    available_keys: set[str] = set()
+    for spec in workspace._tab_specs:
+        key = str(spec.get("key") or "").strip()
+        if key in allowed_keys:
+            available_keys.add(key)
+    return [key for key in workspace.STARTUP_TAB_LOAD_ORDER if key in available_keys]
+
+
+def _apply_prestart_priority_closures(coordinator) -> None:
+    workspace = coordinator.workspace
+    for key in coordinator._prestart_priority_order:
+        closure = _ordered_unready_dependency_closure(workspace, key)
+        coordinator._priority_closures[key] = closure
+        coordinator._priority_boosted_keys.update(closure)
+        _move_priority_closure_to_front(workspace, closure)
+    coordinator._prestart_priority_order.clear()
+
+
+def _initial_preload_delay_ms(coordinator) -> int:
+    workspace = coordinator.workspace
+    if (
+        workspace._background_prewarm_queue
+        and workspace._background_prewarm_queue[0] in coordinator._priority_boosted_keys
+    ):
+        return 0
+    return workspace.BACKGROUND_PREWARM_DELAY_MS
+
+
+def _next_step_delay_ms(coordinator) -> int:
+    queue = coordinator.workspace._background_prewarm_queue
+    if queue and queue[0] in coordinator._priority_boosted_keys:
+        return 0
+    return coordinator.workspace.BACKGROUND_PREWARM_INTERVAL_MS
+
+
+def _preload_start_blocked(workspace) -> bool:
+    return bool(
+        getattr(workspace, "_shutting_down", False)
+        or workspace._background_prewarm_started
+        or not workspace._background_prewarm_enabled
+        or workspace._background_prewarm_finished
+    )
+
+
+def _preload_runtime_ready(workspace) -> bool:
+    coordinator = getattr(workspace, "_background_preload_coordinator", None)
+    priority_pending = bool(getattr(coordinator, "_priority_reasons", None))
+    return bool(
+        (workspace._initial_real_tab_activated or priority_pending)
+        and workspace.data_provider is not None
+        and workspace.engine is not None
+    )
+
+
+def _schedule_preload(coordinator, delay_ms: int) -> bool:
+    workspace = coordinator.workspace
+    if getattr(workspace, "_shutting_down", False) or not workspace._background_prewarm_enabled:
+        return False
+    coordinator.timer.start(max(0, int(delay_ms)))
+    return True
+
+
+def _pop_next_step(workspace) -> tuple[str, Mapping] | None:
+    while workspace._background_prewarm_queue:
+        key = workspace._background_prewarm_queue.pop(0)
+        spec = workspace._spec_for_key_or_index(key)
+        if spec is not None:
+            return key, spec
+    return None
+
+
+def _preload_dependencies_ready(workspace, spec: Mapping) -> bool:
+    profile = str(spec.get("constructor_profile") or "").strip()
+    if profile == TabConstructorProfile.WORKSPACE_PARENT.value:
+        return True
+    if workspace.data_provider is None:
+        return False
+    return profile != TabConstructorProfile.SCAN.value or workspace.engine is not None
+
+
+def _active_step_timed_out(workspace) -> bool:
+    elapsed_ms = (
+        time.perf_counter() - float(workspace._background_prewarm_active_started_at or 0.0)
+    ) * 1000.0
+    return elapsed_ms >= workspace.BACKGROUND_PREWARM_STEP_TIMEOUT_MS
+
+
+def _cancellation_settlement_timed_out(coordinator) -> bool:
+    started_at = float(coordinator._cancel_settlement_started_at or 0.0)
+    if started_at <= 0.0:
+        return False
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    return elapsed_ms >= coordinator.workspace.BACKGROUND_PREWARM_CANCEL_SETTLEMENT_TIMEOUT_MS
+
+
+def _receipt_status(receipt) -> dict:
+    if receipt is None:
+        return {}
+    status = getattr(receipt, "status", None)
+    if not callable(status):
+        return {"accepted": False, "settled": False}
+    try:
+        result = status()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return {"accepted": False, "settled": False}
+    return dict(result) if isinstance(result, Mapping) else {"accepted": False, "settled": False}
+
+
+def _loaded_preload_keys(workspace, planned_order: list[str]) -> list[str]:
+    loaded: list[str] = []
+    for spec in workspace._tab_specs:
+        key = str(spec.get("key") or "").strip()
+        if spec.get("loaded") and key in planned_order:
+            loaded.append(key)
+    return loaded
+
+
+def _ready_preload_keys(workspace, planned_order: list[str]) -> list[str]:
+    return [key for key in planned_order if _preload_key_ready(workspace, key)]
+
+
+def _priority_closure_status(coordinator) -> dict[str, list[str]]:
+    return {
+        key: list(closure)
+        for key, closure in coordinator._priority_closures.items()
+    }
+
+
+def _shutdown_receipt_statuses(coordinator) -> list[dict]:
+    return [_receipt_status(receipt) for receipt in coordinator._shutdown_cancel_receipts]
+
+
+def _all_receipts_settled(receipt_statuses: list[dict]) -> bool:
+    return all(bool(status.get("settled")) for status in receipt_statuses)
+
+
+def _missing_preload_dependencies(workspace, key: str) -> tuple[str, ...]:
+    return tuple(
+        dependency
+        for dependency in preload_dependencies_for(key)
+        if not _preload_key_ready(workspace, dependency)
+    )
+
+
+def _pending_preload_dependencies(workspace, dependencies: tuple[str, ...]) -> tuple[str, ...]:
+    pending = set(workspace._background_prewarm_queue)
+    active_key = str(workspace._background_prewarm_active_key or "")
+    return tuple(
+        dependency
+        for dependency in dependencies
+        if dependency in pending or dependency == active_key
+    )
+
+
+def _requeue_dependency_step(coordinator, key: str) -> None:
+    workspace = coordinator.workspace
+    workspace._background_prewarm_queue.insert(0, key)
+    closure = _ordered_unready_dependency_closure(workspace, key)
+    coordinator._priority_boosted_keys.update(closure)
+    _move_priority_closure_to_front(workspace, closure)
+    _schedule_preload(coordinator, workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+
+
+def _clear_cancellation_state(coordinator) -> None:
+    coordinator._cancelling_key = ""
+    coordinator._cancel_receipt = None
+    coordinator._cancel_terminal_status = ""
+    coordinator._cancel_terminal_detail = ""
+    coordinator._cancel_settlement_started_at = 0.0
+
+
+def _record_step_terminal(workspace, key: str, widget, status: str, detail: str) -> None:
+    workspace._background_prewarm_completion_order.append(key)
+    if status == "ready" and widget is not None:
+        setattr(widget, "_workspace_background_preload_ready", True)
+        return
+    workspace._background_prewarm_failures[key] = str(detail or status)
+    if status == "timeout" and key not in workspace._background_prewarm_timeouts:
+        workspace._background_prewarm_timeouts.append(key)
+
+
+def _promote_priority_widget(coordinator, key: str, widget, priority_reason: str) -> None:
+    workspace = coordinator.workspace
+    if not priority_reason or widget is None or workspace.tabs.currentWidget() is not widget:
+        return
+    workspace._promote_loaded_tab_to_interactive(widget, priority_reason)
+    workspace._startup_last_allowed_index = workspace._tab_index_for_key(key)
+    workspace._notify_tab_activated(key, widget)
+    if not workspace._initial_real_tab_activated:
+        if priority_reason == TabLoadReason.RESTORE_LAST_TAB.value:
+            launch_started_at = float(
+                getattr(getattr(workspace, "host", None), "_launch_started_at", 0.0) or 0.0
+            )
+            if launch_started_at > 0.0:
+                workspace._initial_tab_ready_elapsed_ms = (
+                    time.perf_counter() - launch_started_at
+                ) * 1000.0
+        on_initial_activation = getattr(workspace, "_on_initial_real_tab_activated", None)
+        if callable(on_initial_activation):
+            on_initial_activation()
+
+
+def _finish_all_preloads(coordinator) -> None:
+    workspace = coordinator.workspace
+    if workspace._background_prewarm_finished:
+        return
+    workspace._background_prewarm_finished = True
+    workspace._background_prewarm_finished_at = time.perf_counter()
+    host = workspace.host or workspace.window()
+    refresh_supplier = getattr(host, "_refresh_central_quote_code_supplier", None)
+    if callable(refresh_supplier):
+        try:
+            refresh_supplier()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[Workspace] refresh quote universe after preload failed: {exc}")
+    log.info(
+        "[Workspace] background tab preload finished completed=%s failures=%s",
+        len(workspace._background_prewarm_completion_order),
+        sorted(workspace._background_prewarm_failures),
+    )
+
+
+def cancel_background_tab_preload(coordinator) -> None:
+    coordinator.timer.stop()
+    coordinator._priority_reasons.clear()
+    receipt = coordinator._cancel_receipt
+    if receipt is None and coordinator.workspace._background_prewarm_active_widget is not None:
+        receipt = coordinator._cancel_active_widget(reason="owner_shutdown")
+    if receipt is not None:
+        coordinator._shutdown_cancel_receipts.append(receipt)
+    _clear_cancellation_state(coordinator)
+    coordinator._cancellation_blocked = False
+    coordinator._active_step_count = 0
+
+
+class BackgroundTabPreloadCoordinator(QObject):
+    """Serially construct and hydrate workspace tabs after first paint."""
+
+    def __init__(self, workspace, *, enabled: bool) -> None:
+        super().__init__(workspace)
+        self.workspace = workspace
+        workspace._background_prewarm_enabled = bool(enabled)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.advance)
+        self._priority_reasons: dict[str, str] = {}
+        self._prestart_priority_order: list[str] = []
+        self._priority_closures: dict[str, tuple[str, ...]] = {}
+        self._priority_boosted_keys: set[str] = set()
+        self._promoted_order: list[str] = []
+        self._cancelling_key = ""
+        self._cancel_receipt = None
+        self._cancel_terminal_status = ""
+        self._cancel_terminal_detail = ""
+        self._cancel_settlement_started_at = 0.0
+        self._cancellation_blocked = False
+        self._cancellation_timeouts: dict[str, str] = {}
+        self._dependency_failures: dict[str, str] = {}
+        self._active_step_count = 0
+        self._max_concurrent_steps = 0
+        self._shutdown_cancel_receipts: list[object] = []
+        workspace._background_prewarm_timer = self.timer
+
+    def start(self) -> None:
+        workspace = self.workspace
+        if _preload_start_blocked(workspace) or not _preload_runtime_ready(workspace):
+            return
+        workspace._background_prewarm_started = True
+        workspace._background_prewarm_queue = _configured_preload_queue(workspace)
+        _apply_prestart_priority_closures(self)
+        _schedule_preload(self, _initial_preload_delay_ms(self))
+
+    def advance(self) -> None:
+        workspace = self.workspace
+        if getattr(workspace, "_shutting_down", False) or workspace._background_prewarm_finished:
+            workspace._background_prewarm_queue.clear()
+            return
+        with ui_stall_span("ClassicWorkspace._prewarm_next_tab", signal="background_prewarm"):
+            if self._cancellation_blocked:
+                self._poll_cancelled_step()
+                return
+            if workspace._background_prewarm_active_key:
+                self._poll_active_step()
+                return
+            self._start_next_step()
+
+    def status(self) -> dict:
+        workspace = self.workspace
+        planned_order = list(workspace.STARTUP_TAB_LOAD_ORDER)
+        loaded_keys = _loaded_preload_keys(workspace, planned_order)
+        shutdown_receipts = _shutdown_receipt_statuses(self)
+        return {
+            "enabled": bool(workspace._background_prewarm_enabled),
+            "started": bool(workspace._background_prewarm_started),
+            "finished": bool(workspace._background_prewarm_finished),
+            "planned_order": planned_order,
+            "planned_count": len(planned_order),
+            "start_order": list(workspace._background_prewarm_start_order),
+            "completion_order": list(workspace._background_prewarm_completion_order),
+            "ready_keys": _ready_preload_keys(workspace, planned_order),
+            "loaded_keys": loaded_keys,
+            "loaded_count": len(loaded_keys),
+            "active_key": str(workspace._background_prewarm_active_key or ""),
+            "remaining_keys": list(workspace._background_prewarm_queue),
+            "failures": dict(workspace._background_prewarm_failures),
+            "timeouts": list(workspace._background_prewarm_timeouts),
+            "promoted_order": list(self._promoted_order),
+            "pending_priority_keys": list(self._priority_reasons),
+            "priority_closures": _priority_closure_status(self),
+            "dependency_failures": dict(self._dependency_failures),
+            "cancelling_key": self._cancelling_key,
+            "cancel_receipt": _receipt_status(self._cancel_receipt),
+            "cancellation_settlement_timeout_ms": (
+                workspace.BACKGROUND_PREWARM_CANCEL_SETTLEMENT_TIMEOUT_MS
+            ),
+            "cancellation_blocked_poll_interval_ms": (
+                workspace.BACKGROUND_PREWARM_CANCEL_BLOCKED_POLL_INTERVAL_MS
+            ),
+            "cancellation_timeouts": dict(self._cancellation_timeouts),
+            "cancellation_timeout_keys": list(self._cancellation_timeouts),
+            "cancellation_blocked": self._cancellation_blocked,
+            "blocked_reason": "cancellation_timeout" if self._cancellation_blocked else "",
+            "active_step_count": self._active_step_count,
+            "max_concurrent_steps": self._max_concurrent_steps,
+            "timer_active": bool(self.timer.isActive()),
+            "shutdown_cancel_receipts": shutdown_receipts,
+            "shutdown_cancellation_settled": _all_receipts_settled(shutdown_receipts),
+        }
+
+    def prioritize(self, key: str, reason: object) -> bool:
+        """Move an interactive request to the next serial preload slot."""
+        workspace = self.workspace
+        request = _normalized_priority_request(workspace, key, reason)
+        if request is None:
+            return False
+
+        key_text, reason_text = request
+        active_key = str(workspace._background_prewarm_active_key or "")
+        self._priority_reasons[key_text] = reason_text
+        if key_text not in self._promoted_order:
+            self._promoted_order.append(key_text)
+        workspace._lazy_loading_keys.discard(key_text)
+        if not workspace._background_prewarm_started:
+            self._prestart_priority_order = [
+                queued_key for queued_key in self._prestart_priority_order if queued_key != key_text
+            ]
+            self._prestart_priority_order.append(key_text)
+            start_preload = getattr(workspace, "_start_background_tab_prewarm", None)
+            if callable(start_preload):
+                start_preload()
+            return True
+        closure = _ordered_unready_dependency_closure(workspace, key_text)
+        self._priority_closures[key_text] = closure
+        self._priority_boosted_keys.update(closure)
+        _move_priority_closure_to_front(workspace, closure)
+        if self._cancellation_blocked or not active_key:
+            _schedule_preload(self, 0)
+        return True
+
+    def defers_interactive_activation(self, key: str) -> bool:
+        key_text = str(key or "").strip()
+        return bool(
+            key_text
+            and key_text in self._priority_reasons
+            and key_text == str(self.workspace._background_prewarm_active_key or "")
+        )
+
+    def _poll_active_step(self) -> None:
+        workspace = self.workspace
+        if self._cancelling_key:
+            self._poll_cancelled_step()
+            return
+        try:
+            completed = self._widget_preload_complete(workspace._background_prewarm_active_widget)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._fail_active_step(str(exc))
+            return
+        if completed:
+            self._complete_active_step()
+            return
+        if _active_step_timed_out(workspace):
+            timeout_ms = workspace.BACKGROUND_PREWARM_STEP_TIMEOUT_MS
+            self._begin_step_cancellation(
+                "timeout",
+                f"cache-only preload exceeded {timeout_ms}ms",
+                reason="step_timeout",
+            )
+            return
+        _schedule_preload(self, workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+
+    def _start_next_step(self) -> None:
+        step = _pop_next_step(self.workspace)
+        if step is None:
+            _finish_all_preloads(self)
+            return
+        key, spec = step
+        if not _preload_dependencies_ready(self.workspace, spec):
+            self.workspace._background_prewarm_queue.insert(0, key)
+            _schedule_preload(self, self.workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+            return
+        missing_dependencies = _missing_preload_dependencies(self.workspace, key)
+        if missing_dependencies:
+            unresolved = _pending_preload_dependencies(self.workspace, missing_dependencies)
+            if unresolved:
+                _requeue_dependency_step(self, key)
+                return
+            self._fail_dependency_blocked_step(key, spec, missing_dependencies)
+            return
+        self._activate_step(key, spec)
+
+    def _fail_dependency_blocked_step(
+        self,
+        key: str,
+        spec: Mapping,
+        missing_dependencies: tuple[str, ...],
+    ) -> None:
+        detail = "dependencies_not_ready:" + ",".join(missing_dependencies)
+        self._dependency_failures[key] = detail
+        self.workspace._background_prewarm_start_order.append(key)
+        _record_step_terminal(self.workspace, key, None, "dependency_failed", detail)
+        priority_reason = self._priority_reasons.pop(key, "")
+        self._priority_closures.pop(key, None)
+        self._priority_boosted_keys.discard(key)
+        placeholder = spec.get("widget")
+        set_error = getattr(placeholder, "set_error", None)
+        if priority_reason and callable(set_error):
+            set_error("上游数据未就绪，综合数据加载已安全停止。")
+        log.error(
+            "[Workspace] background preload dependency gate rejected key=%s missing=%s",
+            key,
+            missing_dependencies,
+        )
+        _schedule_preload(self, _next_step_delay_ms(self))
+
+    def _activate_step(self, key: str, spec: Mapping) -> None:
+        workspace = self.workspace
+        workspace._background_prewarm_start_order.append(key)
+        workspace._background_prewarm_active_key = key
+        workspace._background_prewarm_active_widget = None
+        workspace._background_prewarm_active_started_at = time.perf_counter()
+        self._active_step_count += 1
+        self._max_concurrent_steps = max(self._max_concurrent_steps, self._active_step_count)
+        widget = spec.get("widget") if spec.get("loaded") else workspace.ensure_tab_loaded(
+            key,
+            reason=TabLoadReason.BACKGROUND_PREWARM.value,
+        )
+        if widget is None:
+            self._fail_active_step("tab construction failed")
+            return
+        workspace._background_prewarm_active_widget = widget
+        if not workspace._prime_tab_runtime(widget):
+            self._fail_active_step("startup prime failed")
+            return
+        try:
+            completed = self._widget_preload_complete(widget)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._fail_active_step(str(exc))
+            return
+        if completed:
+            self._complete_active_step()
+            return
+        _schedule_preload(self, workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+
+    @staticmethod
+    def _widget_preload_complete(widget) -> bool:
+        if widget is None:
+            return False
+        checker = getattr(widget, "is_background_preload_complete", None)
+        if callable(checker) and not checker():
+            return False
+
+        snapshot_prime = getattr(widget, "prime_workspace_background_snapshot", None)
+        snapshot_complete = getattr(widget, "is_workspace_background_snapshot_complete", None)
+        if not callable(snapshot_prime) or not callable(snapshot_complete):
+            return True
+        if not snapshot_prime():
+            return False
+        return bool(snapshot_complete())
+
+    def _complete_active_step(self) -> None:
+        self._finish_step("ready")
+        _schedule_preload(self, _next_step_delay_ms(self))
+
+    def _fail_active_step(self, detail: str) -> None:
+        if self.workspace._background_prewarm_active_widget is None:
+            self._finish_step("failed", detail)
+            _schedule_preload(self, _next_step_delay_ms(self))
+            return
+        self._begin_step_cancellation("failed", detail, reason="step_failed")
+
+    def _begin_step_cancellation(self, status: str, detail: str, *, reason: str) -> None:
+        workspace = self.workspace
+        key = str(workspace._background_prewarm_active_key or "")
+        if not key or self._cancelling_key:
+            return
+        self._cancelling_key = key
+        self._cancel_terminal_status = str(status or "failed")
+        self._cancel_terminal_detail = str(detail or status or "failed")
+        self._cancel_settlement_started_at = time.perf_counter()
+        workspace._background_prewarm_failures[key] = self._cancel_terminal_detail
+        if status == "timeout" and key not in workspace._background_prewarm_timeouts:
+            workspace._background_prewarm_timeouts.append(key)
+        self._cancel_receipt = self._cancel_active_widget(reason=reason)
+        self._poll_cancelled_step()
+
+    def _cancel_active_widget(self, *, reason: str):
+        widget = self.workspace._background_prewarm_active_widget
+        cancel = getattr(widget, "cancel_background_preload", None)
+        if not callable(cancel):
+            return BackgroundPreloadCancellationReceipt(accepted=False)
+        try:
+            receipt = cancel(reason=reason)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[Workspace] background preload cancellation failed: {exc}")
+            return BackgroundPreloadCancellationReceipt(accepted=False)
+        is_settled = getattr(receipt, "is_settled", None)
+        return receipt if callable(is_settled) else BackgroundPreloadCancellationReceipt(accepted=False)
+
+    def _poll_cancelled_step(self) -> None:
+        receipt = self._cancel_receipt
+        receipt_status = _receipt_status(receipt)
+        accepted = bool(receipt_status.get("accepted"))
+        is_settled = getattr(receipt, "is_settled", None)
+        try:
+            settled = bool(accepted and callable(is_settled) and is_settled())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            settled = False
+        if not settled:
+            if _cancellation_settlement_timed_out(self):
+                self._block_on_cancellation_timeout()
+                return
+            _schedule_preload(self, self.workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+            return
+        self._cancellation_blocked = False
+        status = self._cancel_terminal_status
+        detail = self._cancel_terminal_detail
+        self._finish_step(status, detail)
+        _schedule_preload(self, _next_step_delay_ms(self))
+
+    def _block_on_cancellation_timeout(self) -> None:
+        workspace = self.workspace
+        retry_ms = workspace.BACKGROUND_PREWARM_CANCEL_BLOCKED_POLL_INTERVAL_MS
+        if self._cancellation_blocked:
+            _schedule_preload(self, retry_ms)
+            return
+        key = str(self._cancelling_key or workspace._background_prewarm_active_key or "")
+        timeout_ms = workspace.BACKGROUND_PREWARM_CANCEL_SETTLEMENT_TIMEOUT_MS
+        receipt_status = _receipt_status(self._cancel_receipt)
+        accepted = bool(receipt_status.get("accepted"))
+        detail = (
+            f"cancellation_timeout: physical termination was not confirmed within {timeout_ms}ms "
+            f"(accepted={accepted})"
+        )
+        self._cancellation_timeouts[key] = detail
+        self._cancellation_blocked = True
+        log.error(
+            "[Workspace] background preload fail-closed key=%s reason=cancellation_timeout receipt=%s",
+            key,
+            receipt_status,
+        )
+        _schedule_preload(self, retry_ms)
+
+    def _finish_step(self, status: str, detail: str = "") -> None:
+        workspace = self.workspace
+        key = str(workspace._background_prewarm_active_key or "")
+        widget = workspace._background_prewarm_active_widget
+        priority_reason = self._priority_reasons.pop(key, "")
+        if not key:
+            return
+        _record_step_terminal(workspace, key, widget, status, detail)
+        _promote_priority_widget(self, key, widget, priority_reason)
+        workspace._background_prewarm_active_key = ""
+        workspace._background_prewarm_active_widget = None
+        workspace._background_prewarm_active_started_at = 0.0
+        self._active_step_count = max(0, self._active_step_count - 1)
+        self._priority_boosted_keys.discard(key)
+        self._priority_closures.pop(key, None)
+        _clear_cancellation_state(self)

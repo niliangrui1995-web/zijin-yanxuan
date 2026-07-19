@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import builtins
-import datetime
 import os
 import threading
 from pathlib import Path
@@ -13,6 +12,7 @@ import pytest
 
 import core.rps_precomputer as rps_precomputer_module
 import infra.market_data.market_data_warehouse as warehouse_module
+from app.services.f5_job_contract import F5JobRequest, F5JobStatus, F5Phase
 from core.rps_precomputer import RPSPrecomputer
 from infra.market_data.market_data_warehouse import (
     MARKET_DATA_SCHEMA_VERSION,
@@ -21,6 +21,7 @@ from infra.market_data.market_data_warehouse import (
     _frame_to_polars,
 )
 from infra.market_data.warehouse_manifest import WarehouseManifest, WarehouseManifestRecord
+from infra.market_data.warehouse_quote_reader import read_latest_quotes
 from vcp.data_provider_cache import load_cache_from_disk
 from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin
 
@@ -136,6 +137,169 @@ def test_warehouse_read_symbols_scans_once_and_returns_only_requested_hits(tmp_p
     assert list(result.data["000001"]["close"]) == [10.2, 10.7]
     assert list(result.data["600000"]["close"]) == [30.2, 30.7]
     assert len(scan_calls) == 1
+
+
+def test_warehouse_read_close_tails_projects_and_materializes_only_sorted_tail_values(tmp_path, monkeypatch):
+    warehouse = _warehouse(tmp_path)
+    base = pd.DataFrame(
+        {
+            "open": range(1, 26),
+            "high": range(2, 27),
+            "low": range(0, 25),
+            "close": [float(value) for value in range(1, 26)],
+            "volume": range(1001, 1026),
+            "amount": range(10001, 10026),
+        },
+        index=pd.date_range("2026-01-01", periods=25, freq="D"),
+    )
+    shuffled = base.iloc[[24, 0, 23, 1, 22, 2, 21, 3, 20, 4, 19, 5, 18, 6, 17, 7, 16, 8, 15, 9, 14, 10, 13, 11, 12]]
+    with_null = base.copy()
+    with_null.loc[pd.Timestamp("2026-01-10"), "close"] = None
+    warehouse.write_market_dataset(
+        {"000001": shuffled, "300750": base, "600000": with_null},
+        "20260125",
+        source="vipdoc",
+    )
+
+    real_scan_parquet = pl.scan_parquet
+    scan_calls = []
+    monkeypatch.setattr(
+        pl,
+        "scan_parquet",
+        lambda *args, **kwargs: scan_calls.append(args[0]) or real_scan_parquet(*args, **kwargs),
+    )
+    monkeypatch.setattr(
+        pl.DataFrame,
+        "to_pandas",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("close-tail reads must not convert to pandas")),
+    )
+
+    result = warehouse.read_close_tails(["000001", "600000", "999999", "000001"], 21)
+
+    assert result.status.ok is True
+    assert result.status.symbol_count == 2
+    assert result.status.row_count == 42
+    assert result.data["000001"] == tuple(float(value) for value in range(5, 26))
+    assert result.data["600000"] == tuple(float(value) for value in [4, 5, 6, 7, 8, 9, *range(11, 26)])
+    assert len(scan_calls) == 1
+
+
+def test_warehouse_read_close_tails_keeps_empty_and_failure_status_contracts(tmp_path, monkeypatch):
+    warehouse = _warehouse(tmp_path)
+    empty = warehouse.read_close_tails([], 21)
+
+    assert empty.status.ok is True
+    assert empty.data == {}
+
+    invalid = _sample_frame([10.0, 10.5])
+    invalid["close"] = ["10.2", "invalid"]
+    warehouse.write_market_dataset({"000001": invalid}, "20260511")
+    invalid_result = warehouse.read_close_tails(["000001"], 21)
+
+    assert invalid_result.status.ok is True
+    assert invalid_result.data == {"000001": ()}
+
+    monkeypatch.setattr(pl, "scan_parquet", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read failed")))
+
+    failed = warehouse.read_close_tails(["000001"], 21)
+
+    assert failed.data is None
+    assert failed.status.ok is False
+    assert failed.status.data_status == "parquet_unreadable"
+    assert failed.status.fallback_reason == "parquet_unreadable"
+
+
+def test_warehouse_quote_reader_scans_once_and_materializes_only_tail_rows(tmp_path, monkeypatch):
+    warehouse = _warehouse(tmp_path)
+    warehouse.write_market_dataset(
+        {
+            "000001": _sample_frame([10.0, 10.5]),
+            "300750": _sample_frame([20.0, 20.5]),
+            "600000": _sample_frame([30.0, 30.5]),
+        },
+        "20260511",
+        source="vipdoc",
+    )
+    real_scan_parquet = pl.scan_parquet
+    scan_calls = []
+    monkeypatch.setattr(
+        pl,
+        "scan_parquet",
+        lambda *args, **kwargs: scan_calls.append(args[0]) or real_scan_parquet(*args, **kwargs),
+    )
+
+    result = read_latest_quotes(warehouse, ["000001", "600000", "999999", "000001"])
+
+    assert result.status.ok is True
+    assert result.status.active_layer == "parquet_sqlite_warehouse"
+    assert result.status.row_count == 4
+    assert set(result.data) == {"000001", "600000"}
+    assert result.data["000001"] == {
+        "open": pytest.approx(10.5),
+        "high": pytest.approx(11.0),
+        "low": pytest.approx(10.0),
+        "close": pytest.approx(10.7),
+        "volume": pytest.approx(1001.0),
+        "amount": pytest.approx(10001.0),
+        "last_close": pytest.approx(10.2),
+        "date": "2026-05-11",
+    }
+    assert len(scan_calls) == 1
+
+
+def test_warehouse_quote_reader_sorts_tail_rows_and_handles_single_bar(tmp_path):
+    warehouse = _warehouse(tmp_path)
+    unordered = pd.DataFrame(
+        {
+            "open": [12.0, 8.0, 11.0],
+            "high": [12.8, 8.8, 11.8],
+            "low": [11.5, 7.5, 10.5],
+            "close": [12.5, 8.5, 11.5],
+            "volume": [1200, 800, 1100],
+            "amount": [12_500.0, 8_500.0, 11_500.0],
+        },
+        index=pd.to_datetime(["2026-05-12", "2026-05-08", "2026-05-11"]),
+    )
+    single = pd.DataFrame(
+        {
+            "open": [20.0],
+            "high": [20.8],
+            "low": [19.5],
+            "close": [20.5],
+            "volume": [2000],
+            "amount": [20_500.0],
+        },
+        index=pd.to_datetime(["2026-05-10"]),
+    )
+    warehouse.write_market_dataset({"000001": unordered, "600000": single}, "20260512")
+
+    result = read_latest_quotes(warehouse, ["000001", "600000"])
+
+    assert result.status.row_count == 3
+    assert result.data["000001"]["close"] == pytest.approx(12.5)
+    assert result.data["000001"]["last_close"] == pytest.approx(11.5)
+    assert result.data["000001"]["date"] == "2026-05-12"
+    assert result.data["600000"]["last_close"] == pytest.approx(20.0)
+    assert result.data["600000"]["date"] == "2026-05-10"
+
+
+def test_warehouse_quote_reader_reports_missing_required_columns_as_schema_error(tmp_path):
+    warehouse = _warehouse(tmp_path)
+    _write_minimal_parquet(warehouse.parquet_path, include_close=False)
+    warehouse.manifest.upsert(
+        _manifest_record(
+            warehouse,
+            parquet_path=str(warehouse.parquet_path),
+        )
+    )
+
+    result = read_latest_quotes(warehouse, ["000001"])
+
+    assert result.data is None
+    assert result.status.ok is False
+    assert result.status.data_status == "schema_incompatible"
+    assert result.status.fallback_reason == "schema_incompatible"
+    assert "close" in result.status.error
 
 
 def test_legacy_save_entry_publishes_the_built_snapshot_through_warehouse(tmp_path, monkeypatch):
@@ -568,6 +732,48 @@ class _NoopLogger:
         return None
 
 
+class _F5DateColumn:
+    @staticmethod
+    def max():
+        return "20260101"
+
+
+class _F5Frame:
+    columns = ("datetime",)
+
+    def __len__(self):
+        return 60
+
+    def __getitem__(self, key):
+        assert key == "datetime"
+        return _F5DateColumn()
+
+
+class _F5SnapshotStore:
+    def __init__(self, output_dir):
+        self.parquet_path = str(Path(output_dir) / "market.parquet")
+
+    def stage_market_dataset(self, cache_data, _trade_date):
+        return SimpleNamespace(
+            ok=True,
+            error="",
+            parquet_path=self.parquet_path,
+            schema_version=1,
+            symbol_count=len(cache_data),
+            row_count=len(cache_data) * 60,
+        )
+
+
+def _f5_request(tmp_path) -> F5JobRequest:
+    return F5JobRequest.build(
+        project_root=str(tmp_path),
+        data_dir=str(tmp_path / "data"),
+        cache_dir=str(tmp_path / "cache"),
+        tdx_vipdoc="D:/HT/vipdoc",
+        requested_date="20260101",
+    )
+
+
 def test_load_cache_from_disk_prefers_warehouse_full_market(tmp_path):
     warehouse = _warehouse(tmp_path)
     warehouse.write_market_dataset({"000001": _sample_frame([10.0, 10.5])}, "20260511")
@@ -585,13 +791,7 @@ def test_load_cache_from_disk_prefers_warehouse_full_market(tmp_path):
     assert provider._last_market_data_source_status["active_layer"] == "parquet_sqlite_warehouse"
 
 
-def test_f5_stage1_uses_provider_cache_loader_before_vipdoc_reread(monkeypatch):
-    import core.cache_policy as cache_policy
-
-    monkeypatch.setattr(cache_policy, "cleanup_stale_caches", lambda _project_root: None)
-
-    today = datetime.date.today().strftime("%Y%m%d")
-
+def test_f5_initial_cancellation_stops_before_provider_cache_load(monkeypatch, tmp_path):
     class _Provider:
         def __init__(self):
             self.cache_data = {}
@@ -602,43 +802,31 @@ def test_f5_stage1_uses_provider_cache_loader_before_vipdoc_reread(monkeypatch):
         def load_cache_from_disk(self):
             self.load_calls += 1
             self.cache_data = {f"{idx:06d}": object() for idx in range(2001)}
-            return today
+            return "20260101"
 
         @staticmethod
         def _get_codes_from_vipdoc():
             return {"000001": "Ping An Bank"}
 
     provider = _Provider()
-    messages = []
-    done = []
+    events = []
+    monkeypatch.setattr(rps_precomputer_module, "ensure_cache_dir", lambda: None)
 
-    RPSPrecomputer.run_f5_pipeline(
-        provider,
+    result = RPSPrecomputer.run_f5_job(
+        _f5_request(tmp_path),
+        data_provider=provider,
         engine=object(),
         cancelled_checker=lambda: True,
-        set_status_callback=messages.append,
-        done_callback=lambda count, elapsed: done.append((count, elapsed)),
+        event_callback=events.append,
     )
 
-    assert provider.load_calls == 1
-    assert provider.code2name == {"000001": "Ping An Bank"}
-    assert any("local warehouse cache" in message for message in messages)
-    assert done and done[0][0] == 2001
+    assert result.status is F5JobStatus.CANCELLED
+    assert provider.load_calls == 0
+    assert provider.code2name == {}
+    assert events == []
 
 
-def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeypatch):
-    import sys
-    from types import SimpleNamespace
-
-    import core.cache_policy as cache_policy
-
-    monkeypatch.setattr(cache_policy, "cleanup_stale_caches", lambda _project_root: None)
-    monkeypatch.setitem(
-        sys.modules,
-        "vcp.polars_engine",
-        SimpleNamespace(save_cache_parquet=lambda _cache_data, _today_str: True),
-    )
-
+def test_f5_stage1_progress_emits_job_events_under_system_log_backpressure(monkeypatch, tmp_path):
     guard_calls = []
 
     class _Guard:
@@ -655,6 +843,8 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
         return _Guard()
 
     monkeypatch.setattr(rps_precomputer_module, "system_log_backpressure", _fake_backpressure)
+    monkeypatch.setattr(rps_precomputer_module, "F5MarketSnapshotStore", _F5SnapshotStore)
+    monkeypatch.setattr(rps_precomputer_module, "ensure_cache_dir", lambda: None)
 
     class _Provider:
         def __init__(self):
@@ -683,144 +873,40 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
         def set_online_mode(_online):
             return None
 
-        def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
+        def sync_market_data(
+            self,
+            codes,
+            force_refresh=False,
+            progress_callback=None,
+            *,
+            max_workers=None,
+            cancellation_checker=None,
+            snapshot_writer=None,
+            snapshot_date="",
+        ):
             self.max_workers = max_workers
+            assert cancellation_checker is not None and cancellation_checker() is False
             if progress_callback:
                 progress_callback(1000, len(codes), "ETA 1 min")
-            self.cache_data = {code: object() for code in codes}
+            self.cache_data = {code: _F5Frame() for code in codes}
+            assert snapshot_writer is not None
+            snapshot_writer(self.cache_data, snapshot_date)
 
     provider = _Provider()
-    messages = []
-    done = []
+    events = []
 
-    RPSPrecomputer.run_f5_pipeline(
-        provider,
+    result = RPSPrecomputer.run_f5_job(
+        _f5_request(tmp_path),
+        data_provider=provider,
         engine=object(),
-        cancelled_checker=lambda: True,
-        set_status_callback=messages.append,
-        done_callback=lambda count, elapsed: done.append((count, elapsed)),
+        cancelled_checker=lambda: False,
+        event_callback=events.append,
     )
 
     assert ("F5", ("core.rps_precomputer",)) in guard_calls
     assert ("enter",) in guard_calls
     assert ("exit",) in guard_calls
     assert provider.max_workers == rps_precomputer_module.F5_LOCAL_REREAD_MAX_WORKERS
-    assert any("1000/2000 ETA 1 min" in message for message in messages)
-    assert done and done[0][0] == 2000
-
-
-def test_f5_skips_duplicate_stage1_checkpoint_after_provider_save(monkeypatch):
-    import sys
-    from types import SimpleNamespace
-
-    import core.cache_policy as cache_policy
-
-    monkeypatch.setattr(cache_policy, "cleanup_stale_caches", lambda _project_root: None)
-
-    def _unexpected_checkpoint(_cache_data, _today_str):
-        raise AssertionError("provider already saved the stage1 cache")
-
-    monkeypatch.setitem(
-        sys.modules,
-        "vcp.polars_engine",
-        SimpleNamespace(save_cache_parquet=_unexpected_checkpoint),
-    )
-
-    today = datetime.date.today().strftime("%Y%m%d")
-
-    class _Provider:
-        def __init__(self):
-            self.cache_data = {}
-            self.cache_lock = threading.Lock()
-            self.code2name = {}
-            self.tdx_vipdoc = ""
-            self._last_market_data_parquet_saved_date = ""
-
-        @staticmethod
-        def ensure_adjustment_metadata(*, force=False):
-            return None
-
-        @staticmethod
-        def load_cache_from_disk():
-            return ""
-
-        @staticmethod
-        def _get_codes_from_vipdoc():
-            return {"000001": "Ping An Bank"}
-
-        @staticmethod
-        def is_online():
-            return False
-
-        @staticmethod
-        def set_online_mode(_online):
-            return None
-
-        def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
-            self.cache_data = {code: object() for code in codes}
-            self._last_market_data_parquet_saved_date = today
-
-    done = []
-
-    RPSPrecomputer.run_f5_pipeline(
-        _Provider(),
-        engine=object(),
-        cancelled_checker=lambda: True,
-        set_status_callback=lambda _message: None,
-        done_callback=lambda count, elapsed: done.append((count, elapsed)),
-    )
-
-    assert done and done[0][0] == 1
-
-
-def test_f5_ui_status_skips_separator_noise():
-    messages = []
-
-    rps_precomputer_module._emit_status(messages.append, "\n" + "=" * 60)
-    rps_precomputer_module._emit_status(messages.append, "[F5] 盘后一键预计算 -- 开始")
-    rps_precomputer_module._emit_status(messages.append, "=" * 60)
-
-    assert messages == ["[F5] 盘后一键预计算 -- 开始"]
-
-
-def test_f5_stage1_progress_throttles_dense_status_updates():
-    messages = []
-    progress_state = {}
-
-    for done in (1, 50, 199):
-        rps_precomputer_module._handle_stage1_progress(
-            done,
-            2000,
-            "ETA 1 min",
-            messages.append,
-            progress_state,
-        )
-
-    assert messages == []
-
-    rps_precomputer_module._handle_stage1_progress(
-        200,
-        2000,
-        "ETA 1 min",
-        messages.append,
-        progress_state,
-    )
-    rps_precomputer_module._handle_stage1_progress(
-        201,
-        2000,
-        "ETA 1 min",
-        messages.append,
-        progress_state,
-    )
-    rps_precomputer_module._handle_stage1_progress(
-        1000,
-        2000,
-        "ETA 1 min",
-        messages.append,
-        progress_state,
-    )
-
-    assert [message for message in messages if "ETA 1 min" in message] == [
-        "[F5] 阶段1/3: 重读本地数据 200/2000 ETA 1 min",
-        "[F5] 阶段1/3: 重读本地数据 1000/2000 ETA 1 min",
-    ]
+    progress_events = [event for event in events if event.phase is F5Phase.MARKET_SYNC and event.completed]
+    assert any(event.completed == 1000 and "1000/2000 ETA 1 min" in event.message for event in progress_events)
+    assert result.status is F5JobStatus.FAILED

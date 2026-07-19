@@ -68,6 +68,48 @@ def test_fund_holdings_row_builder_stops_inside_row_loop():
         )
 
 
+def test_fund_holdings_query_pushes_stock_universe_into_store():
+    calls = []
+
+    class _Store:
+        def query_change_rows(self, *, quarter_keys, stock_codes):
+            calls.append((quarter_keys, stock_codes))
+            return [
+                {"stock_code": "000001", "quarter_key": "2026Q1"},
+                {"stock_code": "600000", "quarter_key": "2026Q1"},
+            ]
+
+    rows = payload_module.query_change_rows_for_scope(
+        {"2026Q1"},
+        stock_universe_provider=lambda: {1, "300750.0"},
+        store=_Store(),
+    )
+
+    assert calls == [({"2026Q1"}, {"000001", "300750"})]
+    assert rows == [{"stock_code": "000001", "quarter_key": "2026Q1"}]
+
+
+def test_fund_holdings_query_keeps_legacy_store_fallback():
+    calls = []
+
+    class _LegacyStore:
+        def query_change_rows(self, quarter_keys=None):
+            calls.append(quarter_keys)
+            return [
+                {"stock_code": "000001", "quarter_key": "2026Q1"},
+                {"stock_code": "600000", "quarter_key": "2026Q1"},
+            ]
+
+    rows = payload_module.query_change_rows_for_scope(
+        {"2026Q1"},
+        stock_universe_provider=lambda: {"000001"},
+        store=_LegacyStore(),
+    )
+
+    assert calls == [{"2026Q1"}]
+    assert rows == [{"stock_code": "000001", "quarter_key": "2026Q1"}]
+
+
 def test_qfii_sync_cancellation_before_store_does_not_commit(monkeypatch):
     from domains.fund_holdings import sync as sync_module
 

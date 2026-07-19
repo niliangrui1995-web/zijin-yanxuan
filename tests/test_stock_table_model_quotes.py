@@ -7,7 +7,7 @@ from PyQt6.QtTest import QSignalSpy
 
 from core.global_store import global_store
 from core.observability import clear_metric_history, metric_history
-from ui.models.table_model_helpers import _flash_decay_alpha
+from ui.models.table_model_helpers import STOCK_CELL_RENDER_ROLE, _flash_decay_alpha
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
@@ -78,6 +78,68 @@ def test_stock_table_model_coalesces_sparse_non_flash_updates():
     roles = {int(getattr(role, "value", role)) for role in spy[0][2]}
     assert int(Qt.ItemDataRole.UserRole) + 1 not in roles
     assert model._flash_records == {}
+
+
+def test_stock_table_model_incremental_update_emits_only_changed_visible_columns():
+    model = StockTableModel(["代码", "名称", "现价", "RPS强度", "摘要"])
+    model.update_data(
+        [{"代码": "000001", "名称": "A", "现价": "10.00", "RPS强度": "80", "摘要": "旧"}],
+        hydrate_latest_quotes=False,
+    )
+    spy = QSignalSpy(model.dataChanged)
+    updated = [dict(model.row_data[0])]
+    updated[0]["RPS强度"] = "95"
+
+    model.update_data(updated, hydrate_latest_quotes=False)
+
+    assert len(spy) == 1
+    changed_col = model.headers.index("RPS强度")
+    assert spy[0][0].column() == changed_col
+    assert spy[0][1].column() == changed_col
+    roles = {int(getattr(role, "value", role)) for role in spy[0][2]}
+    assert STOCK_CELL_RENDER_ROLE in roles
+
+
+def test_stock_table_model_hidden_row_style_change_notifies_accent_rail_column():
+    model = StockTableModel(["代码", "名称", "现价"])
+    model.update_data(
+        [{"代码": "000001", "名称": "A", "现价": "10.00", "_row_style": ""}],
+        hydrate_latest_quotes=False,
+    )
+    spy = QSignalSpy(model.dataChanged)
+    updated = [dict(model.row_data[0])]
+    updated[0]["_row_style"] = "warning"
+
+    model.update_data(updated, hydrate_latest_quotes=False)
+
+    assert len(spy) == 1
+    assert spy[0][0].column() == 0
+    assert spy[0][1].column() == 0
+    roles = {int(getattr(role, "value", role)) for role in spy[0][2]}
+    assert int(Qt.ItemDataRole.UserRole) + 4 in roles
+    assert STOCK_CELL_RENDER_ROLE in roles
+
+
+def test_stock_table_model_pct_change_notifies_dependent_price_style():
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%"])
+    model.update_data(
+        [{"代码": "000001", "名称": "A", "现价": "10.00", "涨幅%": -1.0}],
+        hydrate_latest_quotes=False,
+    )
+    price_col = model.headers.index("现价")
+    pct_col = model.headers.index("涨幅%")
+    old_color = model.data(model.index(0, price_col), Qt.ItemDataRole.ForegroundRole)
+    spy = QSignalSpy(model.dataChanged)
+    updated = [dict(model.row_data[0])]
+    updated[0]["涨幅%"] = 1.0
+
+    model.update_data(updated, hydrate_latest_quotes=False)
+
+    changed_spans = [(entry[0].column(), entry[1].column()) for entry in spy]
+    assert any(start <= price_col <= end for start, end in changed_spans)
+    assert any(start <= pct_col <= end for start, end in changed_spans)
+    new_color = model.data(model.index(0, price_col), Qt.ItemDataRole.ForegroundRole)
+    assert new_color != old_color
 
 
 def test_stock_table_model_sort_value_cache_invalidates_on_cell_update():

@@ -7,9 +7,16 @@ from datetime import date
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError, NetworkServiceError
 from core.market_calendar import MarketCalendar
+from core.runtime_paths import PROJECT_ROOT
+
+
+@pytest.fixture(autouse=True)
+def _reset_market_calendar_task_shutdown(monkeypatch):
+    monkeypatch.setattr(MarketCalendar, "_task_shutdown", False, raising=False)
 
 
 def _fake_status(status: str):
@@ -418,6 +425,69 @@ def test_load_trade_dates_uses_store_and_schedules_stale_refresh(monkeypatch):
     assert scheduled == ["2026-04"]
 
 
+def test_cache_only_trade_dates_reads_stale_cache_without_refresh_or_write(monkeypatch):
+    scheduled = []
+
+    class _DataStore:
+        def load_json(self, key):
+            assert key == "trade_dates"
+            return {"month": "2026-03", "dates": ["2026-04-18"]}
+
+        def save_json(self, _key, _payload):
+            raise AssertionError("cache-only calendar must not write")
+
+    monkeypatch.setattr(MarketCalendar, "_trade_dates_loading", False, raising=False)
+    monkeypatch.setattr(
+        MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": datetime.datetime(2026, 4, 20, 9, 0)),
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_schedule_trade_dates_refresh",
+        classmethod(lambda cls, month: scheduled.append(month)),
+    )
+    monkeypatch.setattr("infra.storage.DataStore", _DataStore)
+
+    assert MarketCalendar.load_trade_dates(allow_refresh=False) == {"2026-04-18"}
+    assert scheduled == []
+
+
+def test_cache_only_trade_dates_missing_cache_never_schedules_refresh(monkeypatch, tmp_path):
+    scheduled = []
+
+    class _DataStore:
+        def load_json(self, key):
+            assert key == "trade_dates"
+            return None
+
+        def save_json(self, _key, _payload):
+            raise AssertionError("cache-only calendar must not write")
+
+    monkeypatch.setattr(MarketCalendar, "_trade_dates", None, raising=False)
+    monkeypatch.setattr(MarketCalendar, "_trade_dates_loading", False, raising=False)
+    monkeypatch.setattr(
+        MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": datetime.datetime(2026, 4, 20, 9, 0)),
+    )
+    monkeypatch.setattr(MarketCalendar, "_project_root", staticmethod(lambda: str(tmp_path)))
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_schedule_trade_dates_refresh",
+        classmethod(lambda cls, month: scheduled.append(month)),
+    )
+    monkeypatch.setattr("infra.storage.DataStore", _DataStore)
+
+    assert MarketCalendar.load_trade_dates(allow_refresh=False) is None
+    assert MarketCalendar.get_recent_trade_dates(
+        3,
+        ref_date="2026-04-20",
+        allow_refresh=False,
+    ) == ["20260420", "20260417", "20260416"]
+    assert scheduled == []
+
+
 def test_load_trade_dates_migrates_legacy_cache_file(monkeypatch, tmp_path):
     cache_dir = tmp_path / "data" / "Cache"
     cache_dir.mkdir(parents=True)
@@ -439,6 +509,38 @@ def test_load_trade_dates_migrates_legacy_cache_file(monkeypatch, tmp_path):
     assert MarketCalendar.load_trade_dates() == {"2026-04-20"}
     assert saved == [("trade_dates", {"month": "2026-04", "dates": ["2026-04-20"]})]
     assert (cache_dir / "trade_dates.json.migrated").exists()
+
+
+def test_cache_only_legacy_trade_dates_does_not_migrate_or_write(monkeypatch, tmp_path):
+    cache_dir = tmp_path / "data" / "Cache"
+    cache_dir.mkdir(parents=True)
+    cache_file = cache_dir / "trade_dates.json"
+    cache_file.write_text('{"month": "2026-03", "dates": ["2026-04-20"]}', encoding="utf-8")
+
+    class _DataStore:
+        def load_json(self, key):
+            assert key == "trade_dates"
+            return None
+
+        def save_json(self, _key, _payload):
+            raise AssertionError("cache-only legacy read must not migrate")
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": datetime.datetime(2026, 4, 20, 9, 0)),
+    )
+    monkeypatch.setattr(MarketCalendar, "_project_root", staticmethod(lambda: str(tmp_path)))
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_schedule_trade_dates_refresh",
+        classmethod(lambda cls, month: (_ for _ in ()).throw(AssertionError(month))),
+    )
+    monkeypatch.setattr("infra.storage.DataStore", _DataStore)
+
+    assert MarketCalendar.load_trade_dates(allow_refresh=False) == {"2026-04-20"}
+    assert cache_file.exists()
+    assert not (cache_dir / "trade_dates.json.migrated").exists()
 
 
 def test_load_trade_dates_returns_none_while_refresh_is_loading(monkeypatch, tmp_path):
@@ -535,3 +637,21 @@ def test_market_calendar_status_branches(monkeypatch):
     monkeypatch.setitem(MarketCalendar._MARKET_PHASES, "CN", None)
     monkeypatch.setattr(MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": datetime.datetime(2026, 4, 20, 12, 0)))
     assert MarketCalendar.get_market_status("CN") == "\u5348\u4f11"
+
+
+def test_market_calendar_uses_the_canonical_project_data_root():
+    assert MarketCalendar._project_root() == PROJECT_ROOT
+
+
+def test_market_calendar_does_not_schedule_new_tasks_after_process_shutdown(monkeypatch):
+    calls = []
+    monkeypatch.setattr(MarketCalendar, "_task_shutdown", True, raising=False)
+    monkeypatch.setattr(
+        "domains.market_calendar.calendar_service._MARKET_CALENDAR_TASKS.run_background",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    MarketCalendar._schedule_asian_holiday_refresh("HK", [2026])
+    MarketCalendar._schedule_trade_dates_refresh("2026-07")
+
+    assert calls == []

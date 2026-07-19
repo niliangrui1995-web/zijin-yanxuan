@@ -53,7 +53,6 @@ def apply_table_density(main_window, mode: str, persist: bool = True):
                 widget.apply_density(mode)
 
         qss = generate_global_qss(density=mode)
-        main_window.setStyleSheet(qss)
         app.setStyleSheet(qss)
 
     apply_chrome_theme(main_window)
@@ -173,11 +172,10 @@ def apply_theme(main_window, *, notify: bool = True):
 
     invalidate_table_token_cache()
     invalidate_global_qss_cache()
-    qss = generate_global_qss()
-    main_window.setStyleSheet(qss)
 
     app = QApplication.instance()
     if app is not None:
+        qss = generate_global_qss()
         app.setStyleSheet(qss)
         hide_floating_tooltip()
 

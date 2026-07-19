@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from app.services.kline_open_service import build_kline_open_request
-from ui.workspaces.stock_signal import StockSignal
+from app.services.stock_context_model_service import StockSignal
 
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
@@ -294,3 +294,70 @@ def test_build_kline_open_request_falls_back_to_name_map_when_row_context_missin
     assert request["vcp_data"]["代码"] == "000001"
     assert request["vcp_data"]["名称"] == "平安银行"
     assert request["code_list"] == []
+
+
+def test_build_kline_open_request_uses_published_index_without_workspace_snapshot_copy():
+    scan_signal = StockSignal(
+        code="000001",
+        source_tab="scan",
+        signal_type="vcp_scan",
+        summary="VCP",
+        observed_at="20260717",
+        payload={"区间最高价": 15.2, "区间最低点": 11.8},
+    )
+    earnings_signal = StockSignal(
+        code="000001",
+        source_tab="earnings",
+        signal_type="earnings",
+        summary="一季度增长",
+        payload={"公告日期": "2026-07-17"},
+    )
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("K-line open must not capture or scan the whole workspace")
+
+    workspace = SimpleNamespace(
+        get_published_stock_context_signals=lambda code: (scan_signal, earnings_signal),
+        capture_stock_context_snapshot=_forbidden,
+        collect_stock_context=_forbidden,
+        get_scan_results=_forbidden,
+    )
+
+    request = build_kline_open_request(
+        code="000001",
+        code_name_map={"000001": "平安银行"},
+        code_list=[{"代码": "000001", "名称": "平安银行"}],
+        current_idx=0,
+        workspace=workspace,
+        source_tab_index=0,
+        source_tab_key="watchlist",
+    )
+
+    assert request["vcp_data"]["区间最高价"] == 15.2
+    assert request["vcp_data"]["区间最低点"] == 11.8
+    assert request["vcp_data"]["业绩异动"] == "一季度增长"
+    assert request["vcp_data"]["业绩日"] == "2026-07-17"
+
+
+def test_build_kline_open_request_uses_fast_row_fallback_before_index_ready():
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("unready published index must not trigger a full workspace copy")
+
+    workspace = SimpleNamespace(
+        get_published_stock_context_signals=lambda _code: None,
+        capture_stock_context_snapshot=_forbidden,
+        collect_stock_context=_forbidden,
+        get_scan_results=_forbidden,
+    )
+
+    request = build_kline_open_request(
+        code="000001",
+        code_name_map={"000001": "平安银行"},
+        code_list=[{"代码": "000001", "名称": "平安银行", "自选备注": "观察"}],
+        current_idx=0,
+        workspace=workspace,
+        source_tab_index=0,
+        source_tab_key="watchlist",
+    )
+
+    assert request["vcp_data"]["自选备注"] == "观察"

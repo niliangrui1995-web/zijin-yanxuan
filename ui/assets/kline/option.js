@@ -399,7 +399,7 @@
                         coordinateSystem: 'cartesian2d',
                         xAxisIndex: 1,
                         yAxisIndex: 1,
-                        data: buildVolumeSpikeParticles(),
+                        data: runtimeActive ? buildVolumeSpikeParticles() : [],
                         symbol: 'circle',
                         showEffectOn: 'render',
                         rippleEffect: {

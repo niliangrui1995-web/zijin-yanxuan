@@ -49,6 +49,7 @@ class AsianRealtimeQuotePort(Protocol):
         yf_session: Any = None,
         allow_yfinance_fallback: bool = True,
         raise_on_source_payload_error: bool = False,
+        cancellation_token: Any = None,
     ) -> dict | None: ...
 
 
@@ -58,6 +59,7 @@ def fetch_asian_realtime_quote(
     yf_session: Any = None,
     allow_yfinance_fallback: bool = True,
     raise_on_source_payload_error: bool = False,
+    cancellation_token: Any = None,
     yf_module: Any = yf,
     rate_limit_status: RateLimitStatusGetter = get_yf_rate_limit_status,
     rate_limit_error: RateLimitPredicate = is_yf_rate_limit_error,
@@ -73,6 +75,7 @@ def fetch_asian_realtime_quote(
         yf_session=yf_session,
         allow_yfinance_fallback=allow_yfinance_fallback,
         raise_on_source_payload_error=raise_on_source_payload_error,
+        cancellation_token=cancellation_token,
         yf_module=yf_module,
         rate_limit_status=rate_limit_status,
         rate_limit_error=rate_limit_error,

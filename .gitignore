@@ -21,6 +21,8 @@ venv/
 data/Cache/*.pkl
 data/Cache/*.parquet
 data/Cache/parquet/
+data/Cache/f5_jobs/
+data/Cache/f5_generations/
 data/Cache/vcp_*.pkl
 data/Cache/vcp_*.json
 data/Cache/vcp_*.txt

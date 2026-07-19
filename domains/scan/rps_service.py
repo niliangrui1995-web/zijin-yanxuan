@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import pandas as pd
 
+from core.f5_activation_gate import f5_snapshot_activation_boundary, f5_snapshot_read_boundary
 from core.logger import get_logger
 from core.runtime_paths import DATE_FMT, RPS_BUFFER_DAYS
 from domains.market_calendar import MarketCalendar
@@ -27,14 +28,16 @@ class RpsService:
         self._rps_matrix_builder = rps_matrix_builder
 
     def set_precomputed_rps(self, cache_date: str, rps120, rps250) -> None:
-        self._precomputed_rps_bundle = {
-            "date": str(cache_date),
-            "rps120": rps120,
-            "rps250": rps250,
-        }
+        with f5_snapshot_activation_boundary():
+            self._precomputed_rps_bundle = {
+                "date": str(cache_date),
+                "rps120": rps120,
+                "rps250": rps250,
+            }
 
     def get_precomputed_rps(self) -> dict | None:
-        return self._precomputed_rps_bundle
+        with f5_snapshot_read_boundary():
+            return self._precomputed_rps_bundle
 
     @staticmethod
     def build_prices_matrix(

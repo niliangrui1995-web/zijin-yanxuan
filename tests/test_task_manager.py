@@ -109,6 +109,98 @@ def test_task_manager_unexpected_exception_reaches_terminal_state():
     assert errors == ["unexpected index"]
 
 
+def test_task_manager_delivers_on_terminated_after_worker_really_stops():
+    task_manager.cancel_all()
+    task_manager._shutting_down = False
+    release = threading.Event()
+    terminated = []
+
+    task_manager.run_in_background(
+        lambda: release.wait(0.5),
+        on_terminated=lambda: terminated.append(True),
+        task_id="terminated_callback_test",
+    )
+
+    assert terminated == []
+    release.set()
+    assert _pump_events_until(lambda: bool(terminated))
+    assert terminated == [True]
+    assert task_manager.active_count == 0
+
+
+def test_task_manager_releases_dedupe_slot_only_on_terminated():
+    class _Signal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback, **_kwargs):
+            self.callbacks.append(callback)
+
+        def emit(self, *args):
+            for callback in tuple(self.callbacks):
+                callback(*args)
+
+    worker = SimpleNamespace(
+        signals=SimpleNamespace(
+            finished=_Signal(),
+            error=_Signal(),
+            terminated=_Signal(),
+        )
+    )
+    task_manager.active_workers["terminal-only-cleanup"] = worker
+    task_manager._connect_worker_callbacks(
+        worker,
+        "terminal-only-cleanup",
+        None,
+        lambda _message: None,
+        None,
+    )
+
+    worker.signals.finished.emit("ok")
+    assert task_manager.is_active_task("terminal-only-cleanup") is True
+
+    worker.signals.terminated.emit()
+    assert task_manager.is_active_task("terminal-only-cleanup") is False
+
+
+def test_task_manager_releases_exact_worker_before_terminal_callback_resubmits(monkeypatch):
+    class _Signal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback, **_kwargs):
+            self.callbacks.append(callback)
+
+        def emit(self, *args):
+            for callback in tuple(self.callbacks):
+                callback(*args)
+
+    old_worker = SimpleNamespace(
+        signals=SimpleNamespace(finished=_Signal(), error=_Signal(), terminated=_Signal())
+    )
+    replacement = SimpleNamespace()
+    started = []
+    monkeypatch.setattr(
+        task_manager,
+        "thread_pool",
+        SimpleNamespace(start=lambda worker, *args: started.append((worker, args))),
+    )
+    task_manager.active_workers["terminal-resubmit"] = old_worker
+    task_manager._connect_worker_callbacks(
+        old_worker,
+        "terminal-resubmit",
+        None,
+        lambda _message: None,
+        lambda: task_manager.submit_task(replacement, "terminal-resubmit"),
+    )
+
+    old_worker.signals.terminated.emit()
+
+    assert task_manager.active_workers["terminal-resubmit"] is replacement
+    assert started == [(replacement, ())]
+    task_manager.active_workers.pop("terminal-resubmit", None)
+
+
 def test_background_worker_cancelled_before_run_emits_terminal_signal():
     terminal = []
     worker = BackgroundWorker(lambda: "unreachable")

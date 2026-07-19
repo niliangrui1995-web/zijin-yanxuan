@@ -11,7 +11,7 @@ _STATIC_RESOURCE_IO_ALLOWLIST = {
     "ui/components/kline_window_manager.py:_load_kline_window_class:exists",
     "ui/components/stock_context_menu.py:open_codex_project_thread:exists",
     "ui/kline_chart_payload.py:_load_kline_script:read_text",
-    "ui/kline_window_qt.py:KLineChartWindow.__init__:exists",
+    "ui/kline_window_qt.py:_configure_kline_window_shell:exists",
     "ui/splash_screen.py:SplashScreen.__init__:exists",
 }
 _BUSINESS_IO_CALLS = {

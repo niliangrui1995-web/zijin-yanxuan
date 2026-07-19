@@ -2,17 +2,37 @@
 from __future__ import annotations
 
 import time
+from functools import wraps
 from importlib import import_module
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from app.services.stock_context_model_service import StockContextSnapshot, StockSignal
+from app.services.stock_context_query_service import GENERAL_STOCK_CONTEXT_SOURCE_KEYS
 from app.services.ui_diagnostics_service import ui_stall_span
 from core.logger import get_logger
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.components.vector_icons import tab_svg_icon
 from ui.theme_tokens import build_ui_tokens
-from ui.workspaces.stock_signal import StockSignal
+from ui.workspaces.background_tab_preload import (
+    BackgroundTabPreloadCoordinator,
+    cancel_background_tab_preload,
+)
+from ui.workspaces.tab_registry import (
+    INTERACTIVE_TAB_LOAD_REASONS,
+    PROBE_TAB_LOAD_REASONS,
+    TAB_DEFINITIONS,
+    TabConstructorProfile,
+    TabDefinition,
+    TabLoadReason,
+    TabRuntimeDelayPolicy,
+    get_tab_definition,
+    is_interactive_tab_load_reason,
+    normalize_tab_load_reason,
+    startup_tab_keys,
+    widget_prewarm_tab_keys,
+)
 from ui.workspaces.workspace_facade import WorkspaceFacade
 
 log = get_logger(__name__)
@@ -30,21 +50,6 @@ EarningsTab = None
 FundHoldingsTab = None
 LogTab = None
 
-_STARTUP_TAB_LOAD_ORDER = (
-    "watchlist",
-    "system_log",
-    "ai_industry_chain",
-    "na_daily",
-    "scan",
-    "foreign_block",
-    "earnings",
-    "fund_holdings",
-    "lhb",
-    "asian_market",
-    "stock_candidates",
-)
-
-
 def _resolve_tab_class(class_name: str, module_name: str):
     tab_class = globals().get(class_name)
     if tab_class is None:
@@ -52,6 +57,69 @@ def _resolve_tab_class(class_name: str, module_name: str):
         tab_class = getattr(module, class_name)
         globals()[class_name] = tab_class
     return tab_class
+
+
+def _tab_factory_for_definition(workspace, definition: TabDefinition, watchlist_kwargs: dict):
+    def _create(**runtime_kwargs):
+        profile = definition.constructor_profile
+        args = (workspace.data_provider, workspace)
+        kwargs = definition.constructor_default_kwargs()
+        if profile is TabConstructorProfile.WATCHLIST:
+            kwargs.update(watchlist_kwargs)
+        elif profile is TabConstructorProfile.SCAN:
+            args = (workspace.data_provider, workspace.engine, workspace)
+        elif profile is TabConstructorProfile.WORKSPACE_PARENT:
+            args = (workspace,)
+        elif profile not in {
+            TabConstructorProfile.DATA_PROVIDER_PARENT,
+            TabConstructorProfile.LHB,
+            TabConstructorProfile.FUND_HOLDINGS,
+        }:
+            raise ValueError(f"unsupported tab constructor profile: {profile}")
+        factory = workspace._tab_factory(definition.class_name, definition.module_name, *args, **kwargs)
+        return factory(**runtime_kwargs)
+
+    return _create
+
+
+def _watchlist_runtime_kwargs(definition: TabDefinition, reason_text: str, first_visible_load: bool, workspace) -> dict:
+    if reason_text == TabLoadReason.BACKGROUND_PREWARM.value:
+        return {"startup_indicator_refresh_enabled": False}
+    if not first_visible_load:
+        return definition.noninteractive_default_kwargs()
+    return {
+        "startup_indicator_refresh_delay_ms": workspace.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS,
+        "startup_followup_refresh_enabled": False,
+    }
+
+
+def _first_visible_runtime_delay_ms(policy: TabRuntimeDelayPolicy, reason_text: str, workspace) -> int:
+    if policy is TabRuntimeDelayPolicy.LHB_POOL:
+        return (
+            workspace.LHB_SHELL_NAV_POOL_DELAY_MS
+            if reason_text == TabLoadReason.SHELL_NAV.value
+            else workspace.LHB_FIRST_VISIBLE_POOL_DELAY_MS
+        )
+    if policy is TabRuntimeDelayPolicy.SHELL_HEAVY and reason_text == TabLoadReason.SHELL_NAV.value:
+        return workspace.SHELL_NAV_HEAVY_TAB_WORK_DELAY_MS
+    return workspace.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+
+
+def _runtime_kwargs_for_definition(
+    definition: TabDefinition,
+    reason_text: str,
+    first_visible_load: bool,
+    workspace,
+) -> dict:
+    policy = definition.runtime_delay_policy
+    if policy is TabRuntimeDelayPolicy.WATCHLIST:
+        return _watchlist_runtime_kwargs(definition, reason_text, first_visible_load, workspace)
+    if not first_visible_load:
+        return definition.noninteractive_default_kwargs()
+    kwarg = str(definition.runtime_delay_kwarg or "").strip()
+    if not kwarg or policy is TabRuntimeDelayPolicy.NONE:
+        return {}
+    return {kwarg: _first_visible_runtime_delay_ms(policy, reason_text, workspace)}
 
 
 class LazyTabPlaceholder(QWidget):
@@ -74,7 +142,7 @@ class LazyTabPlaceholder(QWidget):
         self.lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.lbl_title, 0, Qt.AlignmentFlag.AlignCenter)
 
-        self.lbl_detail = QLabel("首次进入时加载，主工作台已先响应。", self)
+        self.lbl_detail = QLabel("首屏就绪后会按依赖顺序后台加载；点击可立即优先打开。", self)
         self.lbl_detail.setObjectName("lazyWorkspaceTabDetail")
         self.lbl_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_detail.setWordWrap(True)
@@ -92,6 +160,11 @@ class LazyTabPlaceholder(QWidget):
         self.lbl_detail.setText("正在挂载页面，请稍候...")
         self.btn_load.setEnabled(False)
         self.btn_load.setText("加载中")
+
+    def set_waiting_for_runtime(self) -> None:
+        self.lbl_detail.setText("数据服务正在初始化，页面会在就绪后自动加载。")
+        self.btn_load.setEnabled(False)
+        self.btn_load.setText("准备中")
 
     def set_error(self, message: str) -> None:
         self.lbl_detail.setText(str(message or "").strip() or "页面加载失败，请重试。")
@@ -157,6 +230,24 @@ def _resolve_workspace_facade(workspace) -> WorkspaceFacade:
     return facade
 
 
+def _workspace_stock_context_snapshots_settled(workspace) -> bool:
+    return bool(_resolve_workspace_facade(workspace).stock_context_snapshots_settled())
+
+
+def _cancel_workspace_stock_context_snapshots(workspace, *, reason: str) -> bool:
+    return bool(_resolve_workspace_facade(workspace).cancel_stock_context_snapshots(reason=reason))
+
+
+def _handle_startup_cache_bootstrap_ready(workspace, *_args) -> None:
+    if getattr(workspace, "_shutting_down", False):
+        return
+    workspace._startup_cache_bootstrap_ready = True
+    coordinator = getattr(workspace, "_background_preload_coordinator", None)
+    priority_pending = bool(getattr(coordinator, "_priority_reasons", None))
+    if workspace._initial_real_tab_activated or priority_pending:
+        workspace._start_background_tab_prewarm()
+
+
 def _shutdown_workspace_facade(workspace) -> None:
     facade = getattr(workspace, "_workspace_facade", None)
     shutdown = getattr(facade, "shutdown", None)
@@ -168,47 +259,403 @@ def _shutdown_workspace_facade(workspace) -> None:
         log.warning(f"[Workspace] stock context shutdown failed: {exc}")
 
 
-class ClassicWorkspace(QWidget):
+def _workspace_is_stopping(workspace) -> bool:
+    return bool(getattr(workspace, "_shutting_down", False))
+
+
+def _prefer_tab_load_reason(current: object, incoming: object) -> str:
+    current_text = normalize_tab_load_reason(current)
+    incoming_text = normalize_tab_load_reason(incoming)
+    if current_text in INTERACTIVE_TAB_LOAD_REASONS:
+        return current_text
+    if incoming_text in INTERACTIVE_TAB_LOAD_REASONS:
+        return incoming_text
+    return incoming_text or current_text
+
+
+def _load_queued_tab(workspace, key: str, reason: str) -> None:
+    if _workspace_is_stopping(workspace):
+        workspace._lazy_loading_keys.discard(key)
+        return
+    if key not in workspace._lazy_loading_keys:
+        return
+    workspace.ensure_tab_loaded(key, reason=reason)
+
+
+def _tab_runtime_dependencies_ready(workspace, spec: dict) -> bool:
+    profile = str(spec.get("constructor_profile") or "").strip()
+    if profile == TabConstructorProfile.WORKSPACE_PARENT.value:
+        return True
+    if workspace.data_provider is None:
+        return False
+    return profile != TabConstructorProfile.SCAN.value or workspace.engine is not None
+
+
+def _defer_tab_until_runtime_ready(workspace, spec: dict, key: str, reason: str, placeholder) -> bool:
+    if spec.get("loaded") or _tab_runtime_dependencies_ready(workspace, spec):
+        return False
+    workspace._lazy_loading_keys.add(key)
+    workspace._runtime_pending_tab_loads[key] = _prefer_tab_load_reason(
+        workspace._runtime_pending_tab_loads.get(key),
+        reason,
+    )
+    if isinstance(placeholder, LazyTabPlaceholder):
+        placeholder.set_waiting_for_runtime()
+    return True
+
+
+def _attach_workspace_runtime_services(workspace, *, data_provider=None, engine=None) -> None:
+    if data_provider is not None:
+        workspace.data_provider = data_provider
+    if engine is not None:
+        workspace.engine = engine
+    for key, reason in tuple(workspace._runtime_pending_tab_loads.items()):
+        spec = workspace._spec_for_key_or_index(key)
+        if spec is None or not _tab_runtime_dependencies_ready(workspace, spec):
+            continue
+        workspace._runtime_pending_tab_loads.pop(key, None)
+        QTimer.singleShot(0, lambda key=key, reason=reason: _load_queued_tab(workspace, key, reason))
+    start_prewarm = getattr(workspace, "_start_background_tab_prewarm", None)
+    if callable(start_prewarm):
+        start_prewarm()
+
+
+def _cancel_pending_startup_restore_for_user(workspace, reason: str) -> None:
+    reason_text = normalize_tab_load_reason(reason)
+    if reason_text not in INTERACTIVE_TAB_LOAD_REASONS or reason_text == TabLoadReason.RESTORE_LAST_TAB.value:
+        return
+    callback = getattr(getattr(workspace, "host", None), "cancel_pending_workspace_activation", None)
+    if callable(callback):
+        callback(workspace)
+
+
+def _clear_runtime_pending_tab_loads(workspace) -> None:
+    pending = getattr(workspace, "_runtime_pending_tab_loads", None)
+    if pending is not None:
+        pending.clear()
+
+
+def _capture_workspace_stock_context(
+    workspace,
+    *,
+    include_rps_bundle: bool = True,
+) -> StockContextSnapshot:
+    facade = _resolve_workspace_facade(workspace)
+    return (
+        facade.capture_stock_context_snapshot()
+        if include_rps_bundle
+        else facade.capture_stock_context_snapshot(include_rps_bundle=False)
+    )
+
+
+def _publish_workspace_stock_context_index(workspace, index) -> int:
+    return _resolve_workspace_facade(workspace).publish_stock_context_signal_index(index)
+
+
+def _published_workspace_stock_context_signals(workspace, code: str):
+    return _resolve_workspace_facade(workspace).get_published_stock_context_signals(code)
+
+
+def _security_detail_name(workspace, code_text: str, context: dict) -> str:
+    name = str(context.get("name") or context.get("名称") or "").strip()
+    if name:
+        return name
+    code2name = getattr(workspace.data_provider, "code2name", {}) or {}
+    return str(code2name.get(code_text, "") or "").strip()
+
+
+def _security_detail_inputs(workspace, code_text: str, context) -> tuple[str, dict[str, str], dict]:
+    context = context if isinstance(context, dict) else {}
+    name = _security_detail_name(workspace, code_text, context)
+    specs = getattr(workspace, "tab_specs")()
+    tab_titles = {
+        str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
+        for spec in specs
+    }
+    detail_context = context.get("vcp_data")
+    return name, tab_titles, dict(detail_context) if isinstance(detail_context, dict) else {}
+
+
+def _initialize_workspace_runtime_state(workspace, *, controlled_startup_probe_guard: bool) -> None:
+    workspace._stock_detail_dialogs = {}
+    workspace._stock_detail_refresh_slots = {}
+    workspace._controlled_startup_probe_guard = bool(controlled_startup_probe_guard)
+    workspace._startup_guard_started_at = time.perf_counter()
+    workspace._startup_last_allowed_index = -1
+    workspace._startup_suppressed_tab_switch_keys = set()
+    workspace._pending_tab_activation_reasons = {}
+    workspace._shell_group_rebuild_quiet_until = 0.0
+    workspace._tabs_by_key, workspace._runtime_pending_tab_loads = {}, {}
+    workspace._lazy_loading_keys = set()
+    workspace._background_prewarm_queue = []
+    workspace._background_prewarm_started = False
+    workspace._background_prewarm_finished = False
+    workspace._background_prewarm_finished_at = 0.0
+    workspace._background_prewarm_enabled = False
+    workspace._background_prewarm_timer = None
+    workspace._background_prewarm_active_key = ""
+    workspace._background_prewarm_active_widget = None
+    workspace._background_prewarm_active_started_at = 0.0
+    workspace._background_prewarm_start_order = []
+    workspace._background_prewarm_completion_order = []
+    workspace._background_prewarm_failures = {}
+    workspace._background_prewarm_timeouts = []
+    workspace._initial_real_tab_activated = False
+    workspace._startup_cache_bootstrap_required = bool(
+        getattr(getattr(workspace, "host", None), "_startup_enabled", False)
+    )
+    workspace._startup_cache_bootstrap_ready = not workspace._startup_cache_bootstrap_required
+    workspace._restore_last_tab_timer = None
+    workspace._last_shell_nav_load_at = 0.0
+    workspace._last_system_log_shell_nav_load_at = 0.0
+    workspace._copy_hook_refresh_queued = False
+    workspace._workspace_event_bus = None
+    workspace._workspace_events_connected = False
+    workspace._workspace_icon_tokens = build_ui_tokens()["icon"]
+
+
+def _activate_existing_stock_detail(dialog) -> bool:
+    if dialog is None:
+        return False
+    try:
+        if not dialog.isVisible():
+            return False
+        dialog.raise_()
+        dialog.activateWindow()
+        return True
+    except RuntimeError:
+        return False
+
+
+def _disconnect_stock_detail_refresh(slot) -> None:
+    if slot is None:
+        return
+    from app.services.ui_event_service import domain_events
+
+    try:
+        domain_events.sig_stock_context_snapshot_updated.disconnect(slot)
+    except (TypeError, RuntimeError):
+        pass
+
+
+def _attach_stock_detail_refresh(workspace, code_text: str, dialog, detail_dialogs: dict) -> None:
+    from app.services.ui_event_service import domain_events
+
+    refresh_slots = getattr(workspace, "_stock_detail_refresh_slots", None)
+    if refresh_slots is None:
+        refresh_slots = {}
+        workspace._stock_detail_refresh_slots = refresh_slots
+    _disconnect_stock_detail_refresh(refresh_slots.pop(code_text, None))
+
+    def _refresh_detail(*_args, key=code_text, target_dialog=dialog) -> None:
+        if _workspace_is_stopping(workspace) or detail_dialogs.get(key) is not target_dialog:
+            return
+        updated = workspace.collect_stock_context(
+            target_codes={key},
+            sources=GENERAL_STOCK_CONTEXT_SOURCE_KEYS,
+        ).get(key, [])
+        update_signals = getattr(target_dialog, "update_signals", None)
+        if callable(update_signals):
+            update_signals(updated)
+
+    def _cleanup_detail(_obj=None, key=code_text, target_dialog=dialog) -> None:
+        _disconnect_stock_detail_refresh(_refresh_detail)
+        if refresh_slots.get(key) is _refresh_detail:
+            refresh_slots.pop(key, None)
+        if detail_dialogs.get(key) is target_dialog:
+            detail_dialogs.pop(key, None)
+
+    refresh_slots[code_text] = _refresh_detail
+    domain_events.sig_stock_context_snapshot_updated.connect(_refresh_detail)
+    dialog.destroyed.connect(_cleanup_detail)
+
+
+def _show_stock_detail_dialog(dialog) -> None:
+    dialog.show()
+    try:
+        dialog.raise_()
+        dialog.activateWindow()
+    except RuntimeError:
+        pass
+
+
+def _clear_workspace_pending_state(workspace) -> None:
+    for attr in ("_background_prewarm_queue", "_lazy_loading_keys", "_pending_tab_activation_reasons"):
+        value = getattr(workspace, attr, None)
+        if value is not None:
+            value.clear()
+    _clear_runtime_pending_tab_loads(workspace)
+    prewarm_timer = getattr(workspace, "_background_prewarm_timer", None)
+    if prewarm_timer is not None:
+        prewarm_timer.stop()
+    coordinator = getattr(workspace, "_background_preload_coordinator", None)
+    if coordinator is not None:
+        cancel_background_tab_preload(coordinator)
+    workspace._background_prewarm_active_key = ""
+    workspace._background_prewarm_active_widget = None
+    workspace._background_prewarm_active_started_at = 0.0
+    workspace._background_prewarm_enabled = False
+    workspace._background_prewarm_started = False
+    workspace._background_prewarm_finished_at = 0.0
+    workspace._copy_hook_refresh_queued = False
+    restore_timer = getattr(workspace, "_restore_last_tab_timer", None)
+    if restore_timer is None:
+        return
+    restore_timer.stop()
+    restore_timer.deleteLater()
+    workspace._restore_last_tab_timer = None
+
+
+def _shutdown_stock_detail_dialogs(workspace) -> None:
+    refresh_slots = getattr(workspace, "_stock_detail_refresh_slots", {})
+    for slot in tuple(refresh_slots.values()):
+        _disconnect_stock_detail_refresh(slot)
+    refresh_slots.clear()
+    detail_dialogs = getattr(workspace, "_stock_detail_dialogs", {})
+    for dialog in tuple(detail_dialogs.values()):
+        close = getattr(dialog, "close", None)
+        if not callable(close):
+            continue
+        try:
+            close()
+        except RuntimeError:
+            pass
+    detail_dialogs.clear()
+
+
+def _shutdown_loaded_workspace_tabs(workspace) -> None:
+    for tab in workspace.iter_tabs():
+        shutdown = getattr(tab, "shutdown", None)
+        if not callable(shutdown):
+            continue
+        try:
+            shutdown()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[Workspace] {tab.__class__.__name__} shutdown failed: {exc}")
+
+
+def _configure_loaded_tab_widget(workspace, widget, key: str, load_reason: str) -> None:
+    setattr(widget, "workspace_key", key)
+    setattr(widget, "_workspace_load_reason", load_reason)
+    setattr(
+        widget,
+        "_workspace_noninteractive_loaded",
+        load_reason not in workspace.INTERACTIVE_LOAD_REASONS,
+    )
+
+
+def _replace_workspace_placeholder(workspace, spec: dict, key: str, index: int, widget) -> None:
+    current_index = workspace.tabs.currentIndex()
+    previous_blocked = workspace.tabs.blockSignals(True)
+    old_widget = spec.get("widget")
+    try:
+        icon_tokens = workspace._workspace_icon_tokens
+        workspace.tabs.insertTab(
+            index,
+            widget,
+            tab_svg_icon(
+                key=str(spec.get("icon_key") or key),
+                label=spec.get("title", ""),
+                color=icon_tokens["muted"],
+                size=icon_tokens["chrome_size"],
+                stroke_width=icon_tokens["stroke_width"],
+            ),
+            spec.get("title", ""),
+        )
+        if old_widget is not None and workspace.tabs.currentWidget() is old_widget:
+            workspace.tabs.setCurrentIndex(index)
+        workspace.tabs.removeTab(index + 1)
+        if old_widget is not workspace.tabs.currentWidget() and 0 <= current_index < workspace.tabs.count():
+            workspace.tabs.setCurrentIndex(index if current_index == index else current_index)
+    finally:
+        workspace.tabs.blockSignals(previous_blocked)
+
+    if old_widget is not None and old_widget is not widget:
+        old_widget.deleteLater()
+
+
+def _register_loaded_workspace_tab(workspace, spec: dict, key: str, index: int, widget, load_reason: str) -> None:
+    spec["widget"] = widget
+    spec["loaded"] = True
+    workspace._tabs_by_key[key] = widget
+    setattr(workspace, spec["attr"], widget)
+    workspace._mark_system_log_shell_nav(key, load_reason)
+    workspace._lazy_loading_keys.discard(key)
+    QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
+    workspace._schedule_workspace_table_copy_hooks()
+    if load_reason == TabLoadReason.RESTORE_LAST_TAB.value:
+        started_at = float(getattr(getattr(workspace, "host", None), "_launch_started_at", 0.0) or 0.0)
+        if started_at > 0:
+            workspace._initial_tab_ready_elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    if workspace.tabs.currentWidget() is widget:
+        workspace._startup_last_allowed_index = index
+        coordinator = getattr(workspace, "_background_preload_coordinator", None)
+        defer_activation = getattr(coordinator, "defers_interactive_activation", None)
+        activation_deferred = bool(callable(defer_activation) and defer_activation(key))
+        if not activation_deferred:
+            workspace._notify_tab_activated(key, widget)
+        if load_reason in INTERACTIVE_TAB_LOAD_REASONS:
+            callback = getattr(workspace, "_on_initial_real_tab_activated", None)
+            if callable(callback):
+                callback()
+
+
+def _skip_if_workspace_stopping(default=None):
+    def _decorate(method):
+        @wraps(method)
+        def _guarded(workspace, *args, **kwargs):
+            if _workspace_is_stopping(workspace):
+                return default
+            return method(workspace, *args, **kwargs)
+
+        return _guarded
+
+    return _decorate
+
+
+class _ClassicWorkspaceLifecycleMixin:
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self.shutdown()
+        super().deleteLater()
+
+
+class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     mode = "classic"
+    capture_stock_context_snapshot = _capture_workspace_stock_context
+    publish_stock_context_signal_index = _publish_workspace_stock_context_index
+    get_published_stock_context_signals = _published_workspace_stock_context_signals
+    _shutting_down = False
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
-    STARTUP_TAB_LOAD_ORDER = _STARTUP_TAB_LOAD_ORDER
-    BACKGROUND_PREWARM_KEYS = frozenset(STARTUP_TAB_LOAD_ORDER)
-    RESTORE_LAST_TAB_DELAY_MS = 2500
+    BACKGROUND_PREWARM_POLL_INTERVAL_MS = 80
+    BACKGROUND_PREWARM_STEP_TIMEOUT_MS = 190_000
+    BACKGROUND_PREWARM_CANCEL_SETTLEMENT_TIMEOUT_MS = 5_000
+    BACKGROUND_PREWARM_CANCEL_BLOCKED_POLL_INTERVAL_MS = 500
+    STARTUP_TAB_LOAD_ORDER = startup_tab_keys()
+    # QWidget construction remains on the GUI thread.  Each real tab then
+    # hydrates only its local/cache startup data while the coordinator keeps a
+    # single active preload step.
+    BACKGROUND_PREWARM_KEYS = widget_prewarm_tab_keys()
+    RESTORE_LAST_TAB_DELAY_MS = 400
     COPY_HOOK_REFRESH_DELAY_MS = 240
     STARTUP_TRANSITION_SUSPEND_MS = 60_000
     STARTUP_RAW_TAB_SWITCH_GUARD_MS = 60_000
     FIRST_VISIBLE_TAB_WORK_DELAY_MS = 1800
     LHB_FIRST_VISIBLE_POOL_DELAY_MS = 5000
+    LHB_SHELL_NAV_POOL_DELAY_MS = 12000
+    SHELL_NAV_HEAVY_TAB_WORK_DELAY_MS = 12000
     SHELL_GROUP_REBUILD_LOAD_DELAY_MS = 120
     SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS = 250
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
     SNAPSHOT_TRANSITION_SKIP_PAIRS = frozenset({("lhb", "asian_market")})
-    INTERACTIVE_LOAD_REASONS = frozenset(
-        {
-            "placeholder_action",
-            "tab_switch",
-            "user",
-            "restore_last_tab",
-            "shell_nav",
-            "command",
-            "stock_signal_source",
-        }
-    )
-    PROBE_LOAD_REASONS = frozenset({"perf_memory_probe", "perf_memory_probe_cycle"})
+    INTERACTIVE_LOAD_REASONS = INTERACTIVE_TAB_LOAD_REASONS
+    PROBE_LOAD_REASONS = PROBE_TAB_LOAD_REASONS
     CONTROLLED_STARTUP_PROBE_DEFER_KEYS = frozenset(
-        {
-            "watchlist",
-            "lhb",
-            "asian_market",
-            "na_daily",
-            "stock_candidates",
-            "ai_industry_chain",
-            "scan",
-            "foreign_block",
-            "earnings",
-            "fund_holdings",
-        }
+        definition.key for definition in TAB_DEFINITIONS if definition.key != "system_log"
     )
 
     def __init__(
@@ -226,14 +673,13 @@ class ClassicWorkspace(QWidget):
         self.data_provider = data_provider
         self.engine = engine
         self.host = host
-        self._stock_detail_dialogs = {}
+        _initialize_workspace_runtime_state(
+            self,
+            controlled_startup_probe_guard=controlled_startup_probe_guard,
+        )
+        # Keep preload scheduling outside the already broad workspace widget.
+        self._background_preload_coordinator = BackgroundTabPreloadCoordinator(self, enabled=background_prewarm)
         watchlist_kwargs = {} if watchlist_startup_tasks else {"startup_tasks_enabled": False}
-        self._controlled_startup_probe_guard = bool(controlled_startup_probe_guard)
-        self._startup_guard_started_at = time.perf_counter()
-        self._startup_last_allowed_index = -1
-        self._startup_suppressed_tab_switch_keys: set[str] = set()
-        self._pending_tab_activation_reasons: dict[int, str] = {}
-        self._shell_group_rebuild_quiet_until = 0.0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -247,152 +693,24 @@ class ClassicWorkspace(QWidget):
         layout.addWidget(self.tabs, 1)
 
         self._tab_specs = self._build_tab_specs(watchlist_kwargs)
-
-        self._tabs_by_key = {}
-        self._lazy_loading_keys: set[str] = set()
-        self._background_prewarm_queue: list[str] = []
-        self._background_prewarm_started = False
-        self._restore_last_tab_timer: QTimer | None = None
-        self._last_system_log_shell_nav_load_at = 0.0
-        self._copy_hook_refresh_queued = False
-        self._workspace_event_bus = None
-        self._workspace_events_connected = False
-        self._workspace_icon_tokens = build_ui_tokens()["icon"]
         self._mount_initial_tabs()
         self._workspace_facade = WorkspaceFacade(self)
         self.tabs.currentChanged.connect(self._on_current_tab_changed)
         self._connect_workspace_events()
-        if background_prewarm:
-            QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
+
     def _build_tab_specs(self, watchlist_kwargs: dict) -> list[dict]:
-        return [
-            {
-                "key": "watchlist",
-                "title": "关注池",
-                "group": "主工作台",
-                "group_order": 10,
-                "attr": "tab_watchlist",
-                "factory": self._tab_factory(
-                    "WatchlistTab",
-                    "ui.tabs.watchlist_tab",
-                    self.data_provider,
-                    self,
-                    **watchlist_kwargs,
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "lhb",
-                "title": "龙虎榜",
-                "group": "主工作台",
-                "group_order": 15,
-                "attr": "tab_lhb",
-                "factory": self._tab_factory(
-                    "LhbTab", "ui.tabs.lhb_tab", self.data_provider, self, autoload_pool=False
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "asian_market",
-                "title": "亚洲寡头",
-                "group": "主工作台",
-                "group_order": 20,
-                "attr": "tab_asian_market",
-                "factory": self._tab_factory("AsianMarketTab", "ui.tabs.asian_market_tab", self.data_provider, self),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "na_daily",
-                "title": "北美战报",
-                "group": "主工作台",
-                "group_order": 30,
-                "attr": "tab_na_daily",
-                "factory": self._tab_factory("NADailyTab", "ui.tabs.na_daily_tab", self.data_provider, self),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "stock_candidates",
-                "title": "综合候选",
-                "group": "主工作台",
-                "group_order": 32,
-                "attr": "tab_stock_candidates",
-                "factory": self._tab_factory(
-                    "StockCandidateTab", "ui.tabs.stock_candidate_tab", self.data_provider, self
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "ai_industry_chain",
-                "title": "AI产业链",
-                "group": "情报源",
-                "group_order": 15,
-                "attr": "tab_ai_industry_chain",
-                "factory": self._tab_factory(
-                    "AIIndustryChainTab", "ui.tabs.ai_industry_chain_tab", self.data_provider, self
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "scan",
-                "title": "VCP扫描",
-                "group": "情报源",
-                "group_order": 10,
-                "attr": "tab_scan",
-                "factory": self._tab_factory("ScanTab", "ui.tabs.scan_tab", self.data_provider, self.engine, self),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "foreign_block",
-                "title": "大宗交易",
-                "group": "情报源",
-                "group_order": 20,
-                "attr": "tab_foreign_block",
-                "factory": self._tab_factory(
-                    "ForeignBlockTradeTab", "ui.tabs.foreign_block_trade_tab", self.data_provider, self
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "earnings",
-                "title": "业绩异动",
-                "group": "情报源",
-                "group_order": 30,
-                "attr": "tab_earnings",
-                "factory": self._tab_factory("EarningsTab", "ui.tabs.earnings_tab", self.data_provider, self),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "fund_holdings",
-                "title": "基金持仓",
-                "group": "情报源",
-                "group_order": 40,
-                "attr": "tab_fund_holdings",
-                "factory": self._tab_factory(
-                    "FundHoldingsTab", "ui.tabs.fund_holdings_tab", self.data_provider, self, autoload=False
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "system_log",
-                "title": "系统日志",
-                "group": "系统",
-                "group_order": 10,
-                "attr": "tab_log",
-                "factory": self._tab_factory("LogTab", "ui.tabs.log_tab", self),
-                "widget": None,
-                "loaded": False,
-            },
-        ]
+        specs: list[dict] = []
+        for definition in sorted(TAB_DEFINITIONS, key=lambda item: item.stack_order):
+            spec = definition.runtime_spec_metadata()
+            spec.update(
+                {
+                    "factory": _tab_factory_for_definition(self, definition, watchlist_kwargs),
+                    "widget": None,
+                    "loaded": False,
+                }
+            )
+            specs.append(spec)
+        return specs
 
     def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
         def _create(**runtime_kwargs):
@@ -414,7 +732,7 @@ class ClassicWorkspace(QWidget):
             self.tabs.addTab(
                 widget,
                 tab_svg_icon(
-                    key=key,
+                    key=str(spec.get("icon_key") or key),
                     label=spec["title"],
                     color=icon_tokens["muted"],
                     size=icon_tokens["chrome_size"],
@@ -427,27 +745,13 @@ class ClassicWorkspace(QWidget):
         factory = spec.get("factory")
         if not callable(factory):
             raise TypeError(f"missing tab factory: {spec.get('key')}")
-        runtime_kwargs = {}
         key = str(spec.get("key") or "").strip()
-        reason_text = str(reason or "").strip()
+        definition = get_tab_definition(key)
+        if definition is None:
+            raise KeyError(f"unknown tab registry key: {key}")
+        reason_text = normalize_tab_load_reason(reason)
         first_visible_load = reason_text in self.INTERACTIVE_LOAD_REASONS
-        if key == "watchlist" and reason_text == "background_prewarm":
-            runtime_kwargs["startup_indicator_refresh_enabled"] = False
-        elif key == "watchlist" and first_visible_load:
-            runtime_kwargs["startup_indicator_refresh_delay_ms"] = self.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
-            runtime_kwargs["startup_followup_refresh_enabled"] = False
-        elif first_visible_load and key == "lhb":
-            runtime_kwargs["initial_load_delay_ms"] = self.LHB_FIRST_VISIBLE_POOL_DELAY_MS
-        elif first_visible_load and key == "fund_holdings":
-            runtime_kwargs["initial_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        elif first_visible_load and key in {"scan", "foreign_block"}:
-            runtime_kwargs["initial_cache_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        elif first_visible_load and key in {"asian_market"}:
-            runtime_kwargs["local_cache_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        elif first_visible_load and key in {"ai_industry_chain", "na_daily", "stock_candidates", "earnings"}:
-            runtime_kwargs["runtime_start_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        elif key == "foreign_block" and reason_text not in self.INTERACTIVE_LOAD_REASONS:
-            runtime_kwargs["autoload"] = False
+        runtime_kwargs = _runtime_kwargs_for_definition(definition, reason_text, first_visible_load, self)
         return factory(**runtime_kwargs)
 
     def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:
@@ -455,7 +759,10 @@ class ClassicWorkspace(QWidget):
         title = str(spec.get("title") or key or "").strip()
         return LazyTabPlaceholder(
             title,
-            lambda key=key: self.ensure_tab_loaded(key, reason="placeholder_action"),
+            lambda key=key: self.activate_tab(
+                self._tab_index_for_key(key),
+                reason=TabLoadReason.PLACEHOLDER_ACTION.value,
+            ),
             parent=self,
         )
 
@@ -476,33 +783,58 @@ class ClassicWorkspace(QWidget):
     def get_loaded_tab(self, key: str):
         return self._tabs_by_key.get(str(key or "").strip())
 
+    attach_runtime_services = _attach_workspace_runtime_services
+
     def should_defer_probe_tab_load(self, key: str, *, reason: str = "perf_memory_probe") -> bool:
         key_text = str(key or "").strip()
-        reason_text = str(reason or "").strip()
+        reason_text = normalize_tab_load_reason(reason)
         return (
             bool(self._controlled_startup_probe_guard)
             and reason_text in self.PROBE_LOAD_REASONS
             and key_text in self.CONTROLLED_STARTUP_PROBE_DEFER_KEYS
         )
 
+    @_skip_if_workspace_stopping()
     def ensure_tab_loaded(self, key_or_index, reason: str = "user"):
         spec = self._spec_for_key_or_index(key_or_index)
         if spec is None:
             return None
 
         key = str(spec.get("key") or "").strip()
+        if _defer_tab_until_runtime_ready(self, spec, key, normalize_tab_load_reason(reason), spec.get("widget")):
+            return None
+        if spec.get("loaded") and self._defer_interactive_activation_until_preload_ready(key, reason):
+            return spec.get("widget")
         with ui_stall_span("ClassicWorkspace.ensure_tab_loaded", tab=key, signal=reason):
             return self._ensure_tab_loaded_impl(spec, key, reason)
 
+    def _defer_interactive_activation_until_preload_ready(self, key: str, reason: object) -> bool:
+        if not is_interactive_tab_load_reason(reason):
+            return False
+        coordinator = getattr(self, "_background_preload_coordinator", None)
+        defers_activation = getattr(coordinator, "defers_interactive_activation", None)
+        if not callable(defers_activation) or not defers_activation(key):
+            return False
+        prioritize = getattr(coordinator, "prioritize", None)
+        if callable(prioritize):
+            prioritize(key, reason)
+        return True
+
     def _mark_system_log_shell_nav(self, key: str, reason: str) -> None:
-        if key == "system_log" and str(reason or "").strip() == "shell_nav":
-            self._last_system_log_shell_nav_load_at = time.perf_counter()
+        if normalize_tab_load_reason(reason) != TabLoadReason.SHELL_NAV.value:
+            return
+        loaded_at = time.perf_counter()
+        self._last_shell_nav_load_at = loaded_at
+        if key == "system_log":
+            self._last_system_log_shell_nav_load_at = loaded_at
 
     def _ensure_tab_loaded_impl(self, spec: dict, key: str, reason: str = "user"):
-        load_reason = str(reason or "")
+        load_reason = normalize_tab_load_reason(reason)
         if spec.get("loaded"):
             self._mark_system_log_shell_nav(key, load_reason)
-            return spec.get("widget")
+            widget = spec.get("widget")
+            ClassicWorkspace._promote_loaded_tab_to_interactive(widget, load_reason)
+            return widget
 
         placeholder = spec.get("widget")
         if isinstance(placeholder, LazyTabPlaceholder):
@@ -522,55 +854,12 @@ class ClassicWorkspace(QWidget):
             self._lazy_loading_keys.discard(key)
             return widget
 
-        setattr(widget, "workspace_key", key)
-        setattr(widget, "_workspace_load_reason", load_reason)
-        setattr(
-            widget,
-            "_workspace_noninteractive_loaded",
-            load_reason not in self.INTERACTIVE_LOAD_REASONS,
-        )
-        current_index = self.tabs.currentIndex()
-        previous_blocked = self.tabs.blockSignals(True)
-        old_widget = spec.get("widget")
-        try:
-            self.tabs.removeTab(index)
-            icon_tokens = self._workspace_icon_tokens
-            self.tabs.insertTab(
-                index,
-                widget,
-                tab_svg_icon(
-                    key=key,
-                    label=spec.get("title", ""),
-                    color=icon_tokens["muted"],
-                    size=icon_tokens["chrome_size"],
-                    stroke_width=icon_tokens["stroke_width"],
-                ),
-                spec.get("title", ""),
-            )
-            if 0 <= current_index < self.tabs.count():
-                self.tabs.setCurrentIndex(current_index)
-        finally:
-            self.tabs.blockSignals(previous_blocked)
-
-        if old_widget is not None and old_widget is not widget:
-            old_widget.deleteLater()
-
-        spec["widget"] = widget
-        spec["loaded"] = True
-        self._tabs_by_key[key] = widget
-        setattr(self, spec["attr"], widget)
-        self._mark_system_log_shell_nav(key, load_reason)
-        self._lazy_loading_keys.discard(key)
-        ensure_polished = getattr(widget, "ensurePolished", None)
-        if callable(ensure_polished):
-            QTimer.singleShot(0, ensure_polished)
-        QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
-        self._schedule_workspace_table_copy_hooks()
-        if self.tabs.currentWidget() is widget:
-            self._startup_last_allowed_index = index
-            self._notify_tab_activated(key, widget)
+        _configure_loaded_tab_widget(self, widget, key, load_reason)
+        _replace_workspace_placeholder(self, spec, key, index, widget)
+        _register_loaded_workspace_tab(self, spec, key, index, widget, load_reason)
         return widget
 
+    @_skip_if_workspace_stopping()
     def _on_current_tab_changed(self, index: int) -> None:
         spec = self._spec_for_key_or_index(index)
         key = str((spec or {}).get("key") or "").strip()
@@ -582,18 +871,38 @@ class ClassicWorkspace(QWidget):
             if spec.get("loaded"):
                 widget = spec.get("widget")
                 if widget is not None:
+                    if self._defer_interactive_activation_until_preload_ready(key, reason):
+                        return
+                    ClassicWorkspace._promote_loaded_tab_to_interactive(widget, reason)
                     self._startup_last_allowed_index = index
                     self._notify_tab_activated(key, widget)
                 return
-            if not key or key in self._lazy_loading_keys:
+            if not key:
                 return
             if self._should_suppress_startup_tab_switch(key, reason):
                 self._restore_startup_allowed_tab_after_suppressed_switch(key)
                 return
-            self._queue_lazy_tab_load(spec, key, reason=reason or "tab_switch", index=index)
+            self._request_interactive_tab_load(
+                spec,
+                key,
+                reason=reason or TabLoadReason.TAB_SWITCH.value,
+                index=index,
+            )
 
     def _take_tab_activation_reason(self, index: int) -> str:
-        return self._pending_tab_activation_reasons.pop(int(index), "tab_switch")
+        return self._pending_tab_activation_reasons.pop(int(index), TabLoadReason.TAB_SWITCH.value)
+
+    @staticmethod
+    def _promote_loaded_tab_to_interactive(widget, reason: object) -> bool:
+        reason_text = normalize_tab_load_reason(reason)
+        if widget is None or reason_text not in INTERACTIVE_TAB_LOAD_REASONS:
+            return False
+        try:
+            setattr(widget, "_workspace_load_reason", reason_text)
+            setattr(widget, "_workspace_noninteractive_loaded", False)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        return True
 
     def _is_startup_raw_tab_switch_guard_active(self) -> bool:
         return (time.perf_counter() - self._startup_guard_started_at) * 1000.0 < self.STARTUP_RAW_TAB_SWITCH_GUARD_MS
@@ -601,10 +910,31 @@ class ClassicWorkspace(QWidget):
     def _should_suppress_startup_tab_switch(self, key: str, reason: str) -> bool:
         return (
             bool(key)
-            and str(reason or "").strip() == "tab_switch"
+            and normalize_tab_load_reason(reason) == TabLoadReason.TAB_SWITCH.value
             and self._is_startup_raw_tab_switch_guard_active()
         )
 
+    @_skip_if_workspace_stopping(False)
+    def _request_interactive_tab_load(
+        self,
+        spec: dict,
+        key: str,
+        *,
+        reason: str,
+        index: int | None = None,
+    ) -> bool:
+        coordinator = getattr(self, "_background_preload_coordinator", None)
+        prioritize = getattr(coordinator, "prioritize", None)
+        if callable(prioritize) and prioritize(key, reason):
+            if isinstance(index, int) and 0 <= index < self.tabs.count():
+                self._startup_last_allowed_index = index
+            placeholder = spec.get("widget")
+            if isinstance(placeholder, LazyTabPlaceholder):
+                placeholder.set_loading()
+            return True
+        return self._queue_lazy_tab_load(spec, key, reason=reason, index=index)
+
+    @_skip_if_workspace_stopping(False)
     def _queue_lazy_tab_load(self, spec: dict, key: str, *, reason: str, index: int | None = None) -> bool:
         if not key or key in self._lazy_loading_keys:
             return False
@@ -616,7 +946,7 @@ class ClassicWorkspace(QWidget):
             placeholder.set_loading()
         QTimer.singleShot(
             self._lazy_tab_load_delay_ms(reason),
-            lambda key=key, reason=reason: self.ensure_tab_loaded(key, reason=reason),
+            lambda key=key, reason=reason: _load_queued_tab(self, key, reason),
         )
         return True
 
@@ -636,7 +966,7 @@ class ClassicWorkspace(QWidget):
         return time.perf_counter() < float(getattr(self, "_shell_group_rebuild_quiet_until", 0.0) or 0.0)
 
     def _lazy_tab_load_delay_ms(self, reason: str) -> int:
-        if str(reason or "").strip() == "shell_nav" and self._is_shell_group_rebuild_quiet_window():
+        if normalize_tab_load_reason(reason) == TabLoadReason.SHELL_NAV.value and self._is_shell_group_rebuild_quiet_window():
             return self.SHELL_GROUP_REBUILD_LOAD_DELAY_MS
         return 0
 
@@ -660,15 +990,18 @@ class ClassicWorkspace(QWidget):
             )
 
         def _restore() -> None:
+            if _workspace_is_stopping(self):
+                return
             if not (0 <= restore_index < self.tabs.count()):
                 return
             if self.tabs.currentIndex() == restore_index:
                 return
-            self._pending_tab_activation_reasons[restore_index] = "startup_guard_restore"
+            self._pending_tab_activation_reasons[restore_index] = TabLoadReason.STARTUP_GUARD_RESTORE.value
             self.tabs.setCurrentIndex(restore_index)
 
         QTimer.singleShot(0, _restore)
 
+    @_skip_if_workspace_stopping(False)
     def activate_tab(self, index: int, *, reason: str = "user") -> bool:
         try:
             target_index = int(index)
@@ -677,7 +1010,8 @@ class ClassicWorkspace(QWidget):
         if not (0 <= target_index < self.tabs.count()):
             return False
 
-        reason_text = str(reason or "").strip() or "user"
+        reason_text = normalize_tab_load_reason(reason) or TabLoadReason.USER.value
+        _cancel_pending_startup_restore_for_user(self, reason_text)
         if self.tabs.currentIndex() == target_index:
             spec = self._spec_for_key_or_index(target_index)
             key = str((spec or {}).get("key") or "").strip()
@@ -688,10 +1022,13 @@ class ClassicWorkspace(QWidget):
                 self._mark_system_log_shell_nav(key, reason_text)
                 widget = spec.get("widget")
                 if widget is not None:
+                    if self._defer_interactive_activation_until_preload_ready(key, reason_text):
+                        return True
+                    ClassicWorkspace._promote_loaded_tab_to_interactive(widget, reason_text)
                     self._startup_last_allowed_index = target_index
                     self._notify_tab_activated(key, widget)
                 return True
-            self._queue_lazy_tab_load(spec, key, reason=reason_text, index=target_index)
+            self._request_interactive_tab_load(spec, key, reason=reason_text, index=target_index)
             return True
 
         self._pending_tab_activation_reasons[target_index] = reason_text
@@ -704,6 +1041,7 @@ class ClassicWorkspace(QWidget):
 
             event_bus.sig_ai_industry_chain_updated.connect(self._on_ai_industry_chain_source_updated)
             event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_source_updated)
+            event_bus.sig_cache_bootstrap_ready.connect(self._on_startup_cache_bootstrap_ready)
             self._workspace_event_bus = event_bus
             self._workspace_events_connected = True
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -721,52 +1059,48 @@ class ClassicWorkspace(QWidget):
             event_bus.sig_fund_holdings_updated.disconnect(self._on_fund_holdings_source_updated)
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
+        try:
+            event_bus.sig_cache_bootstrap_ready.disconnect(self._on_startup_cache_bootstrap_ready)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
         self._workspace_events_connected = False
 
+    @_skip_if_workspace_stopping()
     def _on_ai_industry_chain_source_updated(self, *_args) -> None:
         _resolve_workspace_facade(self).refresh_tabs_after_ai_industry_chain_update()
-        self.prime_stock_context_snapshots(force=True, include_lhb=False)
 
+    @_skip_if_workspace_stopping()
     def _on_fund_holdings_source_updated(self, *_args) -> None:
         self.prime_stock_context_snapshots(force=True, include_lhb=False)
 
-    def _start_background_tab_prewarm(self) -> None:
-        if self._background_prewarm_started:
-            return
-        self._background_prewarm_started = True
-        self.prime_stock_context_snapshots(include_lhb=False)
+    _on_startup_cache_bootstrap_ready = _handle_startup_cache_bootstrap_ready
 
-        prewarm_keys = set(self.BACKGROUND_PREWARM_KEYS)
-        unloaded_by_key = {
-            str(spec.get("key") or "").strip()
-            for spec in self._tab_specs
-            if not spec.get("loaded")
-            and str(spec.get("key") or "").strip()
-            and str(spec.get("key") or "").strip() in prewarm_keys
-        }
-        self._background_prewarm_queue = [key for key in self.STARTUP_TAB_LOAD_ORDER if key in unloaded_by_key]
-        self._prewarm_next_tab()
+    def _on_initial_real_tab_activated(self) -> None:
+        self._initial_real_tab_activated = True
+        self._start_background_tab_prewarm()
+
+    def _start_background_tab_prewarm(self) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
+        if getattr(self, "_startup_cache_bootstrap_required", False) and not getattr(
+            self,
+            "_startup_cache_bootstrap_ready",
+            False,
+        ):
+            return
+        coordinator = getattr(self, "_background_preload_coordinator", None)
+        if coordinator is not None:
+            coordinator.start()
 
     def _prewarm_next_tab(self) -> None:
-        with ui_stall_span("ClassicWorkspace._prewarm_next_tab", signal="background_prewarm"):
-            while self._background_prewarm_queue:
-                key = self._background_prewarm_queue.pop(0)
-                spec = self._spec_for_key_or_index(key)
-                if spec is None or spec.get("loaded"):
-                    continue
+        coordinator = getattr(self, "_background_preload_coordinator", None)
+        if coordinator is not None:
+            coordinator.advance()
 
-                widget = self.ensure_tab_loaded(key, reason="background_prewarm")
-                if widget is not None:
-                    self._prime_tab_runtime(widget)
-                break
-
-            if self._background_prewarm_queue:
-                QTimer.singleShot(self.BACKGROUND_PREWARM_INTERVAL_MS, self._prewarm_next_tab)
-
-    def _prime_tab_runtime(self, widget) -> None:
+    def _prime_tab_runtime(self, widget) -> bool:
         for method_name in (
-            "prime_startup_state",
             "prime_background_load",
+            "prime_startup_state",
             "_ensure_runtime_started",
             "_ensure_initial_load_started",
             "_ensure_pool_bootstrap_started",
@@ -778,8 +1112,17 @@ class ClassicWorkspace(QWidget):
                 method()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[Workspace] prime tab runtime failed {widget.__class__.__name__}.{method_name}: {exc}")
-            return
+                return False
+            return True
+        return True
 
+    def background_preload_status(self) -> dict:
+        status = self._background_preload_coordinator.status()
+        status["startup_cache_bootstrap_required"] = self._startup_cache_bootstrap_required
+        status["startup_cache_bootstrap_ready"] = self._startup_cache_bootstrap_ready
+        return status
+
+    @_skip_if_workspace_stopping()
     def _schedule_workspace_table_copy_hooks(self) -> None:
         host = self.host or self.window()
         install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
@@ -789,6 +1132,8 @@ class ClassicWorkspace(QWidget):
 
         def _install_hooks() -> None:
             self._copy_hook_refresh_queued = False
+            if _workspace_is_stopping(self):
+                return
             try:
                 install_hooks()
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -796,10 +1141,15 @@ class ClassicWorkspace(QWidget):
 
         QTimer.singleShot(self.COPY_HOOK_REFRESH_DELAY_MS, _install_hooks)
 
+    @_skip_if_workspace_stopping()
     def _notify_tab_activated(self, _key: str, widget) -> None:
         callback = getattr(widget, "on_workspace_tab_activated", None)
+        if not callable(callback):
+            callback = getattr(widget, "_ensure_runtime_started", None)
         if callable(callback):
             def _run_if_current(widget=widget, callback=callback) -> None:
+                if _workspace_is_stopping(self):
+                    return
                 current_widget = getattr(self.tabs, "currentWidget", None)
                 if callable(current_widget):
                     try:
@@ -814,18 +1164,29 @@ class ClassicWorkspace(QWidget):
     def tab_specs(self) -> list[dict]:
         return list(self._tab_specs)
 
-    def nav_groups(self) -> list[str]:
-        return _resolve_workspace_facade(self).nav_groups()
-
     def tab_indices_by_group(self) -> dict[str, list[int]]:
         return _resolve_workspace_facade(self).tab_indices_by_group()
 
-    def restore_last_tab(self, index: int):
+    @_skip_if_workspace_stopping()
+    def restore_last_tab(self, key_or_index: str | int):
+        spec = self._spec_for_key_or_index(key_or_index)
+        if spec is None:
+            return
+        key = str(spec.get("key") or "").strip()
+        index = self._tab_index_for_key(key)
         if 0 <= index < self.tabs.count():
-            self.activate_tab(index, reason="restore_last_tab")
+            self.activate_tab(index, reason=TabLoadReason.RESTORE_LAST_TAB.value)
 
-    def schedule_restore_last_tab(self, index: int, *, delay_ms: int | None = None) -> None:
-        if not isinstance(index, int) or index < 0:
+    @_skip_if_workspace_stopping()
+    def schedule_restore_last_tab(self, key_or_index: str | int, *, delay_ms: int | None = None) -> None:
+        if isinstance(key_or_index, int):
+            if key_or_index < 0:
+                return
+        elif isinstance(key_or_index, str):
+            key_or_index = key_or_index.strip()
+            if not key_or_index:
+                return
+        else:
             return
         try:
             delay = self.RESTORE_LAST_TAB_DELAY_MS if delay_ms is None else max(0, int(delay_ms))
@@ -842,12 +1203,14 @@ class ClassicWorkspace(QWidget):
         self._restore_last_tab_timer = timer
 
         def _restore() -> None:
-            if self._background_prewarm_queue:
-                timer.start(self.BACKGROUND_PREWARM_INTERVAL_MS)
+            if _workspace_is_stopping(self):
+                if self._restore_last_tab_timer is timer:
+                    self._restore_last_tab_timer = None
+                timer.deleteLater()
                 return
             if self._restore_last_tab_timer is timer:
                 self._restore_last_tab_timer = None
-            self.restore_last_tab(index)
+            self.restore_last_tab(key_or_index)
             timer.deleteLater()
 
         timer.timeout.connect(_restore)
@@ -855,6 +1218,10 @@ class ClassicWorkspace(QWidget):
 
     def current_tab_index(self) -> int:
         return self.tabs.currentIndex()
+
+    def current_tab_key(self) -> str:
+        spec = self._spec_for_key_or_index(self.tabs.currentIndex())
+        return str((spec or {}).get("key") or "").strip()
 
     def get_tab(self, key: str):
         return self.ensure_tab_loaded(key)
@@ -870,9 +1237,6 @@ class ClassicWorkspace(QWidget):
 
     def iter_tables(self) -> list:
         return _resolve_workspace_facade(self).iter_tables()
-
-    def iter_refreshable_tabs(self) -> list:
-        return _resolve_workspace_facade(self).iter_refreshable_tabs()
 
     def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
         _resolve_workspace_facade(self).refresh_all_tabs_after_f5(skip_cache_reload_tabs=skip_cache_reload_tabs)
@@ -890,9 +1254,6 @@ class ClassicWorkspace(QWidget):
             skip_cache_reload_tabs=skip_cache_reload_tabs,
         )
 
-    def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
-        return _resolve_workspace_facade(self).refresh_tabs_after_ai_industry_chain_update()
-
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         return _resolve_workspace_facade(self).refresh_information_sources_after_f5()
 
@@ -908,9 +1269,6 @@ class ClassicWorkspace(QWidget):
             interval_ms=interval_ms,
             frame_budget_ms=frame_budget_ms,
         )
-
-    def select_scan_row(self, index: int) -> bool:
-        return _resolve_workspace_facade(self).select_scan_row(index)
 
     def run_incremental_scan(self) -> bool:
         return _resolve_workspace_facade(self).run_incremental_scan()
@@ -933,9 +1291,6 @@ class ClassicWorkspace(QWidget):
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         return _resolve_workspace_facade(self).refresh_watchlist_names(code2name)
 
-    def schedule_watchlist_special_quotes(self, task_manager) -> None:
-        _resolve_workspace_facade(self).schedule_watchlist_special_quotes(task_manager)
-
     def run_post_online_refresh(self, task_manager) -> None:
         _resolve_workspace_facade(self).run_post_online_refresh(task_manager)
 
@@ -954,9 +1309,6 @@ class ClassicWorkspace(QWidget):
             allow_lhb_cache_compute=allow_lhb_cache_compute,
         )
 
-    def collect_stock_signals(self) -> list[StockSignal]:
-        return _resolve_workspace_facade(self).collect_stock_signals()
-
     def collect_stock_context(
         self,
         *,
@@ -964,13 +1316,21 @@ class ClassicWorkspace(QWidget):
         include_source_cache_fallback: bool | None = None,
         allow_lhb_cache_compute: bool = False,
         allow_async_snapshot_refresh: bool = True,
-    ) -> dict[str, list[StockSignal]]:
-        return _resolve_workspace_facade(self).collect_stock_context(
+        capture_snapshot: bool = False,
+        target_codes=None,
+        sources=None,
+    ) -> dict[str, list[StockSignal]] | StockContextSnapshot:
+        options = dict(
             include_cache_fallback=include_cache_fallback,
             include_source_cache_fallback=include_source_cache_fallback,
             allow_lhb_cache_compute=allow_lhb_cache_compute,
             allow_async_snapshot_refresh=allow_async_snapshot_refresh,
+            target_codes=target_codes,
+            sources=sources,
         )
+        if capture_snapshot:
+            options["capture_snapshot"] = True
+        return _resolve_workspace_facade(self).collect_stock_context(**options)
 
     def prime_stock_context_snapshots(
         self,
@@ -985,23 +1345,19 @@ class ClassicWorkspace(QWidget):
             include_lhb=include_lhb,
         )
 
+    stock_context_snapshots_settled = _workspace_stock_context_snapshots_settled
+    cancel_stock_context_snapshots = _cancel_workspace_stock_context_snapshots
+
     def open_security_detail(self, code: str, context=None):
         code_text = str(code or "").strip()
         if not code_text:
             return False
 
-        context = context if isinstance(context, dict) else {}
-        name = str(context.get("name") or context.get("名称") or "").strip()
-        if not name:
-            code2name = getattr(self.data_provider, "code2name", {}) or {}
-            name = str(code2name.get(code_text, "") or "").strip()
-
-        tab_titles = {
-            str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip() for spec in self.tab_specs()
-        }
-        signals = self.collect_stock_context().get(code_text, [])
-        detail_context = context.get("vcp_data")
-        detail_context = dict(detail_context) if isinstance(detail_context, dict) else {}
+        name, tab_titles, detail_context = _security_detail_inputs(self, code_text, context)
+        signals = self.collect_stock_context(
+            target_codes={code_text},
+            sources=GENERAL_STOCK_CONTEXT_SOURCE_KEYS,
+        ).get(code_text, [])
 
         from ui.components.stock_detail_dialog import StockDetailDialog
 
@@ -1011,14 +1367,9 @@ class ClassicWorkspace(QWidget):
             setattr(self, "_stock_detail_dialogs", detail_dialogs)
 
         existing_dialog = detail_dialogs.get(code_text)
-        if existing_dialog is not None:
-            try:
-                if existing_dialog.isVisible():
-                    existing_dialog.raise_()
-                    existing_dialog.activateWindow()
-                    return True
-            except RuntimeError:
-                pass
+        if _activate_existing_stock_detail(existing_dialog):
+            return True
+        if existing_dialog is not None and detail_dialogs.get(code_text) is existing_dialog:
             detail_dialogs.pop(code_text, None)
 
         dialog = StockDetailDialog(
@@ -1031,13 +1382,8 @@ class ClassicWorkspace(QWidget):
             parent=self.window(),
         )
         detail_dialogs[code_text] = dialog
-        dialog.destroyed.connect(lambda _obj=None, key=code_text: detail_dialogs.pop(key, None))
-        dialog.show()
-        try:
-            dialog.raise_()
-            dialog.activateWindow()
-        except RuntimeError:
-            pass
+        _attach_stock_detail_refresh(self, code_text, dialog, detail_dialogs)
+        _show_stock_detail_dialog(dialog)
         return True
 
     def _tab_index_for_key(self, key: str) -> int:
@@ -1058,7 +1404,7 @@ class ClassicWorkspace(QWidget):
         if source_index >= 0:
             activate_tab = getattr(self, "activate_tab", None)
             if callable(activate_tab):
-                activate_tab(source_index, reason="stock_signal_source")
+                activate_tab(source_index, reason=TabLoadReason.STOCK_SIGNAL_SOURCE.value)
             else:
                 self.tabs.setCurrentIndex(source_index)
             tab = self.get_tab(signal.source_tab)
@@ -1069,24 +1415,13 @@ class ClassicWorkspace(QWidget):
         return self.select_code_row(code_text, preferred_tab_index=source_index if source_index >= 0 else None)
 
     def shutdown(self):
-        prewarm_queue = getattr(self, "_background_prewarm_queue", None)
-        if prewarm_queue is not None:
-            prewarm_queue.clear()
-        restore_timer = getattr(self, "_restore_last_tab_timer", None)
-        if restore_timer is not None:
-            restore_timer.stop()
-            restore_timer.deleteLater()
-            self._restore_last_tab_timer = None
-
+        if getattr(self, "_shutting_down", False):
+            return
+        self._shutting_down = True
+        _clear_workspace_pending_state(self)
         disconnect_events = getattr(self, "_disconnect_workspace_events", None)
         if callable(disconnect_events):
             disconnect_events()
+        _shutdown_stock_detail_dialogs(self)
         _shutdown_workspace_facade(self)
-        for tab in self.iter_tabs():
-            shutdown = getattr(tab, "shutdown", None)
-            if not callable(shutdown):
-                continue
-            try:
-                shutdown()
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                log.warning(f"[Workspace] {tab.__class__.__name__} shutdown failed: {exc}")
+        _shutdown_loaded_workspace_tabs(self)

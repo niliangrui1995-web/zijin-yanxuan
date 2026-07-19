@@ -531,7 +531,7 @@ def test_apply_table_density_updates_config_tables_styles_and_chrome(monkeypatch
     assert main_window._act_density_compact.checked is False
     assert main_window._act_density_comfort.checked is True
     assert table.modes == ["舒适"]
-    assert main_window.styleSheet() == "QSS:舒适"
+    assert main_window.styleSheet() == ""
     assert qt_application.styleSheet() == "QSS:舒适"
     assert chrome_calls == [main_window]
     assert main_window._status_bar_widget.theme_calls == 1
@@ -569,7 +569,7 @@ def test_apply_theme_repolishes_widgets_and_only_notifies_visible_window(monkeyp
     qt_application.processEvents()
 
     main_window_visuals.apply_theme(main_window, notify=True)
-    assert main_window.styleSheet() == "GLOBAL-QSS"
+    assert main_window.styleSheet() == ""
     assert qt_application.styleSheet() == "GLOBAL-QSS"
     assert main_window._status_bar_widget.theme_calls == 1
     toast_calls = [item for item in calls if isinstance(item, tuple) and item[0] == "toast"]
@@ -594,7 +594,12 @@ def test_visual_helpers_tolerate_missing_application_and_optional_chrome(monkeyp
     monkeypatch.setattr(ui_config_service, "app_config", SimpleNamespace(table_density=None, sync=lambda: calls.append("sync")))
     monkeypatch.setattr(table_model_helpers, "invalidate_table_token_cache", lambda *args: calls.append(("table", args)))
     monkeypatch.setattr(main_window_visuals, "invalidate_global_qss_cache", lambda: calls.append("qss"))
-    monkeypatch.setattr(main_window_visuals, "generate_global_qss", lambda **kwargs: f"QSS:{kwargs}")
+    qss_calls = []
+    monkeypatch.setattr(
+        main_window_visuals,
+        "generate_global_qss",
+        lambda **kwargs: qss_calls.append(kwargs) or f"QSS:{kwargs}",
+    )
     monkeypatch.setattr(main_window_visuals, "apply_chrome_theme", lambda window: calls.append(("chrome", window)))
 
     main_window = QWidget()
@@ -602,7 +607,8 @@ def test_visual_helpers_tolerate_missing_application_and_optional_chrome(monkeyp
     assert main_window.styleSheet() == ""
 
     main_window_visuals.apply_theme(main_window, notify=False)
-    assert main_window.styleSheet() == "QSS:{}"
+    assert main_window.styleSheet() == ""
+    assert qss_calls == []
     assert ("chrome", main_window) in calls
     assert "qss" in calls
     main_window.deleteLater()
@@ -808,29 +814,20 @@ def test_table_copy_handler_handles_missing_selection_model():
     assert originals == [return_event]
 
 
-def test_workspace_navigation_groups_keys_and_scan_selection():
+def test_workspace_navigation_group_indices_and_keys():
     specs = [
         {"key": "scan", "group": "选股", "group_order": 20},
         {"key": "watchlist", "group": "自选", "group_order": 5},
         {"key": "candidate", "group": "选股", "group_order": 10},
         {"key": "blank", "group": ""},
     ]
-    scan_tab = _SelectableTab(row_result=True)
-    workspace = SimpleNamespace(_tab_specs=specs, get_tab=lambda key: scan_tab if key == "scan" else None)
+    workspace = SimpleNamespace(_tab_specs=specs)
     service = WorkspaceNavigationService(workspace)
 
-    assert service.nav_groups() == ["选股", "自选"]
     assert service.tab_indices_by_group() == {"选股": [2, 0], "自选": [1], "": [3]}
     assert service._key_for_index(1) == "watchlist"
     assert service._key_for_index(-1) == ""
     assert service._key_for_index(99) == ""
-    assert service.select_scan_row(7) is True
-    assert scan_tab.rows == [7]
-
-    workspace.get_tab = lambda _key: object()
-    assert service.select_scan_row(1) is False
-    del workspace.get_tab
-    assert service.select_scan_row(1) is False
 
 
 def test_workspace_navigation_falls_back_to_public_specs():

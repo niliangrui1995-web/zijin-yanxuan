@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from app.services.earnings_cache_query_service import load_cached_earnings_rows
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
 from app.services.ui_task_lifecycle_service import raise_if_cancelled as shared_raise_if_cancelled
@@ -30,7 +31,7 @@ STARTUP_BACKFILL_TRADE_DAYS = 10
 class CachedEarningsRowsPort(Protocol):
     """Optional engine capability for dataframe-free cache startup."""
 
-    def get_cached_record_rows(self) -> Iterable[Mapping[str, object]]: ...
+    def get_cached_record_rows(self, *, cancellation_token=None) -> Iterable[Mapping[str, object]]: ...
 
 
 def _pandas_module():
@@ -139,11 +140,20 @@ class EarningsRefreshService(QObject):
     _build_startup_scan_dates = staticmethod(_build_startup_scan_dates)
     _raise_if_cancelled = staticmethod(shared_raise_if_cancelled)
 
-    def __init__(self, parent=None, *, engine: EarningsEngine | None = None, job_runner=None):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        engine: EarningsEngine | None = None,
+        job_runner=None,
+        cache_rows_loader=None,
+    ):
         super().__init__(parent)
         self._engine = engine
         self._engine_lock = Lock()
         self._job_runner = job_runner or task_manager
+        self._cache_rows_loader = cache_rows_loader or load_cached_earnings_rows
+        self._cache_load_generation = 0
         self._task_lifecycle = TaskLifecycleGroup(self._job_runner)
         self._shutdown = False
         self.active_workers: set[_ActiveEarningsJob] = set()
@@ -175,7 +185,7 @@ class EarningsRefreshService(QObject):
 
     def _emit_cached_rows(self, rows: list[dict], mode: str = "warm_cache") -> None:
         if self.receivers(self.sig_new_surprises_found) > 0:
-            self.sig_new_surprises_found.emit(_pandas_module().DataFrame(rows), mode)
+            self.sig_new_surprises_found.emit([dict(row) for row in rows], mode)
         event_bus.sig_earnings_updated.emit()
 
     def _emit_failure(self, mode: str, error) -> None:
@@ -307,19 +317,22 @@ class EarningsRefreshService(QObject):
         )
         return True
 
-    def load_cached_records_async(self) -> bool:
-        task_id = task_registry.workspace("earnings_view_warm_cache").task_id
+    def load_cached_records_async(self, *, supersede: bool = False) -> bool:
+        task_key = "earnings_view_ai_chain_cache" if supersede else "earnings_view_warm_cache"
+        task_id = task_registry.workspace(task_key).task_id
         if self._job_runner.is_active_task(task_id):
             return False
+        self._cache_load_generation += 1
+        generation = self._cache_load_generation
 
         def _run(cancellation_token):
-            df = invoke_with_cancellation(self.engine.get_cached_records, cancellation_token)
-            return df if df is not None else _empty_frame()
+            rows = invoke_with_cancellation(self._cache_rows_loader, cancellation_token)
+            return [dict(row) for row in rows or [] if isinstance(row, Mapping)]
 
-        def _on_success(df) -> None:
-            if self._shutdown:
+        def _on_success(rows) -> None:
+            if self._shutdown or generation != self._cache_load_generation:
                 return
-            self.sig_new_surprises_found.emit(df if df is not None else _empty_frame(), "warm_cache")
+            self.sig_new_surprises_found.emit(list(rows or []), "warm_cache")
 
         def _on_error(error_message: str) -> None:
             self._emit_failure("warm_cache", error_message)
@@ -335,6 +348,8 @@ class EarningsRefreshService(QObject):
         return True
 
     def trigger_routine_scan(self, reason: str = "manual") -> bool:
+        if self._shutdown:
+            return False
         if self.active_workers:
             log.info(f"[业绩调度] 即时巡检跳过({reason})：已有后台任务运行中")
             return False

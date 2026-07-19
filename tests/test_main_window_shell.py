@@ -103,7 +103,7 @@ class DummyShellWindow(QMainWindow):
         self.last_density = (density, persist)
 
 
-def test_main_window_status_bar_applies_theme():
+def test_main_window_status_bar_applies_theme(qt_application):
     bar = MainWindowStatusBar("vtest")
     try:
         assert bar.lbl_version.text() == "vtest"
@@ -114,9 +114,14 @@ def test_main_window_status_bar_applies_theme():
         assert isinstance(bar.status_dot, StatusGlyph)
         assert bar.status_flow.objectName() == "statusFlowStrip"
         assert bar.status_flow.height() == 2
+        assert bar._clock_timer.isActive() is False
         assert bar.status_flow._timer.isActive() is False
         bar.show_sync_feedback("working")
         assert bar.status_flow._mode == "working"
+        assert bar.status_flow._timer.isActive() is False
+        bar.show()
+        qt_application.processEvents()
+        assert bar._clock_timer.isActive() is True
         assert bar.status_flow._timer.isActive() is True
         bar.show_sync_feedback("cache")
         assert bar.status_flow._mode == "cache"
@@ -137,7 +142,7 @@ def test_app_version_is_v188_for_shell_surfaces():
     assert APP_VERSION == "1.8.8"
 
 
-def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
+def test_main_window_shell_builders_wire_titlebar_menu_and_tabs(qt_application):
     window = DummyShellWindow()
     try:
         assert window._standalone_tabbar.count() == 2
@@ -163,6 +168,9 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert "outline: none;" in window._titlebar_sync_widget.btn_trade_calendar.styleSheet()
         assert window._titlebar_sync_widget.quote_pulse_dot.toolTip() == "quotes 同步心跳"
         window._titlebar_sync_widget.pulse_quotes()
+        assert window._titlebar_sync_widget.quote_pulse_dot._timer.isActive() is False
+        window.show()
+        qt_application.processEvents()
         assert window._titlebar_sync_widget.quote_pulse_dot._timer.isActive() is True
         window._titlebar_sync_widget.btn_trade_calendar.click()
         assert window.trade_calendar_open_count == 1
@@ -181,8 +189,8 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert not hasattr(window, "_act_workspace_classic")
         assert not hasattr(window, "_act_workspace_research")
         assert "工作区模式" not in [action.text() for action in window._sys_menu.actions()]
-        assert window.last_density is not None
-        assert window.last_density[1] is False
+        assert window.last_density is None
+        assert window._act_density_compact.isChecked() != window._act_density_comfort.isChecked()
         tabbar_style = window._standalone_tabbar.styleSheet()
         assert "max-width: 104px;" not in tabbar_style
         assert "max-width: 132px;" not in tabbar_style

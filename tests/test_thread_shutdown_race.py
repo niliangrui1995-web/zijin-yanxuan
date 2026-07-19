@@ -54,7 +54,7 @@ def test_finished_is_connected_before_a_synchronous_stop_can_emit(monkeypatch):
         )
 
         assert accepted is True
-        assert shutdown_module.pending_thread_count() == 0
+        assert thread not in shutdown_module._PENDING_THREADS
         assert thread.deleted is True
     finally:
         shutdown_module._PENDING_THREADS.discard(thread)
@@ -93,12 +93,12 @@ def test_shutdown_connection_failure_stops_and_retains_until_not_running(monkeyp
         assert thread.stop_requested is True
         assert thread.running is True
         assert thread.deleted is False
-        assert shutdown_module.pending_thread_count() == 1
+        assert thread in shutdown_module._PENDING_THREADS
 
         thread.running = False
         for callback in tuple(callbacks):
             callback()
-        assert shutdown_module.pending_thread_count() == 0
+        assert thread not in shutdown_module._PENDING_THREADS
         assert thread.deleted is True
     finally:
         shutdown_module._PENDING_THREADS.discard(thread)

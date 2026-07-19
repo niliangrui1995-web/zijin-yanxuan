@@ -959,6 +959,22 @@ def test_runtime_service_defer_prevents_auto_worker_start(monkeypatch):
     assert created[0].calls == ["resume", "start"]
 
 
+def test_runtime_service_shutdown_is_terminal(monkeypatch):
+    created = []
+    monkeypatch.setattr(runtime_service, "is_asian_quote_refresh_time", lambda _codes: True)
+    service = runtime_service.AsianMarketRuntimeService(
+        worker_factory=lambda codes: created.append(_RuntimeWorker(codes)) or created[-1]
+    )
+    service.set_target_codes(["0522.HK"])
+
+    service.shutdown()
+
+    assert service.sync_runtime_state() == "shutdown"
+    assert service.trigger_refresh_once() is False
+    assert service.resume_auto_refresh() is None
+    assert created == []
+
+
 def test_runtime_service_marks_deferred_repaint_progress_degraded():
     service = runtime_service.AsianMarketRuntimeService()
     state_spy = QSignalSpy(service.sig_runtime_state_changed)

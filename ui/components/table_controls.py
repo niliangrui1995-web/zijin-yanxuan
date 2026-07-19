@@ -56,6 +56,49 @@ from .table_view_helpers import bounded_model_row, find_header_column
 log = logging.getLogger(__name__)
 
 
+def _model_has_rows(model) -> bool:
+    try:
+        return int(model.rowCount()) > 0
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _selected_table_rows(table) -> tuple[list[int], list[str]]:
+    selection_model = table.selectionModel()
+    if selection_model is None:
+        return [], []
+    try:
+        rows = [index.row() for index in selection_model.selectedRows()]
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return [], []
+    codes = [code for row in rows if (code := table._row_identity(row))]
+    return rows, codes
+
+
+def _model_sort_state(model) -> tuple[int, Qt.SortOrder]:
+    if not hasattr(model, "sortColumn"):
+        return -1, Qt.SortOrder.AscendingOrder
+    try:
+        return int(model.sortColumn()), model.sortOrder()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return -1, Qt.SortOrder.AscendingOrder
+
+
+def _stop_state_animation(wrapper) -> None:
+    animation = wrapper._state_animation
+    if animation is None:
+        return
+    try:
+        effect = animation.targetObject()
+        animation.stop()
+        effect_owner = effect.parent() if effect is not None else None
+        if isinstance(effect_owner, QWidget) and effect_owner.graphicsEffect() is effect:
+            effect_owner.setGraphicsEffect(None)
+    except (AttributeError, RuntimeError):
+        pass
+    wrapper._state_animation = None
+
+
 class VCPTableView(QTableView):
     """
     紫金研选统一表格组件 (VCPTableView)
@@ -114,8 +157,6 @@ class VCPTableView(QTableView):
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self._apply_screen_width_limit()
 
-        self._apply_runtime_style()
-
         if default_row_height is None:
             default_row_height = self.verticalHeader().defaultSectionSize()
         self._base_row_height = default_row_height
@@ -165,18 +206,10 @@ class VCPTableView(QTableView):
         self.verticalHeader().setDefaultSectionSize(row_height)
         self.horizontalHeader().setMinimumHeight(tokens["table"]["header_min_height"])
 
-    def _table_qss(self) -> str:
-        tokens = build_ui_tokens()
-        return f"QTableView::item {{ padding: {tokens['table']['cell_padding_y']}px {tokens['table']['cell_padding_x']}px; }}"
-
-    def _apply_runtime_style(self):
-        self.setStyleSheet(self._table_qss())
-
     def _on_theme_changed(self, _theme_name: str):
         if self._closing:
             return
         self._apply_screen_width_limit()
-        self._apply_runtime_style()
         self.style().unpolish(self)
         self.style().polish(self)
         self.viewport().update()
@@ -252,30 +285,14 @@ class VCPTableView(QTableView):
         if self._restoring_refresh_state:
             return
         model = self.model()
-        if model is None:
+        if model is None or not _model_has_rows(model):
             self._refresh_state_snapshot = None
             return
 
         current = self.currentIndex()
-        selected_rows = []
-        selected_codes = []
-        selection_model = self.selectionModel()
-        if selection_model is not None:
-            try:
-                selected_rows = [index.row() for index in selection_model.selectedRows()]
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                selected_rows = []
-            selected_codes = [self._row_identity(row) for row in selected_rows if self._row_identity(row)]
-
+        selected_rows, selected_codes = _selected_table_rows(self)
         header = self.horizontalHeader()
-        proxy_sort_column = -1
-        proxy_sort_order = Qt.SortOrder.AscendingOrder
-        if hasattr(model, "sortColumn"):
-            try:
-                proxy_sort_column = int(model.sortColumn())
-                proxy_sort_order = model.sortOrder()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                proxy_sort_column = -1
+        proxy_sort_column, proxy_sort_order = _model_sort_state(model)
 
         self._refresh_state_snapshot = {
             "v_scroll": self.verticalScrollBar().value(),
@@ -570,6 +587,7 @@ class PulsingDot(QWidget):
         self.dot_color = QColor(color)
         self._radius = 3.5
         self._opacity = 1.0
+        self._animation_requested = True
 
         self.anim = QPropertyAnimation(self, b"opacity", self)
         self.anim.setDuration(1500)
@@ -581,17 +599,37 @@ class PulsingDot(QWidget):
         self._start_timer = QTimer(self)
         self._start_timer.setSingleShot(True)
         self._start_timer.timeout.connect(self.anim.start)
-        self._start_timer.start(100)
+
+    def _sync_animation(self) -> None:
+        if self._animation_requested and self.isVisible():
+            if self.anim.state() == self.anim.State.Stopped and not self._start_timer.isActive():
+                self._start_timer.start(100)
+            return
+        self._stop_animation()
+
+    def set_running(self, running: bool) -> None:
+        self._animation_requested = bool(running)
+        self._sync_animation()
 
     def _stop_animation(self) -> None:
         self._start_timer.stop()
         self.anim.stop()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_animation()
+
+    def hideEvent(self, event) -> None:
+        self._stop_animation()
+        super().hideEvent(event)
+
     def closeEvent(self, event):
+        self._animation_requested = False
         self._stop_animation()
         super().closeEvent(event)
 
     def deleteLater(self):
+        self._animation_requested = False
         self._stop_animation()
         super().deleteLater()
 
@@ -728,6 +766,7 @@ class SkeletonShimmer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._phase = 0.0
+        self._running_requested = False
         self.setFixedHeight(72)
         self.setMinimumWidth(240)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -740,21 +779,31 @@ class SkeletonShimmer(QWidget):
         self.update()
 
     def set_running(self, running: bool) -> None:
-        if running:
+        self._running_requested = bool(running)
+        self._sync_timer()
+
+    def _sync_timer(self) -> None:
+        if self._running_requested and self.isVisible():
             if not self._timer.isActive():
                 self._timer.start()
             return
         self._timer.stop()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_timer()
+
     def hideEvent(self, event) -> None:
-        self.set_running(False)
+        self._timer.stop()
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:
+        self._running_requested = False
         self.set_running(False)
         super().closeEvent(event)
 
     def deleteLater(self):
+        self._running_requested = False
         self.set_running(False)
         super().deleteLater()
 
@@ -981,7 +1030,7 @@ class TableStateOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._mode = "empty"
+        self._mode, self._disposed = "empty", False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1045,11 +1094,19 @@ class TableStateOverlay(QWidget):
         card_layout.addWidget(self._action, 0, Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._card, 0, Qt.AlignmentFlag.AlignCenter)
 
-        from ui.theme import theme_manager
-
-        theme_manager.sig_theme_changed.connect(lambda _name: self._apply_style())
+        self._bind_theme_manager()
         self._sync_card_width()
         self._apply_style()
+
+    def _bind_theme_manager(self) -> None:
+        from ui.theme import theme_manager
+
+        self._theme_manager = theme_manager
+        self._theme_manager.sig_theme_changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, _name: str) -> None:
+        if not self._disposed:
+            self._apply_style()
 
     def _handle_action(self):
         if callable(self._action_callback):
@@ -1126,12 +1183,21 @@ class TableStateOverlay(QWidget):
         self._apply_style()
 
     def closeEvent(self, event):  # noqa: N802 - Qt API naming
-        self._skeleton.set_running(False)
+        self._dispose()
         super().closeEvent(event)
 
     def deleteLater(self):
-        self._skeleton.set_running(False)
+        self._dispose()
         super().deleteLater()
+
+    def _dispose(self) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        self._skeleton.set_running(False)
+        self._dot.set_running(False)
+        with suppress(AttributeError, RuntimeError, TypeError):
+            self._theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
 
 
 class TableStateWrapper(QWidget):
@@ -1244,11 +1310,16 @@ class TableStateWrapper(QWidget):
         self._fade_in_widget(widget)
 
     def _fade_in_widget(self, widget: QWidget) -> None:
-        animation = self._state_animation
-        if animation is not None:
-            with suppress(RuntimeError):
-                animation.stop()
-            self._state_animation = None
+        _stop_state_animation(self)
+
+        # QGraphicsOpacityEffect forces item views to render their whole viewport
+        # into an off-screen surface on every animation frame.  Keep state-overlay
+        # motion, but reveal data tables directly so a cache delivery cannot turn
+        # into several full-table repaints on the GUI thread.
+        if widget is self._table:
+            if widget.graphicsEffect() is not None:
+                widget.setGraphicsEffect(None)
+            return
 
         if not self.isVisible() or widget.width() <= 0 or widget.height() <= 0:
             return

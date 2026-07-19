@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 import types
-from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QObject
@@ -11,7 +10,10 @@ from PyQt6.QtTest import QSignalSpy
 import core.startup_orchestrator as startup_module
 from core.event_bus import event_bus
 from core.startup_orchestrator import (
+    ASIAN_DATA_SYNC_BUSY_RETRY_DELAY_MS,
+    ASIAN_DATA_SYNC_PROCESS_TIMEOUT_SEC,
     ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC,
+    ASIAN_DATA_SYNC_SHELL_NAV_QUIET_SEC,
     ASIAN_DATA_SYNC_START_DELAY_MS,
     ASIAN_DATA_SYNC_TASK_ID,
     ASIAN_DATA_SYNC_TIME_BUDGET_SEC,
@@ -20,15 +22,18 @@ from core.startup_orchestrator import (
     DEFERRED_LOAD_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
+    GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS,
     GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS,
     GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
+    SMART_STARTUP_PRELOAD_RETRY_DELAY_MS,
     SMART_STARTUP_TASK_ID,
     StartupHostAdapter,
     StartupOrchestrator,
     ms_until_next_global_earnings_calendar_daily_refresh,
 )
+from infra.tasks import TaskCancelledError
 
 
 @pytest.fixture(autouse=True)
@@ -38,10 +43,6 @@ def _stub_global_earnings_cache_probe(monkeypatch):
         "_global_earnings_calendar_cache_snapshot",
         lambda: {"status": "miss", "events": 0},
     )
-
-
-def _asian_sync_path_exists(path):
-    return not str(path).endswith("asian_klines_latest.json")
 
 
 class _DummyLabel:
@@ -70,6 +71,14 @@ class _DummyAsianMarketService:
     def sync_runtime_state(self):
         self.calls.append(("sync",))
         return "running"
+
+    def cache_staleness(self):
+        self.calls.append(("staleness",))
+        return {"stale": True}
+
+    def run_cache_sync_if_stale(self, *, emit_event=True, cancellation_token=None):
+        self.calls.append(("cache_sync", bool(emit_event), cancellation_token))
+        return {"status": "success", "records": 3}
 
 
 class _DummyDataProvider:
@@ -105,7 +114,7 @@ class _DummyMainWindow(QObject):
         self.lbl_code_count = _DummyLabel()
         self.titlebar_sync_states = []
         self.tab_watchlist = None
-        self._workspace = None
+        self._workspace = types.SimpleNamespace(current_tab_key=lambda: "asian_market")
         self.network_updates = []
         self.online_done_count = 0
 
@@ -178,7 +187,7 @@ def test_startup_host_adapter_exposes_narrow_main_window_boundary():
 
     assert adapter.timer_parent is mw
     assert adapter.data_provider is mw.data_provider
-    assert adapter.workspace is None
+    assert adapter.workspace is mw._workspace
     assert adapter.fallback_watchlist_tab is None
 
     adapter.set_code_count_text("标的池 3")
@@ -194,25 +203,53 @@ def test_startup_host_adapter_exposes_narrow_main_window_boundary():
     assert mw.online_done_count == 1
 
 
-def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
+def test_startup_host_adapter_defers_asian_sync_while_f5_is_pending_or_running():
+    mw = _DummyMainWindow()
+    adapter = StartupHostAdapter(mw)
+
+    assert startup_module._should_defer_startup_asian_sync(adapter) is False
+    mw._pending_f5_request = True
+    assert startup_module._should_defer_startup_asian_sync(adapter) is True
+    mw._pending_f5_request = False
+    mw._f5_job_controller = types.SimpleNamespace(is_running=True)
+    assert startup_module._should_defer_startup_asian_sync(adapter) is True
+    mw._f5_job_controller.is_running = False
+    assert startup_module._should_defer_startup_asian_sync(adapter) is False
+
+
+def test_startup_host_adapter_defers_asian_sync_until_background_preload_settles():
+    mw = _DummyMainWindow()
+    finished = [False]
+    mw._workspace.background_preload_status = lambda: {
+        "enabled": True,
+        "finished": finished[0],
+        "active_key": "watchlist" if not finished[0] else "",
+        "remaining_keys": ["lhb"] if not finished[0] else [],
+        "pending_priority_keys": [],
+        "cancelling_key": "",
+        "active_step_count": 1 if not finished[0] else 0,
+    }
+    adapter = StartupHostAdapter(mw)
+
+    assert startup_module._should_defer_startup_asian_sync(adapter) is True
+
+    finished[0] = True
+
+    assert startup_module._should_defer_startup_asian_sync(adapter) is False
+
+
+def test_startup_orchestrator_asian_sync_uses_cancellable_subprocess(monkeypatch):
     runner = _InlineJobRunner()
     mw = _DummyMainWindow()
     orchestrator = StartupOrchestrator(mw, job_runner=runner)
-    run_calls = []
     delayed = []
+    subprocess_tokens = []
 
-    def fake_run_python_module(module_name, module_args=None, **kwargs):
-        run_calls.append(
-            {
-                "module_name": module_name,
-                "module_args": list(module_args or []),
-                "kwargs": kwargs,
-            }
-        )
-        return types.SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", _asian_sync_path_exists)
-    monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
+    monkeypatch.setattr("core.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: False)
+    monkeypatch.setattr(
+        "core.startup_orchestrator._run_startup_asian_sync_subprocess",
+        lambda token: subprocess_tokens.append(token),
+    )
     monkeypatch.setattr(
         "core.startup_orchestrator.QTimer.singleShot",
         lambda delay, callback: delayed.append((delay, callback)),
@@ -223,37 +260,24 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     assert delayed and delayed[0][0] == ASIAN_DATA_SYNC_START_DELAY_MS
     delayed.pop(0)[1]()
 
-    assert run_calls, "expected asian sync subprocess to run"
-    assert run_calls[0]["module_name"] == "vcp.fetchers.asian_kline_fetcher"
-    assert run_calls[0]["module_args"][:2] == ["--strict-sync", "--output-dir"]
-    assert run_calls[0]["module_args"][2]
-    assert run_calls[0]["module_args"][3:] == [
-        "--time-budget-sec",
-        str(ASIAN_DATA_SYNC_TIME_BUDGET_SEC),
-    ]
-    assert run_calls[0]["kwargs"]["timeout"] == ASIAN_DATA_SYNC_TIMEOUT_SEC
-    assert Path(run_calls[0]["kwargs"]["cwd"]).name == Path(__file__).resolve().parents[1].name
-    assert run_calls[0]["kwargs"]["capture_output"] is True
-    assert run_calls[0]["kwargs"]["text"] is True
-    assert run_calls[0]["kwargs"]["no_window"] is True
-    assert mw.asian_market_service.calls == [
-        ("defer", ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync"),
-        ("clear",),
-        ("sync",),
-    ]
+    assert mw.asian_market_service.calls[0] == ("staleness",)
+    assert mw.asian_market_service.calls[1] == (
+        "defer",
+        ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC,
+        "startup_asian_sync",
+    )
+    token = subprocess_tokens[0]
+    assert token.cancelled is False
+    assert token.remaining_seconds() <= ASIAN_DATA_SYNC_TIMEOUT_SEC
+    assert mw.asian_market_service.calls[2:] == [("clear",), ("sync",)]
 
 
-def test_startup_orchestrator_asian_sync_timeout_extends_runtime_backoff(monkeypatch):
+def test_startup_orchestrator_asian_sync_after_close_is_owned_by_central_scheduler(monkeypatch):
     mw = _DummyMainWindow()
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     delayed = []
 
-    def fake_run_python_module(*_args, **_kwargs):
-        raise startup_module.ProcessTimeoutError(cmd="python", timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC)
-
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", _asian_sync_path_exists)
-    monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
-    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("core.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: True)
     monkeypatch.setattr(
         "core.startup_orchestrator.QTimer.singleShot",
         lambda delay, callback: delayed.append((delay, callback)),
@@ -263,20 +287,131 @@ def test_startup_orchestrator_asian_sync_timeout_extends_runtime_backoff(monkeyp
     assert delayed and delayed[0][0] == ASIAN_DATA_SYNC_START_DELAY_MS
     delayed.pop(0)[1]()
 
+    assert mw.asian_market_service.calls == []
+
+
+def test_startup_orchestrator_asian_sync_waits_for_shell_navigation_quiet_window(monkeypatch):
+    runner = _QueuedJobRunner()
+    mw = _DummyMainWindow()
+    mw._workspace = types.SimpleNamespace(
+        _last_shell_nav_load_at=99.0,
+        current_tab_key=lambda: "asian_market",
+    )
+    orchestrator = StartupOrchestrator(mw, job_runner=runner)
+    delayed = []
+
+    monkeypatch.setattr(startup_module.time, "perf_counter", lambda: 100.0)
+    monkeypatch.setattr(startup_module.QTimer, "singleShot", lambda delay, callback: delayed.append((delay, callback)))
+
+    orchestrator.deferred_data_load()
+    assert delayed[0][0] == ASIAN_DATA_SYNC_START_DELAY_MS
+    delayed.pop(0)[1]()
+
+    assert delayed[0][0] == ASIAN_DATA_SYNC_BUSY_RETRY_DELAY_MS
+    assert [getattr(task_id, "task_id", task_id) for task_id, _task, _kwargs in runner.jobs] == [
+        DEFERRED_LOAD_TASK_ID
+    ]
+    assert ASIAN_DATA_SYNC_SHELL_NAV_QUIET_SEC > 5.0
+
+    mw._workspace._last_shell_nav_load_at = 0.0
+    delayed.pop(0)[1]()
+    assert [getattr(task_id, "task_id", task_id) for task_id, _task, _kwargs in runner.jobs] == [
+        DEFERRED_LOAD_TASK_ID,
+        ASIAN_DATA_SYNC_TASK_ID,
+    ]
+
+
+def test_startup_orchestrator_asian_sync_never_starts_while_asian_tab_is_hidden(monkeypatch):
+    runner = _QueuedJobRunner()
+    mw = _DummyMainWindow()
+    mw._workspace = types.SimpleNamespace(current_tab_key=lambda: "watchlist")
+    orchestrator = StartupOrchestrator(mw, job_runner=runner)
+    delayed = []
+
+    monkeypatch.setattr(
+        startup_module.QTimer,
+        "singleShot",
+        lambda delay, callback: delayed.append((delay, callback)),
+    )
+
+    orchestrator.deferred_data_load()
+    assert delayed[0][0] == ASIAN_DATA_SYNC_START_DELAY_MS
+    delayed.pop(0)[1]()
+
+    assert [getattr(task_id, "task_id", task_id) for task_id, _task, _kwargs in runner.jobs] == [
+        DEFERRED_LOAD_TASK_ID
+    ]
+    assert delayed == []
+
+
+def test_startup_orchestrator_asian_sync_timeout_keeps_runtime_backoff(monkeypatch):
+    mw = _DummyMainWindow()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+
+    monkeypatch.setattr(startup_module, "ASIAN_DATA_SYNC_START_DELAY_MS", 0)
+    monkeypatch.setattr(startup_module, "_central_scheduler_owns_asian_sync", lambda: False)
+    monkeypatch.setattr(
+        startup_module,
+        "_run_startup_asian_sync_subprocess",
+        lambda _token: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(["python"], ASIAN_DATA_SYNC_PROCESS_TIMEOUT_SEC)
+        ),
+    )
+
+    orchestrator.deferred_data_load()
+
     assert mw.asian_market_service.calls == [
+        ("staleness",),
         ("defer", ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync"),
         ("defer", ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC, "startup_asian_sync_timeout"),
     ]
 
 
+def test_startup_orchestrator_asian_sync_skips_fresh_cache_without_child(monkeypatch):
+    mw = _DummyMainWindow()
+    mw.asian_market_service.cache_staleness = lambda: {"stale": False}
+    child_calls = []
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+
+    monkeypatch.setattr(startup_module, "ASIAN_DATA_SYNC_START_DELAY_MS", 0)
+    monkeypatch.setattr(startup_module, "_central_scheduler_owns_asian_sync", lambda: False)
+    monkeypatch.setattr(
+        startup_module,
+        "_run_startup_asian_sync_subprocess",
+        lambda token: child_calls.append(token),
+    )
+
+    orchestrator.deferred_data_load()
+
+    assert child_calls == []
+    assert mw.asian_market_service.calls == []
+
+
+def test_startup_asian_sync_subprocess_uses_hidden_cancellable_boundary(monkeypatch):
+    captured = {}
+    token = object()
+
+    def fake_run(module_name, module_args=None, **kwargs):
+        captured.update(module_name=module_name, module_args=module_args, kwargs=kwargs)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(startup_module, "run_python_module_cancellable", fake_run)
+
+    startup_module._run_startup_asian_sync_subprocess(token)
+
+    assert captured["module_name"] == "vcp.fetchers.asian_kline_fetcher"
+    assert "--strict-sync" in captured["module_args"]
+    assert str(ASIAN_DATA_SYNC_TIME_BUDGET_SEC) in captured["module_args"]
+    assert captured["kwargs"]["cancellation_token"] is token
+    assert captured["kwargs"]["timeout"] == ASIAN_DATA_SYNC_PROCESS_TIMEOUT_SEC
+    assert captured["kwargs"]["check"] is True
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["no_window"] is True
+
+
 def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypatch):
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     spy = QSignalSpy(event_bus.sig_cache_bootstrap_ready)
-
-    def fake_exists(path):
-        return not str(path).endswith("asian_kline_fetcher.py")
-
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
 
     orchestrator.deferred_data_load()
     orchestrator.shutdown()
@@ -284,14 +419,25 @@ def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypa
     assert len(spy) == 1
 
 
+def test_startup_orchestrator_deferred_load_emits_bootstrap_terminal_after_failure(monkeypatch):
+    mw = _DummyMainWindow()
+    mw.data_provider.load_cache_from_disk = lambda: (_ for _ in ()).throw(OSError("cache failed"))
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    spy = QSignalSpy(event_bus.sig_cache_bootstrap_ready)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        lambda key, *_args, **_kwargs: key == "startup_history_cache_load",
+    )
+
+    with pytest.raises(OSError, match="cache failed"):
+        orchestrator.deferred_data_load()
+
+    assert len(spy) == 1
+
+
 def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatch):
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     labels = []
-
-    def fake_exists(path):
-        return not str(path).endswith("asian_kline_fetcher.py")
-
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
     monkeypatch.setattr(
         "core.startup_orchestrator.log_process_snapshot",
         lambda label, **_kwargs: labels.append(label),
@@ -304,16 +450,16 @@ def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatc
     assert "startup.deferred_load.end" in labels
 
 
-def test_startup_orchestrator_deferred_load_loads_history_cache_by_default(monkeypatch):
+def test_startup_orchestrator_deferred_load_can_preload_history_when_enabled(monkeypatch):
     mw = _DummyMainWindow()
     calls = []
     mw.data_provider.load_cache_from_disk = lambda: calls.append("load") or "20260508"
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
 
-    def fake_exists(path):
-        return not str(path).endswith("asian_kline_fetcher.py")
-
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        lambda key, *_args, **_kwargs: key == "startup_history_cache_load",
+    )
 
     orchestrator.deferred_data_load()
     orchestrator.shutdown()
@@ -366,10 +512,6 @@ def test_startup_orchestrator_code_count_uses_lightweight_code_map_when_history_
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
 
     monkeypatch.setattr(
-        "core.startup_orchestrator.os.path.exists",
-        lambda path: not str(path).endswith("asian_kline_fetcher.py"),
-    )
-    monkeypatch.setattr(
         "core.startup_orchestrator.service_toggle_registry.is_enabled",
         lambda key, *_args, **_kwargs: False if key == "startup_history_cache_load" else True,
     )
@@ -380,35 +522,12 @@ def test_startup_orchestrator_code_count_uses_lightweight_code_map_when_history_
     assert mw.lbl_code_count.value == "标的池: 3 只"
 
 
-def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypatch):
-    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
-    records = {"warning": [], "debug": []}
+def test_startup_orchestrator_asian_sync_runner_receives_same_cancellation_token(monkeypatch):
+    runner = _QueuedJobRunner()
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
     scheduled_callbacks = []
 
-    class _FakeLog:
-        def warning(self, message):
-            records["warning"].append(message)
-
-        def debug(self, message):
-            records["debug"].append(message)
-
-        def info(self, _message):
-            return None
-
-        def error(self, _message):
-            return None
-
-    def fake_run_python_module(*_args, **_kwargs):
-        raise subprocess.CalledProcessError(
-            returncode=1,
-            cmd=["python", "asian_kline_fetcher.py"],
-            stderr="connect failed\nHTTP 429 Too Many Requests",
-        )
-
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", _asian_sync_path_exists)
-    monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
-    monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
-    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("core.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: False)
     monkeypatch.setattr(
         startup_module.QTimer,
         "singleShot",
@@ -419,12 +538,12 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
     assert [delay_ms for delay_ms, _callback in scheduled_callbacks] == [ASIAN_DATA_SYNC_START_DELAY_MS]
     scheduled_callbacks[0][1]()
 
-    assert len(records["warning"]) == 1
-    assert "429" in records["warning"][0]
-    assert "1" in records["warning"][0]
-    assert len(records["debug"]) == 1
-    assert "connect failed" in records["debug"][0]
-    assert "HTTP 429 Too Many Requests" in records["debug"][0]
+    _, task, kwargs = runner.jobs[-1]
+    token = kwargs["cancellation_token"]
+    assert kwargs["timeout_sec"] == ASIAN_DATA_SYNC_TIMEOUT_SEC
+    token.cancel("window closing")
+    with pytest.raises(TaskCancelledError):
+        task()
 
 
 def test_startup_orchestrator_offline_network_log_is_visible_info(monkeypatch):
@@ -463,6 +582,33 @@ def test_startup_orchestrator_smart_startup_records_process_snapshots(monkeypatc
     orchestrator.smart_startup()
 
     assert labels == ["startup.smart.begin", "startup.smart.end"]
+
+
+def test_startup_orchestrator_defers_smart_network_until_background_preload_settles():
+    mw = _DummyMainWindow()
+    settled = [False]
+    mw._workspace.background_preload_status = lambda: {
+        "enabled": True,
+        "finished": settled[0],
+        "active_key": "watchlist" if not settled[0] else "",
+        "remaining_keys": ["lhb"] if not settled[0] else [],
+        "pending_priority_keys": [],
+        "cancelling_key": "",
+        "active_step_count": 1 if not settled[0] else 0,
+    }
+    runner = _QueuedJobRunner()
+    orchestrator = StartupOrchestrator(mw, job_runner=runner)
+
+    orchestrator.smart_startup()
+
+    assert runner.jobs == []
+    assert orchestrator._smart_timer.isActive() is True
+    assert orchestrator._smart_timer.interval() == SMART_STARTUP_PRELOAD_RETRY_DELAY_MS
+
+    settled[0] = True
+    orchestrator.smart_startup()
+
+    assert [job[0].task_id for job in runner.jobs] == [SMART_STARTUP_TASK_ID]
 
 
 def test_startup_orchestrator_smart_startup_stops_after_window_close(monkeypatch):
@@ -680,11 +826,45 @@ def test_startup_orchestrator_schedules_global_earnings_refresh_timer():
 
     orchestrator.schedule_startup()
     try:
+        assert orchestrator._deferred_timer.interval() == 0
+        assert orchestrator._smart_timer.interval() == 4500
         assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
         assert orchestrator._global_earnings_calendar_daily_timer.isSingleShot() is True
         assert 0 < orchestrator._global_earnings_calendar_daily_timer.interval() <= 24 * 60 * 60 * 1000
     finally:
         orchestrator.shutdown()
+
+
+def test_startup_orchestrator_defers_global_earnings_network_until_background_preload_settles():
+    mw = _DummyMainWindow()
+    finished = [False]
+    mw._workspace.background_preload_status = lambda: {
+        "enabled": True,
+        "finished": finished[0],
+        "active_key": "watchlist" if not finished[0] else "",
+        "remaining_keys": ["system_log"] if not finished[0] else [],
+        "pending_priority_keys": [],
+        "cancelling_key": "",
+        "active_step_count": 1 if not finished[0] else 0,
+    }
+    runner = _QueuedJobRunner()
+    orchestrator = StartupOrchestrator(mw, job_runner=runner)
+
+    orchestrator._run_daily_global_earnings_calendar_refresh()
+
+    assert runner.jobs == []
+    assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
+    assert orchestrator._global_earnings_calendar_daily_timer.interval() == (
+        GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS
+    )
+
+    finished[0] = True
+    orchestrator._run_daily_global_earnings_calendar_refresh()
+
+    assert [job[0] for job in runner.jobs] == [GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID]
+    assert orchestrator._global_earnings_calendar_daily_timer.interval() > (
+        GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS
+    )
 
 
 def test_startup_orchestrator_global_earnings_sync_allows_next_period_after_completion(monkeypatch):

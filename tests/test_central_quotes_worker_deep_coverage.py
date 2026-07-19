@@ -16,6 +16,51 @@ def _service():
     return worker_module.CentralQuotesService(None, _Provider(), code_supplier=lambda: [])
 
 
+def test_central_quote_phase_metrics_split_worker_queue_and_publish(monkeypatch):
+    perf_values = iter((2.0, 4.0, 7.0, 7.25))
+    monkeypatch.setattr(worker_module.time, "perf_counter", lambda: next(perf_values))
+    metrics = []
+    logs = []
+    published = []
+    monkeypatch.setattr(
+        worker_module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, float(value), kwargs)),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "emit_structured_log",
+        lambda event, **kwargs: logs.append((event, kwargs)),
+    )
+    service = SimpleNamespace(
+        _fetch_quote_payload=lambda codes: {"quotes": {code: {"close": 10.0} for code in codes}},
+        publish_external_quotes=lambda quotes, **kwargs: published.append((quotes, kwargs)),
+    )
+    timing = {"submitted_at": 1.0}
+
+    payload = worker_module._fetch_quote_payload_timed(service, {"000001"}, timing)
+    worker_module._record_and_publish_quote_refresh(
+        service,
+        codes={"000001"},
+        quotes=payload["quotes"],
+        has_valid=True,
+        provider_failed=False,
+        elapsed_ms=5_000.0,
+        reason="cache_reload",
+        timing=timing,
+        callback_started_at=6.0,
+    )
+
+    metric_values = {name: value for name, value, _kwargs in metrics}
+    assert metric_values["quote_submit_queue_ms"] == 1_000.0
+    assert metric_values["quote_worker_ms"] == 2_000.0
+    assert metric_values["quote_result_queue_delay_ms"] == 2_000.0
+    assert metric_values["quote_publish_ms"] == 250.0
+    assert all(item[2]["tags"]["reason"] == "cache_reload" for item in metrics)
+    assert published[0][1]["source"] == "central_quotes.realtime"
+    assert logs[0][1]["result_queue_delay_ms"] == 2_000.0
+
+
 def test_central_quote_provider_stats_timer_failure_and_health_states(monkeypatch, qt_application):
     provider = _Provider()
     monkeypatch.setattr(

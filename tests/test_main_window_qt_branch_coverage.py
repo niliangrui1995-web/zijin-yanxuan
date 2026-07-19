@@ -106,11 +106,14 @@ class _Timer:
     def isActive(self):
         return self.active
 
-    def start(self):
+    def start(self, delay_ms=None):
         self.started = True
+        self.delay_ms = delay_ms
 
 
 def test_post_paint_schedule_and_runtime_success_failure(monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "_schedule_f5_startup_retention", lambda _window: calls.append("retention"))
     timer = _Timer()
     window = SimpleNamespace(_is_closing=False, _post_paint_runtime_started=False, _post_paint_runtime_timer=timer)
     main.MainWindowQT._schedule_post_paint_runtime(window)
@@ -122,7 +125,6 @@ def test_post_paint_schedule_and_runtime_success_failure(monkeypatch):
     window._is_closing = True
     main.MainWindowQT._schedule_post_paint_runtime(window)
 
-    calls = []
     scheduler = SimpleNamespace(start=lambda: calls.append("scheduler"))
     runtime_window = SimpleNamespace(
         _is_closing=False,
@@ -133,20 +135,220 @@ def test_post_paint_schedule_and_runtime_success_failure(monkeypatch):
         startup_orchestrator=SimpleNamespace(schedule_startup=lambda: calls.append("startup")),
         auto_refresh_scheduler=scheduler,
     )
-    main.MainWindowQT._start_post_paint_runtime(runtime_window)
-    assert calls == ["init", "startup", "scheduler"]
+    for _ in range(12):
+        main.MainWindowQT._start_post_paint_runtime(runtime_window)
+        if runtime_window._post_paint_runtime_started:
+            break
+    assert calls == ["retention", "init", "startup", "scheduler"]
+    assert runtime_window._post_paint_runtime_started is True
     main.MainWindowQT._start_post_paint_runtime(runtime_window)
 
+    failures = [True]
+    retry_timer = _Timer()
     broken = SimpleNamespace(
         _is_closing=False,
         _post_paint_runtime_started=False,
         _auto_refresh_enabled=False,
         _startup_enabled=True,
-        startup_orchestrator=SimpleNamespace(schedule_startup=lambda: (_ for _ in ()).throw(RuntimeError("bad"))),
+        startup_orchestrator=SimpleNamespace(
+            schedule_startup=lambda: (_ for _ in ()).throw(RuntimeError("bad")) if failures else calls.append("retry")
+        ),
         auto_refresh_scheduler=None,
+        _post_paint_runtime_timer=retry_timer,
     )
-    main.MainWindowQT._start_post_paint_runtime(broken)
-    assert broken._post_paint_runtime_started
+    for _ in range(12):
+        main.MainWindowQT._start_post_paint_runtime(broken)
+        if retry_timer.delay_ms == 250:
+            break
+    assert broken._post_paint_runtime_started is False
+    assert broken._post_paint_tab_activation_finished is True
+    assert broken._post_paint_auto_refresh_initialized is True
+    assert getattr(broken, "_post_paint_scheduler_started", False) is False
+    assert retry_timer.started is True
+    assert retry_timer.delay_ms == 250
+
+    failures.clear()
+    retry_timer.active = False
+    for _ in range(4):
+        main.MainWindowQT._start_post_paint_runtime(broken)
+        if broken._post_paint_runtime_started:
+            break
+    assert broken._post_paint_runtime_started is True
+    assert broken._post_paint_scheduler_started is True
+    assert calls[-1] == "retry"
+
+
+def test_post_paint_core_services_attach_engine_before_quotes(monkeypatch):
+    calls = []
+    workspace = SimpleNamespace(engine=None)
+    window = SimpleNamespace(
+        engine=None,
+        central_quotes_svc=None,
+        _workspace=workspace,
+        _init_central_broadcaster=lambda: calls.append("quotes"),
+    )
+    monkeypatch.setattr(main, "create_scan_engine", lambda: calls.append("engine") or "scan-engine")
+
+    assert main._initialize_post_paint_scan_engine(window) is True
+    assert main._initialize_post_paint_central_quotes(window) is True
+    assert window.engine == "scan-engine"
+    assert workspace.engine == "scan-engine"
+    assert calls == ["engine", "quotes"]
+
+
+def test_disconnect_main_window_runtime_signals_is_complete_and_idempotent():
+    disconnected = []
+
+    class Signal:
+        def __init__(self, name):
+            self.name = name
+
+        def disconnect(self, slot):
+            disconnected.append((self.name, slot.__name__))
+
+    domain_bus = SimpleNamespace(
+        sig_network_status_changed=Signal("network"),
+        sig_rt_quotes=Signal("quotes"),
+    )
+    ui_bus = SimpleNamespace(
+        sig_task_progress=Signal("progress"),
+        sig_show_kline=Signal("kline"),
+        sig_show_kline_with_list=Signal("kline_list"),
+    )
+    theme_bus = SimpleNamespace(sig_theme_changed=Signal("theme"))
+    window = SimpleNamespace(
+        _update_network_ui=lambda: None,
+        _on_rt_quotes_pulse=lambda: None,
+        _on_task_progress=lambda: None,
+        _on_show_kline=lambda: None,
+        _on_show_kline_with_list=lambda: None,
+        _apply_theme=lambda: None,
+    )
+
+    main._disconnect_main_window_runtime_signals(
+        window,
+        domain_bus=domain_bus,
+        ui_bus=ui_bus,
+        theme_bus=theme_bus,
+    )
+    main._disconnect_main_window_runtime_signals(
+        window,
+        domain_bus=domain_bus,
+        ui_bus=ui_bus,
+        theme_bus=theme_bus,
+    )
+
+    assert [name for name, _slot in disconnected] == [
+        "network",
+        "quotes",
+        "progress",
+        "kline",
+        "kline_list",
+        "theme",
+    ]
+
+
+def test_workspace_tab_activation_waits_for_first_paint():
+    calls = []
+    workspace = SimpleNamespace(
+        schedule_restore_last_tab=lambda target, *, delay_ms: calls.append((target, delay_ms)),
+        tab_specs=lambda: [{"key": "watchlist"}, {"key": "scan"}],
+    )
+    window = SimpleNamespace(
+        _workspace=workspace,
+        _post_paint_runtime_started=False,
+        _restore_last_tab_enabled=True,
+        _app_config=SimpleNamespace(last_active_tab=0, last_active_tab_key="scan"),
+    )
+
+    main._queue_workspace_tab_activation(window, workspace)
+    assert calls == []
+    main._activate_pending_workspace_tab(window)
+    assert calls == [("scan", main.POST_PAINT_TAB_ACTIVATION_DELAY_MS)]
+
+    window._restore_last_tab_enabled = False
+    window._post_paint_runtime_started = True
+    main._queue_workspace_tab_activation(window, workspace)
+    assert calls[-1] == (0, 0)
+
+
+def test_kline_prewarm_is_a_post_paint_stage_after_tab_activation(monkeypatch):
+    calls = []
+    scheduled = []
+    window = SimpleNamespace(_kline_prewarm_enabled=True, _is_closing=False)
+    monkeypatch.setattr(main.kline_manager, "prewarm", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr(main.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+
+    labels = [label for _flag, label, _action in main._post_paint_stage_specs(window)]
+
+    assert labels.index("tab_activation") < labels.index("kline_prewarm")
+    assert main._schedule_post_paint_kline_prewarm(window) is True
+    assert calls == []
+    assert scheduled[0][0] == main.WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS
+    scheduled.pop(0)[1]()
+    assert calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
+
+    window._kline_prewarm_enabled = False
+    assert main._schedule_post_paint_kline_prewarm(window) is True
+    assert len(calls) == 1
+
+
+def test_kline_prewarm_waits_for_shell_navigation_quiet_window(monkeypatch):
+    calls = []
+    scheduled = []
+    workspace = SimpleNamespace(_last_shell_nav_load_at=99.5)
+    window = SimpleNamespace(
+        _workspace=workspace,
+        _kline_prewarm_enabled=True,
+        _is_closing=False,
+        _pending_f5_request=False,
+        _f5_precompute_start_pending=False,
+        _f5_job_controller=None,
+    )
+    monkeypatch.setattr(main.time, "perf_counter", lambda: 100.0)
+    monkeypatch.setattr(main.kline_manager, "prewarm", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr(main.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+
+    main._try_post_paint_kline_prewarm(window)
+
+    assert calls == []
+    assert scheduled[0][0] == main.KLINE_PREWARM_BUSY_RETRY_DELAY_MS
+    workspace._last_shell_nav_load_at = 0.0
+    scheduled.pop(0)[1]()
+    assert calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
+
+
+def test_kline_prewarm_waits_until_tab_preload_and_quiet_tail_finish(monkeypatch):
+    calls = []
+    scheduled = []
+    workspace = SimpleNamespace(
+        _background_prewarm_enabled=True,
+        _background_prewarm_finished=False,
+        _background_prewarm_finished_at=0.0,
+        _last_shell_nav_load_at=0.0,
+    )
+    window = SimpleNamespace(
+        _workspace=workspace,
+        _kline_prewarm_enabled=True,
+        _is_closing=False,
+        _pending_f5_request=False,
+        _f5_precompute_start_pending=False,
+        _f5_job_controller=None,
+    )
+    monkeypatch.setattr(main.time, "perf_counter", lambda: 100.0)
+    monkeypatch.setattr(main.kline_manager, "prewarm", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr(main.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+
+    main._try_post_paint_kline_prewarm(window)
+    assert calls == []
+    workspace._background_prewarm_finished = True
+    workspace._background_prewarm_finished_at = 95.0
+    scheduled.pop(0)[1]()
+    assert calls == []
+    workspace._background_prewarm_finished_at = 90.0
+    scheduled.pop(0)[1]()
+
+    assert calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
 
 
 def test_central_broadcaster_and_code_count_paths():
@@ -187,7 +389,7 @@ def test_network_and_shell_delegates(monkeypatch):
     monkeypatch.setattr(network, "force_reconnect", lambda window: calls.append("reconnect"))
     monkeypatch.setattr(visuals, "apply_table_density", lambda *args, **kwargs: calls.append(("density", kwargs)))
     monkeypatch.setattr(visuals, "show_trade_calendar", lambda window: calls.append("calendar"))
-    window = SimpleNamespace()
+    window = SimpleNamespace(data_provider=object(), engine=object())
     main.MainWindowQT._on_smart_startup_online_done(window)
     main.MainWindowQT._toggle_network(window)
     main.MainWindowQT._update_network_ui(window, True, "ok")
@@ -312,7 +514,7 @@ def test_replace_workspace_success_restore_and_old_cleanup(monkeypatch):
     new_tabs = _Tabs(index=2)
     new = SimpleNamespace(
         tabs=new_tabs,
-        schedule_restore_last_tab=lambda index: calls.append(("restore", index)),
+        schedule_restore_last_tab=lambda index, *, delay_ms: calls.append(("restore", index, delay_ms)),
     )
     layout = SimpleNamespace(
         addWidget=lambda *args: calls.append(("add", args)),
@@ -323,6 +525,7 @@ def test_replace_workspace_success_restore_and_old_cleanup(monkeypatch):
         tabs=old_tabs,
         _tabs_wrapper_layout=layout,
         _restore_last_tab_enabled=True,
+        _post_paint_runtime_started=True,
         _app_config=SimpleNamespace(last_active_tab=3),
         _kline_prewarm_enabled=False,
         install_workspace_table_copy_hooks=lambda: calls.append("hooks"),
@@ -332,9 +535,34 @@ def test_replace_workspace_success_restore_and_old_cleanup(monkeypatch):
     )
     assert main.MainWindowQT._replace_workspace_impl(window, new) is new
     assert window._workspace is new and "old_shutdown" in calls and "old_delete" in calls
+    assert ("restore", 3, 0) in calls
+
+    keyed_tabs = _Tabs(index=0)
+    keyed = SimpleNamespace(
+        tabs=keyed_tabs,
+        tab_specs=lambda: [{"key": "watchlist"}, {"key": "scan"}],
+        schedule_restore_last_tab=lambda target, *, delay_ms: calls.append(("key", target, delay_ms)),
+    )
+    window._workspace = new
+    window.tabs = new_tabs
+    window._app_config.last_active_tab_key = "scan"
+    main.MainWindowQT._replace_workspace_impl(window, keyed)
+    assert ("key", "scan", 0) in calls
+
+    fallback = SimpleNamespace(
+        tabs=_Tabs(index=0),
+        tab_specs=lambda: [{"key": "watchlist"}, {"key": "lhb"}],
+        schedule_restore_last_tab=lambda target, *, delay_ms: calls.append(("fallback", target, delay_ms)),
+    )
+    window._workspace = keyed
+    window.tabs = keyed_tabs
+    window._app_config.last_active_tab_key = "removed_tab"
+    window._app_config.last_active_tab = 1
+    main.MainWindowQT._replace_workspace_impl(window, fallback)
+    assert ("fallback", 1, 0) in calls
 
     fresh_tabs = _Tabs(index=2)
-    fresh = SimpleNamespace(tabs=fresh_tabs, restore_last_tab=lambda index: None)
+    fresh = SimpleNamespace(tabs=fresh_tabs, restore_last_tab=fresh_tabs.setCurrentIndex)
     window._workspace = None
     window.tabs = None
     window._restore_last_tab_enabled = False
@@ -349,7 +577,7 @@ def test_replace_workspace_failure_rolls_back_and_deletes(monkeypatch):
     new_tabs = _Tabs()
     new = SimpleNamespace(
         tabs=new_tabs,
-        schedule_restore_last_tab=lambda index: (_ for _ in ()).throw(RuntimeError("bad")),
+        schedule_restore_last_tab=lambda index, *, delay_ms: (_ for _ in ()).throw(RuntimeError("bad")),
         shutdown=lambda: calls.append("shutdown"),
         deleteLater=lambda: calls.append("delete"),
     )
@@ -360,6 +588,7 @@ def test_replace_workspace_failure_rolls_back_and_deletes(monkeypatch):
             addWidget=lambda *args: None, removeWidget=lambda widget: calls.append("remove")
         ),
         _restore_last_tab_enabled=True,
+        _post_paint_runtime_started=True,
         _app_config=SimpleNamespace(last_active_tab=1),
         _kline_prewarm_enabled=False,
         _remember_last_active_tab=lambda index: None,
@@ -421,17 +650,21 @@ def test_show_kline_request_and_apply_theme(monkeypatch):
 
     monkeypatch.setattr(
         open_service,
-        "build_kline_open_request",
-        lambda **kwargs: {
-            "code": kwargs["code"],
-            "name": "One",
-            "vcp_data": {},
-            "code_list": kwargs["code_list"],
-            "current_idx": kwargs["current_idx"],
-        },
+        "build_kline_open_context",
+        lambda **kwargs: SimpleNamespace(
+            code=kwargs["code"],
+            name="One",
+            current_idx=kwargs["current_idx"],
+        ),
     )
     opened = []
     monkeypatch.setattr(main.kline_manager, "open_chart", lambda **kwargs: opened.append(kwargs))
+    provider_notices = []
+    monkeypatch.setattr(
+        main.kline_manager,
+        "notify_data_provider_preparing",
+        lambda *args: provider_notices.append(args[1]),
+    )
     workspace = SimpleNamespace(tab_specs=lambda: [{"key": "scan"}])
     window = SimpleNamespace(
         _workspace=workspace,
@@ -440,6 +673,13 @@ def test_show_kline_request_and_apply_theme(monkeypatch):
     )
     main.MainWindowQT._on_show_kline_with_list(window, "1", [{"code": "1"}], 0)
     assert opened[-1]["name"] == "One"
+    assert opened[-1]["open_context"].code == "1"
+    window.data_provider = None
+    main.MainWindowQT._on_show_kline_with_list(window, "000001", [], 0)
+    assert provider_notices == []
+    assert len(opened) == 2 and opened[-1]["data_provider"] is None
+    main.MainWindowQT._on_show_kline_with_list(window, "2330.TW", [], 0)
+    assert len(opened) == 3 and opened[-1]["data_provider"] is None
     window.tabs = None
     window._workspace = None
     main.MainWindowQT._on_show_kline_with_list(window, "2", [], 0)
@@ -493,18 +733,46 @@ def test_f5_action_cancel_and_confirm(monkeypatch):
     import ui.main_window_runtime as runtime
 
     monkeypatch.setattr(boxes, "show_themed_question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
-    window = SimpleNamespace()
+    window = SimpleNamespace(data_provider=object(), engine=object())
     main.MainWindowQT._action_refresh_f5(window)
     started = []
     monkeypatch.setattr(boxes, "show_themed_question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(runtime, "start_f5_precompute", lambda *args, **kwargs: started.append((args, kwargs)))
     labels = []
     window = SimpleNamespace(
+        data_provider=object(),
+        engine=object(),
         lbl_status=SimpleNamespace(setText=lambda text: labels.append(text)),
         _set_titlebar_sync_state=lambda *args: labels.append(args),
     )
     main.MainWindowQT._action_refresh_f5(window)
     assert started and window._f5_cancelled is False and labels
+
+
+def test_f5_action_waits_for_post_paint_runtime_and_replays(monkeypatch):
+    callbacks = []
+    labels = []
+    window = SimpleNamespace(
+        data_provider=None,
+        engine=None,
+        _is_closing=False,
+        lbl_status=SimpleNamespace(setText=lambda text: labels.append(text)),
+        _set_titlebar_sync_state=lambda *args: labels.append(args),
+    )
+    main.MainWindowQT._action_refresh_f5(window)
+    assert window._pending_f5_request is True
+    assert labels
+
+    monkeypatch.setattr(main.QTimer, "singleShot", lambda _delay, callback: callbacks.append(callback))
+    replayed = []
+    window.data_provider = object()
+    window.engine = object()
+    window._action_refresh_f5 = lambda: replayed.append(True)
+    main._replay_pending_f5_request(window)
+    assert window._pending_f5_request is False
+    assert len(callbacks) == 1
+    callbacks[0]()
+    assert replayed == [True]
 
 
 def test_workspace_factory_wrapper_and_central_quotes_factory(monkeypatch):
@@ -642,6 +910,15 @@ def test_workspace_tables_copy_hooks_and_save_state(monkeypatch):
     window = SimpleNamespace(_app_config=config)
     main.MainWindowQT._remember_last_active_tab(window, 2)
     assert config.last_active_tab == 2
+
+    config = SimpleNamespace(last_active_tab=0, last_active_tab_key="")
+    window = SimpleNamespace(
+        _app_config=config,
+        _workspace=SimpleNamespace(tab_specs=lambda: [{"key": "watchlist"}, {"key": "scan"}]),
+    )
+    main.MainWindowQT._remember_last_active_tab(window, 1)
+    assert config.last_active_tab == 1
+    assert config.last_active_tab_key == "scan"
     assert main.MainWindowQT.iter_workspace_tables(SimpleNamespace(_workspace=None)) == []
     assert main.MainWindowQT.iter_workspace_tables(SimpleNamespace(_workspace=object())) == []
     workspace = SimpleNamespace(iter_tables=lambda: [1, 2])
@@ -712,7 +989,7 @@ def test_restore_ui_state_cached_failure_screen_and_no_screen(monkeypatch):
 
 def test_update_last_f5_time_and_completion_delegate(monkeypatch):
     labels = []
-    monkeypatch.setattr(main, "cache_file_mtime", lambda path: 1_700_000_000)
+    monkeypatch.setattr(main, "active_rps_cache_mtime", lambda path: 1_700_000_000)
     window = SimpleNamespace(
         act_f5=SimpleNamespace(setText=lambda text: labels.append(text)),
         _titlebar_sync_state="idle",
@@ -720,7 +997,7 @@ def test_update_last_f5_time_and_completion_delegate(monkeypatch):
     )
     main.MainWindowQT._update_last_f5_time(window)
     assert window._last_sync_freshness and labels
-    monkeypatch.setattr(main, "cache_file_mtime", lambda path: 0)
+    monkeypatch.setattr(main, "active_rps_cache_mtime", lambda path: 0)
     main.MainWindowQT._update_last_f5_time(window)
     assert "暂无" in window._last_sync_freshness
     window._titlebar_sync_state = "working"

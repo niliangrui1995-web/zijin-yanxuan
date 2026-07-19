@@ -14,6 +14,7 @@ from infra.market_data.adjustment_service import AdjustmentService
 from infra.market_data.local_history_provider import LocalHistoryProvider
 from infra.market_data.provider_ports import ProviderHealthSnapshot, RealtimeQuoteRequestPolicy
 from infra.market_data.realtime_quote_provider import RealtimeQuoteProvider
+from infra.tasks.lifecycle import bounded_io_timeout, raise_if_cancelled
 from vcp.data_provider_cache import compact_runtime_caches, downcast_memory, prune_rt_quote_cache
 from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin
 from vcp.data_provider_local import fetch_from_local_tdx
@@ -324,13 +325,17 @@ class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxData
         time_out: float = 5,
         require_security_count: bool = True,
         allow_unconnected: bool = False,
+        cancellation_token=None,
     ):
         last_error = None
         for ip, port in self.server_pool:
+            raise_if_cancelled(cancellation_token)
             try:
-                if not api.connect(ip, port, time_out=time_out):
+                connect_timeout = bounded_io_timeout(time_out, cancellation_token)
+                if not api.connect(ip, port, time_out=connect_timeout):
                     last_error = ConnectionError(f"连接节点返回 False: {ip}:{port}")
                     continue
+                raise_if_cancelled(cancellation_token)
                 if require_security_count and api.get_security_count(0) <= 0:
                     last_error = ConnectionError(f"节点返回的证券数量无效: {ip}:{port}")
                     try:
@@ -463,16 +468,34 @@ class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxData
             threshold=threshold,
         )
 
-    def _get_thread_api(self):
+    def _get_thread_api(self, *, cancellation_token=None):
         if not hasattr(self.thread_local, "api"):
+            raise_if_cancelled(cancellation_token)
             api = self._create_api_client()
-            self._connect_api_to_best_server(api, time_out=5, require_security_count=True, allow_unconnected=True)
+            self._connect_api_to_best_server(
+                api,
+                time_out=bounded_io_timeout(5, cancellation_token),
+                require_security_count=True,
+                allow_unconnected=True,
+                cancellation_token=cancellation_token,
+            )
             self.thread_local.api = api
+        raise_if_cancelled(cancellation_token)
         return self.thread_local.api
 
-    def _apply_forward_adjustment(self, api, market, code, df):
+    def _apply_forward_adjustment(self, api, market, code, df, *, cancellation_token=None):
         local_gbbq = self._get_local_gbbq_for_code(code)
-        return self._get_adjustment_service().apply_forward_adjustment(api, market, code, df, local_gbbq=local_gbbq)
+        cancellation_kwargs = (
+            {"cancellation_token": cancellation_token} if cancellation_token is not None else {}
+        )
+        return self._get_adjustment_service().apply_forward_adjustment(
+            api,
+            market,
+            code,
+            df,
+            local_gbbq=local_gbbq,
+            **cancellation_kwargs,
+        )
 
     def _fetch_standard_data(self, api, code, count=MAX_HISTORY_BARS):
         return self._get_local_history_provider().fetch_standard_data(api, code, count=count)

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import requests
 
 from infra.http_safety import requests_get_https
+from infra.tasks.lifecycle import bounded_io_timeout, raise_if_cancelled
 
 ASIAN_MARKET_HTTP_TIMEOUT_SEC = 15
 ASIAN_MARKET_HTTP_HEADERS = {
@@ -42,29 +43,29 @@ def asian_market_get(
     *,
     session=None,
     headers: Mapping[str, str] | None = None,
-    timeout: int = ASIAN_MARKET_HTTP_TIMEOUT_SEC,
+    timeout: float = ASIAN_MARKET_HTTP_TIMEOUT_SEC,
     retries: int = 0,
+    cancellation_token=None,
 ):
     attempts = max(0, int(retries or 0)) + 1
     last_exc = None
     for _attempt in range(attempts):
+        raise_if_cancelled(cancellation_token)
         try:
-            return requests_get_https(
+            response = requests_get_https(
                 url,
                 session=session,
                 headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS),
-                timeout=timeout,
+                timeout=bounded_io_timeout(timeout, cancellation_token),
             )
+            raise_if_cancelled(cancellation_token)
+            return response
         except RequestException as exc:
             last_exc = exc
+            raise_if_cancelled(cancellation_token)
     if last_exc is not None:
         raise last_exc
-    return requests_get_https(
-        url,
-        session=session,
-        headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS),
-        timeout=timeout,
-    )
+    raise RuntimeError("Asian-market HTTP request did not run")
 
 
 __all__ = [

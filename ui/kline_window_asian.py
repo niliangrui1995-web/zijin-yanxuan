@@ -2,40 +2,19 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from functools import partial
 
 import pandas as pd
 
-from app.services.asian_market_cache_service import (
-    load_cached_asian_stock as _load_cached_asian_stock,
-)
+from app.services.kline_data_service import KlineDataService
 from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_task_lifecycle_service import task_lifecycle_for
-from app.services.ui_task_service import task_registry
+from app.services.ui_task_lifecycle_service import (
+    invoke_with_cancellation,
+    raise_if_cancelled,
+)
 from ui.kline_chart_payload import merge_kline_context
 from ui.kline_window_runtime import _is_current_request
-
-
-def load_cached_asian_stock(json_cache: str, code: str) -> dict | None:
-    return _load_cached_asian_stock(json_cache, code)
-
-
-def build_asian_df_from_klines(klines, normalize_daily_df_index):
-    if not klines:
-        return None
-
-    frame = pd.DataFrame(klines)
-    if frame.empty:
-        return None
-
-    if "date" in frame.columns:
-        frame["date"] = pd.to_datetime(frame["date"]).dt.normalize()
-        frame.set_index("date", inplace=True)
-
-    for column in ["open", "high", "low", "close", "volume"]:
-        if column in frame.columns:
-            frame[column] = pd.to_numeric(frame[column], errors="coerce").astype(float)
-
-    return normalize_daily_df_index(frame)
+from ui.kline_window_state import current_kline_open_context
 
 
 def merge_asian_context_payload(vcp_data: dict, stock_payload: dict, refresh_header_context):
@@ -60,76 +39,108 @@ def merge_asian_context_payload(vcp_data: dict, stock_payload: dict, refresh_hea
     refresh_header_context()
 
 
-def build_asian_history_df(
-    stock_payload: dict | None,
+def _load_asian_backfill(
+    cancellation_token,
     *,
-    vcp_data: dict,
-    refresh_header_context,
-    normalize_daily_df_index,
+    request_name: str,
+    request_code: str,
+    context,
+    fetch_single_kline,
 ):
-    if not stock_payload:
-        return None
-    merge_asian_context_payload(vcp_data, stock_payload, refresh_header_context)
-    return build_asian_df_from_klines(
-        stock_payload.get("klines", []),
-        normalize_daily_df_index,
+    raise_if_cancelled(cancellation_token)
+    stock_payload = invoke_with_cancellation(
+        fetch_single_kline,
+        cancellation_token,
+        request_name,
+        request_code,
+        period="1y",
     )
+    raise_if_cancelled(cancellation_token)
 
+    def loader(_path, _code):
+        return stock_payload
 
-def render_asian_history_payload(window, stock_payload: dict | None) -> bool:
-    if getattr(window, "_closing", False):
-        return False
-    if not stock_payload:
-        window._set_status_message("当前标的暂无历史日线数据", tone="warning")
-        return False
-
-    fresh_df = build_asian_history_df(
-        stock_payload,
-        vcp_data=window.vcp_data,
-        refresh_header_context=window._refresh_header_context,
-        normalize_daily_df_index=window._normalize_daily_df_index,
+    data_result = KlineDataService(None, asian_stock_loader=loader).load(
+        context,
+        cancellation_token=cancellation_token,
     )
-    if fresh_df is None or fresh_df.empty:
-        window._set_status_message("当前标的暂无历史日线数据", tone="warning")
-        return False
-
-    window._set_status_message(f"已回源载入 · {len(fresh_df)} 条日线", tone="success")
-    window._render_chart(fresh_df, loading=False)
-    return True
+    return stock_payload, data_result.frame
 
 
-def schedule_asian_history_backfill(window, *, task_manager, fetch_single_kline):
-    if getattr(window, "_closing", False):
-        return
-    request_code = str(getattr(window, "code", "") or "").strip()
-    request_name = str(getattr(window, "name", "") or "").strip()
-    request_generation = int(getattr(window, "_render_generation", 0) or 0)
+def _apply_asian_backfill_result(result, *, window, request_code: str, request_generation: int) -> None:
+    with suppress(RuntimeError):
+        if not _is_current_request(window, request_code, request_generation):
+            return
+        stock_payload, frame = result or (None, None)
+        if not stock_payload or frame is None or frame.empty:
+            window._set_status_message("当前标的暂无历史日线数据", tone="warning")
+            return
+        merge_asian_context_payload(window.vcp_data, stock_payload, window._refresh_header_context)
+        window._set_status_message(f"已回源载入 · {len(frame)} 条日线", tone="success")
+        window._render_chart(frame, loading=False)
 
-    window._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
 
-    def _bg_fetch(_cancellation_token):
-        return fetch_single_kline(request_name, request_code, period="1y")
-
-    def _on_fetch_success(stock_payload):
-        with suppress(RuntimeError):
-            if not _is_current_request(window, request_code, request_generation):
-                return
-            render_asian_history_payload(window, stock_payload)
-
-    def _on_fetch_error(error_msg):
-        with suppress(RuntimeError):
-            if not _is_current_request(window, request_code, request_generation):
-                return
+def _report_asian_backfill_error(
+    error_msg,
+    *,
+    window,
+    request_code: str,
+    request_generation: int,
+) -> None:
+    with suppress(RuntimeError):
+        if _is_current_request(window, request_code, request_generation):
             window._set_status_message(f"历史日线拉取失败: {error_msg}", tone="error")
 
-    task_lifecycle_for(window, runner=task_manager).run_background(
+
+def schedule_asian_history_backfill(
+    window,
+    *,
+    task_manager,
+    fetch_single_kline,
+    submit_owned_task=None,
+):
+    del task_manager
+    if getattr(window, "_closing", False):
+        return
+    controller = getattr(window, "_load_controller", None)
+    identity = getattr(controller, "current_identity", None)
+    if controller is None or not controller.is_current(identity):
+        return
+    request_code = identity.code
+    request_name = str(getattr(window, "name", "") or "").strip()
+    request_generation = identity.generation
+    context = current_kline_open_context(window)
+
+    window._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
+    if submit_owned_task is None:
+        from ui.kline_window_runtime import _submit_owned_window_task
+
+        submit_owned_task = _submit_owned_window_task
+    submit_owned_task(
+        window,
         "asian_history_backfill",
-        _bg_fetch,
-        on_success=_on_fetch_success,
-        on_error=_on_fetch_error,
-        task_id=task_registry.transient_window(f"kline_asian_{request_code}_{request_generation}"),
-        timeout_sec=120.0,
-        runner=task_manager,
+        partial(
+            _load_asian_backfill,
+            request_name=request_name,
+            request_code=request_code,
+            context=context,
+            fetch_single_kline=fetch_single_kline,
+        ),
+        partial(
+            _apply_asian_backfill_result,
+            window=window,
+            request_code=request_code,
+            request_generation=request_generation,
+        ),
+        controller.task_id("asian-history", identity=identity),
+        120.0,
+        on_error=partial(
+            _report_asian_backfill_error,
+            window=window,
+            request_code=request_code,
+            request_generation=request_generation,
+        ),
+        identity=identity,
     )
 
 

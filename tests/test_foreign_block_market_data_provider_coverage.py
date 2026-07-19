@@ -48,12 +48,12 @@ def test_calendar_subprocess_protocol_builds_isolated_command_and_converts_value
     monkeypatch.setattr(provider, "build_domestic_process_env", fake_process_env)
     monkeypatch.setattr(provider, "windows_no_window_kwargs", lambda: {"creationflags": 123})
 
-    def fake_run_process(command, **kwargs):
+    def fake_cancellable_process(command, **kwargs):
         observed["command"] = command
         observed["kwargs"] = kwargs
         return SimpleNamespace(stdout='["2026-07-10", 20260711, null]\n')
 
-    monkeypatch.setattr(provider, "run_process", fake_run_process)
+    monkeypatch.setattr(provider, "_run_cancellable_process", fake_cancellable_process)
 
     assert provider.fetch_trade_calendar(timeout=9, cancellation_token=token) == [
         "2026-07-10",
@@ -64,14 +64,10 @@ def test_calendar_subprocess_protocol_builds_isolated_command_and_converts_value
     assert observed["command"][:3] == [provider.sys.executable, "-c", provider._AKSHARE_FETCH_SNIPPET]
     assert observed["command"][3:] == ["calendar"]
     assert observed["kwargs"] == {
-        "capture_output": True,
-        "text": True,
-        "encoding": "utf-8",
-        "errors": "ignore",
         "timeout": 4,
+        "cancellation_token": token,
         "env": {"SAFE": "1"},
         "creationflags": 123,
-        "check": True,
     }
     assert token.raise_calls == 2
 
@@ -121,15 +117,57 @@ def test_subprocess_result_is_rejected_when_owner_cancels_after_process(monkeypa
     monkeypatch.setattr(provider, "build_domestic_process_env", lambda **_kwargs: {})
     monkeypatch.setattr(provider, "windows_no_window_kwargs", dict)
 
-    def fake_run_process(*_args, **_kwargs):
+    def fake_cancellable_process(*_args, **_kwargs):
         calls.append("run")
         return SimpleNamespace(stdout="[]")
 
-    monkeypatch.setattr(provider, "run_process", fake_run_process)
+    monkeypatch.setattr(provider, "_run_cancellable_process", fake_cancellable_process)
 
     with pytest.raises(TaskDeadlineExceeded, match="deadline"):
         provider._run_akshare_process("calendar", timeout=10, cancellation_token=token)
     assert calls == ["run"]
+
+
+def test_cancellable_subprocess_terminates_and_reaps_when_owner_hides(monkeypatch) -> None:
+    class Process:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.communicate_calls = 0
+            self.terminated = False
+            self.killed = False
+
+        def communicate(self, timeout=None):
+            self.communicate_calls += 1
+            if not self.terminated and not self.killed:
+                raise provider.ProcessTimeoutError(["python"], timeout)
+            return "", ""
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    process = Process()
+    token = _Token(10, raise_on_call=2)
+    monkeypatch.setattr(provider, "spawn_process", lambda *_args, **_kwargs: process)
+
+    with pytest.raises(TaskDeadlineExceeded, match="deadline"):
+        provider._run_cancellable_process(
+            ["python"],
+            timeout=10,
+            cancellation_token=token,
+            env={},
+        )
+
+    assert process.terminated is True
+    assert process.killed is False
+    assert process.communicate_calls == 2
 
 
 def test_subprocess_is_not_started_when_owner_is_already_cancelled(monkeypatch) -> None:

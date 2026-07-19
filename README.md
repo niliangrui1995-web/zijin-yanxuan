@@ -2,7 +2,7 @@
 
 Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、关注池联动和多市场辅助观察构建。
 
-最后校验：2026-07-12（按当前源码、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
+最后校验：2026-07-19（按当前源码、`docs/feature-tab-logic-map.md`、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
 
 当前代码基于本地通达信日线数据和 Parquet/SQLite 本地仓库运行，盘中实时行情通过东方财富 HTTP 链路获取，并在必要时回退到新浪、腾讯批量报价；海外、亚洲、龙虎榜、大宗交易、业绩和基金持仓页面各自维护独立抓取、清洗、缓存和展示链路。
 
@@ -19,19 +19,19 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 
 当前 `ClassicWorkspace` 装配了 11 个主 Tab：
 
-| 页面 | 模块 | 说明 |
-| --- | --- | --- |
-| 关注池 | `ui/tabs/watchlist_tab.py` | 自选股票池，联动实时现价、涨幅、市值、催化与专题信息 |
-| 亚洲寡头 | `ui/tabs/asian_market_tab.py` | 多市场亚洲龙头/寡头跟踪，带本地缓存与盘中刷新 |
-| 北美战报 | `ui/tabs/na_daily_tab.py` | 从战报产出文件中回填标的，并挂接实时行情 |
-| 综合候选 | `ui/tabs/stock_candidate_tab.py` | 汇总扫描、战报、AI 产业链、业绩、基金持仓等多源候选 |
-| AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | AI 产业链标的、细分环节与上下文信号跟踪 |
-| 龙虎榜 | `ui/tabs/lhb_tab.py` | 30 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
-| VCP 扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
-| 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 外资席位相关大宗交易监控与过滤 |
-| 业绩异动 | `ui/tabs/earnings_tab.py` | 业绩预告、快报、财报高增跟踪 |
-| 基金持仓 | `ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、对比与最新变动跟踪 |
-| 系统日志 | `ui/tabs/log_tab.py` | 统一查看运行日志与后台任务状态 |
+| key | 页面 | 模块 | 说明 |
+| --- | --- | --- | --- |
+| `watchlist` | 关注池 | `ui/tabs/watchlist_tab.py` | 自选股票池，联动实时现价、涨幅、市值、催化与专题信息 |
+| `lhb` | 龙虎榜 | `ui/tabs/lhb_tab.py` | 30 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
+| `asian_market` | 亚洲寡头 | `ui/tabs/asian_market_tab.py` | 多市场亚洲龙头/寡头跟踪，带本地缓存与盘中刷新 |
+| `na_daily` | 北美战报 | `ui/tabs/na_daily_tab.py` | 从战报产出文件中回填标的，并挂接实时行情 |
+| `stock_candidates` | 综合候选 | `ui/tabs/stock_candidate_tab.py` | 汇总扫描、战报、AI 产业链、业绩、基金持仓等多源候选 |
+| `ai_industry_chain` | AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | AI 产业链标的、细分环节与上下文信号跟踪 |
+| `scan` | VCP扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
+| `foreign_block` | 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 外资席位相关大宗交易监控与过滤 |
+| `earnings` | 业绩异动 | `ui/tabs/earnings_tab.py` | 业绩预告、快报、财报高增跟踪 |
+| `fund_holdings` | 基金持仓 | `ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、对比与最新变动跟踪 |
+| `system_log` | 系统日志 | `ui/tabs/log_tab.py` | 统一查看运行日志与后台任务状态 |
 
 除此之外，还有几条贯穿全局的能力：
 
@@ -39,11 +39,12 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - 中央行情广播与表格快照合并：`ui/workers/central_quotes_worker.py` + `core/global_store.py`
 - 标题栏全局导航、同步与交易日历入口：`ui/components/main_window_shell.py` + `ui/main_window_visuals.py`
 - A 股交易日历与全球寡头财报面板：`ui/components/trade_calendar.py` + `domains/global_earnings_calendar/service.py`
-- 统一股票右键菜单与 Codex 投研跳转：`ui/components/stock_context_menu.py` + `ui/workspaces/stock_context_service.py`
+- 统一股票右键菜单与 Codex 投研跳转：`ui/components/stock_context_menu.py`；股票上下文由 `domains/stock_context/`、`app/services/stock_context_query_service.py`、`ui/workspaces/stock_context_widget_adapter.py` 分层处理，`ui/workspaces/stock_context_service.py` 管理基金持仓/龙虎榜异步快照生命周期，并原子发布综合候选 worker 同批生成的不可变 `StockContextSignalIndex`；生产 K 线只按当前代码做 O(1) 查询，不再为一次打开复制或遍历整份工作区上下文
 - Windows 系统菜单开机自启动：`ui/components/main_window_shell.py` + `infra/navigation/windows_autostart.py`
 
 ## 技术文档
 
+- 功能、Tab 与逻辑关系：`docs/feature-tab-logic-map.md`
 - 技术架构文档：`docs/technical-architecture.md`
 - 模块归属与边界登记：`docs/module-owners.md`
 - 项目审计入口：`docs/project-audit.md`
@@ -54,7 +55,14 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 当前仓库的主工作区已经完成一轮统一化交互收口，主要约束如下：
 
 - 主窗口标题栏集成 Tab 分组导航、全局 F5 同步、交易日历入口和同步状态摘要
-- 所有 Tab 首先挂载 `LazyTabPlaceholder`；用户首次进入页面时才创建真实 Tab，当前不后台预热真实 Tab
+- 11 个 Tab 采用“首开分阶段后台全量预载”（staged eager preload）：首屏和当前页优先就绪，随后无需点击即按固定数据依赖顺序逐个创建并读取本地缓存；轻量占位只隔离首屏构造成本，不改变首开自动加载语义，协调器始终只有 1 个活动步骤
+- 自动刷新调度器可以在 post-paint 阶段初始化，但 staged eager preload 未完全 settled 时不提交计划任务；首次 settled 后按单调时钟保留 60 秒稳定窗口，避免自动刷新与首开预载争用 UI、磁盘和线程池
+- 上次页面按稳定 Tab key 恢复；用户点击尚未轮到的页面时，占位页可以立即成为当前页，该 Tab 进入当前活动步骤之后的下一个串行槽；真实 widget 构造、本地读取和 prime 沿用同一协调步骤且各执行一次。预载失败会保留诊断并继续；步骤超时先请求协作取消，取消回执没有物理结算前保持 fail-closed，不会启动下一页；若真实 widget 已构造且仍是当前页，则只提升并通知激活一次
+- 数据血缘把“具备联网能力”的声明 `network_capable` 与“本实例实际发起过远端请求/worker”的闩锁 `triggered_network` 分开。隐藏预载的唯一 `after_background_preload` 样本必须精确覆盖 10 个数据 Tab，并把 `system_log` 明确列为排除项；缺行、重复/额外行、非 bool、`lineage_error` 或任一 `triggered_network=true` 都会 fail-closed
+- 系统日志由应用级有界缓冲统一采集，日志页尚未打开时产生的消息也可回放
+- Qt 回调异常由应用级异常边界记录并隔离；退出时按统一生命周期有界停止 F5、K 线、后台任务、Timer、订阅和子进程
+- F5 在独立子进程构建 job-local 完整快照，并通过 `prepare → gbbq → market_sync → market_stage → rps → sector_rps → validate` 阶段事件持续回执；父进程严格校验后原子激活，失败、取消或超时继续使用旧快照。阻塞式事件轮询、取消、terminate/kill 和进程回收统一由专属 `f5-worker-monitor` 执行，Qt Timer 只消费线程安全消息队列；worker 使用 below-normal 优先级并设置 `POLARS_MAX_THREADS=max(1,min(4,logical_cpu_count//2))`，同时只在子进程中把 `OPENBLAS_NUM_THREADS`、`OMP_NUM_THREADS`、`MKL_NUM_THREADS`、`NUMEXPR_NUM_THREADS` 固定为 1。终态结果先持久化，再由 controller-owned cleanup 清理失败 generation 和旧运行产物；cleanup 结束前 controller 仍视为 running，退出磁盘回执保持 fail-closed
+- K 线 WebEngine 在 11 Tab 后台预载完成并经过空闲窗口后预检、预热；生产路径只保留至多 1 个完整物理 `KLineChartWindow` 单槽池，窗口 UUID 稳定、每次租约递增 generation，不移动 WebEngine 的 parent/page；关闭时必须在 2 秒内完成 reset 回执，否则 fail-closed 销毁
 - 主要数据页统一采用页面级状态反馈，明确区分 `加载中 / 最新数据 / 缓存数据 / 刷新失败 / 离线`
 - 各 Tab 页头统一回答“当前看的是什么数据、筛选是否生效、数据何时更新”
 - 通用工具栏已经按窄宽度场景重排，优先保证筛选控件、状态摘要和动作按钮不互相挤压
@@ -62,6 +70,20 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - 亚洲页在远端抓取失败时会明确标记“沿用缓存”，而不是把底层抓取异常直接外泄给用户
 - 股票右键菜单统一提供 K 线、股票全景、关注池、通达信/东方财富和 Codex 产业链投研入口
 - K 线窗口和主窗口关键按钮补齐了 tooltip 与可访问性命名，便于悬停识别和后续维护
+
+### K 线功能契约
+
+| 功能域 | 当前保留能力 |
+| --- | --- |
+| 打开与窗口 | 表格双击、键盘、统一右键菜单、股票详情按钮和程序接口；独立无边框窗口，最多 5 个，同一股票可重复打开 |
+| 导航与联动 | 上一只/下一只、Left/Right、与来源表当前行同步、加入/移出关注池 |
+| 图表与交互 | 固定日线最后 250 根；K 线/成交量/MACD 三面板；十字光标、OHLC/涨跌/量价工具栏、滚轮缩放和拖动平移 |
+| 指标 | MA10、MA20、MA50、MA150、MA200，均线收敛淡化、MA200 穿越强调、VOL-MA20、MACD、DIFF、DEA |
+| 标记与特效 | VCP 箱体、趋势线、突破标记、业绩日期标记与 tooltip、普通量/地量/放量和粒子效果 |
+| 多源与外观 | 各来源 Tab 摘要卡、A 股与亚洲市场数据、实时更新、主题、Mica/玻璃、磁吸、F11、标题栏双击全屏、Esc、窗口状态恢复和资源释放 |
+| 明确排除 | 不补回 MA5；不补回历史 B/S/T 账户交易标记；不新增周线、分钟线或周期切换 |
+
+K 线打开状态按 `shell_ready → browser_ready → data_ready → js_ready → chart_ready → first_interaction` 记录。冷创建或受控恢复时，`browser_ready` 之前还有 `create → handoff/skip → attach → WebEngine shell` 四个 owner-owned 事件循环切片，并分别记录 `browser_create_ms`、`page_handoff_*`、`browser_attach_sync_ms`、`load_shell_*`、`max_sync_slice_ms` 和 `pipeline_total_ms`。完整物理窗口复用时 `full_window_reused=true`，上述冷路径耗时显式为 `0.0`，表示该步骤已按设计跳过，不是诊断缺失。`chart_ready` 只在 Python 收到与当前 `window_id + generation + code + snapshotVersion` 严格匹配的 ECharts `rendered` 回执后成立；快速切股和隐藏窗口只保留最新完整快照，渲染进程单窗口最多自动恢复一次，第二次异常进入终止态并要求重新打开。生产健康门禁会在每次真实打开前清空 UI stall 探针，范围固定为 `kline_open_to_chart_ready`，等待 `chart_ready` 后再跨两个事件循环 tick 截止；缺少 reset、scope、完整回执或出现 `>100 ms / critical>0` 都会 fail-closed。
 
 ## 技术栈
 
@@ -90,32 +112,39 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 ```text
 vcp_hunter_qt.pyw
   -> MainWindowQT
-  -> ApplicationBootstrap
-  -> TdxDataProvider(offline=True)
-  -> VCPEngine
-  -> ClassicWorkspace
-  -> StartupOrchestrator
-  -> CentralQuotesService
+     -> ApplicationBootstrap
+        -> ClassicWorkspace
+     -> 真实首帧
+        -> post-paint stages
+           -> owner 后台创建 TdxDataProvider 并预载启动编排模块
+           -> GUI 线程挂接 provider / 创建 VCPEngine / 安装 CentralQuotesService
+           -> 恢复稳定 Tab key / F5 retention / 自动刷新
+           -> StartupOrchestrator.schedule_startup()
 ```
 
 关键点：
 
 - 入口文件是 `vcp_hunter_qt.pyw`，负责单实例限制、崩溃日志和 `QApplication` 初始化。
-- `ApplicationBootstrap` 负责装配数据 provider、扫描引擎、工作区和中央行情服务。
+- 启动页显示后先在主线程幂等初始化 `pyarrow / pandas / polars` 原生数据运行时；`MainWindowQT` 构造期只创建窗口壳和 11 个轻量工作区占位，data provider、扫描引擎、启动编排器与中央行情都延后到真实首帧之后，并按依赖顺序分事件循环切片初始化。
 - 程序默认先以“离线优先”启动，优先保证冷启动可用。
-- `StartupOrchestrator` 在启动后异步完成：
+- data provider 在 owner 级后台任务中创建，回到 GUI 线程后才挂接到工作区；依赖尚未就绪时，Tab、F5 和网络操作会保留请求或明确提示“初始化中”，不会用 `None` 构造运行对象。
+- `StartupOrchestrator` 在真实首帧后的独立 post-paint stage 中开始异步完成：
   - 本地缓存恢复
   - RPS 预计算缓存恢复
-  - 亚洲市场 JSON 缓存静默同步
+  - 16:30 前仅当“亚洲寡头”是当前可见页时才允许可取消的亚洲市场缓存检查/同步；页面隐藏时本次启动同步直接跳过，16:30 后仍交由自动刷新调度器
   - 全球寡头财报日历静默同步
-  - 网络探测与在线模式切换
+  - 共享 2 秒总截止时间的行情链路探测与在线模式切换
 
 ### 2. 工作区与页面装配
 
 - 主窗口外壳：`ui/main_window_qt.py`
 - 工作区装配：`ui/workspaces/classic_workspace.py`
+- Tab 单一声明源：`ui/workspaces/tab_registry.py`
 - 当前仅装配 `ClassicWorkspace`
-- 所有页面先挂载 `LazyTabPlaceholder` 占位，真实 Tab 仅在用户进入时按需创建；当前真实 Tab 后台预热白名单为空
+- 工作区启动时只挂轻量页面壳；首屏、运行依赖和当前真实页面就绪后，11 个 Tab 无需点击即按 registry 的依赖顺序单步后台创建并完成缓存预载。这是 staged eager preload，不是用户点击后才刷新的按需加载
+- 后台顺序为：关注池 → 系统日志 → AI产业链 → 北美战报 → VCP扫描 → 大宗交易 → 业绩异动 → 基金持仓 → 龙虎榜 → 亚洲寡头 → 综合候选；重网络同步不进入这条首开队列
+- 协调器同一时刻最多推进 1 个页面；用户提前点击未来页面时先选中占位页，再把目标移动到当前活动步骤后的下一串行槽，构造、本地读取和 prime 不另开第二条路径。失败/超时会留痕；超时取消未物理结算时阻断下一串行槽，只有 cancellation receipt 已 `accepted` 且 `settled` 后才恢复队列。已构造且仍为当前页的 widget 只提升激活一次。退出回执必须证明 Timer 停止、`active_step_count=0`、active/cancelling key 与剩余/提权队列为空、全部 shutdown cancellation receipts 已结算
+- 标题、分组、顺序、构造参数、行情/F5/健康探针策略由不可变 `TabRegistry` 统一声明，视觉分组不再隐式决定业务行为
 - 跨 Tab 表格聚合、实时订阅代码收集、个股信号汇总和导航定位统一通过 `WorkspaceFacade` 及能力协议完成
 - 各 Tab 大多继承 `ui/tabs/base_stock_tab.py`，共享：
   - 右键菜单
@@ -131,7 +160,8 @@ vcp_hunter_qt.pyw
 ```text
 QuoteUniverseService.collect_realtime_quote_codes()
   -> CentralQuotesService
-  -> event_bus.sig_rt_quotes
+  -> domains.quotes.publish_rt_quotes
+  -> domains.runtime.domain_events.sig_rt_quotes
   -> GlobalStore(quotes snapshot)
   -> BaseStockTab / TableModel.update_quotes()
   -> 各表格页面刷新
@@ -368,7 +398,7 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 
 | 能力 | 主来源 | 本地处理与缓存 | 主要代码 |
 | --- | --- | --- | --- |
-| 历史 K 线 | 本地通达信 `vipdoc` 日线文件 | 优先读取内存和 Parquet/SQLite 仓库，缺失时回退 `vipdoc`，F5 后写回仓库 manifest | `infra/market_data/tdx_data_provider.py`、`infra/market_data/market_data_warehouse.py`、`vcp/data_provider_local.py` |
+| 历史 K 线 | 本地通达信 `vipdoc` 日线文件 | 优先读取内存和 Parquet/SQLite 仓库，缺失时回退 `vipdoc`；F5 只写独立 generation，完整校验后事务切换 manifest | `infra/market_data/tdx_data_provider.py`、`infra/market_data/market_data_warehouse.py`、`infra/market_data/f5_market_snapshot_store.py`、`vcp/data_provider_local.py` |
 | 盘中实时报价 | 东方财富 `push2.eastmoney.com/api/qt/ulist/get` | 按中央报价站 30 秒轮询，运行时去重、冷却、单飞行任务；东方财富失败后回退新浪 `hq.sinajs.cn`，再回退腾讯 `qt.gtimg.cn` | `ui/workers/central_quotes_worker.py`、`vcp/data_provider_quotes.py`、`vcp/data_provider_realtime.py` |
 | 股本/市值补充 | 本地通达信股本快照优先，东方财富 `push2` 补充 | 用于表格市值动态重算和缺失 `_zongguben` 补齐，带磁盘缓存 | `app/services/central_quote_polling_service.py`、`vcp/engine_external.py`、`ui/tabs/base_stock_refresh.py` |
 | 十大流通股东/机构股东 | 东方财富 F10 `PC_HSF10/ShareholderResearch/PageAjax` | 本地识别机构关键字，结果缓存 90 天 | `vcp/engine_external.py` |
@@ -382,9 +412,9 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 | 大宗交易 | AkShare 东方财富大宗交易：`stock_dzjy_mrmx`；交易日历用 `tool_trade_date_hist_sina` | `infra` 隔离 AkShare 子进程，`app` 负责 deadline、重试、分段和字段口径编排；缓存 schema 与原子写由专用 app/infra 边界负责 | `infra/market_data/foreign_block_provider.py`、`app/services/foreign_block_market_data_service.py`、`app/services/foreign_block_cache_service.py`、`infra/storage/foreign_block_repository.py` |
 | 业绩预告/快报/财报 | AkShare 东方财富：`stock_yjyg_em`、`stock_yjkb_em`、`stock_yjbb_em`；同花顺利润表接口补充单季度口径 | 按公告日期过滤候选，去重，估算单季度环比，必要时用快报净利润回填，写入 SQLite 状态；自动刷新进程协议与 deadline 由 app facade 承担 | `domains/earnings/engine.py`、`app/services/earnings_refresh_process_service.py`、`ui/tabs/earnings_tab.py` |
 | 基金持仓/QFII | 东方财富数据中心 `datacenter-web.eastmoney.com/api/data/v1/get`；东方财富基金档案 `FundArchivesDatas.aspx` | 同步 QFII 和睿远成长价值混合A，规范季度、主体、资金属性，生成快照和变动缓存，落到 SQLite | `domains/fund_holdings/sync.py`、`domains/fund_holdings/store.py`、`ui/tabs/fund_holdings_tab.py` |
-| AI 产业链 | 本地产业链股票池、上下文映射和行业字典 | 作为跨 Tab 股票池和概念上下文来源，供大宗、基金、综合候选和个股上下文过滤/展示 | `domains/industry_chain/pool_service.py`、`app/services/ui_industry_chain_service.py`、`ui/tabs/ai_industry_chain_tab.py` |
+| AI 产业链 | 本地产业链股票池、上下文映射和行业字典 | 作为跨 Tab 股票池和概念上下文来源；5/10/20 日涨幅优先读取 `max(period)+1` 个有效收盘尾值，窄接口不可用时回退既有历史批量路径 | `domains/industry_chain/pool_service.py`、`app/services/ui_industry_chain_service.py`、`app/services/ai_industry_chain_period_return_service.py`、`ui/tabs/ai_industry_chain_tab.py` |
 | 北美战报 | 兄弟项目“每日战报”的本地输出文件 | 由 infra 读取最近战报产物、domain 解析内容、app 编排缓存，再回填标的、细分板块和催化描述 | `domains/na_daily/`、`infra/storage/na_daily_repository.py`、`app/services/na_daily_service.py`、`ui/tabs/na_daily_tab.py` |
-| 综合候选 | VCP 扫描、关注池、龙虎榜、大宗、业绩、基金持仓、AI 产业链、北美战报等本地信号 | 汇总成候选池和个股上下文，不直接抓新数据源 | `ui/tabs/stock_candidate_tab.py`、`ui/workspaces/stock_context_service.py` |
+| 综合候选 | VCP 扫描、龙虎榜、大宗、业绩、基金持仓、AI 产业链、北美战报等本地信号 | 在不可变纯数据快照上同时生成候选行和 `StockContextSignalIndex`，先原子发布索引再提交 UI；不直接抓新数据源，后台 worker 不读取 QWidget/model | `ui/tabs/stock_candidate_tab.py`、`domains/stock_context/`、`app/services/stock_context_query_service.py`、`app/services/stock_context_snapshot_service.py` |
 
 ### 海外 / 亚洲辅助链路
 
@@ -421,9 +451,9 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 | 开关 key | 环境变量 | 默认 | 作用 |
 | --- | --- | --- | --- |
 | `central_quotes_service` | `VCP_TOGGLE_CENTRAL_QUOTES_SERVICE` | 开 | 中央 A 股实时报价轮询 |
-| `silent_asian_sync` | `VCP_TOGGLE_SILENT_ASIAN_SYNC` | 开 | 启动后静默同步亚洲 K 线缓存 |
+| `silent_asian_sync` | `VCP_TOGGLE_SILENT_ASIAN_SYNC` | 开 | 启动延迟点仅在亚洲页当前可见时同步 K 线缓存；隐藏预载绝不启动远程任务 |
 | `daily_global_earnings_calendar_sync` | `VCP_TOGGLE_DAILY_GLOBAL_EARNINGS_CALENDAR_SYNC` | 开 | 运行期间定时刷新全球寡头财报日历 |
-| `startup_history_cache_load` | `VCP_TOGGLE_STARTUP_HISTORY_CACHE_LOAD` | 开 | 启动时预加载本地历史行情缓存 |
+| `startup_history_cache_load` | `VCP_TOGGLE_STARTUP_HISTORY_CACHE_LOAD` | 关 | 可选全量历史行情预载；默认在扫描/K 线窗口中按需加载 |
 
 其他重要环境变量：
 
@@ -438,23 +468,28 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 运行过程中会在 `data/` 下生成或维护这些内容：
 
 - `data/Cache/`
-  - RPS 预计算缓存
+  - RPS/板块 RPS 兼容镜像
   - 亚洲市场缓存
   - 财务/股本缓存
   - 全球寡头财报日历缓存
 - `data/Cache/parquet/market_data.parquet`
-  - 全市场历史日线明细，配合 SQLite manifest 使用
+  - 普通仓库和首次 F5 激活前的兼容全市场历史日线明细，配合 SQLite manifest 使用
+- `data/Cache/f5_jobs/<run_id>/`
+  - F5 request、events、result、cancel request 和 worker log
+- `data/Cache/f5_generations/<run_id>/`
+  - F5 的不可变 market Parquet、RPS、板块 RPS 和可选 GBBQ bundle
 - `data/vcp_hunter.db`
   - `kv_store`
   - `market_data_manifest`
+  - F5 snapshot manifest 和 active 指针
   - 基金持仓原始表、快照表和变动缓存
   - 市场节假日、全球财报日历等 SQLite 数据
 - `data/logs/`
   - 按天滚动的应用日志
 - `data/crash_report.log`
-  - `faulthandler` 写入的底层崩溃日志
+  - 应用级 Qt 回调异常与 `faulthandler` 底层崩溃日志
 - `tmp/runtime_health_*`、`tmp/perf_*`
-  - 运行时健康、长稳、性能预算和 WebEngine 探针报告
+  - 运行时健康、长稳、性能预算和 WebEngine 探针报告；指定 output 时还会生成同名 `.checkpoint.json` 与 `.faulthandler.log`
 
 这些文件属于运行时产物，不应作为业务源码理解。
 
@@ -487,6 +522,9 @@ pytest tests/test_quote_snapshot.py -q
 pytest tests/test_global_store_quote_merge.py -q
 pytest tests/test_central_quotes_finance.py -q
 pytest tests/test_workspace_quote_codes.py -q
+pytest tests/test_tab_registry.py tests/test_workspace_lifecycle.py tests/test_post_paint_startup_boundary.py -q
+pytest tests/test_stock_context_golden_contract.py tests/test_f5_process_pipeline.py tests/test_log_tab.py -q
+pytest tests/test_ui_exception_boundary.py tests/test_ui_task_lifecycle_service.py -q
 pytest tests/test_global_earnings_calendar.py tests/test_trade_calendar.py -q
 pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.py tests/test_stock_table_model_quotes.py -q
 ```
@@ -501,16 +539,17 @@ pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.p
 
 ```powershell
 ruff check .
-ruff format .
 python scripts/check_utf8.py
 ```
 
+现行统一审计执行 Ruff lint，不执行全仓 formatter 门禁；仓库尚未建立全仓格式化零差异基线。需要格式化时应先单独评估影响范围，再运行 `ruff format .`。
+
 ### 运行时健康与 WebEngine 探针
 
-提交前可以用短模式验证主窗口运行时健康、`stock_candidates / scan / watchlist / lhb / fund_holdings` DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算：
+提交前可以用短模式验证 11 个 Tab 的依赖顺序后台预载、重点 Tab DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算。报告中的 `background_preload` 必须证明计划/启动/完成顺序一致、11 页全部加载、单步串行且无失败或超时：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --tabs stock_candidates scan watchlist lhb fund_holdings --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --background-prewarm --allow-controlled-probe-tab-loads --show-window --fail-on-budget --tabs stock_candidates scan watchlist lhb fund_holdings --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
 .\.venv\Scripts\python.exe scripts\perf_budget_check.py --runtime-health-report tmp\runtime_health_stability_short.json
 ```
 
@@ -520,19 +559,37 @@ python scripts/check_utf8.py
 .\.venv\Scripts\python.exe scripts\runtime_env_self_check.py --output tmp\runtime_env_self_check.json
 ```
 
-夜间或人工长稳验证使用 30/60 分钟 soak；长模式会周期性导出 runtime health sample，并在聚合报告中输出 `trend` 和 `budget_trend`：
+生产等价短门禁必须使用原生 Qt 和真实可见窗口，覆盖首开、11 Tab 无点击全量预载、全 Tab 切换、中央行情、真实 F5、真实 K 线 `chart_ready` 与严格退出回执：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak30 --native-qt --fail-on-budget --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak30 --output tmp\runtime_health_soak30.json
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak60 --native-qt --fail-on-budget --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak60 --output tmp\runtime_health_soak60.json
+.\.venv\Scripts\python.exe scripts\project_audit.py --quick --keep-going --runtime-health-production
 ```
 
-K 线 WebEngine 生命周期 smoke 需要原生 Qt / 可视桌面环境；默认 offscreen 会输出跳过原因和手动命令，避免把不稳定 WebEngine 自动化塞进 CI：
+夜间或人工长稳验证使用 30/60 分钟 soak；下列命令会实际显示窗口、启用启动/行情/K 线服务，执行一次真实 F5 子进程与原子激活，并至少完成两轮 Tab/行情、一次真实 K 线。长模式每 60 秒导出 runtime health sample，并在聚合报告中输出 `trend` 和 `budget_trend`：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\kline_webengine_lifecycle_smoke.py --native-qt --cycles 5 --output tmp\kline_webengine_lifecycle_smoke.json
-.\.venv\Scripts\python.exe scripts\perf_budget_check.py --kline-lifecycle-report tmp\kline_webengine_lifecycle_smoke.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak30 --native-qt --show-window --startup-enabled --background-prewarm --kline-prewarm-enabled --central-quotes-enabled --allow-controlled-probe-tab-loads --idle-minutes 30 --tab-cycles 2 --f5-cycles 1 --real-f5 --real-f5-timeout-seconds 1800 --quote-cycles 2 --kline-cycles 1 --kline-code 000001 --kline-name 平安银行 --post-tab-idle-timeout-ms 5000 --background-preload-timeout-ms 600000 --sample-every-seconds 60 --fail-on-budget --sample-output-dir tmp\runtime_health_samples_soak30 --output tmp\runtime_health_soak30.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak60 --native-qt --show-window --startup-enabled --background-prewarm --kline-prewarm-enabled --central-quotes-enabled --allow-controlled-probe-tab-loads --idle-minutes 60 --tab-cycles 2 --f5-cycles 1 --real-f5 --real-f5-timeout-seconds 1800 --quote-cycles 2 --kline-cycles 1 --kline-code 000001 --kline-name 平安银行 --post-tab-idle-timeout-ms 5000 --background-preload-timeout-ms 600000 --sample-every-seconds 60 --fail-on-budget --sample-output-dir tmp\runtime_health_samples_soak60 --output tmp\runtime_health_soak60.json
 ```
+
+每个 `--output` 同时维护原子 checkpoint 和独立 faulthandler 旁路文件；启动样本、每个周期样本和窗口可见性失败都会立即刷新 checkpoint。即使 native abort 来不及写最终聚合 JSON，也能保留最后确认的可见时长、样本路径、完成阶段、当前 Tab 和原生栈证据。checkpoint 未到 `complete` 或报告出现未处理 Qt 回调异常时，不能判定长稳通过。
+
+`soak30/long` 和 `soak60` 的最低可见时长分别固定为 1800/3600 秒，不能用 `--idle-seconds` 或 `--idle-minutes` 缩短后通过；采样间隔上限固定为 60 秒，缺样、乱序或中间断档同样 fail-closed。
+
+K 线精确门禁需要原生 Qt / 可视桌面环境，至少执行 10 轮。成功口径是实际 ECharts `rendered` 回执后的 `chart_ready`，同时验证 10 个缓存切股样本、单槽物理窗口复用和最终资源归零；默认 offscreen 会输出跳过原因和手动命令：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kline_webengine_lifecycle_smoke.py --native-qt --provider-mode production-local --code 000001 --name 平安银行 --switch-code 000002 --switch-name 万科A --cycles 10 --minimum-cycles 10 --fail-on-error --output tmp\kline_webengine_lifecycle_smoke.json
+.\.venv\Scripts\python.exe scripts\perf_budget_check.py --kline-lifecycle-report tmp\kline_webengine_lifecycle_smoke.json --output tmp\kline_webengine_lifecycle_budget.json
+```
+
+K 线精确预算固定为：轻量窗口壳 P95 ≤ 120ms、预热后 `browser_ready` P95 ≤ 500ms、本地 A 股 `chart_ready` P50/P95 ≤ 800/1500ms、缓存切股 P95 ≤ 300ms、单次打开最大 GUI stall ≤ 100ms 且 critical stall = 0；冷态首次用户等价打开、常规预热轮和正式 10 轮均分别执行同一 stall/critical 门禁，不能用正式轮次掩盖 cold-first-open。10 轮后活动 Chart View、Task、Timer、Receiver 和 WebEngine 子进程净增长均为 0，RSS 净增长 ≤ 24MB。原生生产门禁另要求整体 UI 最大 stall ≤ 500ms、退出 ≤ 5 秒，并取得干净的 K 线 manager shutdown receipt。
+
+当前可复核证据：
+
+- `tmp/goal_validation/20260717-123322/kline_lifecycle_production_final_verified.json` 与 `tmp/goal_validation/20260717-123322/kline_lifecycle_budget_final_verified.json` 均为 `ok`：真实 `TdxDataProvider` 的 `production-local` 离线只读路径，000001/000002 各 500 行、截至 2026-07-16、网络请求 0；10/10 打开关闭、10/10 缓存切股；壳/Browser P95 为 24.809/43.495ms，`chart_ready` P50/P95 为 194.806/234.337ms，缓存切股 P95 为 239.184ms；冷态、预热和正式轮次最大 GUI stall 66.698ms、critical 0，稳态 RSS 净增长 -8.406MB，线程 -1，Task/Timer/Receiver/WebEngine 净增长均为 0，shutdown 后 WebEngine 子进程 0。
+- `tmp/goal_validation/20260717-123322/runtime_health_short_after_ai_fix.json` 及内嵌预算均为 `ok`：首帧/初始 Tab 621.330/1004.554ms，inclusive 2237.790/2621.014ms；11 Tab 的计划/开始/完成顺序完全一致、并发 1、无失败/超时/剩余项；精确覆盖 10 个数据 Tab + `system_log` 排除，隐藏预载实际联网触发数 0；真实 F5 父/worker PID 12384/27984，snapshot `bec242b266d0492db70871369b6f9cde` 原子激活；K 线 `chart_ready` 537.572ms、首交互 611.528ms；37.832ms 干净退出，WebEngine 0、未处理 UI 异常 0。
+- 最终 30 分钟原生可见窗口 soak 尚未判定；为避免多个路径占位漂移，唯一回填位置保留在 `docs/project-audit.md` 的“当前证据状态”表。
 
 Post-F5 网络同步完整回归需要覆盖情报源刷新路径；如果只做核心行情链路隔离诊断，可保留 round5 默认隔离参数，但完整门禁应显式关闭隔离：
 

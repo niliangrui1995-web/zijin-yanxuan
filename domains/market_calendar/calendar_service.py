@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 import sqlite3
+import sys
 import threading
 from typing import Any
 
@@ -26,6 +27,7 @@ from core.market_calendar_holidays import (
     normalize_holiday_days,
     save_holidays_to_store,
 )
+from core.runtime_paths import PROJECT_ROOT
 from infra.tasks import TaskLifecycleGroup, task_registry
 
 log = get_logger(__name__)
@@ -65,8 +67,14 @@ def _fetch_asian_holiday_payload(calendar_cls, market: str, pending_years: list[
 
 def _fetch_cn_trade_dates(calendar_cls, cancellation_token) -> set[str]:
     try:
-        import akshare as ak
+        if _calendar_fetch_cancelled(cancellation_token):
+            return set()
+        ak = _import_akshare_for_calendar(cancellation_token)
+        if ak is None:
+            return set()
 
+        if _calendar_fetch_cancelled(cancellation_token):
+            return set()
         frame = ak.tool_trade_date_hist_sina()
         if "trade_date" not in frame.columns:
             raise DataFormatError("akshare trade_date column missing")
@@ -75,6 +83,20 @@ def _fetch_cn_trade_dates(calendar_cls, cancellation_token) -> set[str]:
     finally:
         if cancellation_token.cancelled:
             calendar_cls._trade_dates_loading = False
+
+
+def _calendar_fetch_cancelled(cancellation_token) -> bool:
+    return bool(cancellation_token.cancelled or sys.is_finalizing())
+
+
+def _import_akshare_for_calendar(cancellation_token):
+    try:
+        import akshare as ak
+    except RuntimeError as exc:
+        if "atexit" in str(exc) or _calendar_fetch_cancelled(cancellation_token):
+            return None
+        raise
+    return ak
 
 
 def normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
@@ -88,7 +110,80 @@ def normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
     return sorted(dict.fromkeys(normalized))
 
 
-class MarketCalendar:
+def _load_stored_trade_dates(calendar_cls, cur_month: str, *, allow_refresh: bool) -> set[str] | None:
+    from infra.storage import DataStore
+
+    try:
+        data = DataStore().load_json("trade_dates")
+        cached_dates, is_current_month = calendar_cls._extract_cached_trade_dates(
+            data,
+            cur_month=cur_month,
+        )
+        if cached_dates and allow_refresh and not is_current_month:
+            calendar_cls._schedule_trade_dates_refresh(cur_month)
+        return cached_dates
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        log.debug(f"[交易日历][I/O] DataStore 读取失败: {exc}")
+        return None
+
+
+def _load_legacy_trade_dates(calendar_cls, cur_month: str, *, allow_refresh: bool) -> set[str] | None:
+    from infra.storage import DataStore
+
+    cache_file = os.path.join(calendar_cls._project_root(), "data", "Cache", "trade_dates.json")
+    if not os.path.exists(cache_file):
+        return None
+    try:
+        with open(cache_file, "r", encoding="utf-8") as file_obj:
+            data = json.load(file_obj)
+        cached_dates, is_current_month = calendar_cls._extract_cached_trade_dates(
+            data,
+            cur_month=cur_month,
+        )
+        if not cached_dates:
+            return None
+        if allow_refresh:
+            DataStore().save_json("trade_dates", data)
+            os.rename(cache_file, cache_file + ".migrated")
+            if not is_current_month:
+                calendar_cls._schedule_trade_dates_refresh(cur_month)
+        return cached_dates
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        log.debug(f"[交易日历][I/O] 旧 JSON 迁移失败: {exc}")
+        return None
+
+
+def _ensure_cn_trade_dates(calendar_cls, *, allow_refresh: bool) -> set[str] | None:
+    if calendar_cls._trade_dates is None:
+        calendar_cls._trade_dates = (
+            calendar_cls.load_trade_dates()
+            if allow_refresh
+            else calendar_cls.load_trade_dates(allow_refresh=False)
+        )
+    return calendar_cls._trade_dates
+
+
+def _format_recent_cached_trade_dates(trade_dates: set[str], today: datetime.date, n: int) -> list[str]:
+    candidates = sorted(
+        (day for day in trade_dates if day <= today.isoformat()),
+        reverse=True,
+    )
+    return [day.replace("-", "") for day in candidates[:n]]
+
+
+def _recent_weekday_fallback(today: datetime.date, n: int) -> list[str]:
+    result: list[str] = []
+    cursor = today
+    for _ in range(n * 3):
+        if cursor.weekday() < 5:
+            result.append(cursor.strftime("%Y%m%d"))
+            if len(result) >= n:
+                break
+        cursor -= datetime.timedelta(days=1)
+    return result
+
+
+class _MarketCalendarState:
     _trade_dates: set[str] | None = None
     _trade_dates_loading = False
 
@@ -190,7 +285,7 @@ class MarketCalendar:
     _coverage_check_year: int | None = None
     _refresh_inflight: set[tuple[str, int]] = set()
     _holiday_unpublished_until: dict[tuple[str, int], datetime.datetime] = {}
-    _holiday_table_ready = False
+    _holiday_table_ready = _task_shutdown = False
     _TW_FUTURE_YEAR_REFRESH_MONTH = 10
     _SOURCE_UNPUBLISHED_RETRY_DAYS = 30
 
@@ -225,9 +320,11 @@ class MarketCalendar:
         "\u8865\u884c\u4e0a\u73ed",  # 补行上班
     )
 
+
+class MarketCalendar(_MarketCalendarState):
     @staticmethod
     def _project_root() -> str:
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return PROJECT_ROOT
 
     @classmethod
     def _ensure_holiday_table(cls) -> None:
@@ -449,7 +546,7 @@ class MarketCalendar:
     @classmethod
     def _schedule_asian_holiday_refresh(cls, market: str, years: list[int]) -> None:
         market = cls.normalize_market(market)
-        if market not in cls._ASIAN_MARKETS:
+        if cls._task_shutdown or market not in cls._ASIAN_MARKETS:
             return
 
         now = cls._get_market_now(market)
@@ -545,7 +642,7 @@ class MarketCalendar:
 
     @classmethod
     def _schedule_trade_dates_refresh(cls, cur_month: str) -> None:
-        if cls._trade_dates_loading:
+        if cls._trade_dates_loading or cls._task_shutdown:
             return
         cls._trade_dates_loading = True
 
@@ -586,44 +683,28 @@ class MarketCalendar:
         )
 
     @classmethod
-    def load_trade_dates(cls) -> set[str] | None:
-        from infra.storage import DataStore
+    def load_trade_dates(cls, *, allow_refresh: bool = True) -> set[str] | None:
+        """Load the CN trade-date cache.
 
+        ``allow_refresh=False`` is the explicit cache-only boundary used by
+        hidden staged preload.  It may read an existing SQLite/legacy cache,
+        but it never schedules network refresh or migrates/writes cache data.
+        """
         now = cls.now("CN")
         cur_month = now.strftime("%Y-%m")
-
-        try:
-            data = DataStore().load_json("trade_dates")
-            cached_dates, is_current_month = cls._extract_cached_trade_dates(data, cur_month=cur_month)
-            if cached_dates:
-                if not is_current_month:
-                    cls._schedule_trade_dates_refresh(cur_month)
-                return cached_dates
-        except (OSError, sqlite3.Error, TypeError, ValueError) as e:
-            log.debug(f"[交易日历][I/O] DataStore 读取失败: {e}")
-
-        cache_file = os.path.join(cls._project_root(), "data", "Cache", "trade_dates.json")
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                cached_dates, is_current_month = cls._extract_cached_trade_dates(data, cur_month=cur_month)
-                if cached_dates:
-                    DataStore().save_json("trade_dates", data)
-                    os.rename(cache_file, cache_file + ".migrated")
-                    if not is_current_month:
-                        cls._schedule_trade_dates_refresh(cur_month)
-                    return cached_dates
-            except (OSError, json.JSONDecodeError, TypeError) as e:
-                log.debug(f"[交易日历][I/O] 旧 JSON 迁移失败: {e}")
-
-        if cls._trade_dates_loading:
+        cached_dates = _load_stored_trade_dates(cls, cur_month, allow_refresh=allow_refresh)
+        if cached_dates:
+            return cached_dates
+        cached_dates = _load_legacy_trade_dates(cls, cur_month, allow_refresh=allow_refresh)
+        if cached_dates:
+            return cached_dates
+        if not allow_refresh or cls._trade_dates_loading:
             return None
         cls._schedule_trade_dates_refresh(cur_month)
         return None
 
     @classmethod
-    def is_trade_day(cls, day: Any = None, market: str = "CN") -> bool:
+    def is_trade_day(cls, day: Any = None, market: str = "CN", *, allow_refresh: bool = True) -> bool:
         market = cls.normalize_market(market)
         try:
             target_day = cls._coerce_date(day, market)
@@ -636,7 +717,11 @@ class MarketCalendar:
 
         if market == "CN":
             if cls._trade_dates is None:
-                loaded_dates = cls.load_trade_dates()
+                loaded_dates = (
+                    cls.load_trade_dates()
+                    if allow_refresh
+                    else cls.load_trade_dates(allow_refresh=False)
+                )
                 if loaded_dates is not None:
                     cls._trade_dates = loaded_dates
             if cls._trade_dates:
@@ -656,12 +741,22 @@ class MarketCalendar:
         return True
 
     @classmethod
-    def get_latest_trade_date(cls, market: str = "CN", ref_date: Any = None) -> datetime.date:
+    def get_latest_trade_date(
+        cls,
+        market: str = "CN",
+        ref_date: Any = None,
+        *,
+        allow_refresh: bool = True,
+    ) -> datetime.date:
         market = cls.normalize_market(market)
         cursor = cls._coerce_date(ref_date, market)
         if market == "CN":
             if cls._trade_dates is None:
-                loaded_dates = cls.load_trade_dates()
+                loaded_dates = (
+                    cls.load_trade_dates()
+                    if allow_refresh
+                    else cls.load_trade_dates(allow_refresh=False)
+                )
                 if loaded_dates is not None:
                     cls._trade_dates = loaded_dates
             if not cls._trade_dates:
@@ -669,13 +764,24 @@ class MarketCalendar:
                     cursor -= datetime.timedelta(days=1)
                 return cursor
         for _ in range(40):
-            if cls.is_trade_day(cursor, market):
+            is_trade_day = (
+                cls.is_trade_day(cursor, market)
+                if allow_refresh
+                else cls.is_trade_day(cursor, market, allow_refresh=False)
+            )
+            if is_trade_day:
                 return cursor
             cursor -= datetime.timedelta(days=1)
         return cursor
 
     @classmethod
-    def get_recent_trade_dates(cls, n: int = 20, ref_date: Any = None) -> list[str]:
+    def get_recent_trade_dates(
+        cls,
+        n: int = 20,
+        ref_date: Any = None,
+        *,
+        allow_refresh: bool = True,
+    ) -> list[str]:
         """获取最近 n 个交易日（含 ref_date 当天如果是交易日），返回 yyyyMMdd 格式列表（从近到远）。
 
         为什么要独立实现而不循环调用 is_trade_day：
@@ -687,29 +793,10 @@ class MarketCalendar:
         except DataFormatError:
             today = cls._get_market_now(market).date()
 
-        # 优先使用精确交易日历
-        if cls._trade_dates is None:
-            cls._trade_dates = cls.load_trade_dates()
-
-        if cls._trade_dates:
-            # _trade_dates 里是 ISO 格式 "YYYY-MM-DD"
-            candidates = sorted(
-                [d for d in cls._trade_dates if d <= today.isoformat()],
-                reverse=True,
-            )
-            return [d.replace("-", "") for d in candidates[:n]]
-
-        # 回退方案：跳过周末，近似估算（不含节假日修正）
-        result: list[str] = []
-        cursor = today
-        # 安全上限：最多回溯 n*3 天，避免无限循环
-        for _ in range(n * 3):
-            if cursor.weekday() < 5:
-                result.append(cursor.strftime("%Y%m%d"))
-                if len(result) >= n:
-                    break
-            cursor -= datetime.timedelta(days=1)
-        return result
+        trade_dates = _ensure_cn_trade_dates(cls, allow_refresh=allow_refresh)
+        if trade_dates:
+            return _format_recent_cached_trade_dates(trade_dates, today, n)
+        return _recent_weekday_fallback(today, n)
 
     @classmethod
     def get_market_status(cls, market: str = "CN") -> str:
@@ -758,6 +845,7 @@ class MarketCalendar:
 
 def shutdown_market_calendar_tasks(*, timeout_ms: int = 750) -> bool:
     """Cancel process-lifetime calendar refreshes before the shared runner exits."""
+    MarketCalendar._task_shutdown = True
     completed = _MARKET_CALENDAR_TASKS.shutdown(timeout_ms=timeout_ms)
     with MarketCalendar._asian_lock:
         MarketCalendar._refresh_inflight.clear()

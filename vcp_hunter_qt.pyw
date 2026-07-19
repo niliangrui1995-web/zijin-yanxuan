@@ -1,7 +1,20 @@
 import faulthandler
 import os
 import sys
-import traceback
+
+if "--app-worker=stock-context-fund-snapshot" in sys.argv:
+    from app.workers.stock_context_fund_snapshot_worker_main import main as _fund_snapshot_worker_main
+
+    raise SystemExit(
+        _fund_snapshot_worker_main(
+            [arg for arg in sys.argv[1:] if arg != "--app-worker=stock-context-fund-snapshot"]
+        )
+    )
+
+if "--app-worker=f5" in sys.argv:
+    from app.workers.f5_worker_main import main as _f5_worker_main
+
+    raise SystemExit(_f5_worker_main([arg for arg in sys.argv[1:] if arg != "--app-worker=f5"]))
 
 if sys.stderr is None:
     os.environ["TQDM_DISABLE"] = "1"
@@ -68,41 +81,19 @@ def main():
 
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PyQt6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
     append_bootstrap_event(PROJECT_ROOT, "qapplication.created")
 
-    def ui_exception_hook(exc_type, exc_value, exc_traceback):
-        if issubclass(exc_type, KeyboardInterrupt):
-            sys.__excepthook__(exc_type, exc_value, exc_traceback)
-            return
+    from ui.services.log_buffer_service import install_log_buffer_service
 
-        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-        if sys.stderr:
-            sys.stderr.write(f"Uncaught exception:\n{tb_text}\n")
-            sys.stderr.flush()
+    log_buffer_service = install_log_buffer_service(parent=app, persistent=True)
+    app.aboutToQuit.connect(log_buffer_service.shutdown)
 
-        friendly_msg = (
-            "程序运行时发生了未处理异常。\n\n"
-            f"错误类型: {exc_type.__name__}\n"
-            f"错误信息: {exc_value}\n\n"
-            "程序未必会立刻退出，但部分功能可能不可用。"
-        )
+    from infra.diagnostics.ui_exception_boundary import install_ui_exception_hook
 
-        app = QApplication.instance()
-        if app is None:
-            return
-
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("系统异常")
-        msg_box.setText(friendly_msg)
-        msg_box.setDetailedText(tb_text)
-        msg_box.setStyleSheet(app.styleSheet())
-        msg_box.exec()
-
-    sys.excepthook = ui_exception_hook
+    install_ui_exception_hook(app=app, log_file=CRASH_LOG_FILE, show_dialog=True)
 
     try:
         from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
@@ -129,6 +120,15 @@ def main():
     app.processEvents()
 
     splash.set_progress(30, "初始化本地数据引擎...")
+
+    append_bootstrap_event(PROJECT_ROOT, "native_dataframe_runtime.initialize.begin")
+    from app.services.runtime_services import initialize_native_dataframe_runtime, initialize_search_filter_runtime
+
+    initialize_native_dataframe_runtime()
+    append_bootstrap_event(PROJECT_ROOT, "native_dataframe_runtime.initialize.ready")
+    splash.set_progress(40, "初始化快速搜索引擎...")
+    initialize_search_filter_runtime()
+    app.processEvents()
 
     from ui.main_window_qt import MainWindowQT
 

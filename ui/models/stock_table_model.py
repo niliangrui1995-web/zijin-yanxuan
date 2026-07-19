@@ -10,6 +10,7 @@ from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_p
 from core.observability import record_metric
 from ui.models.table_model_helpers import (
     SERIAL_HEADER,
+    STOCK_CELL_RENDER_ROLE,
     _active_flash_record,
     _alignment_for_cell,
     _build_flash_record,
@@ -40,10 +41,119 @@ LEGACY_MOJIBAKE_CODE_KEY = "\u6d60\uff47\u721c"
 ROW_IDENTITY_KEYS = ("代码", LEGACY_MOJIBAKE_CODE_KEY, "code", "symbol", "股票代码", "证券代码")
 BUY_POINT_TRIGGER_ICON = "🚀"
 FOREIGN_BROKER_KEYWORDS = ("高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和")
+_UNHANDLED_ROLE = object()
+_PRICE_MOVE_HEADERS = ("现价", "市价", "收盘", "最新价")
+_ROW_CHANGE_DEPENDENCIES = {
+    **{key: _PRICE_MOVE_HEADERS for key in ("涨幅%", "涨幅", "涨跌%", "涨跌")},
+    "_row_style": (SERIAL_HEADER,),
+    "_suppress_accent_rail": (SERIAL_HEADER,),
+    "货币": ("现价", "市价"),
+    "来源标签": ("来源",),
+    "_外资净买入_tooltip": ("外资净买入",),
+    "外资净买(万)": ("外资净买入", "外资潜伏池"),
+    "_最近上榜_raw": ("最近上榜",),
+    "_report_ts": ("日报时间",),
+    "_report_row_rank": ("日报时间",),
+}
+
+
+def _indicator_tone(text: str) -> str:
+    value = str(text or "").strip()
+    tones = (
+        (("🔴", "红", "高", "风险", "异常"), "error"),
+        (("🟡", "黄", "中", "午", "竞价", "警"), "warning"),
+        (("🟢", "绿", "交易中", "开盘", "安全", "低"), "success"),
+        (("收盘", "休市", "离线"), "offline"),
+    )
+    return next((tone for tokens, tone in tones if any(token in value for token in tokens)), "neutral")
+
+
+def _indicator_payload(header: str, raw_value) -> dict | None:
+    if header == "风控":
+        return {"kind": "risk_light", "tone": _indicator_tone(str(raw_value)), "label": ""}
+    if header == "状态":
+        return {
+            "kind": "status_light",
+            "tone": _indicator_tone(str(raw_value)),
+            "pulse": "交易中" in str(raw_value) or "🟢" in str(raw_value),
+        }
+    return None
+
+
+def _currency_stamp_text(currency: str) -> str:
+    text = str(currency or "").strip()
+    return {
+        "TWD": "NT$",
+        "NT$": "NT$",
+        "JPY": "¥",
+        "円": "円",
+        "KRW": "₩",
+        "HKD": "HK$",
+        "USD": "$",
+    }.get(text.upper(), text)
+
+
+def _currency_stamp_payload(header: str, row: dict, headers) -> dict | None:
+    if header not in {"现价", "市价"} or "货币" not in headers:
+        return None
+    stamp = _currency_stamp_text(str(row.get("货币", "") or ""))
+    return {"kind": "currency_stamp", "stamp": stamp} if stamp and stamp not in {"--", "---"} else None
+
+
+def _model_currency_stamp_payload(model, header: str, row: dict) -> dict | None:
+    return _currency_stamp_payload(header, row, model._headers)
+
+
+def _changed_row_keys(old_row: dict, new_row: dict) -> set[str]:
+    return {key for key in old_row.keys() | new_row.keys() if old_row.get(key) != new_row.get(key)}
+
+
+def _affected_columns_for_row_change(headers, changed_keys: set[str]) -> list[int]:
+    header_columns = {header: col for col, header in enumerate(headers)}
+    affected_headers = set(changed_keys) & header_columns.keys()
+    for key in changed_keys:
+        affected_headers.update(_ROW_CHANGE_DEPENDENCIES.get(key, ()))
+    if any(_is_status_header(key) for key in changed_keys):
+        affected_headers.add(headers[0])
+    return sorted(header_columns[header] for header in affected_headers if header in header_columns)
+
+
+def _contiguous_column_spans(columns: list[int]) -> list[tuple[int, int]]:
+    if not columns:
+        return []
+    spans = []
+    start = end = columns[0]
+    for col in columns[1:]:
+        if col == end + 1:
+            end = col
+        else:
+            spans.append((start, end))
+            start = end = col
+    spans.append((start, end))
+    return spans
+
+
+def _custom_cell_role_value(model, role, row, col, key, raw_val, item_dict):
+    if role == Qt.ItemDataRole.UserRole + 1:
+        return _active_flash_record(model._flash_records, row, col)
+    if role == Qt.ItemDataRole.UserRole + 2:
+        return model._status_badge_value(key, raw_val)
+    if role == Qt.ItemDataRole.UserRole + 3:
+        return model._uses_plain_style(key)
+    if role == Qt.ItemDataRole.UserRole + 4:
+        return model._accent_rail_value(item_dict)
+    if role == Qt.ItemDataRole.UserRole + 5:
+        return model._visual_payload(key, raw_val, item_dict)
+    if role == STOCK_CELL_RENDER_ROLE:
+        return model._cell_render_payload(row, col, key, raw_val, item_dict)
+    return _UNHANDLED_ROLE
 
 
 class StockTableModel(QAbstractTableModel):
     sig_rows_reordered = pyqtSignal(list)
+    _indicator_tone = staticmethod(_indicator_tone)
+    _currency_stamp_text = staticmethod(_currency_stamp_text)
+    _currency_stamp_payload = _model_currency_stamp_payload
 
     def __init__(self, headers, data=None):
         super().__init__()
@@ -147,62 +257,16 @@ class StockTableModel(QAbstractTableModel):
                 max_abs = max(max_abs, abs(float(item_value)))
         return {"kind": "money_bar", "value": float(value), "max_abs": max(max_abs, abs(float(value)), 1.0)}
 
-    @staticmethod
-    def _indicator_tone(text: str) -> str:
-        value = str(text or "").strip()
-        if any(token in value for token in ("🔴", "红", "高", "风险", "异常")):
-            return "error"
-        if any(token in value for token in ("🟡", "黄", "中", "午", "竞价", "警")):
-            return "warning"
-        if any(token in value for token in ("🟢", "绿", "交易中", "开盘", "安全", "低")):
-            return "success"
-        if any(token in value for token in ("收盘", "休市", "离线")):
-            return "offline"
-        return "neutral"
-
-    def _indicator_payload(self, header: str, raw_value) -> dict | None:
-        if header == "风控":
-            return {"kind": "risk_light", "tone": self._indicator_tone(str(raw_value)), "label": ""}
-        if header == "状态":
-            return {
-                "kind": "status_light",
-                "tone": self._indicator_tone(str(raw_value)),
-                "pulse": "交易中" in str(raw_value) or "🟢" in str(raw_value),
-            }
-        return None
-
-    @staticmethod
-    def _currency_stamp_text(currency: str) -> str:
-        text = str(currency or "").strip()
-        mapping = {
-            "TWD": "NT$",
-            "NT$": "NT$",
-            "JPY": "¥",
-            "円": "円",
-            "KRW": "₩",
-            "HKD": "HK$",
-            "USD": "$",
-        }
-        return mapping.get(text.upper(), text)
-
-    def _currency_stamp_payload(self, header: str, row: dict) -> dict | None:
-        if header not in {"现价", "市价"} or "货币" not in self._headers:
-            return None
-        stamp = self._currency_stamp_text(str(row.get("货币", "") or ""))
-        if not stamp or stamp in {"--", "---"}:
-            return None
-        return {"kind": "currency_stamp", "stamp": stamp}
-
     def _visual_payload(self, header: str, raw_value, row: dict):
         if header == "来源" and not self._uses_plain_style(header):
             return self._source_badges_payload(raw_value, row)
         payload = self._money_bar_payload(header, row)
         if payload:
             return payload
-        payload = self._indicator_payload(header, raw_value)
+        payload = _indicator_payload(header, raw_value)
         if payload:
             return payload
-        payload = self._currency_stamp_payload(header, row)
+        payload = _currency_stamp_payload(header, row, self._headers)
         if payload:
             return payload
         return None
@@ -312,6 +376,7 @@ class StockTableModel(QAbstractTableModel):
             Qt.ItemDataRole.UserRole + 2,
             Qt.ItemDataRole.UserRole + 4,
             Qt.ItemDataRole.UserRole + 5,
+            STOCK_CELL_RENDER_ROLE,
         ]
         if include_flash:
             roles.insert(7, Qt.ItemDataRole.UserRole + 1)
@@ -320,25 +385,32 @@ class StockTableModel(QAbstractTableModel):
     def _emit_incremental_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
         changed_rows = []
+        changed_rows_by_span = {}
         flash_recorded = False
         for row_idx, new_row in enumerate(rows):
-            if self._data[row_idx] != new_row:
-                flash_recorded = self._record_row_flashes(row_idx, self._data[row_idx], new_row) or flash_recorded
+            old_row = self._data[row_idx]
+            if old_row != new_row:
+                changed_keys = _changed_row_keys(old_row, new_row)
+                changed_cols = _affected_columns_for_row_change(self._headers, changed_keys)
+                flash_recorded = self._record_row_flashes(row_idx, old_row, new_row) or flash_recorded
                 self._data[row_idx] = new_row
                 changed_rows.append(row_idx)
+                for span in _contiguous_column_spans(changed_cols):
+                    changed_rows_by_span.setdefault(span, []).append(row_idx)
 
         if not changed_rows:
             return
 
         self._clear_sort_value_cache_for_rows(changed_rows)
-        _emit_model_row_ranges(
-            self,
-            changed_rows,
-            0,
-            max(0, self.columnCount() - 1),
-            self._flash_roles(include_flash=flash_recorded),
-            coalesce=self._sparse_update_coalescing,
-        )
+        for (start_col, end_col), span_rows in sorted(changed_rows_by_span.items()):
+            _emit_model_row_ranges(
+                self,
+                span_rows,
+                start_col,
+                end_col,
+                self._flash_roles(include_flash=flash_recorded),
+                coalesce=self._sparse_update_coalescing,
+            )
 
     def _emit_reordered_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
@@ -886,6 +958,15 @@ class StockTableModel(QAbstractTableModel):
             return None
         return _row_accent_color(item_dict, self._headers)
 
+    def _cell_render_payload(self, row, col, key, raw_val, item_dict):
+        return (
+            self._accent_rail_value(item_dict),
+            self._uses_plain_style(key),
+            _active_flash_record(self._flash_records, row, col),
+            self._status_badge_value(key, raw_val),
+            self._visual_payload(key, raw_val, item_dict),
+        )
+
     def data(self, index, role):
         if not index.isValid():
             return None
@@ -910,17 +991,8 @@ class StockTableModel(QAbstractTableModel):
             return self._background_value(key, raw_val)
         if role == Qt.ItemDataRole.UserRole:
             return self._sort_value(row, col, key, raw_val, item_dict)
-        if role == Qt.ItemDataRole.UserRole + 1:
-            return _active_flash_record(self._flash_records, row, col)
-        if role == Qt.ItemDataRole.UserRole + 2:
-            return self._status_badge_value(key, raw_val)
-        if role == Qt.ItemDataRole.UserRole + 3:
-            return self._uses_plain_style(key)
-        if role == Qt.ItemDataRole.UserRole + 4:
-            return self._accent_rail_value(item_dict)
-        if role == Qt.ItemDataRole.UserRole + 5:
-            return self._visual_payload(key, raw_val, item_dict)
-        return None
+        custom_value = _custom_cell_role_value(self, role, row, col, key, raw_val, item_dict)
+        return None if custom_value is _UNHANDLED_ROLE else custom_value
 
     def headerData(self, section, orientation, role):
         if orientation == Qt.Orientation.Horizontal:

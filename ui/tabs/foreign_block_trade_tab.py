@@ -51,6 +51,7 @@ from ui.components import (
 )
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.theme import COLOR_FALL, COLOR_FLAT, COLOR_RISE
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
 
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
@@ -114,6 +115,7 @@ from ui.tabs.base_stock_tab import (
     BaseStockTab,
     _show_kline_from_proxy_index,
     _show_stock_context_menu_from_proxy_index,
+    mark_runtime_network_activity,
 )
 
 log = get_logger(__name__)
@@ -124,6 +126,7 @@ _FOREIGN_BLOCK_LOCAL_CACHE_TASK = task_registry.workspace("foreign_block_trade_l
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
 F5_AUTO_ONLINE_REFRESH_DELAY_MS = 24000
+VISIBLE_ONLINE_REFRESH_DELAY_MS = 350
 LOCAL_CACHE_LOAD_DELAY_MS = 650
 POST_F5_LOCAL_CACHE_DEFER_MS = 5000
 
@@ -171,6 +174,102 @@ def _apply_fetch_error_if_current(owner, generation: int, error_message) -> None
     owner._on_data_fetch_failed(error_message)
 
 
+def _is_online_refresh_foreground(owner) -> bool:
+    is_visible = _owner_attr(owner, "isVisible")
+    if not callable(is_visible):
+        return True
+    try:
+        if not bool(is_visible()):
+            return False
+    except RuntimeError:
+        return False
+
+    is_current = _owner_attr(owner, "_is_current_workspace_tab")
+    if not callable(is_current):
+        return True
+    try:
+        return bool(is_current())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _cancel_online_fetch(owner, *, reason: str, resume_when_visible: bool) -> bool:
+    if not _owner_attr(owner, "_is_loading", False):
+        return False
+    owner._fetch_generation = int(_owner_attr(owner, "_fetch_generation", 0)) + 1
+    lifecycle = _owner_attr(owner, "_task_lifecycle")
+    if lifecycle is not None:
+        lifecycle.cancel("fetch", reason=reason)
+    owner._is_loading = False
+    button = _owner_attr(owner, "btn_refresh")
+    if button is not None:
+        button.setEnabled(True)
+    if resume_when_visible and not _owner_attr(owner, "_closing", False):
+        owner._pending_visible_online_refresh = True
+    return True
+
+
+def _create_owned_single_shot_timer(owner, callback):
+    try:
+        timer = QTimer(owner)
+    except RuntimeError:
+        return None
+    timer.setSingleShot(True)
+    timer.timeout.connect(callback)
+    return timer
+
+
+def _shutdown_foreign_runtime(owner) -> None:
+    if getattr(owner, "_foreign_runtime_cleanup_done", False):
+        return
+    owner._foreign_runtime_cleanup_done = True
+    owner._closing = True
+    for timer_name in ("_post_f5_online_timer", "_visible_online_timer"):
+        timer = _owner_attr(owner, timer_name)
+        if timer is not None:
+            timer.stop()
+    owner._pending_f5_online_refresh = False
+    owner._pending_visible_online_refresh = False
+    owner._initial_local_cache_generation = int(getattr(owner, "_initial_local_cache_generation", 0)) + 1
+    owner._initial_local_cache_callback_pending = False
+    owner._local_cache_generation = int(getattr(owner, "_local_cache_generation", 0)) + 1
+    owner._post_f5_local_cache_pending = False
+    owner._post_f5_local_cache_defer_until = 0.0
+    owner._post_f5_local_cache_emit_event = False
+    owner._fetch_generation = int(getattr(owner, "_fetch_generation", 0)) + 1
+    owner._local_cache_loading = False
+    owner._background_preload_done = True
+    owner._is_loading = False
+    lifecycle = getattr(owner, "_task_lifecycle", None)
+    if lifecycle is not None:
+        lifecycle.shutdown(timeout_ms=1_000)
+
+
+def _run_pending_visible_online_refresh(owner) -> bool:
+    if _owner_attr(owner, "_closing", False) or not _owner_attr(owner, "_pending_visible_online_refresh", False):
+        return False
+    if not _is_online_refresh_foreground(owner):
+        return False
+    owner._pending_visible_online_refresh = False
+    return owner.run_post_online_refresh()
+
+
+def _schedule_pending_visible_online_refresh(owner) -> bool:
+    if (
+        _owner_attr(owner, "_closing", False)
+        or not _owner_attr(owner, "_pending_visible_online_refresh", False)
+        or _owner_attr(owner, "_is_loading", False)
+        or not _is_online_refresh_foreground(owner)
+    ):
+        return False
+    timer = _owner_attr(owner, "_visible_online_timer")
+    if timer is None:
+        QTimer.singleShot(VISIBLE_ONLINE_REFRESH_DELAY_MS, partial(_run_pending_visible_online_refresh, owner))
+    elif not timer.isActive():
+        timer.start(VISIBLE_ONLINE_REFRESH_DELAY_MS)
+    return True
+
+
 def determine_foreign_block_direction(buyer, seller):
     direction = foreign_block_direction(buyer, seller)
     color = {
@@ -181,8 +280,155 @@ def determine_foreign_block_direction(buyer, seller):
     return direction, color
 
 
-class ForeignBlockTradeTab(BaseStockTab):
+class _ForeignBlockBackgroundPreloadMixin:
+    def prime_background_load(self) -> bool:
+        self._background_preload_requested = True
+        if self._background_preload_done:
+            return False
+        return self._schedule_initial_local_cache_load()
 
+    def is_background_preload_complete(self) -> bool:
+        if self._closing or getattr(self, "_runtime_cleanup_done", False):
+            return True
+        return bool(
+            self._background_preload_requested
+            and self._background_preload_done
+            and not self._local_cache_loading
+            and self._local_cache_pending_emit_event is None
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            self._initial_local_cache_generation += 1
+            self._initial_local_cache_callback_pending = False
+            self._local_cache_generation += 1
+            self._local_cache_loading = False
+            self._local_cache_pending_emit_event = None
+            self._post_f5_local_cache_pending = False
+            self._post_f5_local_cache_defer_until = 0.0
+            self._post_f5_local_cache_emit_event = False
+            self._initial_local_cache_load_started = False
+            self._background_preload_requested = False
+            self._background_preload_done = False
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("local_cache",),
+            task_ids=(_FOREIGN_BLOCK_LOCAL_CACHE_TASK,),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._local_cache_loading
+            and self._local_cache_pending_emit_event is None
+            and not self._initial_local_cache_callback_pending
+            and not self._post_f5_local_cache_pending,
+            runner=task_manager,
+        )
+
+    def _finish_local_cache_load(self):
+        pending_emit_event = self._local_cache_pending_emit_event
+        self._local_cache_pending_emit_event = None
+        self._local_cache_loading = False
+        self._background_preload_done = pending_emit_event is None
+        if pending_emit_event is not None:
+            generation = self._local_cache_generation
+            QTimer.singleShot(
+                0,
+                lambda: ForeignBlockTradeTab._load_pending_local_cache_if_current(
+                    self,
+                    generation,
+                    emit_event=pending_emit_event,
+                ),
+            )
+
+    def _load_pending_local_cache_if_current(self, generation: int, *, emit_event: bool) -> bool:
+        if generation != self._local_cache_generation or self._closing:
+            return False
+        self._load_local_cache(emit_event=emit_event)
+        return True
+
+    def _schedule_initial_local_cache_load(self) -> bool:
+        if self._initial_local_cache_load_started:
+            return False
+        self._initial_local_cache_load_started = True
+        self._initial_local_cache_generation += 1
+        generation = self._initial_local_cache_generation
+        self._initial_local_cache_callback_pending = True
+        QTimer.singleShot(
+            self._initial_cache_load_delay_ms,
+            partial(self._run_initial_local_cache_load, generation),
+        )
+        return True
+
+    def _run_initial_local_cache_load(self, generation: int) -> bool:
+        if generation != self._initial_local_cache_generation or self._closing:
+            return False
+        self._initial_local_cache_callback_pending = False
+        self._load_local_cache()
+        return True
+
+    def _load_local_cache(self, *, emit_event: bool = True):
+        if _owner_attr(self, "_closing", False):
+            return
+        if _owner_attr(self, "_background_preload_requested", False) and not _owner_attr(
+            self,
+            "_background_preload_done",
+            False,
+        ):
+            emit_event = False
+        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
+        if time.monotonic() < defer_until:
+            self._schedule_post_f5_local_cache_load(emit_event=emit_event)
+            return
+        self._initial_local_cache_load_started = True
+        if getattr(self, "_local_cache_loading", False):
+            self._local_cache_pending_emit_event = bool(emit_event)
+            return
+        self._local_cache_loading = True
+        generation = int(_owner_attr(self, "_local_cache_generation", 0)) + 1
+        self._local_cache_generation = generation
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            "local_cache",
+            partial(_load_cache_payload, bool(emit_event)),
+            task_id=_FOREIGN_BLOCK_LOCAL_CACHE_TASK,
+            timeout_sec=30,
+            on_success=partial(_apply_cache_if_current, self, generation),
+            on_error=partial(_apply_cache_error_if_current, self, generation),
+        )
+
+    def _schedule_post_f5_local_cache_load(self, *, emit_event: bool = True) -> bool:
+        self._post_f5_local_cache_emit_event = bool(
+            getattr(self, "_post_f5_local_cache_emit_event", False) or emit_event
+        )
+        if getattr(self, "_post_f5_local_cache_pending", False):
+            return False
+        self._post_f5_local_cache_pending = True
+        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
+        delay_ms = max(0, int((defer_until - time.monotonic()) * 1000))
+        QTimer.singleShot(delay_ms, self._run_post_f5_local_cache_load)
+        return True
+
+    def _run_post_f5_local_cache_load(self) -> bool:
+        if not getattr(self, "_post_f5_local_cache_pending", False) or _owner_attr(
+            self,
+            "_closing",
+            False,
+        ):
+            return False
+        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
+        if time.monotonic() < defer_until:
+            self._post_f5_local_cache_pending = False
+            return self._schedule_post_f5_local_cache_load(
+                emit_event=bool(getattr(self, "_post_f5_local_cache_emit_event", True))
+            )
+        self._post_f5_local_cache_pending = False
+        self._post_f5_local_cache_defer_until = 0.0
+        emit_event = bool(getattr(self, "_post_f5_local_cache_emit_event", True))
+        self._post_f5_local_cache_emit_event = False
+        self._load_local_cache(emit_event=emit_event)
+        return True
+
+
+class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
     def __init__(
         self,
         data_provider,
@@ -204,21 +450,33 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._status_next_step = ""
         self._had_rows_before_refresh = False
         self._pending_f5_online_refresh = False
+        self._pending_visible_online_refresh = False
         self._local_cache_loading = False
         self._local_cache_pending_emit_event: bool | None = None
         self._post_f5_local_cache_defer_until = 0.0
         self._post_f5_local_cache_pending = False
         self._post_f5_local_cache_emit_event = False
         self._initial_local_cache_load_started = False
+        self._initial_local_cache_generation = 0
+        self._initial_local_cache_callback_pending = False
+        self._background_preload_requested = False
+        self._background_preload_done = False
         self._local_cache_generation = 0
         self._fetch_generation = 0
         self._closing = False
+        self._post_f5_online_timer = _create_owned_single_shot_timer(
+            self,
+            partial(ForeignBlockTradeTab._run_pending_post_online_refresh_after_f5, self),
+        )
+        self._visible_online_timer = _create_owned_single_shot_timer(
+            self,
+            partial(_run_pending_visible_online_refresh, self),
+        )
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
         if autoload:
             self._schedule_initial_local_cache_load()
 
-        # 大宗交易页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
         event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
 
@@ -226,26 +484,24 @@ class ForeignBlockTradeTab(BaseStockTab):
         super().showEvent(event)
         if self._should_start_runtime_on_show():
             self._schedule_initial_local_cache_load()
+            _schedule_pending_visible_online_refresh(self)
 
-    def _schedule_initial_local_cache_load(self) -> bool:
-        if self._initial_local_cache_load_started:
-            return False
-        self._initial_local_cache_load_started = True
-        QTimer.singleShot(self._initial_cache_load_delay_ms, self._load_local_cache)
-        return True
+    def on_workspace_tab_activated(self) -> None:
+        self._schedule_initial_local_cache_load()
+        _schedule_pending_visible_online_refresh(self)
 
-    def prime_background_load(self) -> bool:
-        return self._schedule_initial_local_cache_load()
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        timer = _owner_attr(self, "_visible_online_timer")
+        if timer is not None:
+            timer.stop()
+        _cancel_online_fetch(self, reason="owner_hidden", resume_when_visible=True)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("等待加载...")
-
-        # ── 筛选器组：按数据维度从大到小排列 ──
         self.cmb_filter_date = MultiSelectFilterButton("全部日期")
         self.cmb_filter_date.setFixedWidth(128)
         self.cmb_filter_date.selectionChanged.connect(self._filter_table_combo)
@@ -266,10 +522,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.search_box.setFixedWidth(240)
         self.search_box.textChanged.connect(self._filter_table_combo)
 
-        # ── 数据拉取范围 ──
         self.cmb_days = QComboBox()
         self.cmb_days.addItems(["近 10 交易日", "近 30 交易日", "近 40 交易日", "近 60 交易日"])
-        # 默认选中 30 交易日，与 self.days_to_fetch 初始值保持一致
         self.cmb_days.setCurrentIndex(1)
         self.cmb_days.setFixedWidth(148)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
@@ -294,7 +548,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         toolbar = self.build_tab_toolbar("外资大宗", self.lbl_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
-        # 表格
         self.columns = [
             "代码",
             "名称",
@@ -321,23 +574,18 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.setItemDelegate(self.delegate)
         self.table_state = TableStateWrapper(self.table, empty_title="暂无大宗交易数据", loading_title="抓取中...")
 
-        # 列宽
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        # 严格压缩默认列宽，总和约1200px以内，确保即使在小屏幕/高缩放比下也不会超过屏幕宽度产生滚动条
         default_widths = [52, 60, 70, 55, 55, 55, 70, 85, 65, 65, 65, 75, 75, 140, 140]
         for i, w in enumerate(default_widths):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
 
-        # 绑定防抖自动保存与恢复配置 (v4 强制刷新新布局)
         restored_sort = self.bind_header_persistence(self.table, "block_trade_header_state_v5")
         if not restored_sort:
             self.table.sortByColumn(self.model.headers.index("交易日期"), Qt.SortOrder.DescendingOrder)
 
-        # 双击 → K线图
         self.table.doubleClicked.connect(self._on_double_click)
-        # 右键菜单
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -361,31 +609,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         ]
         dates = [date for date in dates if date]
         return max(dates) if dates else ""
-
-    @staticmethod
-    def _should_trigger_auto_refresh(
-        now: datetime.datetime,
-        *,
-        is_trade_day: bool,
-        last_auto_refresh_date: str,
-        last_success_at: datetime.datetime | None = None,
-        pending_auto_refresh_date: str = "",
-    ) -> bool:
-        today_compact = now.strftime("%Y%m%d")
-        if pending_auto_refresh_date == today_compact:
-            return False
-        if now.hour < 20:
-            return False
-        if not is_trade_day:
-            return False
-        if last_auto_refresh_date == today_compact:
-            return False
-        return not (last_success_at is not None and last_success_at.date() == now.date() and last_success_at.hour >= 20)
-
-    @staticmethod
-    def _ensure_log_line(message: str) -> str:
-        text = str(message or "")
-        return text if text.endswith("\n") else text + "\n"
 
     @staticmethod
     def _should_save_cache(timeout_chunks, failed_chunks) -> bool:
@@ -439,63 +662,8 @@ class ForeignBlockTradeTab(BaseStockTab):
             log.warning(f"[外资大宗] 保存本地缓存失败: {exc}")
             return False
 
-    def _load_local_cache(self, *, emit_event: bool = True):
-        if _owner_attr(self, "_closing", False):
-            return
-        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
-        if time.monotonic() < defer_until:
-            self._schedule_post_f5_local_cache_load(emit_event=emit_event)
-            return
-        self._initial_local_cache_load_started = True
-        if getattr(self, "_local_cache_loading", False):
-            self._local_cache_pending_emit_event = bool(emit_event)
-            return
-        self._local_cache_loading = True
-        generation = int(_owner_attr(self, "_local_cache_generation", 0)) + 1
-        self._local_cache_generation = generation
-        task_lifecycle_for(self, runner=task_manager).run_background(
-            "local_cache",
-            partial(_load_cache_payload, bool(emit_event)),
-            task_id=_FOREIGN_BLOCK_LOCAL_CACHE_TASK,
-            timeout_sec=30,
-            on_success=partial(_apply_cache_if_current, self, generation),
-            on_error=partial(_apply_cache_error_if_current, self, generation),
-        )
-
-    def _finish_local_cache_load(self):
-        pending_emit_event = self._local_cache_pending_emit_event
-        self._local_cache_pending_emit_event = None
-        self._local_cache_loading = False
-        if pending_emit_event is not None:
-            QTimer.singleShot(0, lambda: self._load_local_cache(emit_event=pending_emit_event))
-
-    def _schedule_post_f5_local_cache_load(self, *, emit_event: bool = True) -> bool:
-        self._post_f5_local_cache_emit_event = bool(
-            getattr(self, "_post_f5_local_cache_emit_event", False) or emit_event
-        )
-        if getattr(self, "_post_f5_local_cache_pending", False):
-            return False
-        self._post_f5_local_cache_pending = True
-        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
-        delay_ms = max(0, int((defer_until - time.monotonic()) * 1000))
-        QTimer.singleShot(delay_ms, self._run_post_f5_local_cache_load)
-        return True
-
-    def _run_post_f5_local_cache_load(self) -> bool:
-        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
-        if time.monotonic() < defer_until:
-            self._post_f5_local_cache_pending = False
-            return self._schedule_post_f5_local_cache_load(
-                emit_event=bool(getattr(self, "_post_f5_local_cache_emit_event", True))
-            )
-        self._post_f5_local_cache_pending = False
-        self._post_f5_local_cache_defer_until = 0.0
-        emit_event = bool(getattr(self, "_post_f5_local_cache_emit_event", True))
-        self._post_f5_local_cache_emit_event = False
-        self._load_local_cache(emit_event=emit_event)
-        return True
-
     def _apply_local_cache_payload(self, payload: dict):
+        generation = int(getattr(self, "_local_cache_generation", 0))
         try:
             payload = payload or {}
             rows = payload.get("rows", [])
@@ -509,20 +677,31 @@ class ForeignBlockTradeTab(BaseStockTab):
 
             QTimer.singleShot(
                 0,
-                lambda rows=rows, raw_count=raw_count, latest_trade_date=latest_trade_date, payload=payload: (
+                lambda rows=rows, raw_count=raw_count, latest_trade_date=latest_trade_date, payload=payload, generation=generation: (
                     ForeignBlockTradeTab._finish_apply_local_cache_payload(
                         self,
                         rows=rows,
                         raw_count=raw_count,
                         latest_trade_date=latest_trade_date,
                         payload=payload,
+                        generation=generation,
                     )
                 ),
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             self._on_local_cache_failed(str(exc))
 
-    def _finish_apply_local_cache_payload(self, *, rows: list[dict], raw_count: int, latest_trade_date: str, payload: dict):
+    def _finish_apply_local_cache_payload(
+        self,
+        *,
+        rows: list[dict],
+        raw_count: int,
+        latest_trade_date: str,
+        payload: dict,
+        generation: int | None = None,
+    ):
+        if generation is not None and generation != int(getattr(self, "_local_cache_generation", 0)):
+            return
         try:
             if getattr(self, "_runtime_cleanup_done", False):
                 return
@@ -571,6 +750,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._load_local_cache(emit_event=False)
 
     def _cleanup_runtime_state(self):
+        _shutdown_foreign_runtime(self)
         with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
         with suppress(TypeError, RuntimeError):
@@ -578,14 +758,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:
-        self._closing = True
-        self._local_cache_generation += 1
-        self._fetch_generation += 1
-        self._local_cache_loading = False
-        self._is_loading = False
-        lifecycle = getattr(self, "_task_lifecycle", None)
-        if lifecycle is not None:
-            lifecycle.shutdown(timeout_ms=1_000)
+        _shutdown_foreign_runtime(self)
         self._cleanup_runtime_state()
 
     def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
@@ -656,6 +829,9 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _load_block_trade_data(self):
         if _owner_attr(self, "_closing", False):
             return
+        if not _is_online_refresh_foreground(self):
+            self._pending_visible_online_refresh = True
+            return
         if self._is_loading:
             self._set_fetch_status("大宗抓取中", "上一轮任务尚未结束", freshness="快照", next_step="等待当前轮次结束")
             return
@@ -670,11 +846,11 @@ class ForeignBlockTradeTab(BaseStockTab):
         )
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
-        # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
 
         self._fetch_generation += 1
         generation = self._fetch_generation
+        mark_runtime_network_activity(self)
         task_lifecycle_for(self, runner=task_manager).run_background(
             "fetch",
             partial(_build_block_trade_fetch_payload, int(self.days_to_fetch)),
@@ -686,17 +862,29 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def run_post_online_refresh(self) -> bool:
         self._load_block_trade_data()
-        return True
+        return not _owner_attr(self, "_closing", False)
 
     def schedule_post_online_refresh_after_f5(self) -> bool:
         if self._pending_f5_online_refresh:
             return False
         self._pending_f5_online_refresh = True
-        QTimer.singleShot(F5_AUTO_ONLINE_REFRESH_DELAY_MS, self._run_pending_post_online_refresh_after_f5)
+        timer = _owner_attr(self, "_post_f5_online_timer")
+        if timer is None:
+            callback = _owner_attr(self, "_run_pending_post_online_refresh_after_f5")
+            if not callable(callback):
+                callback = partial(ForeignBlockTradeTab._run_pending_post_online_refresh_after_f5, self)
+            QTimer.singleShot(F5_AUTO_ONLINE_REFRESH_DELAY_MS, callback)
+        else:
+            timer.start(F5_AUTO_ONLINE_REFRESH_DELAY_MS)
         return True
 
     def _run_pending_post_online_refresh_after_f5(self) -> bool:
         self._pending_f5_online_refresh = False
+        if _owner_attr(self, "_closing", False):
+            return False
+        if not _is_online_refresh_foreground(self):
+            self._pending_visible_online_refresh = True
+            return True
         return self.run_post_online_refresh()
 
     def prepare_post_f5_refresh(self) -> None:
@@ -714,6 +902,9 @@ class ForeignBlockTradeTab(BaseStockTab):
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
         self._load_local_cache(emit_event=False)
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        if not _is_online_refresh_foreground(self):
+            self._pending_visible_online_refresh = True
+            return True
         return self.run_post_online_refresh()
 
     @staticmethod
@@ -810,7 +1001,6 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._save_local_cache(row_data)
         elif timeout_chunks or failed_chunks:
             log.warning("[外资大宗] 本轮结果不完整，已跳过覆盖本地缓存")
-        # 强制应用当前的筛选状态
         self._filter_table_combo()
         event_bus.sig_block_trade_updated.emit()
 

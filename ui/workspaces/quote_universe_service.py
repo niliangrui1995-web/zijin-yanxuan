@@ -2,18 +2,7 @@
 from __future__ import annotations
 
 from ui.workspaces.tab_capabilities import QuoteUniverseCapability
-
-INFO_SOURCE_GROUP = "情报源"
-NON_A_SHARE_REALTIME_TAB_KEYS = frozenset({"asian_market"})
-DEFAULT_REALTIME_TAB_KEYS = (
-    "scan",
-    "watchlist",
-    "stock_candidates",
-    "foreign_block",
-    "na_daily",
-    "earnings",
-    "lhb",
-)
+from ui.workspaces.tab_registry import TabQuotePolicy
 
 
 class QuoteUniverseService:
@@ -33,26 +22,44 @@ class QuoteUniverseService:
     def _realtime_tab_keys(self) -> tuple[str, ...]:
         specs = self._tab_specs()
         if not specs:
-            return DEFAULT_REALTIME_TAB_KEYS
+            return ()
 
         keys = []
         for spec in specs:
             key = str(spec.get("key", "")).strip()
-            group = str(spec.get("group", "")).strip()
-            if key and group != INFO_SOURCE_GROUP and key not in NON_A_SHARE_REALTIME_TAB_KEYS:
+            if not key:
+                continue
+            policy = str(spec.get("quote_policy") or "").strip()
+            if policy == TabQuotePolicy.A_SHARE_REALTIME.value:
                 keys.append(key)
         return tuple(keys)
+
+    def _eligible_realtime_tab_keys(self) -> tuple[str, ...]:
+        keys = self._realtime_tab_keys()
+        workspace = self._workspace
+        status_reader = getattr(workspace, "background_preload_status", None)
+        current_tab_key = getattr(workspace, "current_tab_key", None)
+        if not callable(status_reader) or not callable(current_tab_key):
+            return keys
+        try:
+            status = status_reader()
+            visible_key = str(current_tab_key() or "").strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return keys
+        if not isinstance(status, dict):
+            return keys
+        if status.get("enabled") is True and status.get("finished") is not True:
+            return tuple(key for key in keys if key == visible_key)
+        return keys
 
     def collect_realtime_quote_codes(self) -> set[str]:
         workspace = self._workspace
         codes: set[str] = set()
         get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
-        get_tab = getattr(workspace, "get_tab", None)
-        for key in self._realtime_tab_keys():
-            if callable(get_loaded_tab):
-                tab = get_loaded_tab(key)
-            else:
-                tab = get_tab(key) if callable(get_tab) else None
+        if not callable(get_loaded_tab):
+            return codes
+        for key in self._eligible_realtime_tab_keys():
+            tab = get_loaded_tab(key)
             if isinstance(tab, QuoteUniverseCapability):
                 codes.update(tab.get_realtime_quote_codes())
 

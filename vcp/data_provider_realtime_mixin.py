@@ -1,10 +1,8 @@
 import time
-import urllib.error
-import urllib.request
 
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
-from infra.http_safety import urlopen_https
+from infra.market_data.warehouse_quote_reader import read_latest_quotes
 from vcp.data_provider_local import build_offline_quotes
 from vcp.data_provider_quotes import (
     ensure_eastmoney_quote_state,
@@ -25,6 +23,58 @@ RT_QUOTE_MIN_BATCH_SIZE = 5
 RT_QUOTE_BATCH_PAUSE_SEC = 0.12
 RT_QUOTE_DEDUP_WINDOW_SEC = 8.5
 RT_EASTMONEY_COOLDOWN_SEC = 120.0
+_WAREHOUSE_QUOTE_ERRORS = (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError)
+
+
+def _normalize_offline_quote_codes(codes) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(str(code or "").strip() for code in (codes or []) if str(code or "").strip()))
+
+
+def _cached_offline_quote_frames(provider, codes: tuple[str, ...]) -> dict:
+    cache_lock = getattr(provider, "cache_lock", None)
+    if cache_lock is None:
+        return {}
+    with cache_lock:
+        cache_data = getattr(provider, "cache_data", None)
+        if not isinstance(cache_data, dict):
+            return {}
+        return {code: cache_data.get(code) for code in codes if cache_data.get(code) is not None}
+
+
+def _warehouse_offline_quotes(provider, codes: list[str]) -> dict:
+    try:
+        warehouse_getter = getattr(provider, "_get_market_data_warehouse", None)
+        warehouse = (
+            warehouse_getter()
+            if callable(warehouse_getter)
+            else getattr(provider, "market_data_warehouse", None)
+        )
+        result = read_latest_quotes(warehouse, codes) if warehouse is not None else None
+    except _WAREHOUSE_QUOTE_ERRORS:
+        return {}
+    if warehouse is None:
+        return {}
+    if result is None or not result.status.ok or not isinstance(result.data, dict):
+        return {}
+    try:
+        provider._last_market_data_source_status = result.status.to_dict()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    return result.data
+
+
+def _missing_offline_quotes(provider, codes: list[str]) -> dict:
+    result = _warehouse_offline_quotes(provider, codes)
+    missing_codes = [code for code in codes if code not in result]
+    if not missing_codes:
+        return result
+    batch_reader = getattr(provider, "get_data_batch", None)
+    if callable(batch_reader):
+        frames = batch_reader(missing_codes) or {}
+        result.update(build_offline_quotes(missing_codes, frames.get))
+        return result
+    result.update(build_offline_quotes(missing_codes, provider.get_data))
+    return result
 
 
 class TdxDataProviderRealtimeMixin:
@@ -70,9 +120,11 @@ class TdxDataProviderRealtimeMixin:
         _log.info("[网络] ✅ 东方财富实时行情状态已重置。")
 
     def test_network(self, timeout=3):
-        """测试东方财富实时行情 HTTP 链路是否可用。"""
+        """在一个总截止时间内测试实时行情 HTTP 回退链路。"""
         inferred_trade_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
-        timeout_sec = float(timeout or 3)
+        timeout_sec = max(0.1, float(timeout or 3))
+        started_at = time.monotonic()
+        deadline = started_at + timeout_sec
         previous_timeout = float(getattr(self, "_rt_api_call_timeout_sec", 8.0) or 8.0)
         probe = {
             "checked_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
@@ -81,32 +133,10 @@ class TdxDataProviderRealtimeMixin:
             "dedup_window_sec": float(
                 getattr(self, "_rt_runtime_dedup_window_sec", RT_QUOTE_DEDUP_WINDOW_SEC) or RT_QUOTE_DEDUP_WINDOW_SEC
             ),
-            "page_probe": "skip",
+            "page_probe": "deferred",
             "quote_probe": "skip",
         }
-        self._rt_api_call_timeout_sec = timeout_sec
         try:
-            try:
-                req = urllib.request.Request(
-                    "https://quote.eastmoney.com/center/gridlist.html#hs_a_board",
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer": "https://quote.eastmoney.com/",
-                        "Connection": "close",
-                    },
-                )
-                resp = urlopen_https(req, timeout=timeout_sec)
-                try:
-                    payload = resp.read(256)
-                finally:
-                    try:
-                        resp.close()
-                    except (AttributeError, OSError, RuntimeError, TypeError):
-                        pass
-                probe["page_probe"] = "ok" if payload else "empty"
-            except (ConnectionError, OSError, TimeoutError, urllib.error.URLError, ValueError) as page_exc:
-                probe["page_probe"] = f"fail:{summarize_probe_error(page_exc)}"
-
             ok = False
             quote_failures = []
             probe["eastmoney_quote_probe"] = "skip"
@@ -117,6 +147,12 @@ class TdxDataProviderRealtimeMixin:
                 ("sina", self._request_sina_quote_batch),
                 ("tencent", self._request_tencent_quote_batch),
             ):
+                remaining_sec = deadline - time.monotonic()
+                if remaining_sec <= 0:
+                    probe[f"{source_name}_quote_probe"] = "deadline"
+                    quote_failures.append(f"{source_name}:deadline")
+                    break
+                self._rt_api_call_timeout_sec = max(0.05, remaining_sec)
                 try:
                     quotes = requester(["000001"], inferred_trade_date)
                     source_ok = bool(quotes and quotes.get("000001"))
@@ -139,6 +175,7 @@ class TdxDataProviderRealtimeMixin:
 
             probe["quote_probe"] = "ok" if ok else (quote_failures[0] if quote_failures else "empty")
             probe["ok"] = ok
+            probe["elapsed_ms"] = round((time.monotonic() - started_at) * 1000.0, 3)
             self._rt_last_network_probe = probe
             log_fn = _log.info if ok else _log.warning
             log_fn(
@@ -173,11 +210,16 @@ class TdxDataProviderRealtimeMixin:
             return dict(self.cache_data)
 
     def _build_offline_quotes(self, codes):
-        batch_reader = getattr(self, "get_data_batch", None)
-        if callable(batch_reader):
-            frames = batch_reader(codes) or {}
-            return build_offline_quotes(codes, frames.get)
-        return build_offline_quotes(codes, self.get_data)
+        requested_codes = _normalize_offline_quote_codes(codes)
+        if not requested_codes:
+            return {}
+
+        frames = _cached_offline_quote_frames(self, requested_codes)
+        result = build_offline_quotes(requested_codes, frames.get)
+        missing_codes = [code for code in requested_codes if code not in result]
+        if missing_codes:
+            result.update(_missing_offline_quotes(self, missing_codes))
+        return result
 
     def _ensure_eastmoney_quote_state(self):
         ensure_eastmoney_quote_state(self)
@@ -207,29 +249,47 @@ class TdxDataProviderRealtimeMixin:
     def _to_eastmoney_secid(self, code: str) -> str:
         return to_eastmoney_secid(code)
 
-    def _request_eastmoney_quote_batch(self, codes, inferred_trade_date: str):
-        return request_eastmoney_quote_batch(self, codes, inferred_trade_date)
+    def _request_eastmoney_quote_batch(self, codes, inferred_trade_date: str, *, cancellation_token=None):
+        return request_eastmoney_quote_batch(
+            self,
+            codes,
+            inferred_trade_date,
+            cancellation_token=cancellation_token,
+        )
 
-    def _request_sina_quote_batch(self, codes, inferred_trade_date: str):
-        return request_sina_quote_batch(self, codes, inferred_trade_date)
+    def _request_sina_quote_batch(self, codes, inferred_trade_date: str, *, cancellation_token=None):
+        return request_sina_quote_batch(
+            self,
+            codes,
+            inferred_trade_date,
+            cancellation_token=cancellation_token,
+        )
 
-    def _request_tencent_quote_batch(self, codes, inferred_trade_date: str):
-        return request_tencent_quote_batch(self, codes, inferred_trade_date)
+    def _request_tencent_quote_batch(self, codes, inferred_trade_date: str, *, cancellation_token=None):
+        return request_tencent_quote_batch(
+            self,
+            codes,
+            inferred_trade_date,
+            cancellation_token=cancellation_token,
+        )
 
     def _fetch_eastmoney_quotes_with_split_retry(
         self,
         codes,
         inferred_trade_date: str,
         min_batch_size: int,
+        *,
+        cancellation_token=None,
     ):
         return fetch_eastmoney_quotes_with_split_retry(
             self,
             codes,
             inferred_trade_date,
             min_batch_size,
+            cancellation_token=cancellation_token,
         )
 
-    def fetch_realtime_quotes_batch(self, codes, _retry_once=True):
+    def fetch_realtime_quotes_batch(self, codes, _retry_once=True, *, cancellation_token=None):
         """Fetch realtime quotes using the configured batch size."""
         return fetch_realtime_quotes_batch_runtime(
             self,
@@ -238,6 +298,7 @@ class TdxDataProviderRealtimeMixin:
             batch_size_default=RT_QUOTE_BATCH_SIZE,
             min_batch_size_default=RT_QUOTE_MIN_BATCH_SIZE,
             batch_pause_default=RT_QUOTE_BATCH_PAUSE_SEC,
+            cancellation_token=cancellation_token,
         )
 
     def build_realtime_df(self, code, quote):

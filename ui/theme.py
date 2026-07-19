@@ -639,7 +639,7 @@ def _refresh_compat_vars():
 _refresh_compat_vars()
 
 # 当主题切换时自动刷新兼容变量
-theme_manager.sig_theme_changed.connect(lambda _: _refresh_compat_vars())
+theme_manager.sig_theme_changed.connect(_refresh_compat_vars)
 
 
 # ============================================================

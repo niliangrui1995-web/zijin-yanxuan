@@ -253,7 +253,11 @@ def test_earnings_refresh_routine_surfaces_degraded_scan(qt_application):
 def test_earnings_refresh_background_entrypoints_run_and_emit(qt_application):
     runner = _FakeJobRunner(active=False)
     engine = _FakeEarningsEngine(cached=None, daily=pd.DataFrame([{"code": "000001"}]))
-    service = EarningsRefreshService(engine=engine, job_runner=runner)
+    service = EarningsRefreshService(
+        engine=engine,
+        job_runner=runner,
+        cache_rows_loader=lambda: [{"股票代码": "000001"}],
+    )
     emitted = []
     failures = []
     service.sig_new_surprises_found.connect(lambda frame, mode: emitted.append((len(frame), mode)))
@@ -310,8 +314,11 @@ def test_earnings_refresh_covers_none_and_background_error_callbacks(monkeypatch
     manual.sig_fetch_failed.connect(lambda mode, error_text: failures.append((mode, error_text)))
     assert manual.force_manual_scan(["2026-04-16"]) is True
 
-    cache_fail = EarningsRefreshService(engine=_FakeEarningsEngine(fail=True), job_runner=_FakeJobRunner(active=False))
-    cache_fail.engine.get_cached_records = lambda: (_ for _ in ()).throw(RuntimeError("cache failed"))
+    cache_fail = EarningsRefreshService(
+        engine=_FakeEarningsEngine(fail=True),
+        job_runner=_FakeJobRunner(active=False),
+        cache_rows_loader=lambda: (_ for _ in ()).throw(RuntimeError("cache failed")),
+    )
     cache_fail.sig_fetch_failed.connect(lambda mode, error_text: failures.append((mode, error_text)))
     assert cache_fail.load_cached_records_async() is True
 
@@ -322,3 +329,56 @@ def test_earnings_refresh_covers_none_and_background_error_callbacks(monkeypatch
     assert ("gap_fill", "provider timeout") in failures
     assert ("warm_cache", "cache failed") in failures
     assert ("routine", "provider timeout") in failures
+
+
+def test_view_cache_replay_never_constructs_heavy_engine(monkeypatch, qt_application):
+    monkeypatch.setattr(
+        ui_earnings_service,
+        "_create_default_engine",
+        lambda: (_ for _ in ()).throw(AssertionError("view cache must not construct EarningsEngine")),
+    )
+    service = EarningsRefreshService(
+        job_runner=_FakeJobRunner(active=False),
+        cache_rows_loader=lambda: [{"股票代码": "000001", "股票名称": "平安银行"}],
+    )
+    emitted = []
+    service.sig_new_surprises_found.connect(lambda payload, mode: emitted.append((payload, mode)))
+
+    assert service.load_cached_records_async() is True
+    assert service._engine is None
+    assert emitted == [([{"股票代码": "000001", "股票名称": "平安银行"}], "warm_cache")]
+
+
+def test_ai_chain_cache_reload_supersedes_an_older_view_snapshot(qt_application):
+    class QueuedRunner:
+        def __init__(self):
+            self.jobs = []
+
+        @staticmethod
+        def is_active_task(_task_id):
+            return False
+
+        def run_in_background(self, fn, **kwargs):
+            self.jobs.append((fn, kwargs.get("on_success")))
+            return str(kwargs.get("task_id") or "")
+
+    runner = QueuedRunner()
+    payloads = iter(
+        [
+            [{"股票代码": "000001", "所属行业与概念": "旧链路"}],
+            [{"股票代码": "000002", "所属行业与概念": "新链路"}],
+        ]
+    )
+    service = EarningsRefreshService(job_runner=runner, cache_rows_loader=lambda: next(payloads))
+    emitted = []
+    service.sig_new_surprises_found.connect(lambda payload, _mode: emitted.append(payload))
+
+    assert service.load_cached_records_async() is True
+    old_run, old_success = runner.jobs[0]
+    old_result = old_run()
+    assert service.load_cached_records_async(supersede=True) is True
+    old_success(old_result)
+    run, on_success = runner.jobs[1]
+    on_success(run())
+
+    assert emitted == [[{"股票代码": "000002", "所属行业与概念": "新链路"}]]

@@ -150,15 +150,58 @@ ON fh_change_cache(subject_code, change_type);
 """
 
 
+def _refresh_compare_cache_storage(owner) -> None:
+    updated_at = owner._now_text()
+    with owner._store.transaction() as cursor:
+        for subject in SUBJECTS.values():
+            snapshot_rows = cursor.execute(
+                """
+                SELECT DISTINCT quarter_key
+                FROM fh_snapshot
+                WHERE subject_code = ?
+                """,
+                (subject["subject_code"],),
+            ).fetchall()
+            for row in snapshot_rows:
+                quarter_key = str(row["quarter_key"])
+                cursor.execute(
+                    """
+                    UPDATE fh_snapshot
+                    SET compare_quarter_key = ?, updated_at = ?
+                    WHERE subject_code = ? AND quarter_key = ?
+                    """,
+                    (
+                        get_compare_quarter_key(subject["subject_type"], quarter_key),
+                        updated_at,
+                        subject["subject_code"],
+                        quarter_key,
+                    ),
+                )
+            owner._rebuild_change_cache_locked(cursor, subject, updated_at)
+
+
+def _ensure_compare_cache_repaired(owner) -> None:
+    if not owner._compare_cache_repair_pending:
+        return
+    with owner._compare_cache_repair_lock:
+        if not owner._compare_cache_repair_pending:
+            return
+        owner.refresh_compare_cache()
+        owner._compare_cache_repair_pending = False
+
+
 class FundHoldingsStore:
-    def __init__(self, store=None):
+    def __init__(self, store=None, *, defer_compare_cache_repair: bool = False):
         self._store = store or data_store
         self._change_rows_cache_lock = threading.RLock()
         self._change_rows_cache_signature = None
         self._change_rows_cache: list[dict] | None = None
+        self._compare_cache_repair_lock = threading.RLock()
+        self._compare_cache_repair_pending = bool(defer_compare_cache_repair)
         self.ensure_schema()
         self.ensure_subjects()
-        self.refresh_compare_cache()
+        if not self._compare_cache_repair_pending:
+            self.refresh_compare_cache()
 
     @staticmethod
     def _now_text() -> str:
@@ -192,34 +235,9 @@ class FundHoldingsStore:
 
     def refresh_compare_cache(self) -> None:
         """按当前规则重建 compare_quarter_key 与变化缓存，兼容历史老数据。"""
-        updated_at = self._now_text()
-        with self._store.transaction() as cursor:
-            for subject in SUBJECTS.values():
-                snapshot_rows = cursor.execute(
-                    """
-                    SELECT DISTINCT quarter_key
-                    FROM fh_snapshot
-                    WHERE subject_code = ?
-                    """,
-                    (subject["subject_code"],),
-                ).fetchall()
-                for row in snapshot_rows:
-                    quarter_key = str(row["quarter_key"])
-                    cursor.execute(
-                        """
-                        UPDATE fh_snapshot
-                        SET compare_quarter_key = ?, updated_at = ?
-                        WHERE subject_code = ? AND quarter_key = ?
-                        """,
-                        (
-                            get_compare_quarter_key(subject["subject_type"], quarter_key),
-                            updated_at,
-                            subject["subject_code"],
-                            quarter_key,
-                        ),
-                    )
-
-                self._rebuild_change_cache_locked(cursor, subject, updated_at)
+        with self._compare_cache_repair_lock:
+            _refresh_compare_cache_storage(self)
+            self._compare_cache_repair_pending = False
 
     def record_sync_run(
         self,
@@ -810,6 +828,7 @@ class FundHoldingsStore:
         )
 
     def query_change_rows(self, quarter_keys=None, *, stock_codes=None) -> list[dict]:
+        _ensure_compare_cache_repaired(self)
         normalized_quarters = self._normalize_quarter_filter(quarter_keys)
         normalized_codes = self._normalize_stock_code_filter(stock_codes)
         if normalized_codes is not None and not normalized_codes:
@@ -842,4 +861,4 @@ class FundHoldingsStore:
         return [dict(row) for row in sorted_rows]
 
 
-fund_holdings_store = FundHoldingsStore()
+fund_holdings_store = FundHoldingsStore(defer_compare_cache_repair=True)

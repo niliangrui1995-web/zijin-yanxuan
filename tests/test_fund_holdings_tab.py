@@ -19,6 +19,15 @@ def test_fund_holdings_tab_defaults_to_cache_only_ai_chain_data():
     assert fund_holdings_module.FundHoldingsTab._chain_context_provider is load_cached_ai_industry_chain_context_map
 
 
+def test_fund_holdings_workspace_activation_retries_cancelled_initial_load():
+    calls = []
+    tab = SimpleNamespace(_ensure_initial_load_started=lambda: calls.append("retry"))
+
+    fund_holdings_module.FundHoldingsTab.on_workspace_tab_activated(tab)
+
+    assert calls == ["retry"]
+
+
 class _DummyProvider:
     pass
 
@@ -216,6 +225,14 @@ def _setup_store(
             lambda self, current_model=None, *, async_local=True: None,
             raising=False,
         )
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: (
+            on_success(fn(*args)) if callable(on_success) else fn(*args)
+        ),
+        raising=False,
+    )
     return settings
 
 
@@ -385,8 +402,7 @@ def test_fund_holdings_data_lineage_reports_loaded_rows(monkeypatch):
     try:
         lineage = tab.get_data_lineage()
 
-        assert lineage["key"] == "fund_holdings"
-        assert lineage["source"] == "fund_holdings_store + local_quote_snapshot"
+        assert {"key", "view", "source", "provider", "cache_refs", "network_capable"}.isdisjoint(lineage)
         assert lineage["status"] == "loaded"
         assert lineage["row_count"] == 1
         assert lineage["visible_row_count"] == 1
@@ -394,7 +410,6 @@ def test_fund_holdings_data_lineage_reports_loaded_rows(monkeypatch):
         assert lineage["loaded_quarter_scope"] == "latest"
         assert lineage["latest_quarter"] == "2025Q4"
         assert lineage["triggered_network"] is False
-        assert "data/vcp_hunter.db:fund holdings tables" in lineage["cache_refs"]
     finally:
         tab.deleteLater()
 
@@ -559,7 +574,7 @@ def test_fund_holdings_tab_does_not_schedule_late_local_quote_after_delete(monke
 
     spy = QSignalSpy(event_bus.sig_rt_quotes)
     tab = fund_holdings_module.FundHoldingsTab(_OfflineQuoteProvider())
-    assert captured_tasks == []
+    assert len(captured_tasks) == 1
 
     tab.deleteLater()
     assert len(spy) == 0
@@ -609,6 +624,7 @@ def test_fund_holdings_tab_delete_later_stops_view_state_timer_without_auto_time
     _setup_store(monkeypatch, [])
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
+        tab._view_state_restored = True
         tab._schedule_view_state_save()
         assert not hasattr(tab, "_daily_auto_sync_timer")
         assert not hasattr(tab, "_daily_auto_sync_initial_check_timer")
@@ -869,6 +885,138 @@ def test_fund_holdings_tab_loads_latest_quarter_before_all_quarters_on_demand(mo
         tab.deleteLater()
 
 
+def test_fund_holdings_tab_loads_persisted_all_scope_once(monkeypatch):
+    row = _build_change_row(
+        subject_code="QFII",
+        subject_name="QFII",
+        quarter_key="2025Q4",
+        compare_quarter_key="2025Q3",
+        change_type="增持",
+        stock_code="000002",
+        stock_name="万科A",
+    )
+    settings = _FakeSettings()
+    settings.setValue("fund_holdings_view_state_v2/quarter_mode", "all")
+    _setup_store(monkeypatch, [row], settings=settings)
+    query_calls = []
+
+    def _query_change_rows(*, quarter_keys=None, **_kwargs):
+        query_calls.append(None if quarter_keys is None else set(quarter_keys))
+        return [row]
+
+    monkeypatch.setattr(fund_holdings_module.fund_holdings_store, "query_change_rows", _query_change_rows)
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert query_calls == [None]
+        assert tab._loaded_quarter_scope == "all"
+        assert tab._quarter_filter_state() == (False, set())
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_loads_persisted_selected_scope_once(monkeypatch):
+    rows = [
+        _build_change_row(
+            subject_code="QFII",
+            subject_name="QFII",
+            quarter_key="2025Q4",
+            compare_quarter_key="2025Q3",
+            change_type="增持",
+            stock_code="000002",
+            stock_name="万科A",
+        ),
+        _build_change_row(
+            subject_code="QFII",
+            subject_name="QFII",
+            quarter_key="2025Q3",
+            compare_quarter_key="2025Q2",
+            change_type="持平",
+            stock_code="000001",
+            stock_name="平安银行",
+        ),
+    ]
+    settings = _FakeSettings()
+    settings.setValue("fund_holdings_view_state_v2/quarter_mode", "selected")
+    settings.setValue("fund_holdings_view_state_v2/quarter_values", ["2025Q3"])
+    _setup_store(monkeypatch, rows, settings=settings)
+    query_calls = []
+
+    def _query_change_rows(*, quarter_keys=None, **_kwargs):
+        selected = None if quarter_keys is None else set(quarter_keys)
+        query_calls.append(selected)
+        if selected is None:
+            return rows
+        return [row for row in rows if row["quarter_key"] in selected]
+
+    monkeypatch.setattr(fund_holdings_module.fund_holdings_store, "query_change_rows", _query_change_rows)
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert query_calls == [{"2025Q3"}]
+        assert tab._loaded_quarter_scope == "selected"
+        assert tab._loaded_quarter_keys == {"2025Q3"}
+        assert tab._quarter_filter_state() == (False, {"2025Q3"})
+        assert _visible_codes(tab) == ["000001"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_does_not_save_before_view_state_restore(monkeypatch):
+    settings = _FakeSettings()
+    settings.setValue("fund_holdings_view_state_v2/quarter_mode", "selected")
+    settings.setValue("fund_holdings_view_state_v2/quarter_values", ["2025Q3"])
+    _setup_store(monkeypatch, [], settings=settings)
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._schedule_view_state_save()
+        tab._save_view_state()
+
+        assert tab._view_state_save_timer.isActive() is False
+        assert settings.value("fund_holdings_view_state_v2/quarter_mode") == "selected"
+        assert settings.value("fund_holdings_view_state_v2/quarter_values") == ["2025Q3"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_early_reload_cancels_delayed_initial_load(monkeypatch):
+    row = _build_change_row(
+        subject_code="QFII",
+        subject_name="QFII",
+        quarter_key="2025Q4",
+        compare_quarter_key="2025Q3",
+        change_type="增持",
+        stock_code="000002",
+        stock_name="万科A",
+    )
+    _setup_store(monkeypatch, [row])
+    query_calls = []
+
+    def _query_change_rows(*, quarter_keys=None, **_kwargs):
+        query_calls.append(None if quarter_keys is None else set(quarter_keys))
+        return [row]
+
+    monkeypatch.setattr(fund_holdings_module.fund_holdings_store, "query_change_rows", _query_change_rows)
+
+    tab = fund_holdings_module.FundHoldingsTab(
+        _DummyProvider(),
+        autoload=False,
+        initial_load_delay_ms=60_000,
+    )
+    try:
+        tab._ensure_initial_load_started()
+        assert tab._initial_load_timer.isActive() is True
+        assert query_calls == []
+
+        tab._reload_from_db_async()
+
+        assert tab._initial_load_timer.isActive() is False
+        assert query_calls == [{"2025Q4"}]
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_centers_header_alignment(monkeypatch):
     _setup_store(monkeypatch, [])
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
@@ -941,7 +1089,11 @@ def test_fund_holdings_tab_defers_initial_load_when_autoload_disabled(monkeypatc
         fund_holdings_module.task_manager,
         "run_in_background",
         lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(
-            task_id or "scheduled"
+            {
+                "task_id": task_id or "scheduled",
+                "on_success": on_success,
+                "on_error": on_error,
+            }
         ),
         raising=False,
     )
@@ -996,7 +1148,11 @@ def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatc
         fund_holdings_module.task_manager,
         "run_in_background",
         lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(
-            task_id or "scheduled"
+            {
+                "task_id": task_id or "scheduled",
+                "on_success": on_success,
+                "on_error": on_error,
+            }
         ),
         raising=False,
     )
@@ -1007,6 +1163,15 @@ def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatc
         tab.prime_background_load()
 
         assert len(scheduled) == 1
+        assert tab.is_background_preload_complete() is False
+
+        scheduled[0]["on_error"]("cache unavailable")
+        assert tab.is_background_preload_complete() is True
+
+        tab._background_preload_done = False
+        monkeypatch.setattr(tab, "_ensure_current_quarter_scope_loaded", lambda: False)
+        tab._apply_view_rows_and_finish([], defer_finish=False)
+        assert tab.is_background_preload_complete() is True
     finally:
         tab.deleteLater()
 
@@ -1110,8 +1275,8 @@ def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkey
         def _restore_view_state(self):
             calls.append("restore")
 
-        def _ensure_current_quarter_scope_loaded(self, *, async_load: bool):
-            calls.append(("ensure", async_load))
+        def _ensure_current_quarter_scope_loaded(self):
+            calls.append("ensure")
             return True
 
         def _apply_filters(self):
@@ -1149,8 +1314,83 @@ def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkey
 
     queued[1]()
 
-    assert ("ensure", False) in calls
+    assert "ensure" in calls
     assert "empty" not in calls
+
+
+def test_fund_holdings_cancelled_generation_drops_queued_view_commit(monkeypatch):
+    calls = []
+    queued = []
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        lambda _delay_ms, callback: queued.append(callback),
+    )
+
+    class DummyTab:
+        _view_load_generation = 3
+        _runtime_cleanup_done = False
+
+        @staticmethod
+        def _should_defer_view_payload_finish():
+            return True
+
+        @staticmethod
+        def _apply_view_rows_and_finish(*_args, **_kwargs):
+            calls.append("commit")
+
+    tab = DummyTab()
+    fund_holdings_module.FundHoldingsTab._apply_view_payload(tab, {"view_rows": []})
+    assert len(queued) == 1
+
+    tab._view_load_generation += 1
+    queued[0]()
+
+    assert calls == []
+
+
+def test_fund_holdings_cancelled_generation_drops_second_stage_finish(monkeypatch):
+    calls = []
+    queued = []
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        lambda _delay_ms, callback: queued.append(callback),
+    )
+
+    class Model:
+        @staticmethod
+        def update_data(rows, **_kwargs):
+            calls.append(("update", list(rows)))
+
+    class DummyTab:
+        model = Model()
+        _view_load_generation = 9
+        _runtime_cleanup_done = False
+
+        @staticmethod
+        def _should_defer_view_payload_finish():
+            return True
+
+        @staticmethod
+        def _finish_apply_view_payload(_rows):
+            calls.append("finish")
+            return False
+
+        @staticmethod
+        def _show_empty_view_payload_if_needed(_rows):
+            calls.append("empty")
+
+    tab = DummyTab()
+    fund_holdings_module.FundHoldingsTab._apply_view_payload(tab, {"view_rows": []})
+    queued.pop(0)()
+    assert calls == [("update", [])]
+    assert len(queued) == 1
+
+    tab._view_load_generation += 1
+    queued.pop(0)()
+
+    assert calls == [("update", [])]
 
 
 def test_fund_holdings_tab_update_button_runs_sync_all_directly(monkeypatch):
@@ -1226,17 +1466,32 @@ def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
         assert tab.refresh_data_after_f5() is True
         assert calls == []
         assert scheduled[0][0] == tab._QUOTE_SNAPSHOT_REFRESH_DELAY_MS
-        assert scheduled[1][0] == tab._F5_AUTO_SYNC_DELAY_MS
+        assert tab._f5_auto_sync_timer.isActive()
+        assert tab._f5_auto_sync_timer.interval() == tab._F5_AUTO_SYNC_DELAY_MS
 
         scheduled[0][1]()
         assert calls == [("snapshot", tab.model, True), "status"]
 
-        assert scheduled[1][1]() is True
+        tab._f5_auto_sync_timer.stop()
+        assert tab._run_pending_auto_sync_after_f5() is True
         assert calls[:2] == [("snapshot", tab.model, True), "status"]
         assert calls[2][0] == "sync"
         assert calls[2][2] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
     finally:
         tab.deleteLater()
+
+
+def test_fund_holdings_delete_cancels_pending_f5_sync(monkeypatch):
+    _setup_store(monkeypatch, [])
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    assert tab.schedule_auto_sync_after_f5()
+    assert tab._f5_auto_sync_timer.isActive()
+
+    tab.deleteLater()
+
+    assert not tab._f5_auto_sync_timer.isActive()
+    assert tab._pending_f5_auto_sync is False
+    assert tab._run_pending_auto_sync_after_f5() is False
 
 
 def test_fund_holdings_cache_reload_refresh_is_deferred_and_coalesced(monkeypatch):
@@ -1413,19 +1668,10 @@ def test_fund_holdings_ai_chain_update_reloads_latest_view_async(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_latest_scope_backfill_uses_async_load(monkeypatch):
+def test_fund_holdings_scope_backfill_uses_async_load(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []
-
-    def _fail_sync_reload(self, *args, **kwargs):
-        raise AssertionError("latest scope backfill must stay off the UI thread")
-
-    monkeypatch.setattr(
-        fund_holdings_module.FundHoldingsTab,
-        "_reload_from_db",
-        _fail_sync_reload,
-        raising=False,
-    )
+    assert not hasattr(fund_holdings_module.FundHoldingsTab, "_reload_from_db")
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
         "_reload_from_db_async",
@@ -1435,14 +1681,26 @@ def test_fund_holdings_latest_scope_backfill_uses_async_load(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
-        tab._build_quarter_menu(["2025Q4"])
+        tab._build_quarter_menu(["2025Q4", "2025Q3"])
         tab._set_quarter_filter_state(latest_only=True, apply=False)
         tab._loaded_quarter_scope = ""
         tab._loaded_quarter_keys = set()
 
-        assert tab._ensure_current_quarter_scope_loaded(async_load=False) is True
+        assert tab._ensure_current_quarter_scope_loaded() is True
 
-        assert calls == [{"quarter_scope": "latest", "quarter_keys": set()}]
+        tab._set_quarter_filter_state(all_quarters=True, apply=False)
+        tab._loaded_quarter_scope = ""
+        assert tab._ensure_current_quarter_scope_loaded() is True
+
+        tab._set_quarter_filter_state(selected_quarters={"2025Q3"}, apply=False)
+        tab._loaded_quarter_scope = ""
+        assert tab._ensure_current_quarter_scope_loaded() is True
+
+        assert calls == [
+            {"quarter_scope": "latest", "quarter_keys": set()},
+            {"quarter_scope": "all", "quarter_keys": set()},
+            {"quarter_scope": "selected", "quarter_keys": {"2025Q3"}},
+        ]
     finally:
         tab.deleteLater()
 

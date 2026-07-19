@@ -134,7 +134,7 @@ def test_try_load_complete_payload_and_rebuild_fallback(monkeypatch, tmp_path):
     manager = _manager(tmp_path)
     Path(manager.rps_path).write_text("present", encoding="utf-8")
     payload = {"date": "20260101", "rps120": {"a": 90}, "rps250": {"a": 80}}
-    monkeypatch.setattr(module, "load_json_file", lambda _path: payload)
+    monkeypatch.setattr(module, "read_active_rps_bundle", lambda _path: (manager.rps_path, payload))
     monkeypatch.setattr(manager, "_should_rebuild_rps_payload", lambda *_args, **_kwargs: (True, 1, 2000))
     monkeypatch.setattr(
         manager,
@@ -154,7 +154,11 @@ def test_try_load_complete_payload_and_rebuild_fallback(monkeypatch, tmp_path):
 def test_try_load_returns_after_successful_rebuild(monkeypatch, tmp_path):
     manager = _manager(tmp_path)
     Path(manager.rps_path).write_text("present", encoding="utf-8")
-    monkeypatch.setattr(module, "load_json_file", lambda _path: {"date": "x", "rps120": {}, "rps250": {}})
+    monkeypatch.setattr(
+        module,
+        "read_active_rps_bundle",
+        lambda _path: (manager.rps_path, {"date": "x", "rps120": {}, "rps250": {}}),
+    )
     monkeypatch.setattr(manager, "_should_rebuild_rps_payload", lambda *_args, **_kwargs: (True, 0, 1000))
     monkeypatch.setattr(manager, "_rebuild_rps_from_cache", lambda *_args, **_kwargs: True)
     engine = SimpleNamespace(set_precomputed_rps=lambda *_args: pytest.fail("old payload must not be installed"))
@@ -168,12 +172,16 @@ def test_try_load_returns_after_successful_rebuild(monkeypatch, tmp_path):
 def test_try_load_handles_typed_cache_failures(monkeypatch, tmp_path, error):
     manager = _manager(tmp_path)
     Path(manager.rps_path).write_text("present", encoding="utf-8")
-    monkeypatch.setattr(module, "load_json_file", lambda _path: (_ for _ in ()).throw(error))
+    monkeypatch.setattr(module, "read_active_rps_bundle", lambda _path: (_ for _ in ()).throw(error))
     manager.try_load_rps_from_disk(SimpleNamespace())
 
 
 def test_try_load_rejects_missing_bundle_values(monkeypatch, tmp_path):
     manager = _manager(tmp_path)
     Path(manager.rps_path).write_text("present", encoding="utf-8")
-    monkeypatch.setattr(module, "load_json_file", lambda _path: {"date": "x", "rps120": None, "rps250": {}})
+    monkeypatch.setattr(
+        module,
+        "read_active_rps_bundle",
+        lambda _path: (manager.rps_path, {"date": "x", "rps120": None, "rps250": {}}),
+    )
     manager.try_load_rps_from_disk(SimpleNamespace())

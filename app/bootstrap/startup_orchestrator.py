@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -16,6 +15,7 @@ from core.background_job_runner import background_job_runner
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import log_process_snapshot
+from core.runtime_paths import CACHE_DIR, PROJECT_ROOT
 from domains.quotes.tdx_name_map import normalize_code_name_targets as _normalize_a_share_codes
 from domains.runtime import domain_events as event_bus
 from infra.features import service_toggle_registry
@@ -23,18 +23,25 @@ from infra.tasks import (
     STARTUP_ASIAN_DATA_SYNC,
     STARTUP_DEFERRED_LOAD,
     STARTUP_SMART,
+    CancellationToken,
     ProcessExecutionError,
     ProcessTimeoutError,
     run_python_module,
+    run_python_module_cancellable,
     task_registry,
 )
 
 log = get_logger(__name__)
 ASIAN_DATA_SYNC_TIME_BUDGET_SEC = 20
 ASIAN_DATA_SYNC_TIMEOUT_SEC = 30
+ASIAN_DATA_SYNC_PROCESS_TIMEOUT_SEC = ASIAN_DATA_SYNC_TIMEOUT_SEC - 1
 ASIAN_DATA_SYNC_START_DELAY_MS = 8500
 ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC = ASIAN_DATA_SYNC_TIMEOUT_SEC + 15
 ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC = 10 * 60
+ASIAN_DATA_SYNC_SHELL_NAV_QUIET_SEC = 8.0
+ASIAN_DATA_SYNC_BUSY_RETRY_DELAY_MS = 1000
+SMART_STARTUP_PRELOAD_RETRY_DELAY_MS = 500
+GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS = 500
 DEFERRED_LOAD_TASK_ID = STARTUP_DEFERRED_LOAD.task_id
 ASIAN_DATA_SYNC_TASK_ID = STARTUP_ASIAN_DATA_SYNC.task_id
 SMART_STARTUP_TASK_ID = STARTUP_SMART.task_id
@@ -52,6 +59,244 @@ GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
 GLOBAL_EARNINGS_CALENDAR_OFFPEAK_START_MINUTE = 18 * 60
 GLOBAL_EARNINGS_CALENDAR_OFFPEAK_END_MINUTE = 8 * 60
 RefreshResult = dict[str, object]
+
+
+def _central_scheduler_owns_asian_sync(now: datetime.datetime | None = None) -> bool:
+    local_now = now or datetime.datetime.now()
+    return (local_now.hour, local_now.minute) >= (16, 30)
+
+
+def _run_startup_asian_sync_subprocess(cancellation_token: CancellationToken):
+    return run_python_module_cancellable(
+        "vcp.fetchers.asian_kline_fetcher",
+        [
+            "--strict-sync",
+            "--workers",
+            "3",
+            "--period",
+            "1y",
+            "--output-dir",
+            CACHE_DIR,
+            "--time-budget-sec",
+            str(ASIAN_DATA_SYNC_TIME_BUDGET_SEC),
+        ],
+        cancellation_token=cancellation_token,
+        timeout=ASIAN_DATA_SYNC_PROCESS_TIMEOUT_SEC,
+        check=True,
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        no_window=True,
+    )
+
+
+def _should_defer_startup_asian_sync(host) -> bool:
+    if not _background_preload_is_settled(host):
+        return True
+    workspace = host.workspace
+    last_shell_nav_at = getattr(workspace, "_last_shell_nav_load_at", 0.0)
+    try:
+        shell_nav_age = time.perf_counter() - float(last_shell_nav_at or 0.0)
+    except (TypeError, ValueError):
+        shell_nav_age = ASIAN_DATA_SYNC_SHELL_NAV_QUIET_SEC
+    if last_shell_nav_at and 0.0 <= shell_nav_age < ASIAN_DATA_SYNC_SHELL_NAV_QUIET_SEC:
+        return True
+
+    main_window = getattr(host, "_main_window", None)
+    if bool(
+        getattr(main_window, "_pending_f5_request", False)
+        or getattr(main_window, "_f5_precompute_start_pending", False)
+    ):
+        return True
+    controller = getattr(main_window, "_f5_job_controller", None)
+    running = getattr(controller, "is_running", False)
+    try:
+        return bool(running() if callable(running) else running)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _background_preload_is_settled(host) -> bool:
+    workspace = host.workspace
+    status_reader = getattr(workspace, "background_preload_status", None)
+    if not callable(status_reader):
+        return True
+    try:
+        status = status_reader()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    if not isinstance(status, dict):
+        return False
+    if status.get("enabled") is False:
+        return True
+    return all(
+        (
+            status.get("enabled") is True,
+            status.get("finished") is True,
+            not str(status.get("active_key") or "").strip(),
+            not list(status.get("remaining_keys") or []),
+            not list(status.get("pending_priority_keys") or []),
+            not str(status.get("cancelling_key") or "").strip(),
+            status.get("active_step_count") == 0,
+        )
+    )
+
+
+def _smart_startup_ready(orchestrator) -> bool:
+    if not orchestrator._alive():
+        return False
+    if _background_preload_is_settled(orchestrator.host):
+        return True
+    orchestrator._smart_timer.start(SMART_STARTUP_PRELOAD_RETRY_DELAY_MS)
+    return False
+
+
+def _complete_smart_startup_online(orchestrator, provider) -> bool:
+    if not orchestrator._alive():
+        return False
+    if provider is not None:
+        provider.set_online_mode(True)
+    log.info("[智能启动] 网络可用，已自动切换到联机模式")
+    try:
+        if not orchestrator._alive():
+            return False
+        code2name = orchestrator._refresh_startup_code_names()
+        orchestrator._safe_call_in_ui(lambda: orchestrator.host.refresh_watchlist_names(code2name))
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.error(f"[智能启动] 后台同步代码名称映射失败: {exc}")
+    orchestrator._safe_call_in_ui(lambda: orchestrator.host.update_network_ui(True))
+    orchestrator._safe_call_in_ui(orchestrator.host.on_smart_startup_online_done)
+    return True
+
+
+def _record_smart_startup_completion(started_at: float, online: bool) -> None:
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    record_metric(
+        "smart_startup_network_probe_ms",
+        elapsed_ms,
+        unit="ms",
+        tags={"online": str(bool(online)).lower()},
+    )
+    log_process_snapshot(
+        "startup.smart.end",
+        logger=log,
+        extra={"elapsed_ms": int(round(elapsed_ms)), "online": bool(online)},
+    )
+    emit_structured_log(
+        "startup.network_probe.completed",
+        elapsed_ms=round(elapsed_ms, 3),
+        online=bool(online),
+    )
+
+
+def _execute_smart_startup(orchestrator) -> None:
+    started_at = time.perf_counter()
+    try:
+        if not orchestrator._alive():
+            return
+        log_process_snapshot("startup.smart.begin", logger=log)
+        provider = orchestrator.host.data_provider
+        online = bool(provider and provider.test_network(timeout=2))
+        if not orchestrator._alive():
+            return
+        if online and not _complete_smart_startup_online(orchestrator, provider):
+            return
+        if not online:
+            log.info("[智能启动] 网络不可用，保持离线模式")
+        _record_smart_startup_completion(started_at, online)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log_process_snapshot(
+            "startup.smart.end",
+            logger=log,
+            level="warning",
+            extra={"status": "failed"},
+        )
+        log.error(f"[智能启动] 网络检测异常: {exc}")
+
+
+def _startup_asian_tab_is_visible(host) -> bool:
+    workspace = host.workspace
+    current_tab_key = getattr(workspace, "current_tab_key", None)
+    if not callable(current_tab_key):
+        return False
+    try:
+        return str(current_tab_key() or "").strip() == "asian_market"
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _startup_asian_cache_is_stale(orchestrator, cancellation_token: CancellationToken) -> bool:
+    service = orchestrator.host.asian_market_service
+    cache_staleness = getattr(service, "cache_staleness", None)
+    if not callable(cache_staleness):
+        log.info("[启动] 亚洲市场缓存服务不可用，跳过静默同步")
+        return False
+    try:
+        staleness = dict(cache_staleness() or {})
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.warning("[启动] 亚洲市场缓存新鲜度检查失败，已跳过本次同步（%s）", exc)
+        return False
+    cancellation_token.raise_if_cancelled()
+    if staleness.get("stale"):
+        return True
+    log.info("[启动] 亚洲市场 K 线缓存已是最新，跳过静默同步")
+    return False
+
+
+def _record_startup_asian_sync_terminal(started_at: float, status: str, *, level: str = "info") -> None:
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    record_metric("startup_asian_sync_ms", elapsed_ms, unit="ms", tags={"status": status})
+    log_process_snapshot(
+        "startup.asian_sync.end",
+        logger=log,
+        level=level,
+        extra={"elapsed_ms": int(round(elapsed_ms)), "status": status},
+    )
+    emit_structured_log(
+        "startup.asian_sync.completed",
+        elapsed_ms=round(elapsed_ms, 3),
+        status=status,
+    )
+
+
+def _execute_startup_asian_sync(orchestrator, cancellation_token: CancellationToken) -> None:
+    started_at = time.perf_counter()
+    if not orchestrator._alive():
+        return
+    if _central_scheduler_owns_asian_sync():
+        log.info("[启动] 16:30 后的亚洲 K 线同步由自动刷新调度器统一处理")
+        return
+    cancellation_token.raise_if_cancelled()
+    if not _startup_asian_cache_is_stale(orchestrator, cancellation_token):
+        return
+
+    log_process_snapshot("startup.asian_sync.begin", logger=log)
+    orchestrator._defer_asian_market_auto_refresh(ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync")
+    try:
+        _run_startup_asian_sync_subprocess(cancellation_token)
+        cancellation_token.raise_if_cancelled()
+    except ProcessTimeoutError:
+        orchestrator._defer_asian_market_auto_refresh(
+            ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC,
+            "startup_asian_sync_timeout",
+        )
+        _record_startup_asian_sync_terminal(started_at, "timeout", level="warning")
+        log.warning("[启动] 亚洲市场后台静默同步超时(%ss)，已终止并回收子进程", ASIAN_DATA_SYNC_TIMEOUT_SEC)
+    except (OSError, ProcessExecutionError, ValueError) as exc:
+        _record_startup_asian_sync_terminal(started_at, "failed", level="warning")
+        summary, raw_detail = _format_subprocess_failure(exc)
+        log.warning("[启动] 亚洲市场静默同步失败，已保留现有缓存（%s）", summary)
+        if raw_detail:
+            log.debug("[启动] 亚洲市场静默同步原始输出: %s", raw_detail)
+    else:
+        _record_startup_asian_sync_terminal(started_at, "success")
+        orchestrator._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
+        if orchestrator._alive():
+            orchestrator._safe_call_in_ui(orchestrator.host.resume_asian_market_auto_refresh)
+
+
 def _normalize_log_detail(text: str, limit: int = 120) -> str:
     raw = str(text or "").strip()
     if not raw:
@@ -330,7 +575,6 @@ class StartupHostAdapter:
         if callable(sync_runtime_state):
             sync_runtime_state()
 
-
 class StartupOrchestrator:
     """主窗口启动流程协调器。"""
 
@@ -354,7 +598,7 @@ class StartupOrchestrator:
     def schedule_startup(self) -> None:
         if self._closed:
             return
-        self._deferred_timer.start(2500)
+        self._deferred_timer.start(0)
         self._smart_timer.start(4500)
         if service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
             self._schedule_next_global_earnings_calendar_daily_refresh()
@@ -387,9 +631,22 @@ class StartupOrchestrator:
         )
 
     def _run_daily_global_earnings_calendar_refresh(self) -> None:
+        if not _background_preload_is_settled(self.host):
+            self._schedule_global_earnings_calendar_preload_retry()
+            return
         self.refresh_global_earnings_calendar()
         if not self._closed and service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
             self._schedule_next_global_earnings_calendar_daily_refresh()
+
+    def _schedule_global_earnings_calendar_preload_retry(self) -> None:
+        if self._closed or not service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
+            return
+        self._global_earnings_calendar_daily_timer.start(GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS)
+        emit_structured_log(
+            "startup.global_earnings_calendar.deferred",
+            reason="background_preload_active",
+            retry_ms=GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS,
+        )
 
     def shutdown(self) -> None:
         self._closed = True
@@ -472,27 +729,35 @@ class StartupOrchestrator:
         )
         return current_map
 
-    @staticmethod
-    def _asian_data_sync_paths() -> tuple[str, str, str, str]:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        output_dir = os.path.join(project_root, "data", "Cache")
-        json_cache = os.path.join(output_dir, "asian_klines_latest.json")
-        module_entry = os.path.join(project_root, "vcp", "fetchers", "asian_kline_fetcher.py")
-        return project_root, output_dir, json_cache, module_entry
-
     def _defer_asian_market_auto_refresh(self, seconds: float, reason: str) -> None:
         self._safe_call_in_ui(lambda: self.host.defer_asian_market_auto_refresh(seconds, reason))
 
-    def _schedule_startup_asian_sync(self, callback: Callable[[], object]) -> None:
-        if ASIAN_DATA_SYNC_START_DELAY_MS <= 0:
-            self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, callback)
-            return
-
+    def _schedule_startup_asian_sync(self, callback: Callable[[CancellationToken], object]) -> None:
         def _run_if_alive() -> None:
-            if self._alive():
-                self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, callback)
+            if not self._alive():
+                return
+            if not _startup_asian_tab_is_visible(self.host):
+                log.info("[启动] 亚洲页当前不可见，跳过启动期远程 K 线静默同步")
+                emit_structured_log(
+                    "startup.asian_sync.skipped",
+                    reason="asian_tab_hidden",
+                )
+                return
+            if _should_defer_startup_asian_sync(self.host):
+                QTimer.singleShot(ASIAN_DATA_SYNC_BUSY_RETRY_DELAY_MS, _run_if_alive)
+                return
+            token = CancellationToken.with_timeout(ASIAN_DATA_SYNC_TIMEOUT_SEC)
+            self._job_runner.run(
+                STARTUP_ASIAN_DATA_SYNC,
+                lambda: callback(token),
+                cancellation_token=token,
+                timeout_sec=ASIAN_DATA_SYNC_TIMEOUT_SEC,
+            )
 
-        QTimer.singleShot(ASIAN_DATA_SYNC_START_DELAY_MS, _run_if_alive)
+        if ASIAN_DATA_SYNC_START_DELAY_MS <= 0:
+            _run_if_alive()
+        else:
+            QTimer.singleShot(ASIAN_DATA_SYNC_START_DELAY_MS, _run_if_alive)
 
     def deferred_data_load(self) -> None:
         """延迟恢复历史缓存和 RPS 缓存。"""
@@ -571,7 +836,6 @@ class StartupOrchestrator:
                 )
                 return
 
-            self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
             log_process_snapshot(
                 "startup.deferred_load.end",
@@ -591,94 +855,16 @@ class StartupOrchestrator:
                 cache_date=str(cache_date or ""),
             )
 
-        self._job_runner.run(STARTUP_DEFERRED_LOAD, _load_bg)
+        def _load_bg_owned() -> None:
+            try:
+                _load_bg()
+            finally:
+                self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
 
-        def _check_asian_data_bg() -> None:
-            started_at = time.perf_counter()
-            if not self._alive():
-                return
-
-            project_root, output_dir, json_cache, module_entry = self._asian_data_sync_paths()
-
-            needs_update = False
-            if not os.path.exists(json_cache):
-                needs_update = True
-            else:
-                try:
-                    mtime = os.path.getmtime(json_cache)
-                except OSError:
-                    needs_update = True
-                else:
-                    mdate = datetime.date.fromtimestamp(mtime)
-                    if mdate < datetime.date.today():
-                        needs_update = True
-
-            if needs_update and os.path.exists(module_entry):
-                log_process_snapshot("startup.asian_sync.begin", logger=log)
-                self._defer_asian_market_auto_refresh(ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync")
-                log.info("[启动] 亚洲市场 JSON 非最新，后台静默增量同步中...")
-                try:
-                    run_python_module(
-                        "vcp.fetchers.asian_kline_fetcher",
-                        [
-                            "--strict-sync",
-                            "--output-dir",
-                            output_dir,
-                            "--time-budget-sec",
-                            str(ASIAN_DATA_SYNC_TIME_BUDGET_SEC),
-                        ],
-                        check=True,
-                        cwd=project_root,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="ignore",
-                        timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC,
-                        no_window=True,
-                    )
-                    log.info("[启动] 亚洲市场静默同步完成，触发界面刷新。")
-                    if not self._alive():
-                        return
-                    self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
-                    self._safe_call_in_ui(self.host.resume_asian_market_auto_refresh)
-                    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-                    record_metric("startup_asian_sync_ms", elapsed_ms, unit="ms")
-                    log_process_snapshot(
-                        "startup.asian_sync.end",
-                        logger=log,
-                        extra={"elapsed_ms": int(round(elapsed_ms)), "status": "success"},
-                    )
-                    emit_structured_log(
-                        "startup.asian_sync.completed",
-                        elapsed_ms=round(elapsed_ms, 3),
-                        output_dir=output_dir,
-                    )
-                except ProcessTimeoutError:
-                    self._defer_asian_market_auto_refresh(
-                        ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC,
-                        "startup_asian_sync_timeout",
-                    )
-                    log_process_snapshot(
-                        "startup.asian_sync.end",
-                        logger=log,
-                        level="warning",
-                        extra={"status": "timeout"},
-                    )
-                    log.warning(f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步")
-                except (OSError, ProcessExecutionError, ValueError) as exc:
-                    log_process_snapshot(
-                        "startup.asian_sync.end",
-                        logger=log,
-                        level="warning",
-                        extra={"status": "failed"},
-                    )
-                    summary, raw_detail = _format_subprocess_failure(exc)
-                    log.warning(f"[启动] 亚洲市场静默同步失败，已跳过本次更新（{summary}）")
-                    if raw_detail:
-                        log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
+        self._job_runner.run(STARTUP_DEFERRED_LOAD, _load_bg_owned)
 
         if service_toggle_registry.is_enabled("silent_asian_sync"):
-            self._schedule_startup_asian_sync(_check_asian_data_bg)
+            self._schedule_startup_asian_sync(lambda token: _execute_startup_asian_sync(self, token))
         else:
             log.info("[启动] silent_asian_sync toggle disabled, skip background sync")
 
@@ -689,6 +875,9 @@ class StartupOrchestrator:
         sync_enabled = service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync")
         if not sync_enabled:
             log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar sync")
+            return
+        if not _background_preload_is_settled(self.host):
+            self._schedule_global_earnings_calendar_preload_retry()
             return
 
         self._global_earnings_calendar_sync_running = True
@@ -878,60 +1067,5 @@ class StartupOrchestrator:
 
     def smart_startup(self) -> None:
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
-
-        def _check_and_go_online() -> None:
-            started_at = time.perf_counter()
-            try:
-                if not self._alive():
-                    return
-                log_process_snapshot("startup.smart.begin", logger=log)
-                provider = self.host.data_provider
-                online = bool(provider and provider.test_network(timeout=3))
-                if not self._alive():
-                    return
-                if online:
-                    if not self._alive():
-                        return
-                    if provider is not None:
-                        provider.set_online_mode(True)
-                    log.info("[智能启动] 网络可用，已自动切换到联机模式")
-
-                    try:
-                        if not self._alive():
-                            return
-                        code2name = self._refresh_startup_code_names()
-                        self._safe_call_in_ui(lambda: self.host.refresh_watchlist_names(code2name))
-                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                        log.error(f"[智能启动] 后台同步代码名称映射失败: {exc}")
-
-                    self._safe_call_in_ui(lambda: self.host.update_network_ui(True))
-                    self._safe_call_in_ui(self.host.on_smart_startup_online_done)
-                else:
-                    log.info("[智能启动] 网络不可用，保持离线模式")
-                elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-                record_metric(
-                    "smart_startup_network_probe_ms",
-                    elapsed_ms,
-                    unit="ms",
-                    tags={"online": str(bool(online)).lower()},
-                )
-                log_process_snapshot(
-                    "startup.smart.end",
-                    logger=log,
-                    extra={"elapsed_ms": int(round(elapsed_ms)), "online": bool(online)},
-                )
-                emit_structured_log(
-                    "startup.network_probe.completed",
-                    elapsed_ms=round(elapsed_ms, 3),
-                    online=bool(online),
-                )
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                log_process_snapshot(
-                    "startup.smart.end",
-                    logger=log,
-                    level="warning",
-                    extra={"status": "failed"},
-                )
-                log.error(f"[智能启动] 网络检测异常: {exc}")
-
-        self._job_runner.run(STARTUP_SMART, _check_and_go_online)
+        if _smart_startup_ready(self):
+            self._job_runner.run(STARTUP_SMART, lambda: _execute_smart_startup(self))

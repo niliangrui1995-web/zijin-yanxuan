@@ -47,7 +47,7 @@ def _request_stop(thread, stop, *, label: str, logger) -> None:
     try:
         if callable(stop):
             stop()
-        elif hasattr(thread, "requestInterruption"):
+        if hasattr(thread, "requestInterruption"):
             thread.requestInterruption()
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         if logger is not None:

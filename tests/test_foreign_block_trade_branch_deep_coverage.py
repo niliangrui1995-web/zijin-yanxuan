@@ -329,6 +329,7 @@ def test_post_f5_schedule_and_apply_cache_payload_branches(monkeypatch):
     assert tab.loads[-1] == ("schedule", True)
 
     tab._post_f5_local_cache_defer_until = 0.0
+    tab._post_f5_local_cache_pending = True
     assert foreign.ForeignBlockTradeTab._run_post_f5_local_cache_load(tab)
     assert tab.loads[-1] is True
 
@@ -514,14 +515,6 @@ def test_filter_combo_and_navigation_wrappers(monkeypatch):
 
 
 def test_remaining_small_wrappers_shutdown_and_static_branches(monkeypatch):
-    now = dt.datetime(2026, 7, 15, 21)
-    assert not foreign.ForeignBlockTradeTab._should_trigger_auto_refresh(
-        now,
-        is_trade_day=False,
-        last_auto_refresh_date="",
-    )
-    assert foreign.ForeignBlockTradeTab._ensure_log_line("done") == "done\n"
-    assert foreign.ForeignBlockTradeTab._ensure_log_line("done\n") == "done\n"
     assert foreign.ForeignBlockTradeTab.get_foreign_keywords() == list(foreign.FOREIGN_KEYWORDS)
 
     tab = _ForeignDummy()

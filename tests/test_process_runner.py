@@ -186,6 +186,35 @@ def test_run_python_module_no_window_uses_console_python_for_pythonw(monkeypatch
     assert captured["kwargs"]["startupinfo"].wShowWindow == 7
 
 
+def test_run_python_module_cancellable_preserves_token_timeout_and_no_window(monkeypatch):
+    captured = {}
+    token = object()
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return "ok"
+
+    _patch_windows_startup_info(monkeypatch)
+    monkeypatch.setattr(process_runner, "run_cancellable_process", fake_run)
+
+    result = process_runner.run_python_module_cancellable(
+        "pkg.tool",
+        ["--flag"],
+        cancellation_token=token,
+        timeout=3,
+        no_window=True,
+        capture_output=True,
+    )
+
+    assert result == "ok"
+    assert captured["command"] == [process_runner.sys.executable, "-m", "pkg.tool", "--flag"]
+    assert captured["kwargs"]["cancellation_token"] is token
+    assert captured["kwargs"]["timeout"] == 3
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["creationflags"] & process_runner.CREATE_NO_WINDOW
+
+
 def test_spawn_silent_process_redirects_standard_streams(monkeypatch):
     captured = {}
 
@@ -205,3 +234,104 @@ def test_spawn_silent_process_redirects_standard_streams(monkeypatch):
     assert captured["kwargs"]["stdout"] is process_runner.PROCESS_DEVNULL
     assert captured["kwargs"]["stderr"] is process_runner.PROCESS_DEVNULL
     assert captured["kwargs"]["hidden"] is True
+
+
+class _NeverCancelledToken:
+    def raise_if_cancelled(self):
+        return None
+
+
+class _CancellationSignal(Exception):
+    pass
+
+
+class _CancelledToken:
+    def raise_if_cancelled(self):
+        raise _CancellationSignal
+
+
+class _FakeCancellableProcess:
+    def __init__(self, *, stubborn=False):
+        self.returncode = None
+        self.stubborn = stubborn
+        self.communicate_calls = 0
+        self.terminated = False
+        self.killed = False
+        self.waited = False
+
+    def communicate(self, timeout=None):
+        self.communicate_calls += 1
+        if self.stubborn and not self.killed:
+            raise process_runner.ProcessTimeoutError(["python"], timeout)
+        if self.communicate_calls == 1 and not self.killed:
+            raise process_runner.ProcessTimeoutError(["python"], timeout)
+        self.returncode = -9 if self.killed else 0
+        return "stdout", "stderr"
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self.waited = True
+        return self.returncode
+
+
+def test_run_cancellable_process_polls_and_reaps_completed_child(monkeypatch):
+    process = _FakeCancellableProcess()
+    monkeypatch.setattr(process_runner, "spawn_process", lambda *_args, **_kwargs: process)
+
+    result = process_runner.run_cancellable_process(
+        ["python", "-V"],
+        cancellation_token=_NeverCancelledToken(),
+        timeout=3,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "stdout"
+    assert process.communicate_calls == 2
+    assert process.waited is True
+    assert process.terminated is False
+
+
+def test_run_cancellable_process_timeout_kills_and_reaps_stubborn_child(monkeypatch):
+    process = _FakeCancellableProcess(stubborn=True)
+    monotonic = iter((10.0, 11.0))
+    monkeypatch.setattr(process_runner, "spawn_process", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(process_runner.time, "monotonic", lambda: next(monotonic))
+
+    with pytest.raises(process_runner.ProcessTimeoutError):
+        process_runner.run_cancellable_process(
+            ["python", "-V"],
+            cancellation_token=_NeverCancelledToken(),
+            timeout=0.1,
+            capture_output=True,
+        )
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.waited is True
+
+
+def test_run_cancellable_process_cancellation_kills_and_reaps_child(monkeypatch):
+    process = _FakeCancellableProcess(stubborn=True)
+    monkeypatch.setattr(process_runner, "spawn_process", lambda *_args, **_kwargs: process)
+
+    with pytest.raises(_CancellationSignal):
+        process_runner.run_cancellable_process(
+            ["python", "-V"],
+            cancellation_token=_CancelledToken(),
+            timeout=3,
+            capture_output=True,
+        )
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.waited is True

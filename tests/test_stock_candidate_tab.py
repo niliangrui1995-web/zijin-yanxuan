@@ -5,11 +5,12 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QShowEvent
 from PyQt6.QtWidgets import QHeaderView, QWidget
 
+from app.services.stock_context_model_service import StockContextSnapshot, StockSignal
 from app.services.ui_event_service import domain_events as event_bus
+from infra.tasks.lifecycle import CancellationToken
 from ui.tabs import stock_candidate_tab as stock_candidate_module
 from ui.tabs.stock_candidate_tab import StockCandidateTab
 from ui.theme import theme_manager
-from ui.workspaces.stock_signal import StockSignal
 
 
 def _run_candidate_refreshes_inline(monkeypatch, submitted=None):
@@ -26,6 +27,11 @@ def _run_candidate_refreshes_inline(monkeypatch, submitted=None):
         _run_in_background,
         raising=False,
     )
+
+
+def _close_and_delete(tab):
+    tab.close()
+    tab.deleteLater()
 
 
 class _PrimingWorkspace(QWidget):
@@ -331,7 +337,7 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
             theme_manager.get("COLOR_RISE")
         ).name()
     finally:
-        tab.close()
+        _close_and_delete(tab)
 
 
 def test_stock_candidate_show_runtime_skips_non_interactive_load_reason():
@@ -363,7 +369,7 @@ def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
         assert tab._status_primary == "等待综合候选自动刷新"
         assert tab._status_freshness == "数据源已更新"
     finally:
-        tab.close()
+        _close_and_delete(tab)
 
 
 def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
@@ -378,7 +384,7 @@ def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
         assert primes == ["prime"]
         assert tab._auto_refresh_timer.isActive()
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -403,7 +409,7 @@ def test_stock_candidate_hidden_context_update_defers_refresh_until_visible(monk
         assert tab._context_refresh_pending is False
         assert tab._auto_refresh_timer.isActive()
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -421,7 +427,7 @@ def test_stock_candidate_after_hours_hidden_update_skips_snapshot_prime(monkeypa
         assert tab._context_refresh_pending is True
         assert not tab._auto_refresh_timer.isActive()
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -439,7 +445,7 @@ def test_stock_candidate_hidden_lhb_update_does_not_prime_lhb_snapshot(monkeypat
         assert tab._context_refresh_pending is True
         assert not tab._auto_refresh_timer.isActive()
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -457,7 +463,7 @@ def test_stock_candidate_current_lhb_update_does_not_reprime_lhb_snapshot(monkey
         assert tab._context_refresh_pending is False
         assert tab._auto_refresh_timer.isActive()
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -471,7 +477,7 @@ def test_stock_candidate_noninteractive_load_ignores_source_update(monkeypatch):
 
         assert not tab._auto_refresh_timer.isActive()
     finally:
-        tab.close()
+        _close_and_delete(tab)
 
 
 def test_stock_candidate_auto_refreshes_when_stock_context_snapshot_updates(monkeypatch):
@@ -484,7 +490,7 @@ def test_stock_candidate_auto_refreshes_when_stock_context_snapshot_updates(monk
         assert tab._status_primary == "等待综合候选自动刷新"
         assert tab._status_freshness == "数据源已更新"
     finally:
-        tab.close()
+        _close_and_delete(tab)
 
 
 def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch):
@@ -496,37 +502,72 @@ def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch)
         assert tab._auto_refresh_timer.isActive()
         assert tab._status_primary == "等待综合候选自动刷新"
     finally:
-        tab.close()
+        _close_and_delete(tab)
 
 
-def test_stock_candidate_prime_background_load_primes_snapshot_and_starts_refresh(monkeypatch):
+def test_stock_candidate_prime_background_load_coalesces_snapshot_and_refresh(monkeypatch):
     scheduled = []
+    jobs = []
     monkeypatch.setattr(
-        "ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay)
+        "ui.tabs.stock_candidate_tab.QTimer.singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
     )
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
     primes = []
     workspace = _PrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
     try:
-        tab.prime_background_load()
-        tab.prime_background_load()
+        assert tab.prime_background_load() is True
+        assert tab.prime_background_load() is True
 
-        assert primes == ["prime", "prime"]
-        assert scheduled.count(350) == 1
+        assert primes == ["prime"]
+        assert [job[0] for job in jobs] == ["candidate_refresh"]
         assert tab._initial_refresh_started is True
+        assert tab._candidate_refresh_pending is False
+        assert tab.is_background_preload_complete() is False
+
+        first_result = jobs[0][1](CancellationToken())
+        jobs[0][2]["on_success"](first_result)
+
+        assert tab.is_background_preload_complete() is True
+        assert tab.prime_background_load() is False
+        assert len(jobs) == 1
+        assert primes == ["prime"]
+        assert tab._background_preload_done is True
+        assert tab._background_preload_error == ""
+        assert tab.is_background_preload_complete() is True
+
+        followup_schedules_before = sum(
+            callback == tab._run_candidate_refresh_followup for _delay, callback in scheduled
+        )
+        tab._ensure_runtime_started()
+        assert (
+            sum(callback == tab._run_candidate_refresh_followup for _delay, callback in scheduled)
+            == followup_schedules_before
+        )
+        assert len(jobs) == 1
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
-def test_stock_candidate_prime_background_load_primes_anchor_sources(monkeypatch):
-    scheduled = []
+def test_stock_candidate_prime_background_load_warms_anchor_caches_without_loading_widgets(monkeypatch):
     primed = []
     loads = []
     snapshots = []
-    monkeypatch.setattr(
-        "ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay)
-    )
+    jobs = []
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
 
     class _AnchorTab:
         def __init__(self, key):
@@ -562,16 +603,226 @@ def test_stock_candidate_prime_background_load_primes_anchor_sources(monkeypatch
     try:
         tab.prime_background_load()
 
-        assert loads == [
-            ("na_daily", "stock_candidates_anchor"),
-            ("ai_industry_chain", "stock_candidates_anchor"),
-        ]
-        assert primed == ["na_daily", "ai_industry_chain"]
+        assert loads == []
+        assert primed == []
         assert snapshots == ["prime"]
-        assert scheduled.count(350) == 1
+        assert [job[0] for job in jobs] == ["candidate_refresh"]
         assert tab._initial_refresh_started is True
     finally:
-        tab.close()
+        _close_and_delete(tab)
+        workspace.deleteLater()
+
+
+def test_stock_candidate_preload_waits_for_snapshots_then_builds_latest_context_once(monkeypatch):
+    jobs = []
+    capture_states = []
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    class _Workspace(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.snapshots_settled = False
+            self.prime_calls = 0
+
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self, **_kwargs):
+            self.prime_calls += 1
+            return True
+
+        def stock_context_snapshots_settled(self):
+            return self.snapshots_settled
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    monkeypatch.setattr(
+        stock_candidate_module,
+        "capture_workspace_stock_context",
+        lambda workspace: capture_states.append(workspace.snapshots_settled) or None,
+    )
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        assert tab.prime_background_load() is True
+        assert tab.prime_background_load() is True
+        assert workspace.prime_calls == 1
+        assert jobs == []
+        assert capture_states == []
+        assert tab.is_background_preload_complete() is False
+
+        workspace.snapshots_settled = True
+        assert tab.is_background_preload_complete() is False
+        assert [job[0] for job in jobs] == ["candidate_refresh"]
+        assert capture_states == [True]
+
+        result = jobs[0][1](CancellationToken())
+        jobs[0][2]["on_success"](result)
+        assert tab.is_background_preload_complete() is True
+        assert len(jobs) == 1
+    finally:
+        _close_and_delete(tab)
+        workspace.deleteLater()
+
+
+def test_stock_candidate_preload_reuses_ready_upstream_snapshots_with_bounded_inner_deadline(
+    monkeypatch,
+):
+    jobs = []
+    captures = []
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    class _Workspace(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.ready_keys = set(StockCandidateTab.SNAPSHOT_SOURCE_TABS)
+            self.prime_calls = 0
+
+        @staticmethod
+        def collect_stock_context():
+            return {}
+
+        def background_preload_status(self):
+            return {"ready_keys": sorted(self.ready_keys)}
+
+        @staticmethod
+        def get_loaded_tab(_key):
+            raise AssertionError("candidate tab must not inspect upstream widgets")
+
+        def prime_stock_context_snapshots(self, **_kwargs):
+            self.prime_calls += 1
+            raise AssertionError("ready upstream snapshots must be reused")
+
+        @staticmethod
+        def stock_context_snapshots_settled():
+            raise AssertionError("ready upstream widgets do not wait for unrelated snapshot tasks")
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    monkeypatch.setattr(
+        stock_candidate_module,
+        "capture_workspace_stock_context",
+        lambda workspace: captures.append(workspace) or StockContextSnapshot(),
+    )
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        assert tab.prime_background_load() is True
+        assert workspace.prime_calls == 0
+        assert tab._background_preload_reuses_ready_sources is True
+        assert [job[0] for job in jobs] == ["candidate_refresh"]
+        assert captures == [workspace]
+
+        from ui.workspaces.classic_workspace import ClassicWorkspace
+
+        timeout_seconds = jobs[0][2]["timeout_sec"]
+        assert timeout_seconds == StockCandidateTab.BACKGROUND_REFRESH_TIMEOUT_SECONDS
+        assert (
+            timeout_seconds * 1000
+            < ClassicWorkspace.BACKGROUND_PREWARM_STEP_TIMEOUT_MS
+            - ClassicWorkspace.BACKGROUND_PREWARM_CANCEL_SETTLEMENT_TIMEOUT_MS
+        )
+
+        result = jobs[0][1](CancellationToken())
+        jobs[0][2]["on_success"](result)
+        assert tab.is_background_preload_complete() is True
+    finally:
+        _close_and_delete(tab)
+        workspace.deleteLater()
+
+
+def test_stock_candidate_cancel_receipt_covers_candidate_and_snapshot_workers(monkeypatch):
+    class _Runner:
+        def __init__(self):
+            self.active = {
+                "stock_candidates_context_refresh",
+                "stock_context_fund_rows_snapshot",
+                "stock_context_lhb_rows_snapshot",
+            }
+            self.cancel_calls = []
+
+        def is_active_task(self, task_id):
+            return task_id in self.active
+
+        def cancel_task(self, task_id, *, reason):
+            self.cancel_calls.append((task_id, reason))
+            return True
+
+    class _Lifecycle:
+        def __init__(self):
+            self.calls = []
+
+        def cancel(self, name, *, reason):
+            self.calls.append((name, reason))
+            return True
+
+        @staticmethod
+        def shutdown(*, timeout_ms):
+            del timeout_ms
+            return True
+
+    class _Workspace(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.cancel_calls = []
+
+        @staticmethod
+        def collect_stock_context():
+            return {}
+
+        @staticmethod
+        def stock_context_snapshots_settled():
+            return True
+
+        def cancel_stock_context_snapshots(self, *, reason):
+            self.cancel_calls.append(reason)
+            return True
+
+    runner = _Runner()
+    monkeypatch.setattr(stock_candidate_module, "task_manager", runner)
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab._task_lifecycle = _Lifecycle()
+    try:
+        receipt = tab.cancel_background_preload(reason="step_timeout")
+
+        assert workspace.cancel_calls == ["step_timeout"]
+        assert tab._task_lifecycle.calls == [("candidate_refresh", "step_timeout")]
+        assert [task_id for task_id, _reason in runner.cancel_calls] == sorted(runner.active)
+        assert receipt.is_settled() is False
+
+        runner.active.clear()
+        assert receipt.is_settled() is True
+    finally:
+        _close_and_delete(tab)
+        workspace.deleteLater()
+
+
+def test_stock_candidate_background_preload_error_is_terminal(monkeypatch):
+    jobs = []
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    workspace = _PrimingWorkspace([])
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        assert tab.prime_background_load() is True
+        assert tab.is_background_preload_complete() is False
+
+        jobs[0][2]["on_error"]("snapshot build failed")
+
+        assert tab._background_preload_done is True
+        assert tab._background_preload_error == "snapshot build failed"
+        assert tab.is_background_preload_complete() is True
+    finally:
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -614,7 +865,7 @@ def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):
         assert tab.model.data(tab.model.index(0, core_col), Qt.ItemDataRole.DisplayRole) == "触发日期 20260423 | RPS 96"
         assert tab.model.data(tab.model.index(0, time_col), Qt.ItemDataRole.DisplayRole) == "20260423"
     finally:
-        tab.close()
+        _close_and_delete(tab)
 
 
 def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch):
@@ -625,6 +876,7 @@ def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch
         def __init__(self):
             super().__init__()
             self.collect_calls = 0
+            self.published_indexes = []
 
         def collect_stock_context(self, **kwargs):
             self.collect_calls += 1
@@ -644,6 +896,29 @@ def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch
                     ),
                 ]
             }
+
+        def capture_stock_context_snapshot(self):
+            return StockContextSnapshot(
+                direct_source_keys=frozenset({"na_daily", "scan"}),
+                direct_signals=(
+                    StockSignal(
+                        code="300750",
+                        source_tab="na_daily",
+                        signal_type="catalyst",
+                        summary="anchor",
+                    ),
+                    StockSignal(
+                        code="300750",
+                        source_tab="scan",
+                        signal_type="vcp_scan",
+                        summary="scan",
+                    ),
+                ),
+            )
+
+        def publish_stock_context_signal_index(self, index):
+            self.published_indexes.append(index)
+            return len(self.published_indexes)
 
         @staticmethod
         def tab_specs():
@@ -666,6 +941,9 @@ def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch
     workspace = _Workspace()
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    tab._build_candidate_rows = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("background worker must not call the QWidget owner")
+    )
     try:
         tab.refresh_candidates()
 
@@ -675,13 +953,15 @@ def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch
         assert tab.model.row_data == []
 
         result = jobs[0][0]()
-        assert workspace.collect_calls == 1
+        assert workspace.collect_calls == 0
         jobs[0][1](result)
 
         assert tab._candidate_refresh_running is False
         assert len(tab.model.row_data) == 1
+        assert len(workspace.published_indexes) == 1
+        assert workspace.published_indexes[0].signals_for("300750")
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -726,7 +1006,7 @@ def test_stock_candidate_refresh_queues_followup_while_background_running(monkey
         assert tab._candidate_refresh_pending is False
         assert scheduled[-1][0] == 0
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -784,8 +1064,7 @@ def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
         tab.refresh_candidates()
         lineage = tab.get_data_lineage()
 
-        assert lineage["key"] == "stock_candidates"
-        assert lineage["source"] == "workspace_stock_context"
+        assert {"key", "view", "source", "provider", "cache_refs", "network_capable"}.isdisjoint(lineage)
         assert lineage["triggered_network"] is False
         assert lineage["trade_date"] == "2026-05-09"
         assert lineage["row_count"] == 1
@@ -793,7 +1072,7 @@ def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
         assert lineage["source_tabs"] == ["na_daily", "scan"]
         assert lineage["provider_fault_tolerance"]["recent_cache_hit_count"] == 1
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -837,6 +1116,7 @@ def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatc
         tab.refresh_candidates()
 
         assert calls == [
+            {"capture_snapshot": True},
             {
                 "allow_lhb_cache_compute": False,
                 "allow_async_snapshot_refresh": True,
@@ -844,7 +1124,7 @@ def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatc
         ]
         assert tab.get_data_lineage()["row_count"] == 1
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -888,6 +1168,7 @@ def test_stock_candidate_after_hours_refresh_suppresses_snapshot_wakeup(monkeypa
         tab.refresh_candidates()
 
         assert calls == [
+            {"capture_snapshot": True},
             {
                 "allow_lhb_cache_compute": False,
                 "allow_async_snapshot_refresh": False,
@@ -895,7 +1176,7 @@ def test_stock_candidate_after_hours_refresh_suppresses_snapshot_wakeup(monkeypa
         ]
         assert tab.get_data_lineage()["row_count"] == 1
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()
 
 
@@ -948,5 +1229,5 @@ def test_stock_candidate_refresh_skips_model_update_when_rows_unchanged(monkeypa
         assert update_calls == [(1, {"hydrate_latest_quotes": False})]
         assert refresh_calls == [True]
     finally:
-        tab.close()
+        _close_and_delete(tab)
         workspace.deleteLater()

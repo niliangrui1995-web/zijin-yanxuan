@@ -7,11 +7,17 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.asian_market_cache_service import (
+    ASIAN_KLINE_CACHE as JSON_CACHE,
+)
+from app.services.asian_market_cache_service import (
+    ASIAN_REALTIME_CACHE as RT_JSON_CACHE,
+)
+from app.services.asian_market_cache_service import (
+    GLOBAL_ASIAN_RT_CACHE,
     load_latest_trade_dates,
     read_mapping_cache,
     write_realtime_quote_cache,
 )
-from app.services.asian_market_service import filter_asian_tickers, find_asian_track
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_lifecycle_service import (
@@ -65,19 +71,44 @@ from ui.tabs.asian_market_runtime import (
 from ui.tabs.asian_market_runtime import (
     worker_trigger_refresh as asian_worker_trigger_refresh,
 )
-from ui.tabs.asian_market_workers import (
-    GLOBAL_ASIAN_RT_CACHE,
-    JSON_CACHE,
-    RT_JSON_CACHE,
-    AsianMarketWorker,
-    is_asian_quote_refresh_time,
-)
-from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index
+from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index, mark_runtime_network_activity
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
 
 log = get_logger(__name__)
+
+
+def _owned_single_shot_timer(owner, callback) -> QTimer:
+    timer = QTimer(owner)
+    timer.setSingleShot(True)
+    timer.timeout.connect(callback)
+    return timer
 _ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
 ASIAN_PINNED_CODES_SETTINGS_KEY = "pinned_codes_v1"
 _DEFERRED_REPAINT_COUNT_RE = re.compile(r"cached\s+(\d+)\s+updates", re.IGNORECASE)
+
+
+def filter_asian_tickers(*args, **kwargs):
+    from app.services.asian_market_service import filter_asian_tickers as _filter_asian_tickers
+
+    return _filter_asian_tickers(*args, **kwargs)
+
+
+def find_asian_track(*args, **kwargs):
+    from app.services.asian_market_service import find_asian_track as _find_asian_track
+
+    return _find_asian_track(*args, **kwargs)
+
+
+def AsianMarketWorker(*args, **kwargs):  # noqa: N802 - compatibility factory name
+    from ui.tabs.asian_market_workers import AsianMarketWorker as _AsianMarketWorker
+
+    return _AsianMarketWorker(*args, **kwargs)
+
+
+def is_asian_quote_refresh_time(*args, **kwargs):
+    from ui.tabs.asian_market_workers import is_asian_quote_refresh_time as _is_refresh_time
+
+    return _is_refresh_time(*args, **kwargs)
 
 
 def _safe_float(value) -> float:
@@ -484,7 +515,137 @@ def build_asian_market_local_cache_payload(
     return {"rows": row_data, "rt_updates": rt_updates}
 
 
-class AsianMarketTab(BaseStockTab):
+def _apply_asian_local_cache_if_current(tab, generation: int, payload: dict) -> None:
+    if generation != int(getattr(tab, "_local_cache_generation", 0)):
+        return
+    tab._apply_local_cache_payload(payload)
+
+
+class _AsianBackgroundPreloadMixin:
+    def prime_background_load(self) -> bool:
+        initial_timer = getattr(self, "_initial_local_cache_timer", None)
+        if initial_timer is not None:
+            initial_timer.stop()
+        self._background_preload_requested = True
+        if self._background_preload_done or self._load_cache_in_progress:
+            return False
+        return bool(self._load_local_cache())
+
+    def is_background_preload_complete(self) -> bool:
+        if self._asian_shutting_down or getattr(self, "_runtime_cleanup_done", False):
+            return True
+        return bool(
+            self._background_preload_requested
+            and self._background_preload_done
+            and not self._load_cache_in_progress
+            and not self._load_cache_pending
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            initial_timer = getattr(self, "_initial_local_cache_timer", None)
+            if initial_timer is not None:
+                initial_timer.stop()
+            self._local_cache_generation += 1
+            self._load_cache_in_progress = False
+            self._load_cache_pending = False
+            self._background_preload_requested = False
+            self._background_preload_done = False
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("local_cache_load",),
+            task_ids=(_ASIAN_MARKET_LOCAL_CACHE_TASK,),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._load_cache_in_progress and not self._load_cache_pending,
+            runner=task_manager,
+        )
+
+    def on_workspace_tab_activated(self) -> None:
+        if not self._background_preload_done and not self._load_cache_in_progress:
+            self._load_local_cache()
+        self._ensure_runtime_started()
+
+    def _run_initial_local_cache_load(self) -> bool:
+        if self._background_preload_requested:
+            return False
+        return bool(self._load_local_cache())
+
+    def _finish_local_cache_load(self):
+        pending_reload = self._load_cache_pending
+        self._load_cache_pending = False
+        self._load_cache_in_progress = False
+        self._background_preload_done = not pending_reload
+        if pending_reload and not self._asian_shutting_down:
+            log.info("[亚洲页] 执行排队中的一次本地缓存重载")
+            generation = self._local_cache_generation
+            QTimer.singleShot(
+                0,
+                lambda: AsianMarketTab._run_pending_local_cache_reload(self, generation),
+            )
+
+    def _run_pending_local_cache_reload(self, generation: int) -> bool:
+        if generation != self._local_cache_generation or self._asian_shutting_down:
+            return False
+        return bool(self._load_local_cache())
+
+    def _apply_local_cache_payload(self, payload: dict):
+        commit_generation = int(getattr(self, "_local_cache_generation", 0))
+        try:
+            payload = payload or {}
+            for code, info in dict(payload.get("rt_updates") or {}).items():
+                if code not in GLOBAL_ASIAN_RT_CACHE:
+                    GLOBAL_ASIAN_RT_CACHE[code] = {}
+                GLOBAL_ASIAN_RT_CACHE[code].update(dict(info or {}))
+
+            self.row_data = list(payload.get("rows") or [])
+            self._sync_worker_codes()
+            QTimer.singleShot(
+                0,
+                lambda: AsianMarketTab._finish_apply_local_cache_payload(
+                    self,
+                    generation=commit_generation,
+                ),
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._on_local_cache_failed(str(exc), generation=commit_generation)
+
+    def _finish_apply_local_cache_payload(self, *, generation: int | None = None):
+        if generation is not None and generation != int(getattr(self, "_local_cache_generation", 0)):
+            return
+        try:
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
+            self.update_table_ui()
+            if self.row_data:
+                self._last_asian_success_at = datetime.datetime.now()
+                self._set_asian_status(
+                    "已载入本地缓存",
+                    self._status_metric("标的 ", len(self.row_data), "只"),
+                    "等待最新报价同步",
+                    freshness="本地缓存",
+                )
+            else:
+                self._set_asian_status(
+                    "本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价"
+                )
+        finally:
+            self._finish_local_cache_load()
+
+    def _on_local_cache_failed(self, error_message: str, *, generation: int | None = None):
+        if generation is not None and generation != int(getattr(self, "_local_cache_generation", 0)):
+            return
+        try:
+            log.error(f"[亚洲页] 本地缓存后台加载失败: {error_message}")
+            self._set_asian_status("本地缓存加载失败", str(error_message or ""), freshness="待刷新", next_step="点击刷新重试")
+            if hasattr(self, "table_state") and not getattr(self, "row_data", None):
+                self.table_state.show_empty("暂无亚洲市场缓存")
+        finally:
+            self._finish_local_cache_load()
+
+
+class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
     """亚洲寡头行情面板"""
 
     def __init__(self, data_provider=None, parent=None, *, local_cache_delay_ms: int = 0):
@@ -499,6 +660,9 @@ class AsianMarketTab(BaseStockTab):
         self._cache_sync_wait_deadline = None
         self._load_cache_in_progress = False
         self._load_cache_pending = False
+        self._local_cache_generation = 0
+        self._background_preload_requested = False
+        self._background_preload_done = False
         self._last_asian_success_at = None
         self._status_primary = "系统初始化..."
         self._status_segments = ()
@@ -517,8 +681,13 @@ class AsianMarketTab(BaseStockTab):
         self._init_ui()
 
         # 1. 冷开机瞬间加载本地 JSON (asian_klines_latest.json)
+        self._initial_local_cache_timer = QTimer(self)
+        self._initial_local_cache_timer.setSingleShot(True)
+        self._initial_local_cache_timer.timeout.connect(self._run_initial_local_cache_load)
+        self._runtime_state_sync_timer = _owned_single_shot_timer(self, self._sync_asian_runtime_state)
+        self._auto_cache_sync_timer = _owned_single_shot_timer(self, self._continue_auto_cache_sync)
         if self._local_cache_delay_ms > 0:
-            QTimer.singleShot(self._local_cache_delay_ms, self._load_local_cache)
+            self._initial_local_cache_timer.start(self._local_cache_delay_ms)
         else:
             self._load_local_cache()
 
@@ -529,13 +698,19 @@ class AsianMarketTab(BaseStockTab):
         self._connect_asian_market_service()
 
     def _ensure_runtime_started(self):
-        if self._runtime_started:
+        if self._runtime_started or self._asian_shutting_down or getattr(self, "_runtime_cleanup_done", False):
             return
         self._runtime_started = True
+        mark_runtime_network_activity(self)
+        self._runtime_state_sync_timer.start(1000)
+
+    def _sync_asian_runtime_state(self) -> None:
+        if self._asian_shutting_down or getattr(self, "_runtime_cleanup_done", False):
+            return
         service = getattr(self, "_asian_market_service", None)
         sync_runtime_state = getattr(service, "sync_runtime_state", None)
         if callable(sync_runtime_state):
-            QTimer.singleShot(1000, sync_runtime_state)
+            sync_runtime_state()
 
     def _resolve_asian_market_service(self):
         parent = self.parent()
@@ -602,6 +777,7 @@ class AsianMarketTab(BaseStockTab):
         return is_asian_quote_refresh_time(self._get_tracked_codes())
 
     def _worker_resume_auto_refresh(self):
+        mark_runtime_network_activity(self)
         service = getattr(self, "_asian_market_service", None)
         if service is not None:
             return service.resume_auto_refresh()
@@ -614,6 +790,7 @@ class AsianMarketTab(BaseStockTab):
         return asian_worker_pause_for_cache_sync(self)
 
     def _worker_trigger_refresh(self):
+        mark_runtime_network_activity(self)
         service = getattr(self, "_asian_market_service", None)
         if service is not None:
             return service.trigger_refresh_once()
@@ -1144,13 +1321,16 @@ class AsianMarketTab(BaseStockTab):
 
     def _load_local_cache(self):
         if self._asian_shutting_down or getattr(self, "_runtime_cleanup_done", False):
-            return
+            return False
         if self._load_cache_in_progress:
             self._load_cache_pending = True
             log.info("[亚洲页] 本地缓存重载进行中，已追加一次待执行重载")
-            return
+            return False
 
+        self._background_preload_done = False
         self._load_cache_in_progress = True
+        self._local_cache_generation += 1
+        generation = self._local_cache_generation
         if hasattr(self, "table_state") and not getattr(self, "row_data", None):
             self.table_state.show_loading("正在加载本地缓存...", "请稍候")
 
@@ -1164,61 +1344,11 @@ class AsianMarketTab(BaseStockTab):
             ),
             task_id=_ASIAN_MARKET_LOCAL_CACHE_TASK,
             timeout_sec=60.0,
-            on_success=self._apply_local_cache_payload,
-            on_error=self._on_local_cache_failed,
+            on_success=lambda payload: _apply_asian_local_cache_if_current(self, generation, payload),
+            on_error=lambda message: self._on_local_cache_failed(message, generation=generation),
             runner=task_manager,
         )
-
-    def _finish_local_cache_load(self):
-        pending_reload = self._load_cache_pending
-        self._load_cache_pending = False
-        self._load_cache_in_progress = False
-        if pending_reload and not self._asian_shutting_down:
-            log.info("[亚洲页] 执行排队中的一次本地缓存重载")
-            QTimer.singleShot(0, self._load_local_cache)
-
-    def _apply_local_cache_payload(self, payload: dict):
-        try:
-            payload = payload or {}
-            for code, info in dict(payload.get("rt_updates") or {}).items():
-                if code not in GLOBAL_ASIAN_RT_CACHE:
-                    GLOBAL_ASIAN_RT_CACHE[code] = {}
-                GLOBAL_ASIAN_RT_CACHE[code].update(dict(info or {}))
-
-            self.row_data = list(payload.get("rows") or [])
-            self._sync_worker_codes()
-            QTimer.singleShot(0, lambda: AsianMarketTab._finish_apply_local_cache_payload(self))
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            self._on_local_cache_failed(str(exc))
-
-    def _finish_apply_local_cache_payload(self):
-        try:
-            if getattr(self, "_runtime_cleanup_done", False):
-                return
-            self.update_table_ui()
-            if self.row_data:
-                self._last_asian_success_at = datetime.datetime.now()
-                self._set_asian_status(
-                    "已载入本地缓存",
-                    self._status_metric("标的 ", len(self.row_data), "只"),
-                    "等待最新报价同步",
-                    freshness="本地缓存",
-                )
-            else:
-                self._set_asian_status(
-                    "本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价"
-                )
-        finally:
-            self._finish_local_cache_load()
-
-    def _on_local_cache_failed(self, error_message: str):
-        try:
-            log.error(f"[亚洲页] 本地缓存后台加载失败: {error_message}")
-            self._set_asian_status("本地缓存加载失败", str(error_message or ""), freshness="待刷新", next_step="点击刷新重试")
-            if hasattr(self, "table_state") and not getattr(self, "row_data", None):
-                self.table_state.show_empty("暂无亚洲市场缓存")
-        finally:
-            self._finish_local_cache_load()
+        return True
 
     def _on_rt_update(self, updates: dict):
         if not updates:
@@ -1306,6 +1436,13 @@ class AsianMarketTab(BaseStockTab):
         if self._asian_shutting_down:
             return
         self._asian_shutting_down = True
+        self._local_cache_generation += 1
+        self._initial_local_cache_timer.stop()
+        self._runtime_state_sync_timer.stop()
+        self._auto_cache_sync_timer.stop()
+        self._pending_auto_cache_sync = False
+        self._cache_sync_wait_deadline = None
+        self._background_preload_done = True
         shutdown_task_lifecycle_for_owner(self, timeout_ms=1_000)
         with suppress(TypeError, RuntimeError):
             event_bus.sig_asian_klines_ready.disconnect(self._on_asian_klines_ready)
@@ -1340,6 +1477,9 @@ class AsianMarketTab(BaseStockTab):
                 logger=log,
             )
 
-    def closeEvent(self, event):
+    def _cleanup_runtime_state(self):
         self.shutdown()
+        super()._cleanup_runtime_state()
+
+    def closeEvent(self, event):
         super().closeEvent(event)

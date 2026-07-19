@@ -3,14 +3,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtTest import QSignalSpy, QTest
-from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton, QTableView, QToolButton
+from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton, QTableView, QTabWidget, QToolButton, QWidget
 
 from core.event_bus import event_bus
 from ui.tabs import base_stock_tab as module
 from ui.tabs.base_stock_tab import BaseStockTab, ToolbarStatusChipBar
+from ui.workspaces.tab_registry import INTERACTIVE_TAB_LOAD_REASONS
 
 
 def test_compact_status_and_direct_workspace_detection():
@@ -30,7 +32,27 @@ def test_compact_status_and_direct_workspace_detection():
         raise RuntimeError("deleted")
 
     tabs.currentWidget = _broken_current
-    assert module._is_direct_workspace_tab(owner)
+    assert not module._is_direct_workspace_tab(owner)
+
+
+def test_direct_workspace_detection_uses_real_qtabwidget_stack(qt_application):
+    tabs = QTabWidget()
+    first = QWidget()
+    second = QWidget()
+    tabs.addTab(first, "first")
+    tabs.addTab(second, "second")
+    try:
+        tabs.setCurrentWidget(first)
+        qt_application.processEvents()
+        assert module._is_direct_workspace_tab(first)
+        assert not module._is_direct_workspace_tab(second)
+
+        tabs.setCurrentWidget(second)
+        qt_application.processEvents()
+        assert not module._is_direct_workspace_tab(first)
+        assert module._is_direct_workspace_tab(second)
+    finally:
+        tabs.deleteLater()
 
 
 def test_proxy_kline_and_context_menu_edge_paths(monkeypatch):
@@ -143,6 +165,21 @@ def test_workspace_visibility_and_prime_snapshot_guards(monkeypatch, qt_applicat
     finally:
         tab.close()
         tab.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    sorted(INTERACTIVE_TAB_LOAD_REASONS),
+)
+def test_all_interactive_workspace_load_reasons_start_runtime(reason):
+    tab = SimpleNamespace(
+        _workspace_load_reason=reason,
+        _workspace_noninteractive_loaded=True,
+        _is_current_workspace_tab=lambda: True,
+    )
+
+    assert BaseStockTab._should_start_interactive_runtime_on_show(tab)
+    assert tab._workspace_noninteractive_loaded is False
 
 
 def test_quote_store_snapshot_rows_and_realtime_codes(monkeypatch):

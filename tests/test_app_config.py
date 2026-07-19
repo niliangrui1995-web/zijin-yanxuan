@@ -74,6 +74,13 @@ class TestAppConfigSingleton:
         result = app_config.get("_test_/nonexistent_key_xyz", default="fallback")
         assert result == "fallback", "不存在的 key 应返回 default 值"
 
+    def test_last_active_tab_key_roundtrip(self):
+        app_config.set("window/last_active_tab_key", "scan")
+        try:
+            assert app_config.get("window/last_active_tab_key", "", str) == "scan"
+        finally:
+            app_config.remove("window/last_active_tab_key")
+
     def test_section_roundtrip(self):
         """section 视图应复用统一入口而不是创建新 scope"""
         section = app_config.section("_test_/section_roundtrip")

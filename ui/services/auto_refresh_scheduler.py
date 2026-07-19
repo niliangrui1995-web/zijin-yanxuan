@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import datetime
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -47,6 +49,43 @@ def _result_status(result) -> tuple[str, str]:
         str(result.get("status") or "").strip(),
         str(result.get("error") or result.get("message") or "").strip(),
     )
+
+
+def _checker_result(checker) -> bool:
+    if not callable(checker):
+        return False
+    try:
+        return bool(checker())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _background_preload_settled(scheduler) -> bool:
+    return _checker_result(scheduler._background_preload_settled_checker)
+
+
+def _asian_market_tab_visible(scheduler) -> bool:
+    return _checker_result(scheduler._asian_market_visible_checker)
+
+
+def _prepare_asian_market_runtime(scheduler, cancellation_token=None):
+    return invoke_with_cancellation(
+        scheduler._task_service_instance().prepare_asian_market_runtime,
+        cancellation_token,
+    )
+
+
+def _post_preload_stabilized(scheduler, schedule_now: datetime.datetime) -> bool:
+    if not _background_preload_settled(scheduler):
+        scheduler._preload_settled_monotonic = None
+        scheduler._preload_settled_schedule_time = None
+        return False
+    now = float(scheduler._monotonic_clock())
+    if scheduler._preload_settled_monotonic is None:
+        scheduler._preload_settled_monotonic = now
+        scheduler._preload_settled_schedule_time = schedule_now
+    elapsed_seconds = now - scheduler._preload_settled_monotonic
+    return elapsed_seconds >= scheduler._post_preload_grace_seconds
 
 
 def _handle_retryable_result(scheduler, state_key, status_job_key, trade_date, started_at, status, error) -> None:
@@ -121,6 +160,7 @@ def _handle_job_error(scheduler, error_message, *, state_key, status_job_key, tr
 
 class AutoRefreshScheduler(QObject):
     CHECK_INTERVAL_MS = 30_000
+    POST_PRELOAD_GRACE_SECONDS = 60.0
     RETRY_BACKOFF_SECONDS = 5 * 60
     RETRYABLE_RESULT_STATUSES = {"failed", "degraded"}
     EARNINGS_ROUTINE_TIMES = ((8, 30), (12, 0), (17, 0), (19, 0), (21, 0), (23, 0))
@@ -155,6 +195,10 @@ class AutoRefreshScheduler(QObject):
         task_service: AutoRefreshTaskService | None = None,
         job_runner=None,
         clock=None,
+        monotonic_clock=None,
+        asian_market_visible_checker: Callable[[], bool] | None = None,
+        background_preload_settled_checker: Callable[[], bool] | None = None,
+        post_preload_grace_seconds: float | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -171,6 +215,19 @@ class AutoRefreshScheduler(QObject):
         self._job_runner = job_runner or task_manager
         self._task_lifecycle = TaskLifecycleGroup(self._job_runner)
         self._clock = clock or (lambda: MarketCalendar.now("CN"))
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._asian_market_visible_checker = asian_market_visible_checker
+        self._background_preload_settled_checker = background_preload_settled_checker
+        self._post_preload_grace_seconds = max(
+            0.0,
+            float(
+                self.POST_PRELOAD_GRACE_SECONDS
+                if post_preload_grace_seconds is None
+                else post_preload_grace_seconds
+            ),
+        )
+        self._preload_settled_monotonic: float | None = None
+        self._preload_settled_schedule_time: datetime.datetime | None = None
         self._running_jobs: set[str] = set()
         self._is_shutdown = False
         self.extended_jobs_enabled = True
@@ -184,6 +241,8 @@ class AutoRefreshScheduler(QObject):
 
     def start(self) -> None:
         self._is_shutdown = False
+        self._preload_settled_monotonic = None
+        self._preload_settled_schedule_time = None
         if not self._timer.isActive():
             self._timer.start(self.CHECK_INTERVAL_MS)
         self.tick()
@@ -198,7 +257,11 @@ class AutoRefreshScheduler(QObject):
         self._running_jobs.clear()
 
     def tick(self) -> None:
-        now = self._clock()
+        schedule_now = self._clock()
+        if not _post_preload_stabilized(self, schedule_now):
+            return
+        now = self._preload_settled_schedule_time or schedule_now
+        self._preload_settled_schedule_time = None
         for job in self.DAILY_JOBS:
             self._maybe_submit_daily_job(job, now)
         if not self.extended_jobs_enabled:
@@ -394,15 +457,11 @@ class AutoRefreshScheduler(QObject):
     def _maybe_submit_asian_market_runtime(self, now: datetime.datetime) -> bool:
         state_key = "asian_market_runtime"
         trade_date = now.strftime("%Y%m%d")
+        if not _asian_market_tab_visible(self):
+            return False
         if state_key in self._running_jobs or self._job_runner.is_active_task(self._task_id(state_key)):
             return False
         self._running_jobs.add(state_key)
-
-        def _prepare(*, cancellation_token=None):
-            return invoke_with_cancellation(
-                self._task_service_instance().prepare_asian_market_runtime,
-                cancellation_token,
-            )
 
         def _on_success(prepared):
             if self._is_shutdown:
@@ -433,7 +492,7 @@ class AutoRefreshScheduler(QObject):
 
         self._task_lifecycle.run_background(
             state_key,
-            lambda cancellation_token: invoke_with_cancellation(_prepare, cancellation_token),
+            lambda cancellation_token: _prepare_asian_market_runtime(self, cancellation_token),
             on_success=_on_success,
             on_error=_on_error,
             task_id=self._task_id(state_key),

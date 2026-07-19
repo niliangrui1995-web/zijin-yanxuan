@@ -286,11 +286,13 @@ def test_na_daily_prime_background_load_schedules_rows_without_ui_thread_parse(m
     monkeypatch.setattr(na_daily_tab_module, "task_manager", FakeTaskRunner())
 
     try:
+        assert tab.is_background_preload_complete() is False
         tab.prime_background_load()
 
-        assert tab._runtime_started is False
+        assert tab._runtime_started is True
         assert tab._background_prime_done is False
         assert tab._background_prime_loading is True
+        assert tab.is_background_preload_complete() is False
         assert len(tab.model.row_data) == 0
         assert scheduled["task_id"] == na_daily_tab_module._NA_DAILY_REFRESH_TASK
 
@@ -298,6 +300,7 @@ def test_na_daily_prime_background_load_schedules_rows_without_ui_thread_parse(m
 
         assert tab._background_prime_done is True
         assert tab._background_prime_loading is False
+        assert tab.is_background_preload_complete() is True
         assert len(tab.model.row_data) == 1
         assert tab._na_daily_codes == {"000001"}
         assert not hasattr(tab, "_patrol_timer")
@@ -306,3 +309,73 @@ def test_na_daily_prime_background_load_schedules_rows_without_ui_thread_parse(m
     finally:
         tab.close()
         tab.deleteLater()
+
+
+def test_na_daily_background_prime_reloads_local_rows_after_early_interactive_start(monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    calls = []
+    tab._runtime_started = True
+    monkeypatch.setattr(tab, "_load_na_daily_report", lambda: calls.append("load") or True)
+
+    try:
+        assert tab.prime_background_load() is True
+        assert calls == ["load"]
+        assert tab._background_prime_loading is True
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_na_daily_foreground_runtime_timer_runs_exactly_once(qt_application, monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    calls = []
+    tab._runtime_start_delay_ms = 0
+    monkeypatch.setattr(tab, "_load_na_daily_report", lambda: calls.append("load") or True)
+
+    try:
+        tab._ensure_runtime_started()
+        tab._ensure_runtime_started()
+        qt_application.processEvents()
+        qt_application.processEvents()
+
+        assert calls == ["load"]
+        assert tab._runtime_start_timer.isActive() is False
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_na_daily_background_prime_cancels_queued_foreground_read(qt_application, monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    calls = []
+    tab._runtime_start_delay_ms = 60_000
+    monkeypatch.setattr(tab, "_load_na_daily_report", lambda: calls.append("load") or True)
+
+    try:
+        tab._ensure_runtime_started()
+        assert tab._runtime_start_timer.isActive() is True
+
+        assert tab.prime_background_load() is True
+        qt_application.processEvents()
+
+        assert calls == ["load"]
+        assert tab._runtime_start_timer.isActive() is False
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_na_daily_shutdown_cancels_queued_runtime_read(qt_application, monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    calls = []
+    tab._runtime_start_delay_ms = 0
+    monkeypatch.setattr(tab, "_load_na_daily_report", lambda: calls.append("load") or True)
+
+    tab._ensure_runtime_started()
+    tab.shutdown()
+    qt_application.processEvents()
+    qt_application.processEvents()
+
+    assert calls == []
+    assert tab._runtime_start_timer.isActive() is False
+    tab.deleteLater()

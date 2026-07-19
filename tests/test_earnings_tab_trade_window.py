@@ -41,7 +41,13 @@ def test_recent_trade_window_start_uses_oldest_trade_day(monkeypatch):
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(lambda cls, n=20, ref_date=None: ["20260414", "20260411", "20260410"]),
+        classmethod(
+            lambda cls, n=20, ref_date=None, *, allow_refresh=True: (
+                ["20260414", "20260411", "20260410"]
+                if allow_refresh is False
+                else (_ for _ in ()).throw(AssertionError("display window must stay cache-only"))
+            )
+        ),
     )
 
     assert EarningsTab._recent_trade_window_start(3) == "2026-04-10"
@@ -54,7 +60,13 @@ def test_prune_rows_to_recent_trade_window_keeps_records_within_trade_span(monke
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(lambda cls, n=20, ref_date=None: ["20260414", "20260411", "20260410"]),
+        classmethod(
+            lambda cls, n=20, ref_date=None, *, allow_refresh=True: (
+                ["20260414", "20260411", "20260410"]
+                if allow_refresh is False
+                else (_ for _ in ()).throw(AssertionError("display window must stay cache-only"))
+            )
+        ),
     )
 
     rows = [
@@ -109,6 +121,58 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch, earni
 
         assert tab._ensure_scheduler() is tab.scheduler
         assert created == [tab]
+    finally:
+        tab.deleteLater()
+
+
+def test_earnings_background_preload_waits_for_warm_cache_empty_or_failure(monkeypatch, earnings_qt):
+    class DummySignal:
+        def __init__(self):
+            self.callback = None
+
+        def connect(self, callback):
+            self.callback = callback
+
+        def disconnect(self, callback):
+            if self.callback == callback:
+                self.callback = None
+
+        def emit(self, *args):
+            assert self.callback is not None
+            self.callback(*args)
+
+    class DummyScheduler:
+        def __init__(self, parent=None):
+            self._parent = parent
+            self.sig_new_surprises_found = DummySignal()
+            self.sig_fetch_failed = DummySignal()
+            self.cache_load_calls = 0
+
+        def parent(self):
+            return self._parent
+
+        def load_cached_records_async(self):
+            self.cache_load_calls += 1
+            return True
+
+        def shutdown(self):
+            return None
+
+    monkeypatch.setattr(earnings_qt.module, "EarningsScheduler", DummyScheduler)
+
+    tab = earnings_qt.EarningsTab()
+    try:
+        assert tab.prime_background_load() is True
+        assert tab.scheduler.cache_load_calls == 1
+        assert tab.is_background_preload_complete() is False
+
+        tab.scheduler.sig_new_surprises_found.emit([], "warm_cache")
+        assert tab.is_background_preload_complete() is True
+
+        tab._background_preload_done = False
+        tab._background_preload_loading = True
+        tab.scheduler.sig_fetch_failed.emit("warm_cache", "cache unavailable")
+        assert tab.is_background_preload_complete() is True
     finally:
         tab.deleteLater()
 
@@ -484,23 +548,21 @@ def test_earnings_refresh_after_f5_schedules_routine_scan(monkeypatch):
 
 def test_earnings_refresh_after_ai_chain_update_replays_filtered_cache():
     EarningsTab = _earnings_tab_class()
-    cached_frame = pd.DataFrame([{"stock": "300750"}])
     calls = []
 
     class Model:
         def update_data(self, rows, **kwargs):
             calls.append(("update", list(rows), kwargs))
 
-    class Engine:
-        def get_cached_records(self):
-            calls.append("cached")
-            return cached_frame
+    class Scheduler:
+        def load_cached_records_async(self, *, supersede=False):
+            calls.append(("cached", supersede))
+            return True
 
     tab = SimpleNamespace(
         row_data=[{"old": "row"}],
         model=Model(),
-        _ensure_scheduler=lambda: SimpleNamespace(engine=Engine()),
-        _on_new_data_found=lambda df, mode="routine": calls.append(("new_data", df, mode)),
+        _ensure_scheduler=lambda: Scheduler(),
         refresh_table_from_latest_snapshot=(
             lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
         ),
@@ -508,12 +570,9 @@ def test_earnings_refresh_after_ai_chain_update_replays_filtered_cache():
 
     assert EarningsTab.refresh_data_after_ai_industry_chain_update(tab) is True
     assert tab.row_data == []
-    assert calls[0] == "cached"
+    assert calls[0] == ("cached", True)
     assert calls[1] == ("update", [], {"hydrate_latest_quotes": False})
-    assert calls[2][0] == "new_data"
-    assert calls[2][1] is cached_frame
-    assert calls[2][2] == "warm_cache"
-    assert calls[3] == ("snapshot", tab.model, True)
+    assert calls[2] == ("snapshot", tab.model, True)
 
 
 def test_earnings_tab_preserves_discovery_time_from_engine_frame(monkeypatch, earnings_qt):
@@ -550,6 +609,40 @@ def test_earnings_tab_preserves_discovery_time_from_engine_frame(monkeypatch, ea
         tab.deleteLater()
 
 
+def test_earnings_tab_replays_dataframe_free_cache_rows_with_existing_dedup_rules(monkeypatch, earnings_qt):
+    tab = earnings_qt.EarningsTab()
+    try:
+        monkeypatch.setattr(tab, "_apply_display_trade_window", lambda force_refresh=False: True)
+        monkeypatch.setattr(tab, "_set_window_status", lambda *args, **kwargs: None)
+        monkeypatch.setattr(tab, "_status_metric", lambda *args, **kwargs: "")
+        base = {
+            "股票代码": "300604",
+            "股票名称": "长川科技",
+            "环比增速_百分比": 57.69,
+            "同比增速_百分比": 88.8,
+            "单季净利润_新增": 120_000_000.0,
+            "单季净利润_上期": 76_000_000.0,
+            "报告期": "2026-03-31",
+            "数据类型": "预告",
+            "公告日期": "2026-04-20",
+            "发现时间": "2026-06-27T08:31:02",
+            "基调": "高增",
+            "所属行业与概念": "半导体设备",
+        }
+
+        tab._on_new_data_found([base, {**base, "股票代码": "000002", "股票名称": "ST晨鸣"}], "warm_cache")
+        tab._on_new_data_found([{**base, "数据类型": "财报", "公告日期": "2026-04-21"}], "warm_cache")
+
+        assert len(tab.row_data) == 1
+        assert tab.row_data[0]["代码"] == "300604"
+        assert tab.row_data[0]["类型"] == "财报"
+        assert tab.row_data[0]["揭晓日"] == "2026-04-21"
+        assert tab.row_data[0]["发现时间"] == "2026-06-27T08:31:02"
+        assert tab.row_data[0]["当季利润"] == "1.20亿"
+    finally:
+        tab.deleteLater()
+
+
 def test_earnings_display_window_primes_local_snapshot_after_cache_render():
     EarningsTab = _earnings_tab_class()
     calls = []
@@ -581,30 +674,34 @@ def test_earnings_display_window_primes_local_snapshot_after_cache_render():
     assert calls == [("update", tab.row_data), "store", ("local", tab.model)]
 
 
-def test_filter_out_st_dataframe_removes_st_rows():
-    EarningsTab = _earnings_tab_class()
+def test_filter_out_st_records_removes_st_rows():
+    earnings_module = _earnings_module()
 
-    df = pd.DataFrame(
-        [
-            {"股票代码": "000001", "股票名称": "平安银行"},
-            {"股票代码": "000002", "股票名称": "ST晨鸣"},
-            {"股票代码": "000003", "股票名称": "*ST同洲"},
-        ]
-    )
+    rows = [
+        {"股票代码": "000001", "股票名称": "平安银行"},
+        {"股票代码": "000002", "股票名称": "ST晨鸣"},
+        {"股票代码": "000003", "股票名称": "*ST同洲"},
+    ]
 
-    filtered = EarningsTab._filter_out_st_dataframe(df)
+    filtered = earnings_module._filter_out_st_records(rows)
 
-    assert filtered["股票代码"].tolist() == ["000001"]
+    assert [row["股票代码"] for row in filtered] == ["000001"]
 
 
 def test_prune_rows_to_recent_trade_window_drops_st_rows(monkeypatch):
     EarningsTab = _earnings_tab_class()
     from core.market_calendar import MarketCalendar
 
+    calls = []
+
+    def _recent_trade_dates(cls, n=20, ref_date=None, *, allow_refresh=True):
+        calls.append((n, ref_date, allow_refresh))
+        return ["20260414", "20260411", "20260410"]
+
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(lambda cls, n=20, ref_date=None: ["20260414", "20260411", "20260410"]),
+        classmethod(_recent_trade_dates),
     )
 
     rows = [
@@ -618,6 +715,7 @@ def test_prune_rows_to_recent_trade_window_drops_st_rows(monkeypatch):
 
     kept_codes = [row["代码"] for row in pruned]
     assert kept_codes == ["000001"]
+    assert calls == [(3, None, False)]
 
 
 def test_rt_sort_filter_proxy_supports_multi_select_column_filters(earnings_qt):

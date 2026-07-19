@@ -20,12 +20,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.services.stock_context_model_service import StockSignal
 from app.services.ui_event_service import ui_signals
 from app.services.ui_watchlist_service import watchlist_vm
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
-from ui.workspaces.stock_signal import StockSignal
 
 SOURCE_LABELS = {
     "na_daily": "北美战报",
@@ -108,10 +108,10 @@ class StockDetailDialog(QDialog):
         super().__init__(parent)
         self._code = str(code or "").strip()
         self._name = str(name or "").strip()
-        self._rows = build_signal_rows(signals, tab_titles=tab_titles)
+        self._tab_titles = dict(tab_titles or {})
+        self._rows = build_signal_rows(signals, tab_titles=self._tab_titles)
         self._activate_callback = activate_callback
         self._context = dict(context or {})
-
         self.setObjectName("stockDetailDialog")
         self.setWindowTitle(f"股票全景 - {self._name or self._code}")
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -221,6 +221,15 @@ class StockDetailDialog(QDialog):
     def _build_meta(self) -> str:
         sources = {str(row.get("source") or "") for row in self._rows if row.get("source")}
         return f"{len(self._rows)} 条信号 | {len(sources)} 个来源"
+
+    def update_signals(self, signals: Iterable[StockSignal]) -> None:
+        """Replace the plain-data signal snapshot without recreating the dialog."""
+        self._rows = build_signal_rows(signals, tab_titles=self._tab_titles)
+        self.table.clearSpans()
+        self.table.clearContents()
+        self._populate_table()
+        self.lbl_meta.setText(self._build_meta())
+        self._sync_actions()
 
     def _detail_payload(self, *, include_signals: bool = False) -> dict:
         payload = dict(self._context)

@@ -1,0 +1,1274 @@
+from __future__ import annotations
+
+import importlib
+import time
+from types import SimpleNamespace
+
+import pytest
+from PyQt6.QtWidgets import QWidget
+
+import ui.workspaces.classic_workspace as classic_workspace_module
+from ui.workspaces.background_preload_receipt import (
+    BackgroundPreloadCancellationReceipt,
+    cancel_background_preload_tasks,
+)
+from ui.workspaces.classic_workspace import ClassicWorkspace
+from ui.workspaces.tab_registry import TAB_DEFINITIONS, TabLoadReason, startup_tab_keys
+
+
+class _ControlledPreloadTab(QWidget):
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.events = events
+        self.ready = False
+        self.prime_calls = 0
+        events.append(("construct", key))
+
+    def prime_background_load(self):
+        self.prime_calls += 1
+        self.events.append(("prime", self.key))
+
+    def is_background_preload_complete(self) -> bool:
+        return self.ready
+
+    def cancel_background_preload(self, *, reason: str):
+        del reason
+        return BackgroundPreloadCancellationReceipt.immediate()
+
+
+class _FailingPrimeTab(_ControlledPreloadTab):
+    def prime_background_load(self):
+        super().prime_background_load()
+        raise RuntimeError("prime failed")
+
+
+class _SupplementalSnapshotPreloadTab(_ControlledPreloadTab):
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(key, events, parent)
+        self.snapshot_ready = False
+        self.snapshot_prime_calls = 0
+
+    def prime_workspace_background_snapshot(self) -> bool:
+        self.snapshot_prime_calls += 1
+        return True
+
+    def is_workspace_background_snapshot_complete(self) -> bool:
+        return self.snapshot_ready
+
+
+class _ControlledCancellationReceipt:
+    def __init__(self):
+        self.settled = False
+
+    def is_settled(self) -> bool:
+        return self.settled
+
+    def status(self) -> dict:
+        return {
+            "accepted": True,
+            "task_ids": ["controlled-hydration"],
+            "active_task_ids": [] if self.settled else ["controlled-hydration"],
+            "local_settled": self.settled,
+            "settled": self.settled,
+        }
+
+
+class _CancellablePreloadTab(_ControlledPreloadTab):
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(key, events, parent)
+        self.cancel_calls = 0
+        self.cancel_reasons = []
+        self.activation_calls = 0
+        self.cancellation_receipt = _ControlledCancellationReceipt()
+
+    def cancel_background_preload(self, *, reason: str):
+        self.cancel_calls += 1
+        self.cancel_reasons.append(reason)
+        self.events.append(("cancel", self.key))
+        assert reason in {"step_timeout", "step_failed", "owner_shutdown"}
+        return self.cancellation_receipt
+
+    def shutdown(self):
+        self.cancellation_receipt.settled = True
+
+    def on_workspace_tab_activated(self):
+        self.activation_calls += 1
+
+
+class _FailingCancellablePrimeTab(_CancellablePreloadTab):
+    def prime_background_load(self):
+        super().prime_background_load()
+        raise RuntimeError("prime failed after hydration started")
+
+
+class _RejectedCancellationTab(_ControlledPreloadTab):
+    def cancel_background_preload(self, *, reason: str):
+        del reason
+        return BackgroundPreloadCancellationReceipt(accepted=False)
+
+
+class _RaisingCancellationTab(_ControlledPreloadTab):
+    def cancel_background_preload(self, *, reason: str):
+        del reason
+        raise RuntimeError("cancellation unavailable")
+
+
+class _ExplodingSettlementReceipt:
+    @staticmethod
+    def status() -> dict:
+        return {"accepted": True, "settled": False}
+
+    @staticmethod
+    def is_settled() -> bool:
+        raise RuntimeError("settlement probe failed")
+
+
+class _ExplodingSettlementTab(_ControlledPreloadTab):
+    def cancel_background_preload(self, *, reason: str):
+        del reason
+        return _ExplodingSettlementReceipt()
+
+
+class _ExplodingStatusReceipt:
+    @staticmethod
+    def status() -> dict:
+        raise RuntimeError("status probe failed")
+
+    @staticmethod
+    def is_settled() -> bool:
+        return True
+
+
+class _ExplodingStatusTab(_ControlledPreloadTab):
+    def cancel_background_preload(self, *, reason: str):
+        del reason
+        return _ExplodingStatusReceipt()
+
+
+class _FakeLifecycle:
+    def __init__(self):
+        self.calls = []
+
+    def cancel(self, name, *, reason):
+        self.calls.append((name, reason))
+        return name == "first"
+
+
+class _FakeRunner:
+    def __init__(self):
+        self.active = {"task-a", "task-b"}
+        self.cancel_calls = []
+
+    def is_active_task(self, task_id):
+        return task_id in self.active
+
+    def cancel_task(self, task_id, *, reason):
+        self.cancel_calls.append((task_id, reason))
+        return True
+
+
+def _install_controlled_factories(workspace: ClassicWorkspace, events: list[tuple[str, str]]) -> None:
+    for spec in workspace._tab_specs:
+        key = spec["key"]
+        spec["factory"] = lambda key=key, **_kwargs: _ControlledPreloadTab(key, events, workspace)
+
+
+def _stop_preload_timer(workspace: ClassicWorkspace) -> None:
+    timer = workspace._background_prewarm_timer
+    if timer is not None:
+        timer.stop()
+
+
+def _process_events_until(qt_application, predicate, *, timeout_seconds: float = 1.0) -> bool:
+    deadline = time.perf_counter() + timeout_seconds
+    while time.perf_counter() < deadline:
+        qt_application.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.001)
+    qt_application.processEvents()
+    return bool(predicate())
+
+
+def test_preload_ready_waits_for_supplemental_local_snapshot_physical_completion():
+    from ui.workspaces.background_tab_preload import BackgroundTabPreloadCoordinator
+
+    tab = _SupplementalSnapshotPreloadTab("scan", [])
+    tab.ready = True
+    try:
+        assert BackgroundTabPreloadCoordinator._widget_preload_complete(tab) is False
+        assert tab.snapshot_prime_calls == 1
+
+        tab.snapshot_ready = True
+        assert BackgroundTabPreloadCoordinator._widget_preload_complete(tab) is True
+        assert tab.snapshot_prime_calls == 2
+    finally:
+        tab.deleteLater()
+
+
+def test_preload_uses_registry_order_and_waits_for_each_data_completion(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        initial = workspace.ensure_tab_loaded("watchlist", reason=TabLoadReason.RESTORE_LAST_TAB.value)
+        assert isinstance(initial, _ControlledPreloadTab)
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+
+        expected_order = startup_tab_keys()
+        assert workspace._background_prewarm_timer.parent() is workspace._background_preload_coordinator
+        assert workspace._background_prewarm_queue == list(expected_order)
+        current_index = workspace.tabs.currentIndex()
+
+        for expected_key in expected_order:
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+
+            assert workspace._background_prewarm_active_key == expected_key
+            assert workspace._background_prewarm_start_order[-1] == expected_key
+            assert [key for event, key in events if event == "prime"][-1] == expected_key
+
+            # A second poll must not construct or prime the following tab while
+            # the current cache-only hydration is still active.
+            event_count = len(events)
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+            assert len(events) == event_count
+            assert workspace._background_prewarm_active_key == expected_key
+
+            active = workspace._background_prewarm_active_widget
+            active.ready = True
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+            assert workspace._background_prewarm_active_key == ""
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        status = workspace.background_preload_status()
+        assert status["finished"] is True
+        assert status["start_order"] == list(expected_order)
+        assert status["completion_order"] == list(expected_order)
+        assert status["failures"] == {}
+        assert status["max_concurrent_steps"] == 1
+        assert workspace._background_prewarm_finished_at > 0.0
+        assert workspace.tabs.currentIndex() == current_index
+        assert len(workspace.iter_tabs()) == len(TAB_DEFINITIONS) == 11
+        assert all(tab.prime_calls == 1 for tab in workspace.iter_tabs())
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_preload_waits_for_startup_cache_bootstrap_terminal_signal(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        host=SimpleNamespace(_startup_enabled=True),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+
+        workspace._start_background_tab_prewarm()
+
+        assert workspace._background_prewarm_started is False
+        assert workspace._background_prewarm_queue == []
+        assert workspace.background_preload_status()["startup_cache_bootstrap_ready"] is False
+
+        workspace._on_startup_cache_bootstrap_ready()
+        _stop_preload_timer(workspace)
+
+        assert workspace._background_prewarm_started is True
+        assert workspace._background_prewarm_queue == list(startup_tab_keys())
+        assert workspace.background_preload_status()["startup_cache_bootstrap_ready"] is True
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_preload_failure_and_timeout_record_terminal_steps_then_continue(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        expected_order = list(startup_tab_keys())
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        first_widget = workspace._background_prewarm_active_widget
+        first_widget.is_background_preload_complete = lambda: (_ for _ in ()).throw(RuntimeError("failed"))
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_active_started_at = 0.0
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == expected_order[2]
+        status = workspace.background_preload_status()
+        assert status["completion_order"][:2] == expected_order[:2]
+        assert status["failures"][expected_order[0]] == "failed"
+        assert expected_order[1] in status["timeouts"]
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_timeout_waits_for_cancel_receipt_before_starting_next_step(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _CancellablePreloadTab(first_key, events, workspace)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        first_widget = workspace._background_prewarm_active_widget
+        workspace._background_prewarm_active_started_at = 0.0
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        status = workspace.background_preload_status()
+        assert first_widget.cancel_calls == 1
+        assert status["timeouts"] == [first_key]
+        assert status["completion_order"] == []
+        assert status["cancelling_key"] == first_key
+        assert status["cancel_receipt"]["settled"] is False
+        assert workspace._background_prewarm_active_key == first_key
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert first_widget.cancel_calls == 1
+        assert workspace._background_prewarm_active_key == first_key
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        first_widget.cancellation_receipt.settled = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == ""
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == startup_tab_keys()[1]
+        assert workspace.background_preload_status()["max_concurrent_steps"] == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_checker_failure_waits_for_cancel_receipt_before_starting_next_step(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _CancellablePreloadTab(first_key, events, workspace)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        first_widget = workspace._background_prewarm_active_widget
+        first_widget.is_background_preload_complete = lambda: (_ for _ in ()).throw(RuntimeError("failed"))
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        status = workspace.background_preload_status()
+        assert first_widget.cancel_reasons == ["step_failed"]
+        assert status["failures"][first_key] == "failed"
+        assert status["completion_order"] == []
+        assert status["cancelling_key"] == first_key
+        assert workspace._background_prewarm_active_key == first_key
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        first_widget.cancellation_receipt.settled = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == startup_tab_keys()[1]
+        assert workspace.background_preload_status()["max_concurrent_steps"] == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_prime_failure_after_start_waits_for_cancel_receipt_before_next_step(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _FailingCancellablePrimeTab(first_key, events, workspace)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        first_widget = workspace._background_prewarm_active_widget
+        status = workspace.background_preload_status()
+        assert first_widget.cancel_reasons == ["step_failed"]
+        assert status["failures"][first_key] == "startup prime failed"
+        assert status["cancelling_key"] == first_key
+        assert status["completion_order"] == []
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        first_widget.cancellation_receipt.settled = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == startup_tab_keys()[1]
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_prioritized_cancelled_step_retries_interactive_load_exactly_once(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _CancellablePreloadTab(first_key, events, workspace)
+    workspace._activation_callback_delay_ms = lambda: 0
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        first_widget = workspace._background_prewarm_active_widget
+        qt_application.processEvents()
+        first_widget.activation_calls = 0
+        coordinator = workspace._background_preload_coordinator
+        assert coordinator.prioritize(first_key, TabLoadReason.USER.value) is True
+        assert coordinator.prioritize(first_key, TabLoadReason.USER.value) is True
+        workspace._background_prewarm_active_started_at = 0.0
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert first_widget.activation_calls == 0
+
+        first_widget.cancellation_receipt.settled = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        qt_application.processEvents()
+
+        assert first_widget.activation_calls == 1
+        assert first_widget._workspace_noninteractive_loaded is False
+        assert first_widget._workspace_load_reason == TabLoadReason.USER.value
+        assert workspace.background_preload_status()["promoted_order"] == [first_key]
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_cancellation_receipt_tracks_every_real_worker_slot_until_all_exit():
+    owner = type("Owner", (), {})()
+    owner._task_lifecycle = _FakeLifecycle()
+    runner = _FakeRunner()
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=("first", "second"),
+        task_ids=("task-a", "task-b", "task-already-settled"),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert owner._task_lifecycle.calls == [
+        ("first", "step_timeout"),
+        ("second", "step_timeout"),
+    ]
+    assert runner.cancel_calls == [
+        ("task-a", "step_timeout"),
+        ("task-b", "step_timeout"),
+        ("task-already-settled", "step_timeout"),
+    ]
+    assert receipt.is_settled() is False
+    runner.active.remove("task-a")
+    assert receipt.is_settled() is False
+    runner.active.remove("task-b")
+    assert receipt.is_settled() is True
+
+
+def test_cancellation_receipt_auto_tracks_workspace_snapshot_until_worker_physical_exit():
+    owner = type("Owner", (), {})()
+    owner._task_lifecycle = _FakeLifecycle()
+    owner._workspace_background_snapshot_started = True
+    owner._workspace_background_snapshot_task_id = "workspace-snapshot"
+    owner._workspace_background_snapshot_cancelled = False
+    owner.snapshot_apply_pending = True
+
+    def _cancel_workspace_background_snapshot_preload() -> None:
+        owner._workspace_background_snapshot_cancelled = True
+        owner.snapshot_apply_pending = False
+
+    def _workspace_background_snapshot_preload_settled() -> bool:
+        return owner._workspace_background_snapshot_cancelled and not owner.snapshot_apply_pending
+
+    owner._cancel_workspace_background_snapshot_preload = _cancel_workspace_background_snapshot_preload
+    owner._workspace_background_snapshot_preload_settled = _workspace_background_snapshot_preload_settled
+    runner = _FakeRunner()
+    runner.active.add("workspace-snapshot")
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=("first",),
+        task_ids=("task-a", "task-b"),
+        reason="workspace_shutdown",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert owner._task_lifecycle.calls == [
+        ("first", "workspace_shutdown"),
+        ("workspace_background_snapshot", "workspace_shutdown"),
+    ]
+    assert runner.cancel_calls == [
+        ("task-a", "workspace_shutdown"),
+        ("task-b", "workspace_shutdown"),
+        ("workspace-snapshot", "workspace_shutdown"),
+    ]
+    assert owner.snapshot_apply_pending is False
+    assert receipt.status()["active_task_ids"] == ["task-a", "task-b", "workspace-snapshot"]
+
+    runner.active.remove("task-a")
+    runner.active.remove("task-b")
+    assert receipt.is_settled() is False
+    assert receipt.status()["active_task_ids"] == ["workspace-snapshot"]
+
+    runner.active.remove("workspace-snapshot")
+    assert receipt.is_settled() is True
+    assert receipt.status()["local_settled"] is True
+
+
+@pytest.mark.parametrize("definition", TAB_DEFINITIONS, ids=lambda definition: definition.key)
+def test_every_registered_tab_exposes_preload_cancellation_receipt_capability(definition):
+    module = importlib.import_module(definition.module_name)
+    tab_class = getattr(module, definition.class_name)
+
+    assert callable(getattr(tab_class, "prime_background_load", None))
+    assert callable(getattr(tab_class, "is_background_preload_complete", None))
+    assert callable(getattr(tab_class, "cancel_background_preload", None))
+    if definition.key != "system_log":
+        assert callable(getattr(tab_class, "on_workspace_tab_activated", None)) or callable(
+            getattr(tab_class, "_ensure_runtime_started", None)
+        )
+
+
+def test_shutdown_keeps_receipt_that_proves_active_hydration_settled(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _CancellablePreloadTab(first_key, events, workspace)
+    workspace._initial_real_tab_activated = True
+    workspace._background_prewarm_enabled = True
+    workspace._start_background_tab_prewarm()
+    _stop_preload_timer(workspace)
+    workspace._prewarm_next_tab()
+    _stop_preload_timer(workspace)
+
+    workspace.shutdown()
+
+    status = workspace.background_preload_status()
+    assert status["shutdown_cancel_receipts"]
+    assert status["shutdown_cancellation_settled"] is True
+    assert status["shutdown_cancel_receipts"][0]["settled"] is True
+    workspace.deleteLater()
+
+
+def test_preload_waits_for_runtime_and_initial_real_tab_without_pending_fanout(qt_application):
+    workspace = ClassicWorkspace(
+        data_provider=None,
+        engine=None,
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    workspace._background_prewarm_enabled = True
+    workspace._initial_real_tab_activated = True
+
+    try:
+        workspace._start_background_tab_prewarm()
+        assert workspace._background_prewarm_started is False
+        assert workspace._background_prewarm_queue == []
+        assert workspace._runtime_pending_tab_loads == {}
+
+        workspace.attach_runtime_services(data_provider=object())
+        assert workspace._background_prewarm_started is False
+        assert workspace._runtime_pending_tab_loads == {}
+
+        workspace.attach_runtime_services(engine=object())
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_started is True
+        assert workspace._background_prewarm_queue == list(startup_tab_keys())
+        assert workspace._runtime_pending_tab_loads == {}
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_interactive_activation_promotes_preloaded_widget_without_reconstruction(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        widget = workspace.ensure_tab_loaded("scan", reason=TabLoadReason.BACKGROUND_PREWARM.value)
+        assert isinstance(widget, _ControlledPreloadTab)
+        assert widget._workspace_noninteractive_loaded is True
+        scan_index = workspace._tab_index_for_key("scan")
+
+        assert workspace.activate_tab(scan_index, reason=TabLoadReason.USER.value) is True
+        qt_application.processEvents()
+
+        assert workspace.get_loaded_tab("scan") is widget
+        assert widget._workspace_noninteractive_loaded is False
+        assert widget._workspace_load_reason == TabLoadReason.USER.value
+        assert [key for event, key in events if event == "construct"].count("scan") == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_interactive_click_prioritizes_future_step_without_duplicate_construct_or_prime(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        first_key = startup_tab_keys()[0]
+        assert workspace._background_prewarm_active_key == first_key
+
+        scan_index = workspace._tab_index_for_key("scan")
+        workspace._lazy_loading_keys.add("scan")
+        assert workspace.activate_tab(scan_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_queue[0] == "scan"
+        assert workspace._lazy_loading_keys == set()
+        assert [key for event, key in events if event == "construct"].count("scan") == 0
+
+        # A stale zero-delay callback no longer owns the promoted key.
+        classic_workspace_module._load_queued_tab(workspace, "scan", TabLoadReason.USER.value)
+        assert [key for event, key in events if event == "construct"].count("scan") == 0
+
+        first_widget = workspace._background_prewarm_active_widget
+        first_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        promoted = workspace.get_loaded_tab("scan")
+        assert workspace._background_prewarm_active_key == "scan"
+        assert promoted._workspace_noninteractive_loaded is True
+        assert [key for event, key in events if event == "construct"].count("scan") == 1
+        assert [key for event, key in events if event == "prime"].count("scan") == 1
+
+        # Repeated activation while the serial step is active cannot start a second read.
+        assert workspace.activate_tab(scan_index, reason=TabLoadReason.USER.value) is True
+        assert [key for event, key in events if event == "construct"].count("scan") == 1
+        assert [key for event, key in events if event == "prime"].count("scan") == 1
+
+        promoted.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert promoted._workspace_noninteractive_loaded is False
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "system_log"
+        status = workspace.background_preload_status()
+        assert status["promoted_order"] == ["scan"]
+        assert status["pending_priority_keys"] == []
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+@pytest.mark.parametrize("target_key", ["foreign_block", "earnings", "fund_holdings", "lhb"])
+def test_interactive_priority_recursively_promotes_ai_dependency_before_consumer(
+    qt_application,
+    target_key,
+):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        target_index = workspace._tab_index_for_key(target_key)
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_queue[:2] == ["ai_industry_chain", target_key]
+
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "ai_industry_chain"
+        assert events.count(("construct", target_key)) == 0
+
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == target_key
+        assert events.index(("prime", "ai_industry_chain")) < events.index(("prime", target_key))
+        assert workspace.background_preload_status()["max_concurrent_steps"] == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_interactive_priority_before_first_real_tab_is_owned_by_dependency_queue(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        assert workspace._initial_real_tab_activated is False
+        target_index = workspace._tab_index_for_key("stock_candidates")
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+
+        status = workspace.background_preload_status()
+        assert status["started"] is True
+        assert status["pending_priority_keys"] == ["stock_candidates"]
+        assert status["priority_closures"]["stock_candidates"][0] == "watchlist"
+        assert workspace._background_prewarm_queue[0] == "watchlist"
+        assert events == []
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "watchlist"
+        assert events[:2] == [("construct", "watchlist"), ("prime", "watchlist")]
+        assert events.count(("construct", "stock_candidates")) == 0
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_prestart_restore_marks_initial_tab_ready_only_after_hydration(qt_application):
+    events: list[tuple[str, str]] = []
+    host = SimpleNamespace(_launch_started_at=time.perf_counter() - 0.1)
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        host=host,
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.RESTORE_LAST_TAB.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._initial_real_tab_activated is False
+
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._initial_real_tab_activated is True
+        assert workspace._initial_tab_ready_elapsed_ms >= 100.0
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_prestart_priority_waits_for_startup_cache_bootstrap_then_resumes(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        host=SimpleNamespace(_startup_enabled=True),
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        target_index = workspace._tab_index_for_key("stock_candidates")
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
+        assert workspace._background_prewarm_started is False
+        assert workspace.background_preload_status()["pending_priority_keys"] == ["stock_candidates"]
+
+        workspace._on_startup_cache_bootstrap_ready()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_started is True
+        assert workspace._background_prewarm_queue[0] == "watchlist"
+        assert events == []
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_stock_candidates_priority_waits_for_complete_dependency_closure(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    expected_chain = [
+        "watchlist",
+        "ai_industry_chain",
+        "na_daily",
+        "scan",
+        "foreign_block",
+        "earnings",
+        "fund_holdings",
+        "lhb",
+        "asian_market",
+        "stock_candidates",
+    ]
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        target_index = workspace._tab_index_for_key("stock_candidates")
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        status = workspace.background_preload_status()
+        assert status["priority_closures"]["stock_candidates"] == expected_chain
+        assert workspace._background_prewarm_queue[: len(expected_chain) - 1] == expected_chain[1:]
+        assert events.count(("construct", "stock_candidates")) == 0
+
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        for expected_key in expected_chain[1:]:
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+            assert workspace._background_prewarm_active_key == expected_key
+            if expected_key == "stock_candidates":
+                ready_keys = set(workspace.background_preload_status()["ready_keys"])
+                assert set(expected_chain[:-1]).issubset(ready_keys)
+            workspace._background_prewarm_active_widget.ready = True
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+
+        assert events.count(("construct", "stock_candidates")) == 1
+        assert events.count(("prime", "stock_candidates")) == 1
+        assert workspace.background_preload_status()["max_concurrent_steps"] == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_failed_upstream_rejects_consumer_hydration_and_queue_continues(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        target_index = workspace._tab_index_for_key("foreign_block")
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
+
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        ai_widget = workspace._background_prewarm_active_widget
+        ai_widget.is_background_preload_complete = lambda: (_ for _ in ()).throw(
+            RuntimeError("ai preload failed")
+        )
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == ""
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        status = workspace.background_preload_status()
+        assert status["dependency_failures"]["foreign_block"] == (
+            "dependencies_not_ready:ai_industry_chain"
+        )
+        assert events.count(("construct", "foreign_block")) == 0
+        assert workspace._background_prewarm_active_key == ""
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "system_log"
+        assert workspace.background_preload_status()["max_concurrent_steps"] == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_dependency_gate_repairs_out_of_order_queue_before_hydration(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        queue = workspace._background_prewarm_queue
+        queue.remove("foreign_block")
+        queue.insert(0, "foreign_block")
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == ""
+        assert workspace._background_prewarm_queue[:2] == ["ai_industry_chain", "foreign_block"]
+        assert events.count(("construct", "foreign_block")) == 0
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "ai_industry_chain"
+        assert events[:2] == [("construct", "ai_industry_chain"), ("prime", "ai_industry_chain")]
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+@pytest.mark.parametrize(
+    ("tab_class", "accepted"),
+    [
+        (_RejectedCancellationTab, False),
+        (_RaisingCancellationTab, False),
+        (_CancellablePreloadTab, True),
+        (_ExplodingSettlementTab, True),
+        (_ExplodingStatusTab, False),
+    ],
+)
+def test_unsettled_cancellation_deadline_stops_queue_fail_closed(
+    qt_application,
+    tab_class,
+    accepted,
+):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: tab_class(first_key, events, workspace)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_active_started_at = 0.0
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        coordinator = workspace._background_preload_coordinator
+        coordinator._cancel_settlement_started_at = 0.0
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace.background_preload_status()["cancellation_blocked"] is False
+        coordinator._cancel_settlement_started_at = time.perf_counter() - 10.0
+        workspace._prewarm_next_tab()
+
+        status = workspace.background_preload_status()
+        assert status["cancellation_blocked"] is True
+        assert status["blocked_reason"] == "cancellation_timeout"
+        assert status["cancellation_timeout_keys"] == [first_key]
+        assert status["cancel_receipt"]["accepted"] is accepted
+        assert status["completion_order"] == []
+        assert status["active_key"] == first_key
+        assert status["active_step_count"] == 1
+        assert workspace._background_prewarm_timer.isActive() is True
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        workspace._prewarm_next_tab()
+        assert workspace._background_prewarm_timer.isActive() is True
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_fail_closed_queue_automatically_resumes_after_physical_settlement(qt_application):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = startup_tab_keys()[0]
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _CancellablePreloadTab(first_key, events, workspace)
+    workspace.BACKGROUND_PREWARM_CANCEL_BLOCKED_POLL_INTERVAL_MS = 5
+    workspace.BACKGROUND_PREWARM_INTERVAL_MS = 5
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        first_widget = workspace._background_prewarm_active_widget
+        workspace._background_prewarm_active_started_at = 0.0
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        coordinator = workspace._background_preload_coordinator
+        coordinator._cancel_settlement_started_at = time.perf_counter() - 10.0
+        workspace._prewarm_next_tab()
+        assert workspace.background_preload_status()["cancellation_blocked"] is True
+        assert workspace._background_prewarm_timer.isActive() is True
+
+        assert not _process_events_until(
+            qt_application,
+            lambda: False,
+            timeout_seconds=0.03,
+        )
+        assert workspace._background_prewarm_active_key == first_key
+        assert events.count(("construct", startup_tab_keys()[1])) == 0
+
+        first_widget.cancellation_receipt.settled = True
+        assert _process_events_until(
+            qt_application,
+            lambda: workspace._background_prewarm_active_key == startup_tab_keys()[1],
+        )
+        assert workspace._background_prewarm_active_key == startup_tab_keys()[1]
+        assert workspace.background_preload_status()["max_concurrent_steps"] == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+@pytest.mark.parametrize("terminal_status", ["failed", "timeout"])
+def test_prioritized_preload_terminal_failure_still_activates_once_and_continues(
+    qt_application,
+    monkeypatch,
+    terminal_status,
+):
+    events: list[tuple[str, str]] = []
+    activations: list[str] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    if terminal_status == "failed":
+        scan_spec = workspace._spec_for_key_or_index("scan")
+        scan_spec["factory"] = lambda **_kwargs: _FailingPrimeTab("scan", events, workspace)
+    monkeypatch.setattr(
+        workspace,
+        "_notify_tab_activated",
+        lambda key, _widget: activations.append(key),
+    )
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._start_background_tab_prewarm()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        scan_index = workspace._tab_index_for_key("scan")
+        assert workspace.activate_tab(scan_index, reason=TabLoadReason.USER.value) is True
+        first_widget = workspace._background_prewarm_active_widget
+        first_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        promoted = workspace.get_loaded_tab("scan")
+        if terminal_status == "timeout":
+            workspace._background_prewarm_active_started_at = 0.0
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+
+        assert promoted._workspace_noninteractive_loaded is False
+        assert promoted._workspace_load_reason == TabLoadReason.USER.value
+        assert [key for event, key in events if event == "construct"].count("scan") == 1
+        assert [key for event, key in events if event == "prime"].count("scan") == 1
+        assert activations.count("scan") == 1
+
+        status = workspace.background_preload_status()
+        assert "scan" in status["failures"]
+        assert ("scan" in status["timeouts"]) is (terminal_status == "timeout")
+        assert status["pending_priority_keys"] == []
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "system_log"
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_shutdown_stops_owned_preload_timer_and_clears_active_step(qt_application):
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    workspace._background_prewarm_enabled = True
+    workspace._background_prewarm_started = True
+    workspace._background_prewarm_queue = ["scan"]
+    workspace._background_prewarm_active_key = "watchlist"
+    workspace._background_prewarm_active_widget = object()
+    workspace._background_prewarm_timer.start(60_000)
+
+    workspace.shutdown()
+
+    assert workspace._background_prewarm_timer.isActive() is False
+    assert workspace._background_prewarm_queue == []
+    assert workspace._background_prewarm_active_key == ""
+    assert workspace._background_prewarm_active_widget is None
+    assert workspace._background_prewarm_enabled is False
+    workspace.deleteLater()

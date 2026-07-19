@@ -2,33 +2,76 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
+
+_WATCHLIST_MODULE_IMPORT_STARTED_AT = time.perf_counter()
+_WATCHLIST_MODULE_IMPORT_MS = 0.0
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services.runtime_constants import RPS_CACHE_FILE
-from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_json_cache_service import load_json_file
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_quote_service import resolve_quote_metrics
 from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
-from app.services.ui_watchlist_service import watchlist_vm
+from app.services.watchlist_indicator_service import (
+    build_watchlist_indicator_results,
+    build_watchlist_metric_patch,
+    persist_watchlist_metrics,
+)
 from core.buy_point import BUY_POINT_TEXT
-from core.exceptions import CacheIOError, DataFormatError
 from core.logger import get_logger
-from ui.components import TableStateWrapper, VCPTableView
+from core.observability import record_metric
+from ui.components.table_controls import VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.stock_table_model import BUY_POINT_TRIGGER_ICON
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.watchlist_table_state import LazyWatchlistTableStateWrapper as TableStateWrapper
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.tab_registry import create_tab_lineage_service
 
 log = get_logger(__name__)
+
+
+class _LazyWatchlistViewModelProxy:
+    """Keep the SQLite-backed watchlist VM out of the tab's import path."""
+
+    @staticmethod
+    def _resolve():
+        from app.services.ui_watchlist_service import watchlist_vm as resolved_watchlist_vm
+
+        return resolved_watchlist_vm
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._resolve(), name, value)
+
+    def __delattr__(self, name):
+        delattr(self._resolve(), name)
+
+
+watchlist_vm = _LazyWatchlistViewModelProxy()
+
+
+def load_active_rps_payload():
+    from app.services.f5_snapshot_service import load_active_rps_payload as load_payload
+
+    return load_payload()
+
+
+def capture_workspace_stock_context(workspace, *, include_rps_bundle: bool = True):
+    from ui.workspaces.stock_context_widget_adapter import capture_workspace_stock_context as capture_context
+
+    return capture_context(workspace, include_rps_bundle=include_rps_bundle)
 
 
 def _task_cancelled(cancellation_token) -> bool:
@@ -42,12 +85,385 @@ def _active_items(values, cancellation_token=None):
         yield value
 
 
-def _run_vcp_refresh(owner, codes_with_rows, cancellation_token):
-    return owner._refresh_vcp_indicators(codes_with_rows, cancellation_token=cancellation_token)
+def _format_watchlist_note(earnings: object = "", block_trade: object = "", lhb: object = "") -> str:
+    parts = []
+    for raw_value in (earnings, block_trade):
+        text = str(raw_value or "").strip()
+        if text and text != "--":
+            parts.append(text)
+
+    lhb_text = str(lhb or "").strip()
+    if lhb_text and lhb_text != "--":
+        parts.append(BUY_POINT_TRIGGER_ICON if lhb_text == BUY_POINT_TEXT else lhb_text)
+
+    return " / ".join(parts)
+
+
+def _watchlist_identity_fields(code, info_new, info_old, code_name_map):
+    source_context = {**info_old, **info_new}
+    source_context.pop("催化剂", None)
+    source_context.pop("美股日报", None)
+    source_tags = watchlist_vm.derive_source_tags(
+        source_context,
+        existing_tags=source_context.get("来源标签"),
+    )
+    name = info_new.get("名称") or info_old.get("名称")
+    if not name or name == str(code):
+        name = code_name_map.get(code, code)
+    return {
+        "代码": code,
+        "名称": name,
+        "来源": watchlist_vm.format_source_tags(source_tags),
+        "来源标签": source_tags,
+    }
+
+
+def _prefer_live_value(live_entry, info_new, key):
+    live_value = live_entry.get(key, "--")
+    return live_value if live_value != "--" else info_new.get(key, "--")
+
+
+def _watchlist_display_fields(info_new, info_old, live_entry):
+    cap = _prefer_live_value(live_entry, info_new, "市值")
+    subsector = info_new.get("细分板块") or info_old.get("细分板块") or info_new.get("subsector", "")
+    return {
+        "现价": str(_prefer_live_value(live_entry, info_new, "现价")),
+        "涨幅%": str(_prefer_live_value(live_entry, info_new, "涨幅%")),
+        "市值": str(cap if cap and cap != "--" else ""),
+        "RPS强度": str(info_new.get("RPS强度", "--")),
+        "细分板块": str(subsector or ""),
+        "摘要": str(info_new.get("备注") or info_old.get("备注", "") or ""),
+        "_zongguben": live_entry.get("_zongguben", 0),
+    }
+
+
+def _watchlist_detail_fields(info_new, info_old):
+    block_trade = info_new.get("大宗交易", "")
+    earnings = info_new.get("业绩异动", "")
+    lhb = info_new.get("龙虎榜", "")
+    return {
+        "备注": _format_watchlist_note(earnings, block_trade, lhb),
+        "大宗交易": block_trade,
+        "大宗交易金额(万)": info_new.get("大宗交易金额(万)", info_old.get("大宗交易金额(万)", "")),
+        "业绩异动": earnings,
+        "业绩环比%": info_new.get("业绩环比%", info_old.get("业绩环比%", "")),
+        "龙虎榜": lhb,
+        "龙虎榜日期": info_new.get("龙虎榜日期", ""),
+        "龙虎榜净额(万)": info_new.get("龙虎榜净额(万)", info_old.get("龙虎榜净额(万)", "")),
+    }
+
+
+def _shape_watchlist_rows(all_codes, data_dict, old_pool, code_name_map, live_data_map, cancellation_token=None):
+    rows = []
+    for code in _active_items(all_codes, cancellation_token):
+        info_new = data_dict.get(code, {})
+        info_old = old_pool.get(code, {})
+        row = _watchlist_identity_fields(code, info_new, info_old, code_name_map)
+        row.update(_watchlist_display_fields(info_new, info_old, live_data_map.get(code, {})))
+        row.update(_watchlist_detail_fields(info_new, info_old))
+        rows.append(row)
+    return rows
+
+
+def _merge_watchlist_quote_row(row: dict, quote: dict) -> None:
+    metrics = resolve_quote_metrics(row, quote)
+    updates = {
+        "现价": metrics.get("price_text"),
+        "涨幅%": metrics.get("pct"),
+        "市值": metrics.get("market_cap_text"),
+    }
+    row.update({key: value for key, value in updates.items() if value is not None and value != ""})
+    zongguben = float(metrics.get("zongguben", 0) or 0)
+    if zongguben > 0:
+        row["_zongguben"] = zongguben
+
+
+def _merge_watchlist_quote_snapshot(rows, quote_snapshot) -> list:
+    merged_rows = list(rows or [])
+    snapshot = dict(quote_snapshot or {})
+    for row in merged_rows:
+        quote = snapshot.get(str(row.get("代码", "") or "").strip())
+        if isinstance(quote, dict):
+            _merge_watchlist_quote_row(row, quote)
+    return merged_rows
+
+
+def _copy_quote_snapshot(snapshot, codes=None) -> dict:
+    code_filter = None if codes is None else {str(code) for code in codes if str(code).strip()}
+    copied = {}
+    for code, values in dict(snapshot or {}).items():
+        code_text = str(code)
+        if not isinstance(values, dict) or (code_filter is not None and code_text not in code_filter):
+            continue
+        copied[code_text] = dict(values)
+    return copied
+
+
+def _capture_latest_quote_snapshot(codes=None) -> dict:
+    try:
+        from core.global_store import global_store
+
+        snapshot = global_store.get_latest_quotes() or {}
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
+        return {}
+    return _copy_quote_snapshot(snapshot, codes)
+
+
+def _load_watchlist_initial_payload(code_name_map, live_data_map, cancellation_token):
+    started_at = time.perf_counter()
+    data_dict = watchlist_vm.get_watchlist_data()
+    rows = _shape_watchlist_rows(
+        tuple(data_dict),
+        data_dict,
+        {},
+        code_name_map,
+        live_data_map,
+        cancellation_token,
+    )
+    return {
+        "rows": rows,
+        "elapsed_ms": (time.perf_counter() - started_at) * 1000.0,
+        "row_count": len(rows),
+    }
+
+
+def _build_watchlist_initial_job(code_name_map, live_data_map):
+    return partial(
+        _load_watchlist_initial_payload,
+        dict(code_name_map),
+        {code: dict(values) for code, values in live_data_map.items()},
+    )
+
+
+def _capture_watchlist_live_data(model) -> dict:
+    live_data_map = {}
+    for row in list(getattr(model, "row_data", None) or []):
+        code = row.get("代码")
+        if code:
+            live_data_map[code] = {
+                "现价": row.get("现价", "--"),
+                "涨幅%": row.get("涨幅%", "--"),
+                "市值": row.get("市值", "--"),
+                "_zongguben": row.get("_zongguben", 0),
+            }
+    return live_data_map
+
+
+def _watchlist_rows_light_signature(rows) -> tuple:
+    return tuple(
+        tuple(sorted((str(key), str(value)) for key, value in dict(row).items()))
+        for row in rows
+        if isinstance(row, dict)
+    )
+
+
+def _finalize_watchlist_rows_lineage(owner, rows, generation: int | None = None) -> None:
+    try:
+        closing = bool(owner._closing)
+    except RuntimeError:
+        return
+    if closing or (
+        generation is not None
+        and generation != getattr(owner, "_watchlist_lineage_generation", 0)
+    ):
+        return
+    result = owner._describe_watchlist_rows(list(rows or []))
+    owner._last_watchlist_result = result
+    owner._last_watchlist_signature = result.signature
+    owner._update_status_summary()
+
+
+def _can_refresh_watchlist_live(owner) -> bool:
+    return not bool(getattr(owner, "_workspace_noninteractive_loaded", False)) and owner._can_fetch_live_quotes_now()
+
+
+def _apply_watchlist_rows(
+    owner,
+    rows,
+    *,
+    refresh_quote_store: bool = True,
+    describe_rows: bool = True,
+    update_status: bool = True,
+) -> None:
+    row_payload = list(rows or [])
+    with ui_stall_span(
+        "WatchlistTab._apply_watchlist_rows",
+        tab="watchlist",
+        signal=str(len(row_payload)),
+    ):
+        owner._touch_watchlist_update()
+        if describe_rows:
+            with ui_stall_span(
+                "WatchlistTab._describe_watchlist_rows",
+                tab="watchlist",
+                signal=str(len(row_payload)),
+            ):
+                result = owner._describe_watchlist_rows(row_payload)
+            signature = result.signature
+            owner._last_watchlist_result = result
+        else:
+            signature = _watchlist_rows_light_signature(row_payload)
+            owner._last_watchlist_result = None
+        rows_changed = signature != owner._last_watchlist_signature
+        if rows_changed:
+            with ui_stall_span(
+                "WatchlistTab.model.update_data",
+                tab="watchlist",
+                signal=str(len(row_payload)),
+            ):
+                owner.model.update_data(row_payload, hydrate_latest_quotes=False)
+            owner._last_watchlist_signature = signature
+            quote_task_id = task_registry.quote_refresh("watchlist").task_id
+            if refresh_quote_store:
+                with ui_stall_span(
+                    "WatchlistTab._refresh_quotes_from_store_or_live",
+                    tab="watchlist",
+                    signal=str(len(row_payload)),
+                ):
+                    owner._refresh_quotes_from_store_or_live(quote_task_id=quote_task_id)
+            elif _can_refresh_watchlist_live(owner):
+                owner._refresh_quotes_async_local(quote_task_id=quote_task_id)
+        if update_status:
+            owner._update_status_summary()
+
+
+def _apply_special_data_payload(owner, payload, *, refresh_indicators, indicator_delay_ms) -> None:
+    if owner._closing:
+        return
+    data = payload if isinstance(payload, dict) else {}
+    rows = list(data.get("rows") or [])
+    codes = [row.get("代码") for row in rows if row.get("代码")]
+    rows = _merge_watchlist_quote_snapshot(rows, _capture_latest_quote_snapshot(codes))
+    record_metric(
+        "watchlist_tab_initial_data_ms",
+        float(data.get("elapsed_ms") or 0.0),
+        unit="ms",
+        tags={"rows": str(data.get("row_count", len(rows)))},
+    )
+    _apply_watchlist_rows(owner, rows, refresh_quote_store=False, describe_rows=False, update_status=False)
+    owner._finish_initial_data_loading()
+    owner._watchlist_initial_data_finished = True
+    if refresh_indicators and indicator_delay_ms is None:
+        owner._request_vcp_calc()
+    elif refresh_indicators:
+        owner._request_vcp_calc(delay_ms=indicator_delay_ms)
+    owner._resume_background_preload_after_rows()
+    owner._watchlist_lineage_generation = int(
+        getattr(owner, "_watchlist_lineage_generation", 0)
+    ) + 1
+    lineage_generation = owner._watchlist_lineage_generation
+    QTimer.singleShot(
+        250,
+        lambda: _finalize_watchlist_rows_lineage(owner, rows, lineage_generation),
+    )
+
+
+def _on_special_data_error(owner, error_message) -> None:
+    if owner._closing:
+        return
+    owner._finish_initial_data_loading()
+    owner._watchlist_initial_data_finished = True
+    log.error(f"[watchlist] initial data load failed: {error_message}")
+    if not getattr(owner.model, "row_data", None) and hasattr(owner, "table_state"):
+        owner.table_state.show_error("关注池加载失败", str(error_message or "请稍后重试"))
+    owner._resume_background_preload_after_rows()
+
+
+def _schedule_initial_loading_overlay(owner) -> None:
+    owner._initial_data_loading = True
+    if owner._initial_loading_timer is None:
+        owner._initial_loading_timer = QTimer(owner)
+        owner._initial_loading_timer.setSingleShot(True)
+        owner._initial_loading_timer.timeout.connect(owner._show_initial_loading_if_pending)
+    owner._initial_loading_timer.start(owner.INITIAL_LOADING_REVEAL_DELAY_MS)
+
+
+def _show_initial_loading_if_pending(owner) -> None:
+    if owner._closing or not owner._initial_data_loading:
+        return
+    if getattr(owner.model, "row_data", None) or not hasattr(owner, "table_state"):
+        return
+    owner.table_state.show_loading("正在加载关注池...", "先显示页面，数据将在后台回填")
+
+
+def _finish_initial_data_loading(owner) -> None:
+    owner._initial_data_loading = False
+    if owner._initial_loading_timer is not None:
+        owner._initial_loading_timer.stop()
+
+
+def _run_pending_async_local_quote_refresh(owner) -> None:
+    quote_task_id = owner._pending_quote_task_id
+    owner._pending_quote_task_id = None
+    if not owner._closing and quote_task_id:
+        owner._run_async_local_quote_refresh(quote_task_id)
+
+
+def _proxy_has_active_sort_or_filter(proxy) -> bool:
+    if proxy is None or not proxy.dynamicSortFilter():
+        return False
+    sort_column = getattr(proxy, "sortColumn", None)
+    has_filter_state = hasattr(proxy, "_filter_text") or hasattr(proxy, "_exact_column_filters")
+    if not callable(sort_column) and not has_filter_state:
+        return True
+    active_sort = callable(sort_column) and sort_column() >= 0
+    active_filter = bool(getattr(proxy, "_filter_text", "") or getattr(proxy, "_exact_column_filters", {}))
+    return active_sort or active_filter
+
+
+def _run_coalesced_model_update(owner, callback):
+    proxy = getattr(owner, "proxy_model", None)
+    dynamic_sorting = _proxy_has_active_sort_or_filter(proxy)
+    if dynamic_sorting:
+        proxy.setDynamicSortFilter(False)
+    try:
+        return callback()
+    finally:
+        if dynamic_sorting:
+            proxy.setDynamicSortFilter(True)
+
+
+def _run_vcp_refresh(codes_with_rows, context_snapshot, fallback_radar_data, cancellation_token):
+    radar_data = fallback_radar_data
+    if context_snapshot is not None:
+        from app.services.stock_context_query_service import StockContextQueryService
+
+        radar_data = StockContextQueryService(context_snapshot).query_watchlist_radar(
+            target_codes=[code for _, code in codes_with_rows],
+            include_source_cache_fallback=True,
+            allow_lhb_cache_compute=False,
+        )
+    return build_watchlist_indicator_results(
+        codes_with_rows,
+        radar_data=radar_data,
+        rps_loader=load_active_rps_payload,
+        cancellation_token=cancellation_token,
+    )
+
+
+def _build_vcp_refresh_job(owner, codes_with_rows):
+    window_reader = getattr(owner, "window", None)
+    window = window_reader() if callable(window_reader) else None
+    context_snapshot = capture_workspace_stock_context(
+        getattr(window, "_workspace", None),
+        include_rps_bundle=False,
+    )
+    fallback_radar_data = None
+    if context_snapshot is None:
+        gather_radar = getattr(owner, "_gather_radar_data", None)
+        fallback_radar_data = (
+            gather_radar([code for _, code in codes_with_rows])
+            if callable(gather_radar)
+            else ({}, {}, {}, {}, {}, None)
+        )
+    return partial(_run_vcp_refresh, tuple(codes_with_rows), context_snapshot, fallback_radar_data)
 
 
 def _emit_vcp_if_current(owner, generation: int, results) -> None:
+    complete_preload = getattr(owner, "_complete_background_preload_vcp", None)
     if owner._closing or generation != owner._vcp_task_generation or not results:
+        if callable(complete_preload):
+            complete_preload(generation)
         return
     event_bus.sig_vcp_watchlist_ready.emit(results)
 
@@ -55,11 +471,14 @@ def _emit_vcp_if_current(owner, generation: int, results) -> None:
 def _log_task_error_if_current(owner, generation: int, label: str, error_message) -> None:
     if owner._closing or generation != owner._vcp_task_generation:
         return
+    complete_preload = getattr(owner, "_complete_background_preload_vcp", None)
+    if callable(complete_preload):
+        complete_preload(generation, committed=False)
     log.error(f"[{label}] {error_message}")
 
 
-def _run_metrics_persist(owner, payload, cancellation_token):
-    return owner._persist_watchlist_metrics(payload, cancellation_token=cancellation_token)
+def _run_metrics_persist(payload, cancellation_token):
+    return persist_watchlist_metrics(payload, cancellation_token=cancellation_token)
 
 
 def _commit_watchlist_metrics(patch_payload, cancellation_token) -> None:
@@ -68,11 +487,248 @@ def _commit_watchlist_metrics(patch_payload, cancellation_token) -> None:
     watchlist_vm.bulk_patch_entries(patch_payload, remove_keys=["催化剂", "美股日报", "热点板块"])
 
 
-class WatchlistTab(BaseStockTab):
+@dataclass
+class _WatchlistBackgroundPreloadState:
+    requested: bool = False
+    complete: bool = False
+    signature: tuple[str, ...] = ()
+    vcp_pending: bool = False
+    vcp_generation: int = 0
+    vcp_committed: bool = False
+
+
+def _initialize_watchlist_vcp_state(owner) -> None:
+    owner._pending_vcp_calc = False
+    owner._deferred_vcp_payload = None
+    owner._deferred_vcp_signature = ()
+    owner._pending_vcp_apply_payload = None
+    owner._pending_vcp_apply_signature = ()
+    owner._pending_vcp_apply_noninteractive = False
+    owner._pending_vcp_apply_generation = 0
+    owner._vcp_apply_timer = None
+    owner._last_vcp_tab_shown_at = 0.0
+    owner._last_vcp_calc_started_at = 0.0
+    owner._last_vcp_payload_signature = ()
+    owner._vcp_calc_allow_noninteractive = False
+    owner._background_preload = _WatchlistBackgroundPreloadState()
+
+
+def _watchlist_initial_data_is_loading(owner) -> bool:
+    lifecycle = getattr(owner, "_task_lifecycle", None)
+    return bool(lifecycle is not None and "initial_data" in getattr(lifecycle, "active_names", ()))
+
+
+def _resume_watchlist_preload_without_rows(owner, preload) -> bool:
+    if _watchlist_initial_data_is_loading(owner):
+        return False
+    if owner._watchlist_initial_data_finished:
+        preload.vcp_committed = True
+        preload.complete = True
+        return True
+    owner._load_special_data(refresh_indicators=False)
+    return False
+
+
+def _clear_watchlist_vcp_apply_queue(owner) -> None:
+    apply_timer = getattr(owner, "_vcp_apply_timer", None)
+    if apply_timer is not None:
+        apply_timer.stop()
+    owner._deferred_vcp_payload = None
+    owner._deferred_vcp_signature = ()
+    owner._pending_vcp_apply_payload = None
+    owner._pending_vcp_apply_signature = ()
+    owner._pending_vcp_apply_noninteractive = False
+    owner._pending_vcp_apply_generation = 0
+
+
+def _watchlist_timer_is_active(owner, name: str) -> bool:
+    timer = getattr(owner, name, None)
+    return bool(timer is not None and timer.isActive())
+
+
+def _watchlist_preload_state_is_ready(preload) -> bool:
+    return bool(
+        preload.requested
+        and preload.complete
+        and preload.vcp_committed
+        and not preload.vcp_pending
+    )
+
+
+def _watchlist_vcp_queue_is_idle(owner) -> bool:
+    return bool(
+        not owner._pending_vcp_calc
+        and owner._deferred_vcp_payload is None
+        and owner._pending_vcp_apply_payload is None
+        and not _watchlist_timer_is_active(owner, "_vcp_calc_timer")
+        and not _watchlist_timer_is_active(owner, "_vcp_apply_timer")
+    )
+
+
+def _vcp_payload_dict(payload: object) -> dict:
+    return dict(payload or {}) if isinstance(payload, dict) else {}
+
+
+def _pending_background_vcp_preload(owner):
+    preload = getattr(owner, "_background_preload", None)
+    if preload is not None and preload.requested and preload.vcp_pending:
+        return preload
+    return None
+
+
+def _vcp_payload_matches_last(owner, signature: tuple, *, force: bool) -> bool:
+    return bool(not force and signature and signature == owner._last_vcp_payload_signature)
+
+
+def _vcp_payload_matches_pending(owner, signature: tuple) -> bool:
+    return bool(signature and signature == owner._pending_vcp_apply_signature)
+
+
+def _watchlist_vcp_rows(owner) -> list[tuple[int, str]]:
+    model = getattr(owner, "model", None)
+    rows = getattr(model, "row_data", None) if model is not None else None
+    return [(idx, str(row.get("代码"))) for idx, row in enumerate(rows or ()) if row.get("代码")]
+
+
+def _start_watchlist_vcp_refresh(owner, *, allow_noninteractive: bool) -> bool:
+    codes_with_rows = _watchlist_vcp_rows(owner)
+    if not codes_with_rows:
+        return False
+
+    refresh_job = _build_vcp_refresh_job(owner, codes_with_rows)
+    owner._last_vcp_calc_started_at = time.monotonic()
+    owner._vcp_task_generation += 1
+    generation = owner._vcp_task_generation
+    preload = getattr(owner, "_background_preload", None)
+    if allow_noninteractive and preload is not None and preload.vcp_pending:
+        preload.vcp_generation = generation
+    task_lifecycle_for(owner, runner=task_manager).run_background(
+        "vcp_refresh",
+        refresh_job,
+        on_success=partial(_emit_vcp_if_current, owner, generation),
+        on_error=partial(_log_task_error_if_current, owner, generation, "关注池"),
+        task_id=task_registry.workspace("watchlist_vcp_refresh").task_id,
+        timeout_sec=120,
+    )
+    return True
+
+
+class _WatchlistBackgroundPreloadMixin:
+    """关注池缓存预载 capability；不改变前台 Tab 的交互刷新语义。"""
+
+    def prime_background_load(self) -> bool:
+        """仅使用已有缓存预加载关注池，并在基础行后到时自动继续。"""
+        if self._closing:
+            return False
+        self._background_preload.requested = True
+        return self._resume_background_preload_after_rows()
+
+    def _resume_background_preload_after_rows(self) -> bool:
+        preload = self._background_preload
+        if self._closing or not preload.requested:
+            return False
+
+        rows = list(getattr(self.model, "row_data", None) or []) if self.model is not None else []
+        signature = self._background_preload_row_signature(rows)
+        if not signature:
+            return _resume_watchlist_preload_without_rows(self, preload)
+
+        if signature == preload.signature:
+            return preload.complete
+
+        preload.signature = signature
+        preload.complete = False
+        preload.vcp_pending = True
+        preload.vcp_generation = 0
+        preload.vcp_committed = False
+        _clear_watchlist_vcp_apply_queue(self)
+        # 后台预加载只消费内存行情快照与本地指标缓存，不发起实时行情请求。
+        self._apply_quote_store_snapshot()
+        self._request_vcp_calc(
+            delay_ms=self._startup_indicator_refresh_delay_ms,
+            allow_noninteractive=True,
+        )
+        return True
+
+    def _complete_background_preload_vcp(self, generation: int, *, committed: bool = True) -> None:
+        preload = self._background_preload
+        if self._closing or not preload.vcp_pending or generation != preload.vcp_generation:
+            return
+        preload.vcp_pending = False
+        preload.vcp_committed = bool(committed)
+        preload.complete = bool(committed)
+
+    def is_background_preload_complete(self) -> bool:
+        preload = self._background_preload
+        return _watchlist_preload_state_is_ready(preload) and _watchlist_vcp_queue_is_idle(self)
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            self._vcp_task_generation += 1
+            self._watchlist_lineage_generation = int(
+                getattr(self, "_watchlist_lineage_generation", 0)
+            ) + 1
+            self._pending_vcp_calc = False
+            self._deferred_vcp_payload = None
+            self._deferred_vcp_signature = ()
+            self._pending_vcp_apply_payload = None
+            self._pending_vcp_apply_signature = ()
+            self._pending_vcp_apply_noninteractive = False
+            self._pending_vcp_apply_generation = 0
+            for timer_name in ("_vcp_calc_timer", "_vcp_apply_timer"):
+                timer = getattr(self, timer_name, None)
+                if timer is not None:
+                    timer.stop()
+            self._finish_initial_data_loading()
+            preload = self._background_preload
+            preload.requested = False
+            preload.complete = False
+            preload.vcp_pending = False
+            preload.vcp_committed = False
+            preload.signature = ()
+            self._watchlist_initial_data_finished = False
+            self._background_preload_retry_pending = True
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("initial_data", "vcp_refresh"),
+            task_ids=(
+                task_registry.workspace("watchlist_initial_data"),
+                task_registry.workspace("watchlist_vcp_refresh"),
+            ),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._background_preload.vcp_pending
+            and not self._initial_data_loading,
+            runner=task_manager,
+        )
+
+    def on_workspace_tab_activated(self) -> None:
+        if not getattr(self, "_background_preload_retry_pending", False):
+            return
+        self._background_preload_retry_pending = False
+        rows = list(getattr(self.model, "row_data", None) or []) if self.model is not None else []
+        if rows:
+            self._request_vcp_calc(allow_noninteractive=True)
+        else:
+            self._load_special_data()
+
+    def _cleanup_runtime_state(self):
+        self.shutdown()
+        super()._cleanup_runtime_state()
+
+
+class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
     CONTEXT_REFRESH_MIN_INTERVAL_MS = 60_000
+    INITIAL_LOADING_REVEAL_DELAY_MS = 120
     POST_SHOW_VCP_CALC_DELAY_MS = 2_000
     POST_SHOW_VCP_APPLY_SETTLE_MS = 2_500
     FOREGROUND_VCP_APPLY_DELAY_MS = 150
+    _schedule_initial_loading_overlay = _schedule_initial_loading_overlay
+    _show_initial_loading_if_pending = _show_initial_loading_if_pending
+    _finish_initial_data_loading = _finish_initial_data_loading
+    _run_pending_async_local_quote_refresh = _run_pending_async_local_quote_refresh
+    _run_coalesced_model_update = _run_coalesced_model_update
 
     """
     关注池 独立 Tab 组件 (Controller + View)
@@ -90,6 +746,7 @@ class WatchlistTab(BaseStockTab):
         startup_indicator_refresh_delay_ms: int = 500,
         startup_followup_refresh_enabled: bool = True,
     ):
+        ui_construct_started_at = time.perf_counter()
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
         self._closing = False
@@ -98,32 +755,21 @@ class WatchlistTab(BaseStockTab):
         self._startup_indicator_refresh_enabled = bool(startup_indicator_refresh_enabled)
         self._startup_indicator_refresh_delay_ms = self._coerce_delay_ms(startup_indicator_refresh_delay_ms, 500)
         self._startup_followup_refresh_enabled = bool(startup_followup_refresh_enabled)
-        self._delayed_special_timer = None
-        self._pending_vcp_calc = False
-        self._deferred_vcp_payload = None
-        self._deferred_vcp_signature = ()
-        self._pending_vcp_apply_payload = None
-        self._pending_vcp_apply_signature = ()
-        self._vcp_apply_timer = None
-        self._last_vcp_tab_shown_at = 0.0
-        self._last_vcp_calc_started_at = 0.0
-        self._last_vcp_payload_signature = ()
-        self._vcp_calc_allow_noninteractive = False
-        self._watchlist_lineage_service = TabDataLineageService(
-            key="watchlist",
-            source="watchlist_vm + local_quote_snapshot",
-            provider="watchlist_vm/global_store",
-            cache_refs=(
-                "watchlist store",
-                "global_store.quotes",
-                "local_tdx_cache",
-                "data/Cache/finance_cache.json",
-            ),
-            provider_status_reader=self._read_provider_status,
-        )
+        self._delayed_special_timer = self._initial_loading_timer = self._quote_refresh_timer = None
+        self._initial_data_loading = False
+        self._pending_quote_task_id = None
+        _initialize_watchlist_vcp_state(self)
+        self._watchlist_initial_data_finished = False
+        self._watchlist_lineage_service = None
         self._last_watchlist_result = None
         self._last_watchlist_signature = ""
         self._init_ui()
+        record_metric("watchlist_tab_import_ms", _WATCHLIST_MODULE_IMPORT_MS, unit="ms")
+        record_metric(
+            "watchlist_tab_ui_construct_ms",
+            (time.perf_counter() - ui_construct_started_at) * 1000.0,
+            unit="ms",
+        )
         # 订阅全局报价与大一统市值更新机制
         self.subscribe_global_quotes()
 
@@ -213,10 +859,13 @@ class WatchlistTab(BaseStockTab):
         super().hideEvent(event)
         timer = getattr(self, "_vcp_calc_timer", None)
         if timer is not None and timer.isActive():
-            timer.stop()
-            self._pending_vcp_calc = True
+            if not self._vcp_calc_allow_noninteractive:
+                timer.stop()
+                self._pending_vcp_calc = True
         apply_timer = getattr(self, "_vcp_apply_timer", None)
         if apply_timer is not None and apply_timer.isActive():
+            if self._pending_vcp_apply_noninteractive:
+                return
             apply_timer.stop()
             if self._pending_vcp_apply_payload:
                 self._defer_vcp_payload(
@@ -330,17 +979,7 @@ class WatchlistTab(BaseStockTab):
 
     @staticmethod
     def _format_watchlist_note(earnings: object = "", block_trade: object = "", lhb: object = "") -> str:
-        parts = []
-        for raw_value in (earnings, block_trade):
-            text = str(raw_value or "").strip()
-            if text and text != "--":
-                parts.append(text)
-
-        lhb_text = str(lhb or "").strip()
-        if lhb_text and lhb_text != "--":
-            parts.append(BUY_POINT_TRIGGER_ICON if lhb_text == BUY_POINT_TEXT else lhb_text)
-
-        return " / ".join(parts)
+        return _format_watchlist_note(earnings, block_trade, lhb)
 
     def _touch_watchlist_update(self, stamp: str | None = None) -> bool:
         text = str(stamp or "").strip() or self._now_hhmm()
@@ -351,7 +990,7 @@ class WatchlistTab(BaseStockTab):
 
     def _latest_trade_date_text(self) -> str:
         try:
-            trade_date = MarketCalendar.get_latest_trade_date("CN")
+            trade_date = MarketCalendar.get_latest_trade_date("CN", allow_refresh=False)
             if trade_date is not None:
                 return trade_date.isoformat()
             return MarketCalendar.today("CN").isoformat()
@@ -359,13 +998,18 @@ class WatchlistTab(BaseStockTab):
             return ""
 
     def _describe_watchlist_rows(self, rows: list[dict]):
+        if self._watchlist_lineage_service is None:
+            self._watchlist_lineage_service = create_tab_lineage_service(
+                "watchlist",
+                provider_status_reader=self._read_provider_status,
+            )
         warnings = []
         if not rows:
             warnings.append("watchlist_rows_empty")
         return self._watchlist_lineage_service.describe(
             rows,
             trade_date=self._latest_trade_date_text(),
-            triggered_network=self._can_fetch_live_quotes_now(),
+            triggered_network=False,
             warnings=warnings,
             extra={
                 "startup_tasks_enabled": self._startup_tasks_enabled,
@@ -380,112 +1024,49 @@ class WatchlistTab(BaseStockTab):
             result = self._describe_watchlist_rows(rows)
             self._last_watchlist_result = result
             self._last_watchlist_signature = result.signature
-        return result.lineage.as_dict()
+        return result.lineage.as_dynamic_dict()
 
     # ================================================================
     # 数据加载
     # ================================================================
     def _load_special_data(self, *, refresh_indicators: bool = True, indicator_delay_ms: int | None = None):
-        """加载关注池数据：统一走 ViewModel/SQLite。"""
+        """先显示表格壳，再在组件生命周期内后台读取并整形关注池数据。"""
         if self._closing:
             return
-        data_dict = watchlist_vm.get_watchlist_data()
 
-        all_codes = list(data_dict.keys())
+        self._watchlist_initial_data_finished = False
 
-        # 渲染表格
-        self._render_table(all_codes, data_dict, {})
+        live_data_map = _capture_watchlist_live_data(self.model)
+        code_name_map = dict(getattr(self.data_provider, "code2name", {}) or {})
+        if not live_data_map:
+            self._schedule_initial_loading_overlay()
+        else:
+            self._finish_initial_data_loading()
 
-        # 主动触发 VCP 指标刷新（细分板块/RPS/业绩异动等）
-        # 为什么不依赖 CACHE_LOADED 事件：因为存在时序竞态——
-        # 缓存可能在 3.5s 延迟前就加载完了，那时 model.row_data 还是空的
-        # 引入 _request_vcp_calc 防抖 500ms 重复合并
-        if refresh_indicators:
-            if indicator_delay_ms is None:
-                self._request_vcp_calc()
-            else:
-                self._request_vcp_calc(delay_ms=indicator_delay_ms)
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            "initial_data",
+            _build_watchlist_initial_job(code_name_map, live_data_map),
+            on_success=partial(
+                _apply_special_data_payload,
+                self,
+                refresh_indicators=refresh_indicators,
+                indicator_delay_ms=indicator_delay_ms,
+            ),
+            on_error=partial(_on_special_data_error, self),
+            task_id=task_registry.workspace("watchlist_initial_data").task_id,
+            timeout_sec=15,
+        )
 
     def _render_table(self, all_codes, data_dict, old_pool):
         """渲染关注池表格"""
-        self._touch_watchlist_update()
-
-        # 提取当前表格中活跃的实时行情和市值，避免重绘时发生闪退或变成 '--'
-        live_data_map = {}
-        if hasattr(self, "model") and getattr(self.model, "row_data", None):
-            for r in self.model.row_data:
-                c = r.get("代码")
-                if c:
-                    live_data_map[c] = {
-                        "现价": r.get("现价", "--"),
-                        "涨幅%": r.get("涨幅%", "--"),
-                        "市值": r.get("市值", "--"),
-                        "_zongguben": r.get("_zongguben", 0),
-                    }
-
-        final_list = []
-        for row_idx, code in enumerate(all_codes):
-            info_new = data_dict.get(code, {})
-            info_old = old_pool.get(code, {})
-            source_context = dict(info_old)
-            source_context.update(info_new)
-            source_context.pop("催化剂", None)
-            source_context.pop("美股日报", None)
-            source_tags = watchlist_vm.derive_source_tags(
-                source_context,
-                existing_tags=source_context.get("来源标签"),
-            )
-            source_text = watchlist_vm.format_source_tags(source_tags)
-            # 优先从新老池数据中提取名称，最后使用全局映射
-            name = info_new.get("名称") or info_old.get("名称")
-            if not name or name == str(code):
-                name = getattr(self.data_provider, "code2name", {}).get(code, code)
-
-            live_entry = live_data_map.get(code, {})
-            # 优先保留活跃数据
-            cur_price = live_entry.get("现价") if live_entry.get("现价", "--") != "--" else info_new.get("现价", "--")
-            pct_str = live_entry.get("涨幅%") if live_entry.get("涨幅%", "--") != "--" else info_new.get("涨幅%", "--")
-            cap = live_entry.get("市值") if live_entry.get("市值", "--") != "--" else info_new.get("市值", "--")
-
-            rps = info_new.get("RPS强度", "--")
-            subsector = info_new.get("细分板块") or info_old.get("细分板块") or info_new.get("subsector", "") or ""
-            cap_display = cap if cap and cap != "--" else ""
-            summary = str(info_new.get("备注") or info_old.get("备注", "") or "")
-            block_trade = info_new.get("大宗交易", "")
-            earnings = info_new.get("业绩异动", "")
-            lhb = info_new.get("龙虎榜", "")
-
-            row_data = {
-                "代码": code,
-                "名称": name,
-                "来源": source_text,
-                "现价": str(cur_price),
-                "涨幅%": str(pct_str),
-                "市值": str(cap_display),
-                "RPS强度": str(rps),
-                "细分板块": str(subsector),
-                "摘要": summary,
-                "备注": self._format_watchlist_note(earnings, block_trade, lhb),
-                "大宗交易": block_trade,
-                "大宗交易金额(万)": info_new.get("大宗交易金额(万)", info_old.get("大宗交易金额(万)", "")),
-                "业绩异动": earnings,
-                "业绩环比%": info_new.get("业绩环比%", info_old.get("业绩环比%", "")),
-                "龙虎榜": lhb,
-                "龙虎榜日期": info_new.get("龙虎榜日期", ""),
-                "龙虎榜净额(万)": info_new.get("龙虎榜净额(万)", info_old.get("龙虎榜净额(万)", "")),
-                "来源标签": source_tags,
-                "_zongguben": live_entry.get("_zongguben", 0),
-            }
-            final_list.append(row_data)
-
-        result = self._describe_watchlist_rows(final_list)
-        self._last_watchlist_result = result
-        rows_changed = result.signature != self._last_watchlist_signature
-        if rows_changed:
-            self.model.update_data(result.rows)
-            self._last_watchlist_signature = result.signature
-            self._refresh_quotes_from_store_or_live(quote_task_id=task_registry.quote_refresh("watchlist").task_id)
-        self._update_status_summary()
+        rows = _shape_watchlist_rows(
+            tuple(all_codes),
+            data_dict,
+            old_pool,
+            dict(getattr(self.data_provider, "code2name", {}) or {}),
+            _capture_watchlist_live_data(self.model),
+        )
+        _apply_watchlist_rows(self, rows)
 
     def _can_fetch_live_quotes_now(self) -> bool:
         provider = getattr(self, "data_provider", None)
@@ -503,9 +1084,18 @@ class WatchlistTab(BaseStockTab):
             self._refresh_quotes_async_local(quote_task_id=quote_task_id)
 
     def _refresh_quotes_async_local(self, *, quote_task_id):
-        QTimer.singleShot(0, lambda task_id=quote_task_id: self._run_async_local_quote_refresh(task_id))
+        if self._closing:
+            return
+        self._pending_quote_task_id = quote_task_id
+        if self._quote_refresh_timer is None:
+            self._quote_refresh_timer = QTimer(self)
+            self._quote_refresh_timer.setSingleShot(True)
+            self._quote_refresh_timer.timeout.connect(self._run_pending_async_local_quote_refresh)
+        self._quote_refresh_timer.start(0)
 
     def _run_async_local_quote_refresh(self, quote_task_id):
+        if getattr(self, "_closing", False):
+            return
         try:
             self.refresh_table_quotes_and_market_caps(
                 quote_task_id=quote_task_id,
@@ -732,20 +1322,9 @@ class WatchlistTab(BaseStockTab):
                 target_codes=codes,
                 allow_lhb_cache_compute=False,
             )
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            log.warning(f"[关注池] 提取工作区雷达数据异常: {e}")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[关注池] 提取工作区雷达数据异常: {exc}")
             return {}, {}, {}, {}, {}, None
-
-    def _run_coalesced_model_update(self, callback):
-        proxy = getattr(self, "proxy_model", None)
-        dynamic_sorting = bool(proxy is not None and proxy.dynamicSortFilter())
-        if dynamic_sorting:
-            proxy.setDynamicSortFilter(False)
-        try:
-            return callback()
-        finally:
-            if dynamic_sorting:
-                proxy.setDynamicSortFilter(True)
 
     def _apply_quote_snapshot(self, quotes: dict | None):
         apply_snapshot = super()._apply_quote_snapshot
@@ -766,88 +1345,14 @@ class WatchlistTab(BaseStockTab):
 
     def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None, cancellation_token=None):
         """后台线程：计算关注池标的的 RPS 和跨 Tab 附加字段。"""
-        try:
-            log.debug(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标")
-
-            # 1. 尝试从引擎获取RPS
-            if radar_data_tuple is None:
-                radar_data_tuple = self._gather_radar_data([code for _, code in codes_with_rows])
-            rps_bundle = radar_data_tuple[5] if radar_data_tuple and len(radar_data_tuple) > 5 else None
-
-            if not rps_bundle:
-                try:
-                    rps_bundle = load_json_file(RPS_CACHE_FILE)
-                except (CacheIOError, DataFormatError) as e:
-                    log.debug(f"[关注池] RPS 缓存读取失败，改用空值: {e}")
-
-            rps120_series = rps_bundle.get("rps120") if rps_bundle else None
-            rps250_series = rps_bundle.get("rps250") if rps_bundle else None
-
-            # --- 动态扫盘：三大挂载战场的雷达数据提取 ---
-            remark_data, na_subsector_data, block_data, earn_data, lhb_data = (
-                (
-                    radar_data_tuple[0],
-                    radar_data_tuple[1],
-                    radar_data_tuple[2],
-                    radar_data_tuple[3],
-                    radar_data_tuple[4],
-                )
-                if radar_data_tuple
-                else ({}, {}, {}, {}, {})
-            )
-
-            # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
-            results = {}  # 修复局部变量未初始化的 bug
-
-            for _, code in _active_items(codes_with_rows, cancellation_token):
-                try:
-                    has_rps120 = rps120_series is not None and code in rps120_series
-                    has_rps250 = rps250_series is not None and code in rps250_series
-                    rps120_val = float(rps120_series.get(code, 0)) if has_rps120 else 0
-                    rps250_val = float(rps250_series.get(code, 0)) if has_rps250 else 0
-                    block_info = block_data.get(code, {})
-                    earnings_info = earn_data.get(code, {})
-
-                    if isinstance(block_info, dict):
-                        block_text = block_info.get("text", "")
-                        block_amount_wan = block_info.get("amount_wan", "")
-                    else:
-                        block_text = block_info or ""
-                        block_amount_wan = ""
-
-                    if isinstance(earnings_info, dict):
-                        earnings_text = earnings_info.get("text", "")
-                        earnings_qoq_pct = earnings_info.get("qoq_pct", "")
-                    else:
-                        earnings_text = earnings_info or ""
-                        earnings_qoq_pct = ""
-
-                    rps_display = "--"
-                    if rps250_val > 0:
-                        rps_display = f"{rps250_val:.0f}"
-                        if rps120_val > 0:
-                            rps_display += f"/{rps120_val:.0f}"
-
-                    results[code] = {
-                        "rps": rps_display,
-                        "subsector": na_subsector_data.get(code, ""),
-                        "remark": remark_data.get(code, ""),
-                        "block_trade": block_text,
-                        "block_trade_amount_wan": block_amount_wan,
-                        "earnings": earnings_text,
-                        "earnings_qoq_pct": earnings_qoq_pct,
-                        "lhb": lhb_data.get(code, ""),
-                    }
-                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as _e:
-                    log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
-                    continue
-
-            if results:
-                log.info(f"[关注池] {len(results)} 只标的附加指标已就绪")
-            return results
-
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-            log.error(f"[关注池] 附加指标批量计算异常: {e}")
+        if radar_data_tuple is None and codes_with_rows is not None:
+            radar_data_tuple = self._gather_radar_data([code for _, code in codes_with_rows])
+        return build_watchlist_indicator_results(
+            codes_with_rows,
+            radar_data=radar_data_tuple,
+            rps_loader=load_active_rps_payload,
+            cancellation_token=cancellation_token,
+        )
 
     def _apply_vcp_indicators_ui(self, results: dict):
         """主线程：将 VCP 指标更新到 Model（按股票代码匹配，不再按行号，防止排序/拖拽后错位）"""
@@ -941,7 +1446,7 @@ class WatchlistTab(BaseStockTab):
             return
         task_lifecycle_for(self, runner=task_manager).run_background(
             "metrics_persist",
-            partial(_run_metrics_persist, self, payload),
+            partial(_run_metrics_persist, payload),
             on_error=lambda e: log.error(f"[watchlist] metrics persist failed: {e}"),
             task_id=task_registry.workspace("watchlist_vcp_persist").task_id,
             timeout_sec=30,
@@ -950,35 +1455,7 @@ class WatchlistTab(BaseStockTab):
     def _persist_watchlist_metrics(self, results: dict, cancellation_token=None):
         if not results:
             return
-
-        patch_payload: dict[str, dict] = {}
-        for code, data in _active_items(results.items(), cancellation_token):
-            entry_patch = {
-                "RPS强度": str(data.get("rps", "")),
-            }
-            if data.get("subsector"):
-                entry_patch["细分板块"] = str(data["subsector"])
-
-            entry_patch["备注"] = str(data.get("remark", "") or "")
-            entry_patch["大宗交易"] = str(data.get("block_trade", "") or "")
-            entry_patch["大宗交易金额(万)"] = data.get("block_trade_amount_wan", "")
-            entry_patch["业绩异动"] = str(data.get("earnings", "") or "")
-            entry_patch["业绩环比%"] = data.get("earnings_qoq_pct", "")
-            new_lhb = data.get("lhb", "")
-            if isinstance(new_lhb, dict):
-                new_date = new_lhb.get("date", "")
-                new_net = new_lhb.get("net_wan", "")
-                new_buy_point = str(new_lhb.get("buy_point", "") or "").strip()
-                entry_patch["龙虎榜"] = BUY_POINT_TEXT if new_buy_point else ""
-                entry_patch["龙虎榜日期"] = str(new_date or "")
-                entry_patch["龙虎榜净额(万)"] = new_net if new_net not in (None, "") else ""
-            else:
-                entry_patch["龙虎榜"] = str(new_lhb or "")
-                entry_patch["龙虎榜日期"] = ""
-                entry_patch["龙虎榜净额(万)"] = ""
-
-            patch_payload[str(code)] = entry_patch
-
+        patch_payload = build_watchlist_metric_patch(results, cancellation_token=cancellation_token)
         _commit_watchlist_metrics(patch_payload, cancellation_token)
 
     def _on_app_closing(self):
@@ -988,12 +1465,32 @@ class WatchlistTab(BaseStockTab):
             self._save_special_cache_from_table()
 
     def shutdown(self):
+        if getattr(self, "_closing", False):
+            return
         self._closing = True
+        self._pending_quote_task_id = None
         self._vcp_task_generation += 1
+        self._watchlist_lineage_generation = int(
+            getattr(self, "_watchlist_lineage_generation", 0)
+        ) + 1
         self._pending_vcp_calc = False
+        self._deferred_vcp_payload = None
+        self._deferred_vcp_signature = ()
         self._pending_vcp_apply_payload = None
         self._pending_vcp_apply_signature = ()
-        for timer_name in ("_delayed_special_timer", "_vcp_calc_timer", "_vcp_apply_timer", "_debounce_timer"):
+        self._pending_vcp_apply_noninteractive = False
+        self._pending_vcp_apply_generation = 0
+        finish_initial_loading = getattr(self, "_finish_initial_data_loading", None)
+        if callable(finish_initial_loading):
+            finish_initial_loading()
+        for timer_name in (
+            "_delayed_special_timer",
+            "_initial_loading_timer",
+            "_quote_refresh_timer",
+            "_vcp_calc_timer",
+            "_vcp_apply_timer",
+            "_debounce_timer",
+        ):
             timer = getattr(self, timer_name, None)
             if timer is None:
                 continue
@@ -1099,19 +1596,26 @@ class WatchlistTab(BaseStockTab):
     def _on_vcp_watchlist_ready(self, payload: object):
         if self._closing:
             return
-        payload_dict = dict(payload or {}) if isinstance(payload, dict) else {}
+        payload_dict = _vcp_payload_dict(payload)
         if not payload_dict:
             return
         payload_signature = self._vcp_payload_signature(payload_dict)
-        if payload_signature and payload_signature == self._last_vcp_payload_signature:
+        preload = _pending_background_vcp_preload(self)
+        if preload is not None:
+            self._schedule_vcp_payload_apply(
+                payload_dict,
+                delay_ms=0,
+                allow_noninteractive=True,
+                generation=preload.vcp_generation,
+                force=True,
+            )
             return
-        if not self._is_active_workspace_tab_for_vcp():
-            if payload_signature and payload_signature == self._deferred_vcp_signature:
-                return
-            self._deferred_vcp_payload = payload_dict
-            self._deferred_vcp_signature = payload_signature
+        if _vcp_payload_matches_last(self, payload_signature, force=False):
             return
-        self._schedule_vcp_payload_apply(payload_dict)
+        if self._is_active_workspace_tab_for_vcp():
+            self._schedule_vcp_payload_apply(payload_dict)
+            return
+        self._defer_vcp_payload(payload_dict, payload_signature)
 
     def _vcp_apply_delay_ms(self) -> int:
         delay_ms = self.FOREGROUND_VCP_APPLY_DELAY_MS
@@ -1139,39 +1643,58 @@ class WatchlistTab(BaseStockTab):
             self._vcp_apply_timer = timer
         return timer
 
-    def _schedule_vcp_payload_apply(self, payload: object, *, delay_ms: int | None = None) -> None:
+    def _schedule_vcp_payload_apply(
+        self,
+        payload: object,
+        *,
+        delay_ms: int | None = None,
+        allow_noninteractive: bool = False,
+        generation: int = 0,
+        force: bool = False,
+    ) -> None:
         if self._closing:
             return
-        payload_dict = dict(payload or {}) if isinstance(payload, dict) else {}
+        payload_dict = _vcp_payload_dict(payload)
         if not payload_dict:
             return
         payload_signature = self._vcp_payload_signature(payload_dict)
-        if payload_signature and payload_signature == self._last_vcp_payload_signature:
+        if _vcp_payload_matches_last(self, payload_signature, force=force):
             return
-        if not self._is_active_workspace_tab_for_vcp():
-            self._defer_vcp_payload(payload_dict, payload_signature)
-            return
-        if payload_signature and payload_signature == self._pending_vcp_apply_signature:
+        if not allow_noninteractive:
+            if not self._is_active_workspace_tab_for_vcp():
+                self._defer_vcp_payload(payload_dict, payload_signature)
+                return
+        if _vcp_payload_matches_pending(self, payload_signature):
             return
 
         self._pending_vcp_apply_payload = payload_dict
         self._pending_vcp_apply_signature = payload_signature
+        self._pending_vcp_apply_noninteractive = bool(allow_noninteractive)
+        self._pending_vcp_apply_generation = int(generation)
         next_delay_ms = self._vcp_apply_delay_ms() if delay_ms is None else delay_ms
         self._ensure_vcp_apply_timer().start(max(0, int(next_delay_ms)))
 
     def _flush_pending_vcp_apply(self) -> None:
         payload = self._pending_vcp_apply_payload
         payload_signature = self._pending_vcp_apply_signature
+        allow_noninteractive = bool(getattr(self, "_pending_vcp_apply_noninteractive", False))
+        generation = int(getattr(self, "_pending_vcp_apply_generation", 0))
         self._pending_vcp_apply_payload = None
         self._pending_vcp_apply_signature = ()
+        self._pending_vcp_apply_noninteractive = False
+        self._pending_vcp_apply_generation = 0
         if self._closing or not payload:
             return
-        if not self._is_active_workspace_tab_for_vcp():
+        if not allow_noninteractive and not self._is_active_workspace_tab_for_vcp():
             self._defer_vcp_payload(payload, payload_signature)
             return
         self._deferred_vcp_signature = ()
+        if allow_noninteractive and payload_signature == self._last_vcp_payload_signature:
+            self._last_vcp_payload_signature = ()
         log.debug(f"[watchlist] apply {len(payload)} metric rows")
         self._apply_vcp_indicators_ui(payload)
+        if allow_noninteractive:
+            self._complete_background_preload_vcp(generation)
 
     def _is_background_prewarm_indicator_blocked(self) -> bool:
         return (
@@ -1232,6 +1755,14 @@ class WatchlistTab(BaseStockTab):
             allow_noninteractive=True,
         )
 
+    @staticmethod
+    def _background_preload_row_signature(rows) -> tuple[str, ...]:
+        return tuple(
+            str(row.get("代码", "") or "").strip()
+            for row in rows or ()
+            if isinstance(row, dict) and str(row.get("代码", "") or "").strip()
+        )
+
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         if not self.model:
             return False
@@ -1259,20 +1790,13 @@ class WatchlistTab(BaseStockTab):
         if not allow_noninteractive and not self._is_active_workspace_tab_for_vcp():
             self._pending_vcp_calc = True
             return
-        if self.model and self.model.row_data:
-            codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]
-            if codes_with_rows:
-                self._last_vcp_calc_started_at = time.monotonic()
-                self._vcp_task_generation += 1
-                generation = self._vcp_task_generation
-                task_lifecycle_for(self, runner=task_manager).run_background(
-                    "vcp_refresh",
-                    partial(_run_vcp_refresh, self, codes_with_rows),
-                    on_success=partial(_emit_vcp_if_current, self, generation),
-                    on_error=partial(_log_task_error_if_current, self, generation, "关注池"),
-                    task_id=task_registry.workspace("watchlist_vcp_refresh").task_id,
-                    timeout_sec=120,
-                )
+        if _start_watchlist_vcp_refresh(self, allow_noninteractive=allow_noninteractive):
+            return
+        preload = getattr(self, "_background_preload", None)
+        if allow_noninteractive and preload is not None and preload.vcp_pending:
+            preload.vcp_pending = False
+            preload.vcp_committed = True
+            preload.complete = True
 
     # ================================================================
     # 工具方法
@@ -1288,3 +1812,6 @@ class WatchlistTab(BaseStockTab):
             return
         if self._touch_watchlist_update():
             self._update_status_summary()
+
+
+_WATCHLIST_MODULE_IMPORT_MS = (time.perf_counter() - _WATCHLIST_MODULE_IMPORT_STARTED_AT) * 1000.0

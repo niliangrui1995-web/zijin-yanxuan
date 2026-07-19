@@ -94,11 +94,39 @@ def filter_rows_to_stock_universe(
     *,
     cancellation_token: CancellationToken | None = None,
 ) -> list[dict]:
+    stock_codes = load_stock_universe_codes(
+        stock_universe_provider,
+        cancellation_token=cancellation_token,
+    )
+    return filter_rows_to_stock_codes(
+        rows,
+        stock_codes,
+        cancellation_token=cancellation_token,
+    )
+
+
+def load_stock_universe_codes(
+    stock_universe_provider,
+    *,
+    cancellation_token: CancellationToken | None = None,
+) -> set[str]:
     _raise_if_cancelled(cancellation_token)
     try:
-        stock_codes = stock_universe_provider() or set()
+        values = stock_universe_provider() or set()
     except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError):
-        return []
+        return set()
+    _raise_if_cancelled(cancellation_token)
+    stock_codes = {normalize_ai_chain_code(code) for code in values}
+    stock_codes.discard("")
+    return stock_codes
+
+
+def filter_rows_to_stock_codes(
+    rows: list[dict],
+    stock_codes: set[str],
+    *,
+    cancellation_token: CancellationToken | None = None,
+) -> list[dict]:
     _raise_if_cancelled(cancellation_token)
     try:
         result = filter_rows_to_ai_chain_codes(
@@ -112,6 +140,25 @@ def filter_rows_to_stock_universe(
     return result
 
 
+def _query_change_rows_with_stock_filter(store, quarter_keys, stock_codes: set[str]) -> list[dict]:
+    try:
+        return list(
+            store.query_change_rows(
+                quarter_keys=quarter_keys,
+                stock_codes=stock_codes,
+            )
+            or []
+        )
+    except TypeError:
+        try:
+            return list(store.query_change_rows(quarter_keys=quarter_keys) or [])
+        except TypeError:
+            rows = list(store.query_change_rows() or [])
+            if quarter_keys is None:
+                return rows
+            return [row for row in rows if str(row.get("quarter_key") or "").strip() in quarter_keys]
+
+
 def query_change_rows_for_scope(
     quarter_keys: set[str] | None,
     *,
@@ -120,16 +167,15 @@ def query_change_rows_for_scope(
     cancellation_token: CancellationToken | None = None,
 ) -> list[dict]:
     _raise_if_cancelled(cancellation_token)
-    try:
-        rows = store.query_change_rows(quarter_keys=quarter_keys)
-    except TypeError:
-        rows = store.query_change_rows()
-        if quarter_keys is not None:
-            rows = [row for row in rows or [] if str(row.get("quarter_key") or "").strip() in quarter_keys]
-    _raise_if_cancelled(cancellation_token)
-    return filter_rows_to_stock_universe(
-        rows,
+    stock_codes = load_stock_universe_codes(
         stock_universe_provider,
+        cancellation_token=cancellation_token,
+    )
+    rows = _query_change_rows_with_stock_filter(store, quarter_keys, stock_codes)
+    _raise_if_cancelled(cancellation_token)
+    return filter_rows_to_stock_codes(
+        rows,
+        stock_codes,
         cancellation_token=cancellation_token,
     )
 

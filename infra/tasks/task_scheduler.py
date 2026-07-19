@@ -197,7 +197,7 @@ class GlobalTaskManager(QObject):
 
         return _handle
 
-    def _connect_worker_callbacks(self, worker, task_id: str, on_success, on_error) -> None:
+    def _connect_worker_callbacks(self, worker, task_id: str, on_success, on_error, on_terminated) -> None:
         from PyQt6.QtCore import Qt
 
         if on_error is None:
@@ -206,15 +206,25 @@ class GlobalTaskManager(QObject):
             worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
         worker.signals.error.connect(on_error, type=Qt.ConnectionType.QueuedConnection)
 
-        def _cleanup(_=None):
+        def _handle_terminated():
             with self._lock:
                 current = self.active_workers.get(task_id)
                 if current is worker:
                     self.active_workers.pop(task_id, None)
+            if on_terminated is not None:
+                try:
+                    on_terminated()
+                except Exception:  # noqa: BLE001 - a Qt queued callback must not escape.
+                    from core.logger import get_logger
 
-        worker.signals.finished.connect(_cleanup)
-        worker.signals.error.connect(_cleanup)
-        worker.signals.terminated.connect(_cleanup)
+                    get_logger(__name__).exception(
+                        f"[TaskManager] 后台任务 '{task_id}' 终态回调异常"
+                    )
+
+        worker.signals.terminated.connect(
+            _handle_terminated,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
 
     def run_in_background(
         self,
@@ -222,6 +232,7 @@ class GlobalTaskManager(QObject):
         *args,
         on_success=None,
         on_error=None,
+        on_terminated=None,
         task_id: str | None = None,
         task_priority: int | None = None,
         thread_priority=None,
@@ -230,7 +241,6 @@ class GlobalTaskManager(QObject):
         **kwargs,
     ) -> str:
         """便捷方法：后台执行函数，结果通过 Qt 信号安全回传主线程
-
         参数:
             fn: 后台执行的函数
             *args, **kwargs: 传给 fn 的参数
@@ -263,7 +273,7 @@ class GlobalTaskManager(QObject):
             if task_id and task_id in self.active_workers:
                 return tid
 
-        self._connect_worker_callbacks(worker, tid, on_success, on_error)
+        self._connect_worker_callbacks(worker, tid, on_success, on_error, on_terminated)
 
         if task_priority is None:
             return self.submit_task(worker, tid)

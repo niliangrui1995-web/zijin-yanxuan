@@ -73,6 +73,180 @@ def _submit_central_task(service, name, fn, on_success, on_error, task_id, timeo
     )
 
 
+def _fetch_quote_payload_timed(service, codes: set[str], timing: dict[str, float]) -> dict:
+    timing["worker_started_at"] = time.perf_counter()
+    try:
+        return service._fetch_quote_payload(codes)
+    finally:
+        timing["worker_finished_at"] = time.perf_counter()
+
+
+def _remember_pending_fetch(service, reason: str) -> None:
+    if str(reason or "").strip() == "cache_reload":
+        service._pending_fetch_reason = "cache_reload"
+
+
+def _schedule_pending_fetch_replay(service) -> None:
+    if service._closed or not service._pending_fetch_reason or service._pending_fetch_timer.isActive():
+        return
+    service._pending_fetch_timer.start(0)
+
+
+def _replay_pending_fetch(service) -> None:
+    reason = str(service._pending_fetch_reason or "").strip()
+    service._pending_fetch_reason = ""
+    if service._closed or not reason:
+        return
+    if reason == "cache_reload":
+        service._off_market_snapshot_emitted = False
+    service._trigger_fetch_for_reason(reason)
+
+
+def _hold_fetch_while_inflight(service, reason: str, codes: set[str]) -> None:
+    _remember_pending_fetch(service, reason)
+    codes_count = int(service._fetch_codes_count or len(codes) or 0)
+    slow_threshold = _slow_fetch_threshold(service.data_provider, codes_count)
+    if (
+        not service._fetch_warned_slow
+        and service._fetch_start_time > 0
+        and (time.time() - service._fetch_start_time) > slow_threshold
+    ):
+        service._fetch_warned_slow = True
+        log.warning(
+            f"[报价站] 单次抓取耗时过长({time.time() - service._fetch_start_time:.1f}s)，"
+            "继续等待当前单飞行任务结束"
+        )
+
+
+def _quote_phase_durations_ms(timing: dict[str, float], callback_started_at: float) -> dict[str, float]:
+    submitted_at = float(timing.get("submitted_at") or callback_started_at)
+    worker_started_at = float(timing.get("worker_started_at") or submitted_at)
+    worker_finished_at = float(timing.get("worker_finished_at") or callback_started_at)
+    return {
+        "submit_queue_ms": max(0.0, (worker_started_at - submitted_at) * 1000.0),
+        "worker_ms": max(0.0, (worker_finished_at - worker_started_at) * 1000.0),
+        "result_queue_delay_ms": max(0.0, (callback_started_at - worker_finished_at) * 1000.0),
+    }
+
+
+def _record_and_publish_quote_refresh(
+    service,
+    *,
+    codes: set[str],
+    quotes: dict,
+    has_valid: bool,
+    provider_failed: bool,
+    elapsed_ms: float,
+    reason: str,
+    timing: dict[str, float],
+    callback_started_at: float,
+) -> None:
+    phase_ms = _quote_phase_durations_ms(timing, callback_started_at)
+    tags = {"valid_quotes": str(bool(has_valid)).lower(), "reason": str(reason or "timer")}
+    record_metric("quote_refresh_batch_size", len(codes), unit="count", tags=tags)
+    record_metric("quote_refresh_ms", elapsed_ms, unit="ms", tags=tags)
+    for metric_name, phase_key in (
+        ("quote_submit_queue_ms", "submit_queue_ms"),
+        ("quote_worker_ms", "worker_ms"),
+        ("quote_result_queue_delay_ms", "result_queue_delay_ms"),
+    ):
+        record_metric(metric_name, phase_ms[phase_key], unit="ms", tags=tags)
+
+    publish_started_at = time.perf_counter()
+    if has_valid:
+        service.publish_external_quotes(
+            quotes,
+            source="central_quotes.realtime",
+            require_valid=True,
+        )
+    publish_ms = max(0.0, (time.perf_counter() - publish_started_at) * 1000.0)
+    record_metric("quote_publish_ms", publish_ms, unit="ms", tags=tags)
+    emit_structured_log(
+        "quotes.refresh.completed",
+        batch_size=len(codes),
+        elapsed_ms=round(elapsed_ms, 3),
+        valid_quotes=bool(has_valid),
+        provider_failed=bool(provider_failed),
+        publish_ms=round(publish_ms, 3),
+        **{key: round(value, 3) for key, value in phase_ms.items()},
+    )
+
+
+def _has_valid_quotes(quotes: dict) -> bool:
+    return any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
+
+
+def _has_live_quote_source(quotes: dict) -> bool:
+    live_sources = {"eastmoney", "sina", "tencent"}
+    return any(str(quote.get("source") or "").lower() in live_sources for quote in quotes.values())
+
+
+def _provider_fetch_failed(provider_stats: dict, *, has_valid: bool, has_live_source: bool) -> bool:
+    if has_live_source:
+        return False
+    if not has_valid or int(provider_stats.get("consecutive_failures") or 0) > 0:
+        return True
+    return time.time() < float(provider_stats.get("cooldown_until") or 0)
+
+
+def _quote_result_state(payload: dict) -> tuple[dict, dict, dict, bool, bool]:
+    payload = payload or {}
+    quotes = payload.get("quotes") or {}
+    provider_stats = payload.get("provider_stats") or {}
+    quote_request_stats = payload.get("quote_request_stats") or {}
+    has_valid = _has_valid_quotes(quotes)
+    provider_failed = _provider_fetch_failed(
+        provider_stats,
+        has_valid=has_valid,
+        has_live_source=_has_live_quote_source(quotes),
+    )
+    return quotes, provider_stats, quote_request_stats, has_valid, provider_failed
+
+
+def _process_quote_fetch_result(
+    service,
+    *,
+    codes: set[str],
+    payload: dict,
+    elapsed_ms: float,
+    reason: str,
+    timing: dict[str, float],
+    callback_started_at: float,
+) -> None:
+    quotes, provider_stats, quote_request_stats, has_valid, provider_failed = _quote_result_state(payload)
+    service._last_central_quote_request_stats = (
+        dict(quote_request_stats) if isinstance(quote_request_stats, dict) else {}
+    )
+    if provider_failed:
+        service._record_failure(provider_stats.get("last_error") or "提供方返回离线兜底快照")
+    else:
+        service._reset_failures()
+
+    _record_and_publish_quote_refresh(
+        service,
+        codes=codes,
+        quotes=quotes,
+        has_valid=has_valid,
+        provider_failed=provider_failed,
+        elapsed_ms=elapsed_ms,
+        reason=reason,
+        timing=timing,
+        callback_started_at=callback_started_at,
+    )
+
+
+def _publish_off_market_snapshot(service, payload: dict) -> None:
+    quotes = (payload or {}).get("quotes") or {}
+    service._off_market_snapshot_emitted = True
+    if not any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values()):
+        return
+    service.publish_external_quotes(
+        quotes,
+        source="central_quotes.off_market",
+        require_valid=True,
+    )
+
+
 class CentralQuotesService(QObject):
     """
     统一的中央实时报价广播站。
@@ -94,12 +268,16 @@ class CentralQuotesService(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._trigger_fetch)
         self._timer.start(_A_SHARE_POLL_INTERVAL_MS)
+        self._pending_fetch_timer = QTimer(self)
+        self._pending_fetch_timer.setSingleShot(True)
+        self._pending_fetch_timer.timeout.connect(lambda: _replay_pending_fetch(self))
 
         self._is_fetching = False
         self._fetch_start_time = 0.0
         self._fetch_warned_slow = False
         self._fetch_codes_count = 0
         self._fetch_generation = 0
+        self._pending_fetch_reason = ""
         self._off_market_snapshot_emitted = False
         self._off_market_snapshot_fetching = False
         self._off_market_snapshot_generation = 0
@@ -651,23 +829,20 @@ class CentralQuotesService(QObject):
             self._off_market_snapshot_fetching = False
             if self._closed:
                 return
-            payload = payload or {}
-            quotes = payload.get("quotes") or {}
-            self._off_market_snapshot_emitted = True
-            has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
-            if has_valid:
-                self.publish_external_quotes(
-                    quotes,
-                    source="central_quotes.off_market",
-                    require_valid=True,
-                )
+            try:
+                _publish_off_market_snapshot(self, payload)
+            finally:
+                _schedule_pending_fetch_replay(self)
 
         def _on_error(error_message: str):
             if request_generation != self._off_market_snapshot_generation:
                 return
             self._off_market_snapshot_fetching = False
-            if not self._closed:
-                log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
+            try:
+                if not self._closed:
+                    log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
+            finally:
+                _schedule_pending_fetch_replay(self)
 
         _submit_central_task(
             self, "off_market_snapshot", _bg_fetch, _on_result, _on_error,
@@ -704,6 +879,9 @@ class CentralQuotesService(QObject):
             return
 
         if not quote_refreshable:
+            if self._off_market_snapshot_fetching:
+                _remember_pending_fetch(self, reason)
+                return
             self._emit_off_market_snapshot(codes)
             return
 
@@ -711,18 +889,7 @@ class CentralQuotesService(QObject):
             return
 
         if self._is_fetching:
-            codes_count = int(self._fetch_codes_count or len(codes) or 0)
-            slow_threshold = _slow_fetch_threshold(self.data_provider, codes_count)
-            if (
-                not self._fetch_warned_slow
-                and self._fetch_start_time > 0
-                and (time.time() - self._fetch_start_time) > slow_threshold
-            ):
-                self._fetch_warned_slow = True
-                log.warning(
-                    f"[报价站] 单次抓取耗时过长({time.time() - self._fetch_start_time:.1f}s)，"
-                    "继续等待当前单飞行任务结束"
-                )
+            _hold_fetch_while_inflight(self, reason, codes)
             return
 
         codes = self._opening_warmup_codes(codes, market_status=market_status)
@@ -766,14 +933,16 @@ class CentralQuotesService(QObject):
         self._fetch_codes_count = len(codes)
         self._fetch_generation += 1
         fetch_token = self._fetch_generation
+        fetch_timing = {"submitted_at": time.perf_counter()}
 
         def _bg_task(_cancellation_token):
-            return self._fetch_quote_payload(codes)
+            return _fetch_quote_payload_timed(self, codes, fetch_timing)
 
         def _on_result(payload):
             if fetch_token != self._fetch_generation:
                 return
 
+            callback_started_at = time.perf_counter()
             elapsed_ms = max(0.0, (time.time() - self._fetch_start_time) * 1000.0)
             self._is_fetching = False
             self._fetch_start_time = 0.0
@@ -782,55 +951,18 @@ class CentralQuotesService(QObject):
             if self._closed:
                 return
 
-            payload = payload or {}
-            quotes = payload.get("quotes") or {}
-            provider_stats = payload.get("provider_stats") or {}
-            quote_request_stats = payload.get("quote_request_stats") or {}
-            self._last_central_quote_request_stats = (
-                dict(quote_request_stats) if isinstance(quote_request_stats, dict) else {}
-            )
-            cooldown_until = float(provider_stats.get("cooldown_until") or 0)
-            has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
-            has_live_source = any(
-                str(quote.get("source") or "").lower() in {"eastmoney", "sina", "tencent"} for quote in quotes.values()
-            )
-            provider_failed = (not has_live_source) and (
-                (not has_valid)
-                or int(provider_stats.get("consecutive_failures") or 0) > 0
-                or time.time() < cooldown_until
-            )
-
-            if provider_failed:
-                self._record_failure(provider_stats.get("last_error") or "提供方返回离线兜底快照")
-            else:
-                self._reset_failures()
-
-            record_metric(
-                "quote_refresh_batch_size",
-                len(codes),
-                unit="count",
-                tags={"valid_quotes": str(bool(has_valid)).lower()},
-            )
-            record_metric(
-                "quote_refresh_ms",
-                elapsed_ms,
-                unit="ms",
-                tags={"valid_quotes": str(bool(has_valid)).lower()},
-            )
-            emit_structured_log(
-                "quotes.refresh.completed",
-                batch_size=len(codes),
-                elapsed_ms=round(elapsed_ms, 3),
-                valid_quotes=bool(has_valid),
-                provider_failed=bool(provider_failed),
-            )
-
-            if has_valid:
-                self.publish_external_quotes(
-                    quotes,
-                    source="central_quotes.realtime",
-                    require_valid=True,
+            try:
+                _process_quote_fetch_result(
+                    self,
+                    codes=codes,
+                    payload=payload,
+                    elapsed_ms=elapsed_ms,
+                    reason=reason,
+                    timing=fetch_timing,
+                    callback_started_at=callback_started_at,
                 )
+            finally:
+                _schedule_pending_fetch_replay(self)
 
         def _on_error(err_msg):
             if fetch_token != self._fetch_generation:
@@ -843,8 +975,11 @@ class CentralQuotesService(QObject):
             if self._closed:
                 return
 
-            self._record_failure(err_msg or "后台抓取异常")
-            log.error(f"[报价站] 后台抓取异常: {err_msg}")
+            try:
+                self._record_failure(err_msg or "后台抓取异常")
+                log.error(f"[报价站] 后台抓取异常: {err_msg}")
+            finally:
+                _schedule_pending_fetch_replay(self)
 
         _submit_central_task(
             self, "realtime_poll", _bg_task, _on_result, _on_error, CENTRAL_QUOTES_POLL,
@@ -854,7 +989,9 @@ class CentralQuotesService(QObject):
     def shutdown(self):
         self._closed = True
         self._timer.stop()
+        self._pending_fetch_timer.stop()
         self._fetch_generation += 1
+        self._pending_fetch_reason = ""
         self._off_market_snapshot_generation += 1
         self._off_market_snapshot_fetching = False
         self._task_lifecycle.shutdown(timeout_ms=1_000)

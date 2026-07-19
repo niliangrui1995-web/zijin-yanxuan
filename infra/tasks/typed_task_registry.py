@@ -48,6 +48,11 @@ class TypedTaskRegistry:
         normalized = str(value).strip()
         return normalized or None
 
+    def category_for(self, value: TaskKeyLike) -> TaskCategory | None:
+        task_id = self.resolve(value)
+        task_key = self._known.get(task_id or "")
+        return task_key.category if task_key is not None else None
+
     def quote_refresh(self, scope: str) -> TaskKey:
         normalized_scope = str(scope or "").strip()
         if not normalized_scope:
@@ -113,6 +118,16 @@ STARTUP_SMART = task_registry.register(
     category=TaskCategory.STARTUP,
     description="Smart startup connectivity probe",
 )
+STARTUP_F5_RETENTION = task_registry.register(
+    "f5_startup_retention",
+    category=TaskCategory.STARTUP,
+    description="Prune stale isolated F5 runtime artifacts after first paint",
+)
+STARTUP_DATA_PROVIDER = task_registry.register(
+    "startup_data_provider",
+    category=TaskCategory.STARTUP,
+    description="Build the local market-data provider after first paint",
+)
 NETWORK_GO_ONLINE = task_registry.register(
     "go_online",
     category=TaskCategory.NETWORK,
@@ -122,11 +137,6 @@ NETWORK_FORCE_RECONNECT = task_registry.register(
     "force_reconnect",
     category=TaskCategory.NETWORK,
     description="Reconnect realtime quote provider",
-)
-WINDOW_F5_PRECOMPUTE = task_registry.register(
-    "f5_precompute",
-    category=TaskCategory.WINDOW,
-    description="Run the full F5 precompute pipeline",
 )
 SHARED_MARKET_CAPS = task_registry.register(
     "shared_market_caps",

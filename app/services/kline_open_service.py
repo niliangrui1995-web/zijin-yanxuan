@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
+from app.services.kline_open_context import KlineOpenContext, compact_kline_navigation
+from app.services.stock_context_model_service import StockContextSnapshot
+from app.services.stock_context_query_service import StockContextQueryService
+
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
 KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
@@ -247,10 +253,46 @@ def _workspace_scan_results(workspace) -> list[dict]:
     return []
 
 
-def _workspace_stock_signals(workspace, code: str) -> list:
-    code_text = str(code or "").strip()
-    if not code_text:
-        return []
+def _workspace_context_snapshot(workspace) -> StockContextSnapshot | None:
+    explicit_reader = getattr(workspace, "capture_stock_context_snapshot", None)
+    if callable(explicit_reader):
+        snapshot = explicit_reader()
+        return snapshot if isinstance(snapshot, StockContextSnapshot) else None
+    context_reader = getattr(workspace, "collect_stock_context", None)
+    if not callable(context_reader):
+        return None
+    try:
+        snapshot = context_reader(capture_snapshot=True)
+    except TypeError:
+        return None
+    return snapshot if isinstance(snapshot, StockContextSnapshot) else None
+
+
+def _snapshot_stock_signals(workspace, code: str) -> list | None:
+    try:
+        snapshot = _workspace_context_snapshot(workspace)
+        return StockContextQueryService(snapshot).query_kline_signals(code) if snapshot is not None else None
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _published_stock_signals(workspace, code_text: str) -> tuple[bool, list]:
+    published_reader = getattr(workspace, "get_published_stock_context_signals", None)
+    if not callable(published_reader):
+        return False, []
+    try:
+        published = published_reader(code_text)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return True, []
+    if published is None:
+        return True, []
+    return True, list(published) if isinstance(published, (list, tuple)) else []
+
+
+def _legacy_workspace_stock_signals(workspace, code_text: str) -> list:
+    snapshot_signals = _snapshot_stock_signals(workspace, code_text)
+    if snapshot_signals is not None:
+        return snapshot_signals
 
     collect_stock_context = getattr(workspace, "collect_stock_context", None)
     if not callable(collect_stock_context):
@@ -270,16 +312,24 @@ def _workspace_stock_signals(workspace, code: str) -> list:
     return list(signals)
 
 
-def _extract_workspace_scan_signal_payload(workspace, code: str) -> dict:
+def _workspace_stock_signals(workspace, code: str) -> list:
     code_text = str(code or "").strip()
-    signals = _workspace_stock_signals(workspace, code_text)
-    return _extract_scan_signal_payload({"_signals": signals}, code_text)
+    if not code_text:
+        return []
+    published, signals = _published_stock_signals(workspace, code_text)
+    return signals if published else _legacy_workspace_stock_signals(workspace, code_text)
 
 
-def _extract_workspace_earnings_signal_payload(workspace, code: str) -> dict:
+def _extract_workspace_scan_signal_payload(workspace, code: str, signals=None) -> dict:
     code_text = str(code or "").strip()
-    signals = _workspace_stock_signals(workspace, code_text)
-    return _extract_earnings_signal_payload({"_signals": signals}, code_text)
+    workspace_signals = _workspace_stock_signals(workspace, code_text) if signals is None else signals
+    return _extract_scan_signal_payload({"_signals": workspace_signals}, code_text)
+
+
+def _extract_workspace_earnings_signal_payload(workspace, code: str, signals=None) -> dict:
+    code_text = str(code or "").strip()
+    workspace_signals = _workspace_stock_signals(workspace, code_text) if signals is None else signals
+    return _extract_earnings_signal_payload({"_signals": workspace_signals}, code_text)
 
 
 def _merge_scan_context(
@@ -289,13 +339,14 @@ def _merge_scan_context(
     workspace,
     source_tab_key: str,
     scan_results: list[dict],
+    workspace_signals=None,
 ) -> None:
     embedded_scan = _extract_scan_signal_payload(vcp_data, code_text)
     if embedded_scan:
         _merge_missing(vcp_data, embedded_scan)
         return
 
-    context_scan = _extract_workspace_scan_signal_payload(workspace, code_text)
+    context_scan = _extract_workspace_scan_signal_payload(workspace, code_text, workspace_signals)
     if context_scan:
         _merge_missing(vcp_data, context_scan)
         return
@@ -309,10 +360,146 @@ def _merge_scan_context(
         vcp_data["_vcp_overlay_allowed"] = True
 
 
-def merge_workspace_earnings_context(*, vcp_data: dict, code_text: str, workspace) -> None:
-    earnings_payload = _extract_workspace_earnings_signal_payload(workspace, code_text)
+def merge_workspace_earnings_context(*, vcp_data: dict, code_text: str, workspace, workspace_signals=None) -> None:
+    earnings_payload = _extract_workspace_earnings_signal_payload(workspace, code_text, workspace_signals)
     if earnings_payload:
         _merge_missing(vcp_data, earnings_payload)
+
+
+def _scan_rows_needed(
+    *,
+    vcp_data: dict,
+    code_text: str,
+    source_tab_key: str,
+    workspace,
+    workspace_signals,
+) -> list[dict]:
+    if _extract_scan_signal_payload(vcp_data, code_text):
+        return []
+    if _extract_workspace_scan_signal_payload(workspace, code_text, workspace_signals):
+        return []
+    if not _source_allows_workspace_scan_merge(vcp_data, source_tab_key):
+        return []
+    return _workspace_scan_results(workspace)
+
+
+def merge_workspace_kline_context(
+    *,
+    vcp_data: dict,
+    code_text: str,
+    workspace,
+    source_tab_key: str = "",
+) -> None:
+    """Merge one code from the published index; never capture widgets on production click paths."""
+
+    workspace_signals = _workspace_stock_signals(workspace, code_text)
+    _merge_scan_context(
+        vcp_data=vcp_data,
+        code_text=code_text,
+        workspace=workspace,
+        source_tab_key=source_tab_key,
+        scan_results=_scan_rows_needed(
+            vcp_data=vcp_data,
+            code_text=code_text,
+            source_tab_key=source_tab_key,
+            workspace=workspace,
+            workspace_signals=workspace_signals,
+        ),
+        workspace_signals=workspace_signals,
+    )
+    merge_workspace_earnings_context(
+        vcp_data=vcp_data,
+        code_text=code_text,
+        workspace=workspace,
+        workspace_signals=workspace_signals,
+    )
+
+
+def _current_context_data(
+    code_list: Sequence[Mapping] | None,
+    current_idx: int,
+    code_text: str,
+    name: str,
+    *,
+    source_tab_index: int,
+    source_tab_key: str,
+) -> tuple[dict, str]:
+    if not code_list or not (0 <= current_idx < len(code_list)):
+        return {KEY_CODE: code_text, KEY_NAME: name}, name
+    current = code_list[current_idx]
+    if not isinstance(current, Mapping):
+        return {KEY_CODE: code_text, KEY_NAME: name}, name
+    normalized = _normalize_code_list(
+        [current],
+        source_tab_index=source_tab_index,
+        source_tab_key=source_tab_key,
+    )[0]
+    return _current_vcp_data([normalized], 0, code_text, name)
+
+
+def _resolved_open_context(
+    *,
+    code: str,
+    name: str,
+    vcp_data: dict,
+    navigation,
+    current_idx: int,
+    source_tab_key: str,
+    source_tab_index: int,
+) -> KlineOpenContext:
+    current_item = navigation[current_idx] if 0 <= current_idx < len(navigation) else None
+    return KlineOpenContext(
+        code=code,
+        name=name,
+        vcp_data=vcp_data,
+        navigation=navigation,
+        current_idx=current_idx,
+        source_tab_key=current_item.source_tab_key if current_item is not None else source_tab_key,
+        source_tab_index=current_item.source_tab_index if current_item is not None else source_tab_index,
+    )
+
+
+def build_kline_open_context(
+    *,
+    code: str,
+    code_name_map: dict[str, str] | None,
+    code_list: Sequence[Mapping] | None,
+    current_idx: int,
+    workspace=None,
+    source_tab_index: int = -1,
+    source_tab_key: str = "",
+) -> KlineOpenContext:
+    """Resolve the current stock once while retaining only compact navigation rows."""
+    code_text = str(code or "").strip()
+    name = str((code_name_map or {}).get(code_text, code_text)).strip() or code_text
+    vcp_data, name = _current_context_data(
+        code_list,
+        current_idx,
+        code_text,
+        name,
+        source_tab_index=source_tab_index,
+        source_tab_key=source_tab_key,
+    )
+    merge_workspace_kline_context(
+        vcp_data=vcp_data,
+        code_text=code_text,
+        workspace=workspace,
+        source_tab_key=source_tab_key,
+    )
+    navigation = compact_kline_navigation(
+        code_list,
+        source_tab_key=source_tab_key,
+        source_tab_index=source_tab_index,
+    )
+    return _resolved_open_context(
+        code=code_text,
+        name=name,
+        vcp_data=vcp_data,
+        navigation=navigation,
+        current_idx=current_idx,
+        source_tab_key=source_tab_key,
+        source_tab_index=source_tab_index,
+    )
 
 
 def build_kline_open_request(
@@ -325,32 +512,32 @@ def build_kline_open_request(
     source_tab_index: int = -1,
     source_tab_key: str = "",
 ) -> dict:
-    code_text = str(code or "").strip()
-    name = str((code_name_map or {}).get(code_text, code_text)).strip() or code_text
+    context = build_kline_open_context(
+        code=code,
+        code_name_map=code_name_map,
+        code_list=code_list,
+        current_idx=current_idx,
+        workspace=workspace,
+        source_tab_index=source_tab_index,
+        source_tab_key=source_tab_key,
+    )
     normalized_code_list = _normalize_code_list(
         code_list,
         source_tab_index=source_tab_index,
         source_tab_key=source_tab_key,
     )
-
-    vcp_data, name = _current_vcp_data(normalized_code_list, current_idx, code_text, name)
-    _merge_scan_context(
-        vcp_data=vcp_data,
-        code_text=code_text,
-        workspace=workspace,
-        source_tab_key=source_tab_key,
-        scan_results=_workspace_scan_results(workspace),
-    )
-    merge_workspace_earnings_context(
-        vcp_data=vcp_data,
-        code_text=code_text,
-        workspace=workspace,
-    )
-
     return {
-        "code": code_text,
-        "name": name,
-        "vcp_data": vcp_data,
+        "code": context.code,
+        "name": context.name,
+        "vcp_data": context.mutable_vcp_data(),
         "code_list": normalized_code_list,
-        "current_idx": current_idx,
+        "current_idx": context.current_idx,
     }
+
+
+__all__ = [
+    "build_kline_open_context",
+    "build_kline_open_request",
+    "merge_workspace_earnings_context",
+    "merge_workspace_kline_context",
+]

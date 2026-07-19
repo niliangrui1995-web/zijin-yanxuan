@@ -380,4 +380,4 @@ QHeaderView::up-arrow {{ image: none; width: 0; }}
 GLOBAL_QSS = ""
 
 
-theme_manager.sig_theme_changed.connect(lambda _theme_name: invalidate_global_qss_cache())
+theme_manager.sig_theme_changed.connect(invalidate_global_qss_cache)

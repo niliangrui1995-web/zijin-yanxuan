@@ -8,6 +8,7 @@ from contextlib import suppress
 
 import pandas as pd
 
+from core.f5_activation_gate import f5_snapshot_read_locked
 from core.json_cache import remove_cache_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
@@ -21,6 +22,8 @@ from domains.quotes.tdx_name_map import (
     normalize_code_name_targets,
     parse_tnf_name_file,
 )
+from infra.tasks.lifecycle import TaskCancelledError, raise_if_cancelled
+from infra.tasks.owner_lifecycle import invoke_with_cancellation
 from vcp.constants import DATE_FMT, INCREMENTAL_BARS, MARKET_SYNC_WORKERS, MAX_HISTORY_BARS
 from vcp.data_provider_cache import load_cache_from_disk
 from vcp.utils import ensure_pandas_dataframe
@@ -102,6 +105,239 @@ def _requested_cached_trade_date(cache_data, requested_codes) -> str:
         if not oldest_date or cached_date < oldest_date:
             oldest_date = cached_date
     return oldest_date
+
+
+def _raise_if_market_sync_cancelled(cancellation_checker, pending_futures) -> None:
+    if cancellation_checker is None or not cancellation_checker():
+        return
+    for pending in pending_futures:
+        pending.cancel()
+    raise TaskCancelledError("F5 market synchronization cancelled")
+
+
+def _write_market_snapshot_cache(provider, *, snapshot_writer, persisted_date: str) -> bool:
+    provider._last_market_data_parquet_saved_date = ""
+    try:
+        if snapshot_writer is None:
+            from vcp.polars_engine import save_cache_parquet
+
+            snapshot_writer = save_cache_parquet
+        write_result = snapshot_writer(provider.cache_data, persisted_date)
+        parquet_saved = bool(getattr(write_result, "ok", write_result))
+        if parquet_saved:
+            provider._last_market_data_parquet_saved_date = persisted_date
+            provider._market_data_snapshot_trade_date = persisted_date
+            remove_cache_file(provider.legacy_cache_file)
+            remove_cache_file(provider.legacy_cache_file + ".corrupted")
+            remove_cache_file(provider.legacy_fallback_cache_file)
+        return parquet_saved
+    except ImportError:
+        _log.error("[数据中台] polars 未安装，无法写入 Parquet 缓存")
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _log.error(f"[数据中台] Parquet 写入失败: {exc}", exc_info=True)
+    return False
+
+
+def _set_market_source_status(provider, status: dict) -> None:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        provider._last_market_data_source_status = status
+
+
+def _memory_history_data(provider, code):
+    with provider.cache_lock:
+        frame = provider.cache_data.get(code)
+        if frame is None:
+            return None
+        normalized = ensure_pandas_dataframe(frame)
+        if isinstance(normalized, pd.DataFrame) and normalized is not frame:
+            provider.cache_data[code] = normalized
+            frame = normalized
+        _set_market_source_status(
+            provider,
+            {
+                "ok": True,
+                "active_layer": "memory_cache",
+                "data_status": "ok",
+                "symbol_count": len(provider.cache_data),
+                "row_count": len(frame) if hasattr(frame, "__len__") else 0,
+                "fallback_reason": "",
+            },
+        )
+        return frame
+
+
+def _warehouse_history_data(provider, code, cancellation_token):
+    getter = getattr(provider, "_get_market_data_warehouse", None)
+    warehouse = invoke_with_cancellation(getter, cancellation_token) if callable(getter) else getattr(
+        provider, "market_data_warehouse", None
+    )
+    if warehouse is None:
+        return None
+    result = invoke_with_cancellation(warehouse.read_symbol, cancellation_token, code)
+    _set_market_source_status(provider, result.status.to_dict())
+    if not result.status.ok or result.data is None:
+        return None
+    frame = ensure_pandas_dataframe(result.data)
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    with provider.cache_lock:
+        cached = provider.cache_data.get(code)
+        if cached is None:
+            provider.cache_data[code] = frame
+            cached = frame
+    return cached
+
+
+def _local_history_data(provider, code, cancellation_token):
+    if not getattr(provider, "tdx_vipdoc", None):
+        return None
+    frame = invoke_with_cancellation(provider._fetch_from_local_tdx, cancellation_token, code)
+    if frame is None or len(frame) <= 0:
+        return None
+    with provider.cache_lock:
+        cached = provider.cache_data.get(code)
+        if cached is None:
+            provider.cache_data[code] = frame
+            cached = frame
+            source, reason = "vipdoc_fallback", "warehouse_unavailable_or_symbol_missing"
+        else:
+            source, reason = "memory_cache_after_vipdoc", ""
+        _set_market_source_status(
+            provider,
+            {
+                "ok": True,
+                "active_layer": source,
+                "data_status": "ok",
+                "symbol_count": len(provider.cache_data),
+                "row_count": len(cached) if hasattr(cached, "__len__") else 0,
+                "fallback_reason": reason,
+            },
+        )
+    return cached
+
+
+def _coerce_close_tail(values, limit: int) -> tuple[float, ...]:
+    try:
+        closes = []
+        for value in values:
+            if value is None or pd.isna(value):
+                continue
+            closes.append(float(value))
+        return tuple(closes[-limit:])
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return ()
+
+
+def _close_column(columns) -> str:
+    if "close" in columns:
+        return "close"
+    return "收盘" if "收盘" in columns else ""
+
+
+def _pandas_close_tail(frame, limit: int) -> tuple[float, ...] | None:
+    normalized = ensure_pandas_dataframe(frame)
+    if not isinstance(normalized, pd.DataFrame) or normalized.empty:
+        return None
+    close_col = _close_column(normalized.columns)
+    if not close_col:
+        return ()
+    try:
+        closes = normalized.sort_index()[close_col].dropna().astype(float)
+        return tuple(float(value) for value in closes.iloc[-limit:])
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return ()
+
+
+def _columnar_close_tail(frame, limit: int) -> tuple[float, ...] | None:
+    if getattr(frame, "height", 0) <= 0:
+        return None
+    columns = tuple(getattr(frame, "columns", ()) or ())
+    close_col = _close_column(columns)
+    if not close_col:
+        return ()
+    try:
+        ordered = frame.sort("datetime") if "datetime" in columns else frame
+        get_column = getattr(ordered, "get_column", None)
+        return _coerce_close_tail(get_column(close_col).to_list(), limit) if callable(get_column) else None
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return ()
+
+
+def _close_tail_from_frame(frame, limit: int) -> tuple[float, ...] | None:
+    if frame is None:
+        return None
+    if isinstance(frame, pd.DataFrame):
+        return _pandas_close_tail(frame, limit)
+    return _columnar_close_tail(frame, limit)
+
+
+def _close_tails_from_frames(frames, codes, limit: int) -> dict[str, tuple[float, ...]]:
+    result: dict[str, tuple[float, ...]] = {}
+    for code in codes:
+        tail = _close_tail_from_frame((frames or {}).get(code), limit)
+        if tail is not None:
+            result[code] = tail
+    return result
+
+
+def _warehouse_close_tail_result(provider, codes, limit: int):
+    warehouse_getter = getattr(provider, "_get_market_data_warehouse", None)
+    warehouse = warehouse_getter() if callable(warehouse_getter) else getattr(provider, "market_data_warehouse", None)
+    reader = getattr(warehouse, "read_close_tails", None)
+    if not callable(reader):
+        return None
+    try:
+        warehouse_result = reader(codes, limit)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        provider._last_market_data_source_status = warehouse_result.status.to_dict()
+    if not getattr(getattr(warehouse_result, "status", None), "ok", False):
+        return None
+    return warehouse_result.data if isinstance(warehouse_result.data, dict) else None
+
+
+def _cached_close_tails(provider, codes, limit: int) -> dict[str, tuple[float, ...]]:
+    with provider.cache_lock:
+        cached_frames = {code: provider.cache_data.get(code) for code in codes}
+    return _close_tails_from_frames(cached_frames, codes, limit)
+
+
+def _merge_warehouse_close_tails(result, warehouse_tails, codes, limit: int) -> None:
+    for code in codes:
+        if code in warehouse_tails:
+            result[code] = _coerce_close_tail(warehouse_tails[code], limit)
+
+
+def _merge_local_close_tails(provider, result, codes, limit: int) -> None:
+    for code in codes:
+        if code in result:
+            continue
+        local_df = provider._fetch_from_local_tdx(code) if getattr(provider, "tdx_vipdoc", None) else None
+        if local_df is None or len(local_df) <= 0:
+            continue
+        with provider.cache_lock:
+            cached = provider.cache_data.setdefault(code, local_df)
+        tail = _close_tail_from_frame(cached, limit)
+        if tail is not None:
+            result[code] = tail
+
+
+def _normalize_close_tail_codes(codes) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(str(code or "").strip() for code in (codes or []) if str(code or "").strip())
+    )
+
+
+def _normalize_close_tail_limit(limit) -> int:
+    try:
+        return max(0, int(limit))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _missing_close_tail_codes(codes, result) -> tuple[str, ...]:
+    return tuple(code for code in codes if code not in result)
 
 
 class TdxDataProviderHistoryMixin:
@@ -474,18 +710,23 @@ class TdxDataProviderHistoryMixin:
             _log.error(f"[数据中台] {code} 标的数据抓取发生异常: {e}")
             return code, None, "底层结构异常/长期停牌"
 
+    @f5_snapshot_read_locked
     def load_cache_from_disk(self):
         trade_date = load_cache_from_disk(self, logger=_log)
         snapshot_trade_date = _normalize_trade_date(trade_date)
         self._market_data_snapshot_trade_date = snapshot_trade_date if self.cache_data else ""
         return trade_date
 
-    def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
+    def sync_market_data(
+        self, codes, force_refresh=False, progress_callback=None, *, max_workers=None,
+        cancellation_checker=None, snapshot_writer=None, snapshot_date: str | None = None,
+    ):
         requested_codes = tuple(dict.fromkeys(codes)) if codes is not None else ()
         if not requested_codes:
             return True
         today_date = MarketCalendar.today("CN")
         today = today_date.strftime(DATE_FMT)
+        persisted_date = _normalize_trade_date(snapshot_date) or today
         latest_trade_date = MarketCalendar.get_latest_trade_date("CN", ref_date=today_date).strftime(DATE_FMT)
         if not self.cache_data:
             self.load_cache_from_disk()
@@ -533,6 +774,7 @@ class TdxDataProviderHistoryMixin:
                 for code in requested_codes
             }
             for future in concurrent.futures.as_completed(future_to_code):
+                _raise_if_market_sync_cancelled(cancellation_checker, future_to_code)
                 completed += 1
                 if completed % 50 == 0:
                     time.sleep(0.001)
@@ -587,107 +829,34 @@ class TdxDataProviderHistoryMixin:
 
         _log.info("[数据中台] 阶段3: 写入本地缓存(Parquet)...")
         # 主路径写 Parquet（体积更小、加载更快）
-        parquet_saved = False
-        self._last_market_data_parquet_saved_date = ""
-        try:
-            from vcp.polars_engine import save_cache_parquet
-
-            parquet_saved = bool(save_cache_parquet(self.cache_data, today))
-            if parquet_saved:
-                self._last_market_data_parquet_saved_date = today
-                self._market_data_snapshot_trade_date = today
-                remove_cache_file(self.legacy_cache_file)
-                remove_cache_file(self.legacy_cache_file + ".corrupted")
-                remove_cache_file(self.legacy_fallback_cache_file)
-        except ImportError:
-            _log.error("[数据中台] polars 未安装，无法写入 Parquet 缓存")
-        except (OSError, RuntimeError, TypeError, ValueError) as e:
-            _log.error(f"[数据中台] Parquet 写入失败: {e}", exc_info=True)
+        parquet_saved = _write_market_snapshot_cache(
+            self, snapshot_writer=snapshot_writer, persisted_date=persisted_date
+        )
 
         if not parquet_saved:
             _log.error("[数据中台] Parquet 失败，已停止写入旧版 pkl fallback，请检查 pyarrow/polars 环境")
-        _log.info(f"[数据中台] 阶段3 完成 -> 缓存已保存 (日期: {today})\n")
+        _log.info(f"[数据中台] 阶段3 完成 -> 缓存已保存 (日期: {persisted_date})\n")
         return True
 
-    def get_data(self, code):
-        with self.cache_lock:
-            df = self.cache_data.get(code)
-            if df is not None:
-                normalized_df = ensure_pandas_dataframe(df)
-                if isinstance(normalized_df, pd.DataFrame) and normalized_df is not df:
-                    self.cache_data[code] = normalized_df
-                    df = normalized_df
-                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                    self._last_market_data_source_status = {
-                        "ok": True,
-                        "active_layer": "memory_cache",
-                        "data_status": "ok",
-                        "symbol_count": len(self.cache_data),
-                        "row_count": len(df) if hasattr(df, "__len__") else 0,
-                        "fallback_reason": "",
-                    }
-                return df
-
-        warehouse = None
-        warehouse_getter = getattr(self, "_get_market_data_warehouse", None)
-        if callable(warehouse_getter):
-            warehouse = warehouse_getter()
-        else:
-            warehouse = getattr(self, "market_data_warehouse", None)
-        if warehouse is not None:
-            result = warehouse.read_symbol(code)
-            if result.status.ok and result.data is not None:
-                warehouse_df = ensure_pandas_dataframe(result.data)
-                if isinstance(warehouse_df, pd.DataFrame) and len(warehouse_df) > 0:
-                    with self.cache_lock:
-                        cached_df = self.cache_data.get(code)
-                        if cached_df is None:
-                            self.cache_data[code] = warehouse_df
-                            cached_df = warehouse_df
-                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                        self._last_market_data_source_status = result.status.to_dict()
-                    return cached_df
-            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                self._last_market_data_source_status = result.status.to_dict()
-
-        # K 线窗口等历史图表不能依赖“缓存先被别处预热”这一前置条件；
-        # 当内存缓存为空时，直接回退读取本地通达信日线并写回缓存。
-        if getattr(self, "tdx_vipdoc", None):
-            local_df = self._fetch_from_local_tdx(code)
-            if local_df is not None and len(local_df) > 0:
-                with self.cache_lock:
-                    cached_df = self.cache_data.get(code)
-                    if cached_df is None:
-                        self.cache_data[code] = local_df
-                        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                            self._last_market_data_source_status = {
-                                "ok": True,
-                                "active_layer": "vipdoc_fallback",
-                                "data_status": "ok",
-                                "symbol_count": len(self.cache_data),
-                                "row_count": len(local_df),
-                                "fallback_reason": "warehouse_unavailable_or_symbol_missing",
-                            }
-                        return local_df
-                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                        self._last_market_data_source_status = {
-                            "ok": True,
-                            "active_layer": "memory_cache_after_vipdoc",
-                            "data_status": "ok",
-                            "symbol_count": len(self.cache_data),
-                            "row_count": len(cached_df) if hasattr(cached_df, "__len__") else 0,
-                            "fallback_reason": "",
-                        }
-                    return cached_df
-
-        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            self._last_market_data_source_status = {
-                "ok": False,
-                "active_layer": "unavailable",
-                "data_status": "history_unavailable",
-                "fallback_reason": "warehouse_and_vipdoc_unavailable",
-            }
-        return None
+    def get_data(self, code, *, cancellation_token=None):
+        raise_if_cancelled(cancellation_token)
+        frame = _memory_history_data(self, code)
+        if frame is None:
+            frame = _warehouse_history_data(self, code, cancellation_token)
+        if frame is None:
+            frame = _local_history_data(self, code, cancellation_token)
+        if frame is None:
+            _set_market_source_status(
+                self,
+                {
+                    "ok": False,
+                    "active_layer": "unavailable",
+                    "data_status": "history_unavailable",
+                    "fallback_reason": "warehouse_and_vipdoc_unavailable",
+                },
+            )
+        raise_if_cancelled(cancellation_token)
+        return frame
 
     def get_data_batch(self, codes):
         requested_codes = tuple(
@@ -747,9 +916,35 @@ class TdxDataProviderHistoryMixin:
 
         return result
 
-    def get_data_fresh_for_chart(self, code, force_sync=False):
+    def get_close_tail_batch(self, codes, limit: int):
+        """Return ascending close tails without changing the full-frame batch API."""
+        requested_codes = _normalize_close_tail_codes(codes)
+        tail_size = _normalize_close_tail_limit(limit)
+        if not requested_codes:
+            return {}
+        if tail_size <= 0:
+            return {}
+
+        result = _cached_close_tails(self, requested_codes, tail_size)
+        missing_codes = _missing_close_tail_codes(requested_codes, result)
+        if not missing_codes:
+            return result
+
+        warehouse_tails = _warehouse_close_tail_result(self, missing_codes, tail_size)
+        if warehouse_tails is None:
+            result.update(_close_tails_from_frames(self.get_data_batch(missing_codes), missing_codes, tail_size))
+            return result
+
+        _merge_warehouse_close_tails(result, warehouse_tails, missing_codes, tail_size)
+        _merge_local_close_tails(self, result, missing_codes, tail_size)
+        return result
+
+    def get_data_fresh_for_chart(self, code, force_sync=False, *, cancellation_token=None):
         """按需委托给本地历史服务做图表补全。"""
-        return self._get_local_history_provider().get_data_fresh_for_chart(
+        provider = invoke_with_cancellation(self._get_local_history_provider, cancellation_token)
+        return invoke_with_cancellation(
+            provider.get_data_fresh_for_chart,
+            cancellation_token,
             code,
             force_sync=force_sync,
         )

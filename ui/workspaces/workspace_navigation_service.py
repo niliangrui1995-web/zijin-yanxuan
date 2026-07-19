@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ui.workspaces.tab_capabilities import CodeRowSelectionCapability, PrimaryRowSelectionCapability
+from ui.workspaces.tab_capabilities import CodeRowSelectionCapability
 
 
 class WorkspaceNavigationService:
@@ -16,14 +16,6 @@ class WorkspaceNavigationService:
             return list(specs)
         tab_specs = getattr(self._workspace, "tab_specs", None)
         return list(tab_specs() or []) if callable(tab_specs) else []
-
-    def nav_groups(self) -> list[str]:
-        groups: list[str] = []
-        for spec in self._tab_specs():
-            group = str(spec.get("group", "")).strip()
-            if group and group not in groups:
-                groups.append(group)
-        return groups
 
     def tab_indices_by_group(self) -> dict[str, list[int]]:
         result: dict[str, list[int]] = {}
@@ -46,13 +38,6 @@ class WorkspaceNavigationService:
         if 0 <= int(tab_index) < len(specs):
             return str(specs[int(tab_index)].get("key") or "").strip()
         return ""
-
-    def select_scan_row(self, index: int) -> bool:
-        get_tab = getattr(self._workspace, "get_tab", None)
-        tab = get_tab("scan") if callable(get_tab) else None
-        if not isinstance(tab, PrimaryRowSelectionCapability):
-            return False
-        return bool(tab.select_primary_row(index))
 
     def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
         code_text = str(code or "").strip()

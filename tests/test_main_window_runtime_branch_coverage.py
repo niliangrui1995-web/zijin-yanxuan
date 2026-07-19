@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from ui import main_window_runtime as runtime
 
 
@@ -80,87 +82,106 @@ def test_f5_stall_grace_handles_bad_clock_and_current_deadline(monkeypatch):
     assert window._f5_precompute_ui_grace_until == 0
 
 
-def test_f5_callbacks_cancel_status_done_and_run(monkeypatch):
+def test_f5_controller_callbacks_status_done_cancel_and_failure():
+    from app.services.f5_job_contract import F5JobResult, F5JobStatus
+
     actions = []
     labels = []
     titles = []
+    starts = []
+    controller = SimpleNamespace(
+        start=lambda request, **callbacks: starts.append((request, callbacks)) or True,
+    )
     window = SimpleNamespace(
         _is_closing=False,
         _f5_cancelled=False,
-        _call_in_ui=lambda callback: callback(),
         lbl_status=SimpleNamespace(setText=lambda text: labels.append(text)),
         _set_titlebar_sync_state=lambda *args: titles.append(args),
         _on_f5_done=lambda *args: actions.append(args),
-        data_provider="provider",
+        data_provider=SimpleNamespace(tdx_vipdoc=""),
         engine="engine",
+        _f5_job_controller=controller,
     )
-    callbacks = runtime._F5TaskCallbacks(window)
-    assert not callbacks.cancelled()
-    callbacks.set_status("working")
+    runtime._submit_owned_f5_task(window)
+    assert len(starts) == 1
+    callbacks = starts[0][1]
+    callbacks["on_event"](SimpleNamespace(message="working"))
     assert labels == ["working"] and titles[-1] == ("working", "working")
-    callbacks.done(3, 1.5)
-    assert actions == [(3, 1.5)]
-    window._is_closing = True
-    callbacks.set_status("ignored")
-    assert labels == ["working"]
-    window._is_closing = False
-    callbacks.token = SimpleNamespace(cancelled=True)
-    assert callbacks.cancelled()
-    callbacks.token = None
-    window._f5_cancelled = True
-    assert callbacks.cancelled()
-
-    import core.rps_precomputer as rps
-
-    captured = []
-    monkeypatch.setattr(
-        rps.RPSPrecomputer,
-        "run_f5_pipeline",
-        lambda **kwargs: captured.append(kwargs) or 7,
+    callbacks["on_finished"](
+        F5JobResult(
+            run_id="success",
+            status=F5JobStatus.SUCCEEDED,
+            requested_date="20260101",
+            symbol_count=3,
+            elapsed_seconds=1.5,
+        )
     )
-    window._f5_cancelled = False
-    token = SimpleNamespace(cancelled=False)
-    assert callbacks.run(token) == 7
-    assert captured[-1]["data_provider"] == "provider"
+    assert actions == [(3, 1.5)]
+    callbacks["on_finished"](
+        F5JobResult(
+            run_id="cancelled",
+            status=F5JobStatus.CANCELLED,
+            requested_date="20260101",
+        )
+    )
+    assert labels[-1] == "F5 预计算已取消"
+    callbacks["on_finished"](
+        F5JobResult.failed(
+            starts[0][0],
+            error_code="failed",
+            error_message="boom",
+        )
+    )
+    assert labels[-1] == "F5 预计算失败: boom"
+    window._is_closing = True
+    callbacks["on_event"](SimpleNamespace(message="ignored"))
+    assert labels[-1] == "F5 预计算失败: boom"
 
 
-def test_f5_callbacks_status_with_partial_optional_widgets():
+def test_f5_status_with_partial_optional_widgets():
     labels = []
     only_label = SimpleNamespace(
-        _is_closing=False,
-        _f5_cancelled=False,
-        _call_in_ui=lambda callback: callback(),
         lbl_status=SimpleNamespace(setText=lambda text: labels.append(text)),
     )
-    runtime._F5TaskCallbacks(only_label).set_status("label")
+    runtime._set_f5_status(only_label, "label")
     assert labels == ["label"]
     titles = []
     only_title = SimpleNamespace(
-        _is_closing=False,
-        _f5_cancelled=False,
-        _call_in_ui=lambda callback: callback(),
         _set_titlebar_sync_state=lambda *args: titles.append(args),
     )
-    runtime._F5TaskCallbacks(only_title).set_status("title")
+    runtime._set_f5_status(only_title, "title")
     assert titles == [("working", "title")]
 
 
 def test_submit_f5_task_and_pending_cancel(monkeypatch):
     calls = []
-    lifecycle = SimpleNamespace(run_background=lambda *args, **kwargs: calls.append((args, kwargs)))
-    monkeypatch.setattr(runtime, "task_lifecycle_for", lambda *args, **kwargs: lifecycle)
-    window = SimpleNamespace(_f5_cancelled=False, _f5_precompute_start_pending=False)
-    runtime._submit_owned_f5_task(window, object())
-    assert calls[-1][1]["timeout_sec"] == 1800.0
+    controller = SimpleNamespace(start=lambda *args, **kwargs: calls.append((args, kwargs)) or True)
+    window = SimpleNamespace(
+        _f5_cancelled=False,
+        _f5_precompute_start_pending=False,
+        _f5_job_controller=controller,
+        data_provider=SimpleNamespace(tdx_vipdoc=""),
+        engine=object(),
+    )
+    runtime._submit_owned_f5_task(window)
+    assert len(calls) == 1
+    assert calls[-1][0][0].timeout_seconds == 1800.0
     window._f5_precompute_start_pending = True
-    runtime.start_f5_precompute(window, task_manager=object())
+    runtime.start_f5_precompute(window)
     assert len(calls) == 1
 
     window._f5_precompute_start_pending = False
     window._f5_cancelled = True
     monkeypatch.setattr(runtime, "_system_log_shell_nav_grace_remaining_ms", lambda window: 0)
-    runtime.start_f5_precompute(window, task_manager=object())
+    runtime.start_f5_precompute(window)
     assert window._f5_precompute_start_pending is False
+
+
+def test_f5_controller_rejects_uninitialized_runtime():
+    window = SimpleNamespace(data_provider=None, engine=None)
+    with pytest.raises(RuntimeError, match="dependencies are not ready"):
+        runtime._ensure_f5_controller(window)
+    assert not hasattr(window, "_f5_job_controller")
 
 
 class _Text:
@@ -299,10 +320,39 @@ def test_shutdown_main_window_runs_all_optional_services_and_contains_errors(mon
 def test_shutdown_main_window_without_optional_services(monkeypatch):
     monkeypatch.setattr(runtime, "shutdown_market_calendar_tasks", lambda **kwargs: None)
     monkeypatch.setattr(runtime.global_store, "reset_runtime_state", lambda: None)
-    window = SimpleNamespace(_workspace=None, _save_ui_state=lambda: None)
+    window = SimpleNamespace(
+        _workspace=None,
+        _save_ui_state=lambda: None,
+        startup_orchestrator=None,
+    )
     event_bus = SimpleNamespace(sig_app_closing=SimpleNamespace(emit=lambda: None))
     runtime.shutdown_main_window(
         window,
         event_bus=event_bus,
         task_manager=SimpleNamespace(shutdown=lambda: None),
     )
+    assert window._pending_f5_request is False
+
+
+def test_shutdown_main_window_warns_when_owned_processes_miss_deadline(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(runtime.log, "warning", warnings.append)
+    monkeypatch.setattr(runtime.kline_manager, "shutdown", lambda: False)
+    monkeypatch.setattr(runtime, "shutdown_market_calendar_tasks", lambda **_kwargs: None)
+    monkeypatch.setattr(runtime.global_store, "reset_runtime_state", lambda: None)
+    window = SimpleNamespace(
+        _workspace=None,
+        _f5_job_controller=SimpleNamespace(shutdown=lambda **_kwargs: False),
+        _save_ui_state=lambda: None,
+    )
+
+    runtime.shutdown_main_window(
+        window,
+        event_bus=SimpleNamespace(sig_app_closing=SimpleNamespace(emit=lambda: None)),
+        task_manager=SimpleNamespace(shutdown=lambda: None),
+    )
+
+    assert warnings == [
+        "[关闭] 停止F5子进程未在时限内完成",
+        "[关闭] 关闭K线窗口未在时限内完成",
+    ]

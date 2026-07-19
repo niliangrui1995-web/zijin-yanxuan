@@ -221,7 +221,7 @@ def test_refresh_startup_names_provider_missing_and_merge():
     assert provider.code2name == result
 
 
-def test_safe_ui_call_alive_runtime_error_and_asian_sync_paths(monkeypatch):
+def test_safe_ui_call_alive_runtime_error(monkeypatch):
     calls = []
     host = SimpleNamespace(
         timer_parent=object(),
@@ -233,7 +233,3 @@ def test_safe_ui_call_alive_runtime_error_and_asian_sync_paths(monkeypatch):
     orchestrator._closed = True
     orchestrator._safe_call_in_ui(lambda: calls.append(False))
     assert calls == []
-    project_root, output_dir, json_cache, module_entry = orchestrator._asian_data_sync_paths()
-    assert output_dir.startswith(project_root)
-    assert json_cache.endswith("asian_klines_latest.json")
-    assert module_entry.endswith("asian_kline_fetcher.py")

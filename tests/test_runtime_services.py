@@ -1,6 +1,99 @@
 from __future__ import annotations
 
+import threading
+
 from app.services import runtime_services
+
+
+def test_native_dataframe_runtime_initializes_once_in_safe_order(monkeypatch):
+    imported = []
+    monkeypatch.setattr(runtime_services, "_native_dataframe_runtime_ready", False)
+    monkeypatch.setattr(
+        runtime_services.importlib,
+        "import_module",
+        lambda name: imported.append(name) or object(),
+    )
+
+    runtime_services.initialize_native_dataframe_runtime()
+    runtime_services.initialize_native_dataframe_runtime()
+
+    assert imported == ["pandas", "polars"]
+    assert runtime_services.is_native_dataframe_runtime_ready() is True
+
+
+def test_native_dataframe_runtime_rejects_first_import_from_worker_thread(monkeypatch):
+    imported = []
+    errors = []
+    monkeypatch.setattr(runtime_services, "_native_dataframe_runtime_ready", False)
+    monkeypatch.setattr(
+        runtime_services.importlib,
+        "import_module",
+        lambda name: imported.append(name) or object(),
+    )
+
+    thread = threading.Thread(
+        target=lambda: _capture_runtime_error(
+            runtime_services.initialize_native_dataframe_runtime,
+            errors,
+        )
+    )
+    thread.start()
+    thread.join(timeout=5)
+
+    assert thread.is_alive() is False
+    assert imported == []
+    assert len(errors) == 1
+    assert "main thread" in str(errors[0])
+    assert runtime_services.is_native_dataframe_runtime_ready() is False
+
+
+def test_search_filter_runtime_initializes_once_on_main_thread(monkeypatch):
+    imported = []
+    monkeypatch.setattr(runtime_services, "_search_filter_runtime_ready", False)
+    monkeypatch.setattr(
+        runtime_services.importlib,
+        "import_module",
+        lambda name: imported.append(name) or object(),
+    )
+
+    runtime_services.initialize_search_filter_runtime()
+    runtime_services.initialize_search_filter_runtime()
+
+    assert imported == ["pypinyin"]
+    assert runtime_services.is_search_filter_runtime_ready() is True
+
+
+def test_search_filter_runtime_rejects_first_import_from_worker_thread(monkeypatch):
+    imported = []
+    errors = []
+    monkeypatch.setattr(runtime_services, "_search_filter_runtime_ready", False)
+    monkeypatch.setattr(
+        runtime_services.importlib,
+        "import_module",
+        lambda name: imported.append(name) or object(),
+    )
+
+    thread = threading.Thread(
+        target=lambda: _capture_runtime_error(
+            runtime_services.initialize_search_filter_runtime,
+            errors,
+        )
+    )
+    thread.start()
+    thread.join(timeout=5)
+
+    assert thread.is_alive() is False
+    assert imported == []
+    assert len(errors) == 1
+    assert "main thread" in str(errors[0])
+    assert runtime_services.is_search_filter_runtime_ready() is False
+
+
+def _capture_runtime_error(callback, errors):
+    try:
+        callback()
+    except RuntimeError as exc:
+        errors.append(exc)
 
 
 def test_create_data_provider_prefers_cached_code_names(monkeypatch):

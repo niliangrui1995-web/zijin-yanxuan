@@ -9,10 +9,14 @@ def fetch_single_kline(
     ticker: str,
     period: str = "1y",
     session=None,
+    *,
+    cancellation_token=None,
 ):
     kwargs = {"period": period}
     if session is not None:
         kwargs["session"] = session
+    if cancellation_token is not None:
+        kwargs["cancellation_token"] = cancellation_token
     return _legacy_fetcher.fetch_single_kline(name, ticker, **kwargs)
 
 
@@ -47,6 +51,7 @@ def sync_asian_kline_cache(
         output_dir=output_dir,
         time_budget_sec=time_budget_sec,
         cancellation_checkpoint=cancellation_checkpoint,
+        cancellation_token=cancellation_token,
     )
 
 

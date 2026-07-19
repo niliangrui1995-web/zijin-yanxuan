@@ -15,6 +15,7 @@ from infra.diagnostics.runtime_health import (
 )
 from infra.market_data.provider_ports import ProviderHealthSnapshot
 from scripts.runtime_health_stability_suite import DEFAULT_TABS
+from ui.tabs.base_stock_tab import mark_runtime_network_activity
 
 
 class _FakeModel:
@@ -40,8 +41,13 @@ def _fake_main_window():
         model=_FakeModel(),
         lbl_status=SimpleNamespace(text=lambda: "本地快照已就绪"),
         get_data_lineage=lambda: {
+            "key": "tab-owned-key",
+            "view": "tab-owned-view",
             "source": "unit-test-cache",
+            "provider": "tab-owned-provider",
+            "cache_refs": ["tab-owned-cache"],
             "trade_date": "2026-05-08",
+            "network_capable": True,
             "triggered_network": False,
             "fallback_or_degraded": False,
             "last_updated": "2026-05-08T15:00:00",
@@ -111,15 +117,36 @@ def test_collect_runtime_health_includes_core_sections(qt_application, monkeypat
     assert report["market_data"]["warehouse"]["row_count"] == 4
     assert "cache_version" in report["f5_cache"]
     assert report["data_lineage"][0]["key"] == "stock_candidates"
-    assert report["data_lineage"][0]["source"] == "unit-test-cache"
+    candidate_lineage = report["data_lineage"][0]
+    assert candidate_lineage["source"] == "workspace_stock_context"
+    assert candidate_lineage["provider"] == "workspace_stock_context"
+    assert candidate_lineage["cache_refs"] == ["global_store.quotes", "workspace.collect_stock_context"]
+    assert candidate_lineage["trade_date"] == "2026-05-08"
+    assert candidate_lineage["network_capable"] is False
+    assert candidate_lineage["lineage_error"] is True
+    assert candidate_lineage["static_override_rejected"] == [
+        "cache_refs",
+        "key",
+        "network_capable",
+        "provider",
+        "source",
+        "view",
+    ]
     asian_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "asian_market")
+    assert asian_lineage["network_capable"] is True
+    assert asian_lineage["triggered_network"] is None
     assert "data/Cache/asian_rt_latest.json" in asian_lineage["cache_refs"]
     assert "data/Cache/asian_realtime_latest.json" not in asian_lineage["cache_refs"]
     lhb_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "lhb")
+    assert lhb_lineage["network_capable"] is True
+    assert lhb_lineage["triggered_network"] is None
     assert lhb_lineage["source"] == "LhbPoolManager cache + local_quote_snapshot"
     assert "data/Cache/lhb_pool_30d.json" in lhb_lineage["cache_refs"]
     assert "data/Cache/lhb_pool_20d.json" not in lhb_lineage["cache_refs"]
     assert "local_tdx_cache" in lhb_lineage["cache_refs"]
+    ai_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "ai_industry_chain")
+    assert ai_lineage["network_capable"] is False
+    assert ai_lineage["triggered_network"] is False
     lineage_keys = {entry["key"] for entry in report["data_lineage"]}
     assert {"asian_market", "na_daily", "ai_industry_chain"} <= lineage_keys
     assert "system_log" not in lineage_keys
@@ -129,6 +156,38 @@ def test_collect_runtime_health_includes_core_sections(qt_application, monkeypat
     assert report["data_lineage_exclusions"][0]["reason"] == "non_data_tab"
 
 
+def test_workspace_lineage_does_not_mask_missing_network_evidence_after_getter_error():
+    failing_tab = SimpleNamespace(get_data_lineage=_raise_runtime)
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "asian_market", "title": "亚洲市场", "group": "情报源"}],
+        get_loaded_tab=lambda key: failing_tab if key == "asian_market" else None,
+    )
+
+    lineage = runtime_health._workspace_lineage(SimpleNamespace(_workspace=workspace))
+    asian_lineage = next(entry for entry in lineage if entry["key"] == "asian_market")
+
+    assert asian_lineage["loaded"] is True
+    assert asian_lineage["network_capable"] is True
+    assert asian_lineage["triggered_network"] is None
+    assert asian_lineage["lineage_error"] is True
+
+
+def test_workspace_lineage_uses_latched_runtime_network_evidence():
+    tab = SimpleNamespace(_runtime_network_triggered=False)
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "asian_market", "title": "亚洲市场", "group": "情报源"}],
+        get_loaded_tab=lambda key: tab if key == "asian_market" else None,
+    )
+    main_window = SimpleNamespace(_workspace=workspace)
+
+    first = next(entry for entry in runtime_health._workspace_lineage(main_window) if entry["key"] == "asian_market")
+    mark_runtime_network_activity(tab)
+    second = next(entry for entry in runtime_health._workspace_lineage(main_window) if entry["key"] == "asian_market")
+
+    assert first["triggered_network"] is False
+    assert second["triggered_network"] is True
+
+
 def test_runtime_health_short_default_tabs_match_static_lineage_coverage():
     covered = set(DATA_LINEAGE_COVERED_TABS)
     excluded = set(DATA_LINEAGE_EXCLUDED_TABS)
@@ -136,8 +195,10 @@ def test_runtime_health_short_default_tabs_match_static_lineage_coverage():
 
     assert {"asian_market", "na_daily", "ai_industry_chain"} <= short_default_tabs
     assert {"asian_market", "na_daily", "ai_industry_chain"} <= covered
+    assert short_default_tabs == covered | excluded
     assert short_default_tabs - covered - excluded == set()
     assert "system_log" not in covered
+    assert "system_log" in short_default_tabs
     assert DATA_LINEAGE_EXCLUDED_TABS["system_log"]["reason"] == "non_data_tab"
 
 
@@ -228,12 +289,16 @@ def test_runtime_health_active_task_snapshot_handles_workers_and_resolve_errors(
 
     snapshot = runtime_health._active_task_snapshot()
 
+    assert snapshot["available"] is True
     assert snapshot["count"] == 2
     assert snapshot["ids"] == ["a", "b"]
     assert snapshot["workers"][1]["cancelled"] is True
 
     monkeypatch.setattr(background_job_runner, "_resolve_manager", _raise_runtime)
-    assert runtime_health._active_task_snapshot()["count"] == 0
+    unavailable = runtime_health._active_task_snapshot()
+    assert unavailable["available"] is False
+    assert unavailable["count"] is None
+    assert unavailable["diagnostic_error"] == "RuntimeError"
 
 
 def test_runtime_health_timer_snapshot_filters_bad_timers():
@@ -357,7 +422,9 @@ def test_runtime_health_process_and_webengine_snapshots_cover_psutil_edges(monke
             raise _PsutilError("bad children")
 
     monkeypatch.setattr(runtime_health, "psutil", SimpleNamespace(Error=_PsutilError, Process=_BrokenParentProcess))
-    assert runtime_health._webengine_snapshot()["count"] == 0
+    broken = runtime_health._webengine_snapshot()
+    assert broken["available"] is False
+    assert broken["count"] is None
 
     monkeypatch.setattr(runtime_health, "psutil", None)
     assert runtime_health._process_info(object()) is None
@@ -392,14 +459,32 @@ def test_runtime_health_f5_and_cache_snapshots_cover_error_paths(tmp_path, monke
         _frame_budget_ms=8,
         _max_tasks_per_frame=3,
     )
-    f5_snapshot = runtime_health._f5_scheduler_snapshot(
-        SimpleNamespace(_workspace=SimpleNamespace(_f5_refresh_scheduler=scheduler))
+    host = SimpleNamespace(
+        _workspace=SimpleNamespace(_f5_refresh_scheduler=scheduler),
+        _f5_job_controller=SimpleNamespace(is_running=True),
     )
+    f5_snapshot = runtime_health._f5_scheduler_snapshot(host)
     assert f5_snapshot["scheduler_active"] is True
     assert f5_snapshot["pending_tasks"] is None
+    assert f5_snapshot["job_controller_present"] is True
+    assert f5_snapshot["job_controller_diagnostics_available"] is True
+    assert f5_snapshot["job_controller_running"] is True
+
+    missing_controller = runtime_health._f5_job_controller_snapshot(SimpleNamespace())
+    assert missing_controller == {
+        "job_controller_present": False,
+        "job_controller_diagnostics_available": True,
+        "job_controller_running": False,
+    }
+    invalid_controller = runtime_health._f5_job_controller_snapshot(
+        SimpleNamespace(_f5_job_controller=SimpleNamespace(is_running="yes"))
+    )
+    assert invalid_controller["job_controller_diagnostics_available"] is False
+    assert invalid_controller["job_controller_running"] is None
 
     import core.runtime_paths as runtime_paths
 
+    monkeypatch.setattr(runtime_health, "_active_f5_rps_path", lambda fallback: fallback)
     missing_cache = tmp_path / "missing.json"
     monkeypatch.setattr(runtime_paths, "RPS_CACHE_FILE", str(missing_cache))
     assert runtime_health._f5_cache_snapshot()["exists"] is False

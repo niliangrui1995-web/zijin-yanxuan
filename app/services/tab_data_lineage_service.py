@@ -8,6 +8,10 @@ from typing import Any, Callable, Mapping, Sequence
 
 from domains.runtime.fault_tolerance import provider_fault_tolerance
 
+_STATIC_LINEAGE_FIELDS = frozenset(
+    {"key", "view", "source", "provider", "cache_refs", "network_capable"}
+)
+
 
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -59,6 +63,14 @@ class TabDataLineage:
         }
         payload.update(dict(self.extra or {}))
         return payload
+
+    def as_dynamic_dict(self) -> dict[str, Any]:
+        """Return widget-owned runtime fields, excluding registry metadata."""
+        return {
+            key: value
+            for key, value in self.as_dict().items()
+            if key not in _STATIC_LINEAGE_FIELDS
+        }
 
 
 @dataclass(frozen=True)

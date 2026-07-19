@@ -3,6 +3,7 @@ from ui.tabs.fund_holdings_view_state import (
     LATEST_QUARTER_MODE,
     SELECTED_QUARTER_MODE,
     FundHoldingsViewState,
+    initial_quarter_query_scope,
     quarter_mode_from_filter,
     read_fund_holdings_view_state,
     write_fund_holdings_view_state,
@@ -32,6 +33,33 @@ def test_quarter_mode_from_filter_preserves_latest_all_and_selected_modes():
     assert quarter_mode_from_filter(True, {"2025Q4"}) == LATEST_QUARTER_MODE
     assert quarter_mode_from_filter(False, set()) == ALL_QUARTER_MODE
     assert quarter_mode_from_filter(False, {"2025Q4"}) == SELECTED_QUARTER_MODE
+
+
+def test_initial_quarter_query_scope_uses_persisted_mode_without_double_load():
+    base = dict(
+        subject_names=set(),
+        capital_attributes=set(),
+        search_text="",
+        change_types=set(),
+        sort_column=-1,
+        sort_order=0,
+    )
+
+    all_state = FundHoldingsViewState(quarter_mode=ALL_QUARTER_MODE, quarter_values=set(), **base)
+    selected_state = FundHoldingsViewState(
+        quarter_mode=SELECTED_QUARTER_MODE,
+        quarter_values={"2025Q3", "2025Q4"},
+        **base,
+    )
+    empty_selected_state = FundHoldingsViewState(
+        quarter_mode=SELECTED_QUARTER_MODE,
+        quarter_values=set(),
+        **base,
+    )
+
+    assert initial_quarter_query_scope(all_state) == (ALL_QUARTER_MODE, set())
+    assert initial_quarter_query_scope(selected_state) == (SELECTED_QUARTER_MODE, {"2025Q3", "2025Q4"})
+    assert initial_quarter_query_scope(empty_selected_state) == (LATEST_QUARTER_MODE, set())
 
 
 def test_write_fund_holdings_view_state_persists_legacy_single_subject_key():

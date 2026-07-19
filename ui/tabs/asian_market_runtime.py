@@ -4,16 +4,33 @@
 from __future__ import annotations
 
 import datetime as dt
+from functools import wraps
 
 from PyQt6.QtCore import QTimer
 
+from app.services.asian_market_cache_service import ASIAN_KLINE_CACHE as JSON_CACHE
 from app.services.asian_market_cache_service import cache_mtime
 from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from core.logger import get_logger
 from ui.tabs.asian_market_meta import get_market_status
-from ui.tabs.asian_market_workers import JSON_CACHE, AsianCacheFetcherThread
 
 log = get_logger(__name__)
+
+
+def _skip_when_asian_runtime_stopped(callback):
+    @wraps(callback)
+    def _guarded(tab, *args, **kwargs):
+        if getattr(tab, "_asian_shutting_down", False) or getattr(tab, "_runtime_cleanup_done", False):
+            return None
+        return callback(tab, *args, **kwargs)
+
+    return _guarded
+
+
+def AsianCacheFetcherThread(*args, **kwargs):  # noqa: N802 - compatibility factory name
+    from ui.tabs.asian_market_workers import AsianCacheFetcherThread as _AsianCacheFetcherThread
+
+    return _AsianCacheFetcherThread(*args, **kwargs)
 
 
 def _set_tab_status(tab, primary: str, *segments: str, freshness: str = "", next_step: str = ""):
@@ -63,6 +80,17 @@ def worker_trigger_refresh(tab):
     return call_worker_method(tab, "trigger_refresh")
 
 
+def _schedule_auto_cache_sync(tab, delay_ms: int) -> None:
+    if getattr(tab, "_asian_shutting_down", False) or getattr(tab, "_runtime_cleanup_done", False):
+        return
+    timer = getattr(tab, "_auto_cache_sync_timer", None)
+    if timer is not None:
+        timer.start(max(0, int(delay_ms or 0)))
+        return
+    QTimer.singleShot(max(0, int(delay_ms or 0)), tab._continue_auto_cache_sync)
+
+
+@_skip_when_asian_runtime_stopped
 def check_auto_cache(tab):
     from app.services.ui_market_calendar_service import MarketCalendar
 
@@ -122,9 +150,10 @@ def check_auto_cache(tab):
         f"期望交易日={expected_latest_trade_date}"
     )
     _set_tab_status(tab, "检测到收盘缓存过期", "等待当前刷新轮次结束后同步")
-    QTimer.singleShot(0, tab._continue_auto_cache_sync)
+    _schedule_auto_cache_sync(tab, 0)
 
 
+@_skip_when_asian_runtime_stopped
 def continue_auto_cache_sync(tab):
     if not tab._pending_auto_cache_sync or tab._is_fetching_cache:
         return
@@ -141,7 +170,7 @@ def continue_auto_cache_sync(tab):
                 log.warning("[亚洲页] 等待后台轮次退出超时，本轮缓存同步延后一轮")
                 return
             _set_tab_status(tab, "等待后台刷新结束", "随后开始收盘缓存同步")
-            QTimer.singleShot(1000, tab._continue_auto_cache_sync)
+            _schedule_auto_cache_sync(tab, 1000)
             return
 
     tab._pending_auto_cache_sync = False

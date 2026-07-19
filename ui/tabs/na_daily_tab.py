@@ -20,6 +20,7 @@ from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
 
 log = get_logger(__name__)
 _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
@@ -46,7 +47,63 @@ def _apply_refresh_error_if_current(owner, generation: int, error_message) -> No
     owner._on_na_daily_refresh_failed(error_message)
 
 
-class NADailyTab(BaseStockTab):
+def _cancel_scheduled_runtime_start(owner) -> None:
+    owner._runtime_start_pending = False
+    timer = getattr(owner, "_runtime_start_timer", None)
+    if timer is not None:
+        timer.stop()
+
+
+def _run_scheduled_runtime_start(owner) -> None:
+    if getattr(owner, "_closing", False) or not getattr(owner, "_runtime_start_pending", False):
+        return
+    _cancel_scheduled_runtime_start(owner)
+    owner._load_na_daily_report()
+
+
+class _NADailyBackgroundPreloadMixin:
+    def prime_background_load(self):
+        if self._closing or self._background_prime_done:
+            return False
+        _cancel_scheduled_runtime_start(self)
+        self._runtime_started = True
+        self._background_prime_loading = True
+        scheduled = self._load_na_daily_report()
+        if not scheduled:
+            self._background_prime_loading = False
+            self._background_prime_done = True
+        return bool(scheduled)
+
+    def is_background_preload_complete(self) -> bool:
+        if self._closing or getattr(self, "_runtime_cleanup_done", False):
+            return True
+        return bool(
+            self._background_prime_done
+            and not self._background_prime_loading
+            and not self._na_daily_refresh_task_active
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            _cancel_scheduled_runtime_start(self)
+            self._na_daily_refresh_generation += 1
+            self._na_daily_refresh_task_active = False
+            self._background_prime_loading = False
+            self._background_prime_done = False
+            self._runtime_started = False
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("refresh",),
+            task_ids=(_NA_DAILY_REFRESH_TASK,),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._na_daily_refresh_task_active,
+            runner=task_manager,
+        )
+
+
+class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
     def __init__(self, data_provider, parent=None, *, runtime_start_delay_ms: int = 350):
         super().__init__(data_provider=data_provider, parent=parent)
         try:
@@ -66,6 +123,10 @@ class NADailyTab(BaseStockTab):
         self._na_daily_refresh_task_active = False
         self._na_daily_refresh_generation = 0
         self._closing = False
+        self._runtime_start_pending = False
+        self._runtime_start_timer = QTimer(self)
+        self._runtime_start_timer.setSingleShot(True)
+        self._runtime_start_timer.timeout.connect(partial(_run_scheduled_runtime_start, self))
         self._init_ui()
         # 首次显示后再拉取/巡逻，避免冷启动阶段抢占首屏。
         # 订阅中央广播站报价及开启大一统市值更新
@@ -76,19 +137,11 @@ class NADailyTab(BaseStockTab):
         self._render_service_cache()
 
     def _ensure_runtime_started(self):
-        if self._runtime_started:
+        if self._closing or self._runtime_started:
             return
         self._runtime_started = True
-        QTimer.singleShot(self._runtime_start_delay_ms, self._load_na_daily_report)
-
-    def prime_background_load(self):
-        if self._runtime_started or self._background_prime_done:
-            return
-        self._background_prime_loading = True
-        scheduled = self._load_na_daily_report()
-        if not scheduled:
-            self._background_prime_loading = False
-            self._background_prime_done = True
+        self._runtime_start_pending = True
+        self._runtime_start_timer.start(self._runtime_start_delay_ms)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -367,7 +420,10 @@ class NADailyTab(BaseStockTab):
         return True
 
     def shutdown(self) -> None:
+        if getattr(self, "_closing", False):
+            return
         self._closing = True
+        _cancel_scheduled_runtime_start(self)
         self._na_daily_refresh_generation += 1
         self._na_daily_refresh_task_active = False
         lifecycle = getattr(self, "_task_lifecycle", None)
@@ -377,6 +433,10 @@ class NADailyTab(BaseStockTab):
             event_bus.sig_na_daily_updated.disconnect(self._on_na_daily_updated)
         except (TypeError, RuntimeError):
             pass
+
+    def _cleanup_runtime_state(self):
+        self.shutdown()
+        super()._cleanup_runtime_state()
 
     def _on_double_click(self, index):
         _show_kline_from_proxy_index(self, index, ui_signals, require_code=True)

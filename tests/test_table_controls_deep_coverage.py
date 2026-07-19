@@ -48,6 +48,9 @@ def test_table_visual_glyphs_render_all_semantic_shapes(qt_application):
     skeleton = controls.SkeletonShimmer()
     try:
         skeleton.set_running(True)
+        assert not skeleton._timer.isActive()
+        skeleton.show()
+        qt_application.processEvents()
         assert skeleton._timer.isActive()
         skeleton.set_running(True)
         old_phase = skeleton._phase
@@ -57,6 +60,9 @@ def test_table_visual_glyphs_render_all_semantic_shapes(qt_application):
         skeleton.hide()
         qt_application.processEvents()
         assert not skeleton._timer.isActive()
+        skeleton.show()
+        qt_application.processEvents()
+        assert skeleton._timer.isActive()
         skeleton.close()
     finally:
         skeleton.deleteLater()
@@ -169,6 +175,9 @@ def test_table_state_overlay_and_wrapper_all_modes(qt_application):
         assert wrapper._state_animation is not None
         previous = wrapper._state_animation
         wrapper.show_table()
+        assert wrapper._state_animation is None
+        assert wrapper._overlay.graphicsEffect() is None
+        assert table.graphicsEffect() is None
         wrapper.show_error()
         assert wrapper._state_animation is not previous
         qt_application.processEvents()

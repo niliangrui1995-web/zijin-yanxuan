@@ -10,7 +10,13 @@ from PyQt6.QtCore import QModelIndex, QRect, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
 
-from ui.models.table_model_helpers import _c, _flash_decay_alpha, _qcolor_from_token, _theme_table_tokens
+from ui.models.table_model_helpers import (
+    STOCK_CELL_RENDER_ROLE,
+    _c,
+    _flash_decay_alpha,
+    _qcolor_from_token,
+    _theme_table_tokens,
+)
 
 
 @dataclass
@@ -40,6 +46,42 @@ class _StockCellRenderContext:
     visual_payload: object
 
 
+def _stock_render_payload(index: QModelIndex) -> tuple[object, bool, object, object, object]:
+    payload = index.data(STOCK_CELL_RENDER_ROLE)
+    if isinstance(payload, tuple) and len(payload) == 5:
+        return payload
+    return (
+        index.data(Qt.ItemDataRole.UserRole + 4),
+        bool(index.data(Qt.ItemDataRole.UserRole + 3)),
+        index.data(Qt.ItemDataRole.UserRole + 1),
+        index.data(Qt.ItemDataRole.UserRole + 2),
+        index.data(Qt.ItemDataRole.UserRole + 5),
+    )
+
+
+def _is_current_cell(widget: object, index: QModelIndex) -> bool:
+    if not widget or not hasattr(widget, "currentIndex"):
+        return False
+    current_index = widget.currentIndex()
+    return current_index.isValid() and current_index == index
+
+
+def _sorted_column_overlay(
+    widget: object,
+    index: QModelIndex,
+    table_tokens: dict,
+    *,
+    is_selected: bool,
+    skip_sorted_overlay: bool,
+) -> QColor | None:
+    if is_selected or skip_sorted_overlay:
+        return None
+    sorted_column = widget.sorted_column() if widget and hasattr(widget, "sorted_column") else -1
+    if sorted_column != index.column():
+        return None
+    return _qcolor_from_token(table_tokens["sorted_column_bg"])
+
+
 def build_stock_cell_context(
     painter: QPainter,
     option: QStyleOptionViewItem,
@@ -54,26 +96,20 @@ def build_stock_cell_context(
     is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
     suppress_left_rails = bool(widget and widget.property("suppressLeftRails"))
     show_current_cell_indicator = bool(widget and widget.property("showCurrentCellIndicator"))
-    rail_color = None if suppress_left_rails else index.data(Qt.ItemDataRole.UserRole + 4)
+    rail_color, skip_sorted_overlay, flash_data, pill_color, visual_payload = _stock_render_payload(index)
+    if suppress_left_rails:
+        rail_color = None
     show_accent_rail = bool(rail_color) and index.column() == 0 and not suppress_left_rails
     show_selected_rail = False
     show_hover_rail = False
-    selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
     accent_rail_width = table_tokens["accent_rail_width"] if show_accent_rail else 0
-    hover_rail_width = table_tokens.get("hover_rail_width", 3) if show_hover_rail and not suppress_left_rails else 0
-    rail_width = selected_rail_width or accent_rail_width or hover_rail_width
-    current_index = widget.currentIndex() if widget and hasattr(widget, "currentIndex") else QModelIndex()
-    is_current = current_index.isValid() and current_index == index
-    skip_sorted_overlay = bool(index.data(Qt.ItemDataRole.UserRole + 3))
-    sorted_column = widget.sorted_column() if widget and hasattr(widget, "sorted_column") else -1
-    sorted_overlay = None
-    if not is_selected and not skip_sorted_overlay and sorted_column == index.column():
-        sorted_overlay = _qcolor_from_token(table_tokens["sorted_column_bg"])
-
-    flash_data = index.data(Qt.ItemDataRole.UserRole + 1)
-    text = index.data(Qt.ItemDataRole.DisplayRole)
-    pill_color = index.data(Qt.ItemDataRole.UserRole + 2)
-    visual_payload = index.data(Qt.ItemDataRole.UserRole + 5)
+    sorted_overlay = _sorted_column_overlay(
+        widget,
+        index,
+        table_tokens,
+        is_selected=is_selected,
+        skip_sorted_overlay=skip_sorted_overlay,
+    )
 
     return _StockCellRenderContext(
         painter=painter,
@@ -92,11 +128,11 @@ def build_stock_cell_context(
         show_accent_rail=show_accent_rail,
         show_selected_rail=show_selected_rail,
         show_hover_rail=show_hover_rail,
-        rail_width=rail_width,
-        is_current=is_current,
+        rail_width=accent_rail_width,
+        is_current=_is_current_cell(widget, index),
         sorted_overlay=sorted_overlay,
         flash_data=flash_data,
-        text=text,
+        text=opt.text,
         pill_color=pill_color,
         visual_payload=visual_payload,
     )
@@ -125,8 +161,8 @@ def render_stock_cell(ctx: _StockCellRenderContext):
 
     text_color, alignment = _resolve_text_style(ctx)
     text_rect = _content_rect(ctx)
-    tooltip_text = ctx.index.data(Qt.ItemDataRole.ToolTipRole)
-    if tooltip_text and len(str(ctx.text or "")) >= 12:
+    tooltip_text = ctx.index.data(Qt.ItemDataRole.ToolTipRole) if len(str(ctx.text or "")) >= 12 else None
+    if tooltip_text:
         _draw_plain_text(ctx, ctx.text, text_rect, fade=True)
         return
 
@@ -137,6 +173,19 @@ def render_stock_cell(ctx: _StockCellRenderContext):
     )
     ctx.painter.setPen(QPen(text_color))
     ctx.painter.drawText(text_rect, alignment, elided_text)
+
+
+def can_use_native_cell_paint(ctx: _StockCellRenderContext) -> bool:
+    """Use Qt's optimized path when the cell has no VCP-specific decoration."""
+    return not (
+        ctx.is_selected
+        or ctx.pill_color
+        or isinstance(ctx.visual_payload, dict)
+        or isinstance(ctx.flash_data, dict)
+        or ctx.rail_width
+        or ctx.sorted_overlay is not None
+        or (ctx.show_current_cell_indicator and ctx.is_current)
+    )
 
 
 def _draw_cell_base(ctx: _StockCellRenderContext):
@@ -161,21 +210,13 @@ def _content_rect(ctx: _StockCellRenderContext) -> QRect:
 
 
 def _resolve_text_style(ctx: _StockCellRenderContext):
-    font = ctx.index.data(Qt.ItemDataRole.FontRole)
-    if isinstance(font, QFont):
-        ctx.painter.setFont(font)
-    else:
-        ctx.painter.setFont(ctx.opt.font)
-
-    text_color = ctx.index.data(Qt.ItemDataRole.ForegroundRole)
-    if not isinstance(text_color, QColor):
-        color_role = QPalette.ColorRole.HighlightedText if ctx.is_selected else QPalette.ColorRole.Text
-        text_color = ctx.opt.palette.color(color_role)
-
-    alignment = ctx.index.data(Qt.ItemDataRole.TextAlignmentRole)
-    if alignment is None:
+    ctx.painter.setFont(ctx.opt.font)
+    color_role = QPalette.ColorRole.HighlightedText if ctx.is_selected else QPalette.ColorRole.Text
+    text_color = ctx.opt.palette.color(color_role)
+    alignment = int(ctx.opt.displayAlignment)
+    if not alignment:
         alignment = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-    return text_color, int(alignment)
+    return text_color, alignment
 
 
 def _draw_plain_text(

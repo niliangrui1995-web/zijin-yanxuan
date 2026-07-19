@@ -121,11 +121,22 @@ def _reset_scheduler_settings():
     app_config.sync()
 
 
-def _scheduler(now, *, runner=None, task_service=None, extended_jobs=False):
+def _scheduler(
+    now,
+    *,
+    runner=None,
+    task_service=None,
+    extended_jobs=False,
+    asian_market_visible_checker=lambda: True,
+    background_preload_settled_checker=lambda: True,
+):
     scheduler = AutoRefreshScheduler(
         task_service=task_service or _TaskService(),
         job_runner=runner or _ImmediateRunner(),
         clock=lambda: now[0],
+        asian_market_visible_checker=asian_market_visible_checker,
+        background_preload_settled_checker=background_preload_settled_checker,
+        post_preload_grace_seconds=0.0,
     )
     scheduler.extended_jobs_enabled = bool(extended_jobs)
     return scheduler
@@ -420,6 +431,8 @@ scheduler = AutoRefreshScheduler(
     task_service=task_service,
     job_runner=runner,
     clock=lambda: datetime.datetime(2026, 4, 20, 1, 0),
+    asian_market_visible_checker=lambda: True,
+    background_preload_settled_checker=lambda: True,
 )
 scheduler._maybe_submit_asian_market_runtime(datetime.datetime(2026, 4, 20, 1, 0))
 _, run_fn, on_success, _ = runner.jobs[0]
@@ -476,6 +489,124 @@ def test_auto_refresh_scheduler_queues_asian_runtime_before_touching_service(mon
         and args[0]["message"] == "started"
         for args in status_spy
     )
+
+
+def test_auto_refresh_scheduler_never_starts_asian_runtime_while_tab_is_hidden():
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 1, 0)]
+    visible = [False]
+    runner = _QueuedRunner()
+    tasks = _TaskService()
+    scheduler = _scheduler(
+        now,
+        runner=runner,
+        task_service=tasks,
+        extended_jobs=True,
+        asian_market_visible_checker=lambda: visible[0],
+    )
+    scheduler.DAILY_JOBS = ()
+
+    scheduler.tick()
+
+    assert not [job for job in runner.jobs if job[0] == "auto_refresh_asian_market_runtime"]
+    assert tasks.calls == []
+
+    visible[0] = True
+    scheduler.tick()
+
+    assert len([job for job in runner.jobs if job[0] == "auto_refresh_asian_market_runtime"]) == 1
+
+
+def test_auto_refresh_scheduler_defers_all_jobs_until_background_preload_settles(monkeypatch):
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 20, 30)]
+    settled = [False]
+    tasks = _TaskService()
+    scheduler = _scheduler(
+        now,
+        task_service=tasks,
+        extended_jobs=True,
+        background_preload_settled_checker=lambda: settled[0],
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_trade_day",
+        classmethod(lambda cls, day, market="CN": True),
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": False),
+    )
+
+    scheduler.tick()
+
+    assert tasks.calls == []
+
+    settled[0] = True
+    scheduler.tick()
+
+    called_jobs = {call[0] for call in tasks.calls}
+    assert {"lhb_daily", "foreign_block_daily", "fund_holdings_daily"} <= called_jobs
+    assert "earnings_startup_gap_fill" in called_jobs
+
+
+def test_auto_refresh_scheduler_waits_for_post_preload_stabilization_grace(monkeypatch):
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 20, 30)]
+    monotonic_now = [100.0]
+    settled = [False]
+    tasks = _TaskService()
+    scheduler = AutoRefreshScheduler(
+        task_service=tasks,
+        job_runner=_ImmediateRunner(),
+        clock=lambda: now[0],
+        monotonic_clock=lambda: monotonic_now[0],
+        asian_market_visible_checker=lambda: True,
+        background_preload_settled_checker=lambda: settled[0],
+        post_preload_grace_seconds=60.0,
+    )
+    scheduler.extended_jobs_enabled = False
+    scheduler.DAILY_JOBS = (AutoRefreshJob("fund_holdings_daily", 20, 30, False),)
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_trade_day",
+        classmethod(lambda cls, day, market="CN": True),
+    )
+
+    scheduler.tick()
+    settled[0] = True
+    scheduler.tick()
+    now[0] += datetime.timedelta(days=1)
+    monotonic_now[0] += 59.0
+    scheduler.tick()
+
+    assert tasks.calls == []
+
+    monotonic_now[0] += 1.0
+    scheduler.tick()
+
+    assert tasks.calls == [("fund_holdings_daily", "20260420")]
+
+    scheduler.tick()
+
+    assert tasks.calls == [
+        ("fund_holdings_daily", "20260420"),
+        ("fund_holdings_daily", "20260421"),
+    ]
+
+
+def test_auto_refresh_scheduler_fails_closed_without_preload_diagnostics():
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 20, 30)]
+    tasks = _TaskService()
+    scheduler = AutoRefreshScheduler(
+        task_service=tasks,
+        job_runner=_ImmediateRunner(),
+        clock=lambda: now[0],
+        asian_market_visible_checker=lambda: True,
+    )
+
+    scheduler.tick()
+
+    assert tasks.calls == []
 
 
 def test_auto_refresh_scheduler_triggers_na_daily_full_after_0925(monkeypatch):

@@ -15,11 +15,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.services.f5_snapshot_service import active_rps_cache_mtime
 from app.services.runtime_constants import APP_VERSION, RPS_CACHE_FILE
 from app.services.ui_diagnostics_service import install_ui_stall_probe, ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signal_hub
-from app.services.ui_json_cache_service import cache_file_mtime
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
+from app.services.ui_task_service import STARTUP_DATA_PROVIDER, STARTUP_F5_RETENTION
 from app.services.ui_task_service import background_job_runner as task_manager
 from core.logger import get_logger
 from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS, kline_manager
@@ -45,6 +47,9 @@ from ui.window_flags import (
 # 核心引擎与数据层
 
 log = get_logger(__name__)
+POST_PAINT_TAB_ACTIVATION_DELAY_MS = 120
+KLINE_PREWARM_SHELL_NAV_QUIET_SEC = 8.0
+KLINE_PREWARM_BUSY_RETRY_DELAY_MS = 1000
 
 __all__ = ["DraggableTitleBar", "MainWindowQT"]
 
@@ -54,6 +59,9 @@ def create_data_provider(*, offline: bool = True):
     from app.services.runtime_services import create_data_provider as factory
 
     return factory(offline=offline)
+
+
+_DEFAULT_DATA_PROVIDER_FACTORY = create_data_provider
 
 
 def create_startup_orchestrator(main_window, job_runner=None):
@@ -66,6 +74,498 @@ def create_scan_engine():
     from app.services.scan_runtime_service import create_scan_engine as factory
 
     return factory()
+
+
+def _read_window_setting(config, *, key: str, attr: str, default, value_type):
+    getter = getattr(config, "get", None)
+    if callable(getter):
+        return getter(key, default, value_type)
+    return getattr(config, attr, default)
+
+
+def _write_window_setting(config, *, key: str, attr: str, value) -> None:
+    setter = getattr(config, "set", None)
+    if callable(setter):
+        setter(key, value)
+        return
+    setattr(config, attr, value)
+
+
+def _workspace_tab_specs(workspace) -> list[dict]:
+    tab_specs = getattr(workspace, "tab_specs", None)
+    return list(tab_specs() or []) if callable(tab_specs) else []
+
+
+def _resolve_last_tab_restore_target(config, workspace) -> str | int:
+    specs = _workspace_tab_specs(workspace)
+    valid_keys = {str(spec.get("key") or "").strip() for spec in specs}
+    saved_key = str(
+        _read_window_setting(
+            config,
+            key="window/last_active_tab_key",
+            attr="last_active_tab_key",
+            default="",
+            value_type=str,
+        )
+        or ""
+    ).strip()
+    if saved_key in valid_keys:
+        return saved_key
+    try:
+        legacy_index = int(
+            _read_window_setting(
+                config,
+                key="window/last_active_tab",
+                attr="last_active_tab",
+                default=0,
+                value_type=int,
+            )
+            or 0
+        )
+    except (TypeError, ValueError):
+        legacy_index = 0
+    if not specs:
+        return max(0, legacy_index)
+    return legacy_index if 0 <= legacy_index < len(specs) else 0
+
+
+def _remember_active_tab_settings(config, workspace, index: int) -> None:
+    try:
+        tab_index = int(index)
+    except (TypeError, ValueError):
+        return
+    _write_window_setting(
+        config,
+        key="window/last_active_tab",
+        attr="last_active_tab",
+        value=tab_index,
+    )
+    specs = _workspace_tab_specs(workspace)
+    if not (0 <= tab_index < len(specs)):
+        return
+    tab_key = str(specs[tab_index].get("key") or "").strip()
+    if tab_key:
+        _write_window_setting(
+            config,
+            key="window/last_active_tab_key",
+            attr="last_active_tab_key",
+            value=tab_key,
+        )
+
+
+def _activate_workspace_tab(workspace, target: str | int, *, delay_ms: int = 0) -> None:
+    schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
+    if callable(schedule_restore):
+        schedule_restore(target, delay_ms=delay_ms)
+        return
+    restore = getattr(workspace, "restore_last_tab", None)
+    if callable(restore):
+        restore(target)
+
+
+def _queue_workspace_tab_activation(main_window, workspace) -> None:
+    target = (
+        _resolve_last_tab_restore_target(main_window._app_config, workspace)
+        if main_window._restore_last_tab_enabled
+        else 0
+    )
+    if getattr(main_window, "_post_paint_runtime_started", False):
+        _activate_workspace_tab(workspace, target)
+        return
+    main_window._pending_workspace_tab_activation = (workspace, target)
+
+
+def _activate_pending_workspace_tab(main_window) -> bool:
+    pending = getattr(main_window, "_pending_workspace_tab_activation", None)
+    if not pending or getattr(main_window, "_workspace", None) is not pending[0]:
+        main_window._pending_workspace_tab_activation = None
+        return True
+    try:
+        _activate_workspace_tab(*pending, delay_ms=POST_PAINT_TAB_ACTIVATION_DELAY_MS)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        log.exception("[startup] 首屏工作区激活失败")
+        return False
+    main_window._pending_workspace_tab_activation = None
+    return True
+
+
+def _run_post_paint_stage(main_window, *, flag: str, label: str, action) -> bool:
+    if getattr(main_window, flag, False):
+        return True
+    try:
+        completed = action()
+    except Exception:
+        log.exception("[startup] post-paint stage failed: %s", label)
+        return False
+    if completed is False:
+        return False
+    setattr(main_window, flag, True)
+    return True
+
+
+def _start_post_paint_scheduler(main_window) -> bool:
+    scheduler = getattr(main_window, "auto_refresh_scheduler", None)
+    if scheduler is None:
+        return not bool(getattr(main_window, "_auto_refresh_enabled", False)) or bool(
+            getattr(main_window, "_post_paint_auto_refresh_initialized", False)
+        )
+    scheduler.start()
+    return True
+
+
+def _preload_post_paint_data_runtime(*, startup_enabled: bool):
+    provider = create_data_provider(offline=True)
+    if startup_enabled:
+        from importlib import import_module
+
+        import_module("app.bootstrap.startup_orchestrator")
+    return provider
+
+
+def _resume_post_paint_runtime(main_window) -> None:
+    if getattr(main_window, "_is_closing", False):
+        return
+    timer = getattr(main_window, "_post_paint_runtime_timer", None)
+    if timer is None:
+        return
+    timer.stop()
+    timer.start(0)
+
+
+def _attach_post_paint_data_provider(main_window, provider) -> None:
+    if getattr(main_window, "_is_closing", False):
+        return
+    main_window.data_provider = provider
+    workspace = getattr(main_window, "_workspace", None)
+    if workspace is not None:
+        attach_runtime_services = getattr(workspace, "attach_runtime_services", None)
+        if callable(attach_runtime_services):
+            attach_runtime_services(data_provider=provider)
+        else:
+            workspace.data_provider = provider
+    main_window._post_paint_data_provider_initialization_started = False
+    main_window._refresh_code_count_label_from_provider()
+    _resume_post_paint_runtime(main_window)
+
+
+def _handle_post_paint_data_provider_error(main_window, message: str) -> None:
+    main_window._post_paint_data_provider_initialization_started = False
+    log.warning("[startup] data provider initialization failed: %s", message)
+
+
+def _initialize_post_paint_data_provider(main_window) -> bool:
+    if not hasattr(main_window, "data_provider") or main_window.data_provider is not None:
+        return True
+    if getattr(main_window, "_post_paint_data_provider_initialization_started", False):
+        return False
+    if create_data_provider is _DEFAULT_DATA_PROVIDER_FACTORY:
+        from app.services.runtime_services import (
+            initialize_native_dataframe_runtime,
+            is_native_dataframe_runtime_ready,
+        )
+
+        if not is_native_dataframe_runtime_ready():
+            log.warning("[startup] native dataframe runtime was not preinitialized; repairing on the main thread")
+            initialize_native_dataframe_runtime()
+    main_window._post_paint_data_provider_initialization_started = True
+    startup_enabled = bool(getattr(main_window, "_startup_enabled", False))
+    task_lifecycle_for(main_window, runner=task_manager).run_background(
+        "startup-data-provider",
+        lambda _token: _preload_post_paint_data_runtime(startup_enabled=startup_enabled),
+        task_id=STARTUP_DATA_PROVIDER,
+        timeout_sec=30.0,
+        on_success=lambda provider: _attach_post_paint_data_provider(main_window, provider),
+        on_error=lambda message: _handle_post_paint_data_provider_error(main_window, message),
+        runner=task_manager,
+    )
+    return False
+
+
+def _initialize_post_paint_startup_orchestrator(main_window) -> bool:
+    if not hasattr(main_window, "startup_orchestrator") or main_window.startup_orchestrator is not None:
+        return True
+    main_window.startup_orchestrator = create_startup_orchestrator(main_window)
+    return True
+
+
+def _initialize_post_paint_scan_engine(main_window) -> bool:
+    if not hasattr(main_window, "engine"):
+        return True
+    if main_window.engine is None:
+        main_window.engine = create_scan_engine()
+    workspace = getattr(main_window, "_workspace", None)
+    if workspace is not None:
+        attach_runtime_services = getattr(workspace, "attach_runtime_services", None)
+        if callable(attach_runtime_services):
+            attach_runtime_services(engine=main_window.engine)
+        else:
+            workspace.engine = main_window.engine
+    _replay_pending_f5_request(main_window)
+    return True
+
+
+def _initialize_post_paint_central_quotes(main_window) -> bool:
+    if not hasattr(main_window, "central_quotes_svc"):
+        return True
+    if main_window.central_quotes_svc is None:
+        main_window._init_central_broadcaster()
+    return True
+
+
+def _apply_post_paint_native_window_effects(main_window) -> bool:
+    if not hasattr(main_window, "_native_taskbar_fix_applied"):
+        return True
+    if main_window._native_taskbar_fix_applied:
+        return True
+    main_window._native_taskbar_fix_applied = True
+    apply_windows_frameless_taskbar_fix(main_window)
+    enable_windows_native_shadow(main_window)
+    enable_windows_system_backdrop(main_window, backdrop="mica", dark=bool(build_ui_tokens()["is_dark"]))
+    return True
+
+
+def _f5_runtime_dependencies_ready(main_window) -> bool:
+    return getattr(main_window, "data_provider", None) is not None and getattr(main_window, "engine", None) is not None
+
+
+def _replay_pending_f5_request(main_window) -> None:
+    if not getattr(main_window, "_pending_f5_request", False) or not _f5_runtime_dependencies_ready(main_window):
+        return
+    main_window._pending_f5_request = False
+
+    def _replay() -> None:
+        if not getattr(main_window, "_is_closing", False):
+            main_window._action_refresh_f5()
+
+    QTimer.singleShot(0, _replay)
+
+
+def _schedule_f5_startup_retention(main_window) -> bool:
+    from app.services.f5_runtime_maintenance import prune_startup_f5_runtime
+
+    task_lifecycle_for(main_window, runner=task_manager).run_background(
+        "f5_startup_retention",
+        lambda _token: prune_startup_f5_runtime(),
+        task_id=STARTUP_F5_RETENTION,
+        timeout_sec=30.0,
+        on_error=lambda message: log.warning("[F5] startup retention skipped: %s", message),
+        runner=task_manager,
+    )
+    return True
+
+
+def _schedule_post_paint_retry(main_window) -> None:
+    if getattr(main_window, "_is_closing", False):
+        return
+    timer = getattr(main_window, "_post_paint_runtime_timer", None)
+    if timer is None or timer.isActive():
+        return
+    attempt = int(getattr(main_window, "_post_paint_retry_attempt", 0) or 0) + 1
+    main_window._post_paint_retry_attempt = attempt
+    delay_ms = min(5000, 250 * (2 ** min(attempt - 1, 5)))
+    timer.start(delay_ms)
+
+
+def _schedule_post_paint_continuation(main_window) -> None:
+    if getattr(main_window, "_is_closing", False):
+        return
+    timer = getattr(main_window, "_post_paint_runtime_timer", None)
+    if timer is not None and not timer.isActive():
+        timer.start(0)
+
+
+def _disconnect_main_window_runtime_signals(
+    main_window,
+    *,
+    domain_bus=event_bus,
+    ui_bus=ui_signal_hub,
+    theme_bus=None,
+) -> None:
+    if getattr(main_window, "_runtime_signals_disconnected", False):
+        return
+    if theme_bus is None:
+        from ui.theme import theme_manager
+
+        theme_bus = theme_manager
+    bindings = (
+        (domain_bus.sig_network_status_changed, getattr(main_window, "_update_network_ui", None)),
+        (domain_bus.sig_rt_quotes, getattr(main_window, "_on_rt_quotes_pulse", None)),
+        (ui_bus.sig_task_progress, getattr(main_window, "_on_task_progress", None)),
+        (ui_bus.sig_show_kline, getattr(main_window, "_on_show_kline", None)),
+        (ui_bus.sig_show_kline_with_list, getattr(main_window, "_on_show_kline_with_list", None)),
+        (theme_bus.sig_theme_changed, getattr(main_window, "_apply_theme", None)),
+    )
+    for signal, slot in bindings:
+        if slot is None:
+            continue
+        with suppress(AttributeError, RuntimeError, TypeError):
+            signal.disconnect(slot)
+    main_window._runtime_signals_disconnected = True
+
+
+def _background_tab_preload_busy(workspace, *, now: float) -> bool:
+    if workspace is None or not bool(getattr(workspace, "_background_prewarm_enabled", False)):
+        return False
+    if not bool(getattr(workspace, "_background_prewarm_finished", False)):
+        return True
+    try:
+        finished_age = now - float(getattr(workspace, "_background_prewarm_finished_at", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return True
+    return 0.0 <= finished_age < KLINE_PREWARM_SHELL_NAV_QUIET_SEC
+
+
+def _background_tab_preload_settled(workspace) -> bool:
+    if workspace is None:
+        return False
+    status_reader = getattr(workspace, "background_preload_status", None)
+    if not callable(status_reader):
+        return False
+    try:
+        status = status_reader()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    if not isinstance(status, dict):
+        return False
+    if status.get("enabled") is False:
+        return True
+    return all(
+        (
+            status.get("enabled") is True,
+            status.get("finished") is True,
+            not str(status.get("active_key") or "").strip(),
+            not list(status.get("remaining_keys") or []),
+            not list(status.get("pending_priority_keys") or []),
+            not str(status.get("cancelling_key") or "").strip(),
+            status.get("active_step_count") == 0,
+        )
+    )
+
+
+def _asian_market_tab_visible(main_window) -> bool:
+    workspace = getattr(main_window, "_workspace", None)
+    current_tab_key = getattr(workspace, "current_tab_key", None)
+    if not callable(current_tab_key):
+        return False
+    try:
+        return str(current_tab_key() or "").strip() == "asian_market"
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _kline_prewarm_runtime_busy(main_window) -> bool:
+    workspace = getattr(main_window, "_workspace", None)
+    now = time.perf_counter()
+    if _background_tab_preload_busy(workspace, now=now):
+        return True
+    last_shell_nav_at = getattr(workspace, "_last_shell_nav_load_at", 0.0)
+    try:
+        shell_nav_age = now - float(last_shell_nav_at or 0.0)
+    except (TypeError, ValueError):
+        shell_nav_age = KLINE_PREWARM_SHELL_NAV_QUIET_SEC
+    if last_shell_nav_at and 0.0 <= shell_nav_age < KLINE_PREWARM_SHELL_NAV_QUIET_SEC:
+        return True
+    if bool(
+        getattr(main_window, "_pending_f5_request", False)
+        or getattr(main_window, "_f5_precompute_start_pending", False)
+    ):
+        return True
+    controller = getattr(main_window, "_f5_job_controller", None)
+    running = getattr(controller, "is_running", False)
+    try:
+        return bool(running() if callable(running) else running)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _try_post_paint_kline_prewarm(main_window) -> None:
+    if getattr(main_window, "_is_closing", False) or not bool(
+        getattr(main_window, "_kline_prewarm_enabled", False)
+    ):
+        return
+    if _kline_prewarm_runtime_busy(main_window):
+        QTimer.singleShot(
+            KLINE_PREWARM_BUSY_RETRY_DELAY_MS,
+            lambda: _try_post_paint_kline_prewarm(main_window),
+        )
+        return
+    kline_manager.prewarm(main_window=main_window, delay_ms=0, hidden_view=True)
+
+
+def _schedule_post_paint_kline_prewarm(main_window) -> bool:
+    if getattr(main_window, "_is_closing", False) or not bool(
+        getattr(main_window, "_kline_prewarm_enabled", False)
+    ):
+        return True
+    QTimer.singleShot(
+        WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS,
+        lambda: _try_post_paint_kline_prewarm(main_window),
+    )
+    return True
+
+
+def _post_paint_stage_specs(main_window):
+    return (
+        ("_post_paint_native_effects_applied", "native_window_effects", lambda: _apply_post_paint_native_window_effects(main_window)),
+        ("_post_paint_data_provider_initialized", "data_provider", lambda: _initialize_post_paint_data_provider(main_window)),
+        ("_post_paint_startup_orchestrator_initialized", "startup_orchestrator", lambda: _initialize_post_paint_startup_orchestrator(main_window)),
+        ("_post_paint_scan_engine_initialized", "scan_engine", lambda: _initialize_post_paint_scan_engine(main_window)),
+        ("_post_paint_central_quotes_initialized", "central_quotes", lambda: _initialize_post_paint_central_quotes(main_window)),
+        ("_post_paint_tab_activation_finished", "tab_activation", lambda: _activate_pending_workspace_tab(main_window)),
+        ("_post_paint_f5_retention_scheduled", "f5_startup_retention", lambda: _schedule_f5_startup_retention(main_window)),
+        (
+            "_post_paint_auto_refresh_initialized",
+            "auto_refresh_initialization",
+            lambda: main_window._initialize_auto_refresh_services() if main_window._auto_refresh_enabled else None,
+        ),
+        (
+            "_post_paint_startup_scheduled",
+            "startup_schedule",
+            lambda: main_window.startup_orchestrator.schedule_startup() if main_window._startup_enabled else None,
+        ),
+        ("_post_paint_scheduler_started", "auto_refresh_start", lambda: _start_post_paint_scheduler(main_window)),
+        (
+            "_post_paint_kline_prewarm_scheduled",
+            "kline_prewarm",
+            lambda: _schedule_post_paint_kline_prewarm(main_window),
+        ),
+    )
+
+
+def _run_post_paint_stages(main_window) -> tuple[bool, ...]:
+    pending = [spec for spec in _post_paint_stage_specs(main_window) if not getattr(main_window, spec[0], False)]
+    if not pending:
+        return (True,)
+    flag, label, action = pending[0]
+    ready = _run_post_paint_stage(main_window, flag=flag, label=label, action=action)
+    main_window._post_paint_stage_progressed = bool(ready)
+    return (bool(ready and len(pending) == 1),)
+
+
+def _run_post_paint_runtime(main_window) -> None:
+    if main_window._is_closing or main_window._post_paint_runtime_started:
+        return
+    started_at = time.perf_counter()
+    main_window._post_paint_stage_progressed = False
+    stage_results = _run_post_paint_stages(main_window)
+    succeeded = all(stage_results)
+    main_window._post_paint_runtime_started = succeeded
+    if succeeded:
+        main_window._post_paint_retry_attempt = 0
+    elif main_window._post_paint_stage_progressed:
+        _schedule_post_paint_continuation(main_window)
+    else:
+        _schedule_post_paint_retry(main_window)
+
+    from core.observability import emit_structured_log, record_metric
+
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    record_metric("main_window_post_paint_runtime_ms", elapsed_ms, unit="ms")
+    emit_structured_log(
+        "main_window.post_paint_runtime",
+        elapsed_ms=round(elapsed_ms, 3),
+        succeeded=succeeded,
+    )
 
 
 class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
@@ -159,9 +659,9 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         # 绑定系统级全局网络状态变更，确保所有角色的状态与UI强同步
         event_bus.sig_network_status_changed.connect(self._update_network_ui)
 
-        self.startup_orchestrator = create_startup_orchestrator(self)
+        self.startup_orchestrator = None
         self.cache_manager = CacheManager()
-        self._f5_cancelled = False
+        self._f5_cancelled = self._pending_f5_request = False
         self._f5_precompute_ui_grace_until = 0.0
         self._titlebar_sync_state = "idle"
         self._last_sync_freshness = ""
@@ -180,22 +680,20 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         self._command_service = WindowCommandService(self)
 
         self._splash_update(60, "正在构建主界面模块...")
-        self.data_provider = create_data_provider(offline=True)
-        self.engine = create_scan_engine()
+        self.data_provider = None
+        self.engine = None
+        self.central_quotes_svc = None
         self.na_daily_service = None
         self.asian_market_service = None
         self.earnings_refresh_service = None
         self.auto_refresh_scheduler = None
 
-        # 全局样式（动态生成，支持主题切换）
-        from ui.styles.global_qss import generate_global_qss
-
-        qss = generate_global_qss()
-        self.setStyleSheet(qss)
-
+        # 正常入口已在创建启动页前安装全局 QSS；直接构造窗口的诊断入口仅在缺失时补装。
         app_instance = QApplication.instance()
-        if app_instance:
-            app_instance.setStyleSheet(qss)
+        if app_instance is not None and not app_instance.styleSheet():
+            from ui.styles.global_qss import generate_global_qss
+
+            app_instance.setStyleSheet(generate_global_qss())
         # 监听主题切换信号，实时刷新全局样式
         from ui.theme import theme_manager
 
@@ -235,7 +733,6 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         if not self._startup_enabled:
             log.info("[startup] startup timers disabled for controlled window construction")
 
-        self._init_central_broadcaster()
         if not self._auto_refresh_enabled:
             log.info("[startup] auto refresh scheduler disabled for controlled window construction")
         self._update_last_f5_time()
@@ -264,6 +761,10 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             na_daily_service=self.na_daily_service,
             asian_market_service=self.asian_market_service,
             earnings_service=self.earnings_refresh_service,
+            asian_market_visible_checker=lambda: _asian_market_tab_visible(self),
+            background_preload_settled_checker=lambda: _background_tab_preload_settled(
+                getattr(self, "_workspace", None)
+            ),
             parent=self,
         )
 
@@ -275,32 +776,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
 
     @pyqtSlot()
     def _start_post_paint_runtime(self) -> None:
-        if self._is_closing or self._post_paint_runtime_started:
-            return
-        self._post_paint_runtime_started = True
-        started_at = time.perf_counter()
-        succeeded = False
-        try:
-            if self._auto_refresh_enabled:
-                self._initialize_auto_refresh_services()
-            if self._startup_enabled:
-                self.startup_orchestrator.schedule_startup()
-            scheduler = self.auto_refresh_scheduler
-            if scheduler is not None:
-                scheduler.start()
-            succeeded = True
-        except Exception:
-            log.exception("[startup] post-paint runtime initialization failed")
-        finally:
-            from core.observability import emit_structured_log, record_metric
-
-            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-            record_metric("main_window_post_paint_runtime_ms", elapsed_ms, unit="ms")
-            emit_structured_log(
-                "main_window.post_paint_runtime",
-                elapsed_ms=round(elapsed_ms, 3),
-                succeeded=succeeded,
-            )
+        _run_post_paint_runtime(self)
 
     def _init_central_broadcaster(self):
         if not self._central_quotes_enabled:
@@ -516,16 +992,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         self._workspace = workspace
         self.tabs = workspace.tabs
         try:
-            if self._restore_last_tab_enabled:
-                schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
-                if callable(schedule_restore):
-                    schedule_restore(self._app_config.last_active_tab)
-                else:
-                    workspace.restore_last_tab(self._app_config.last_active_tab)
-            elif self.tabs is not None and self.tabs.currentIndex() != 0:
-                self.tabs.setCurrentIndex(0)
-            if self._kline_prewarm_enabled:
-                kline_manager.prewarm(delay_ms=WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS)
+            _queue_workspace_tab_activation(self, workspace)
             self.install_workspace_table_copy_hooks()
             self.tabs.currentChanged.connect(self._remember_last_active_tab)
             self._rebind_workspace_chrome()
@@ -774,7 +1241,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
     # 统一由 BaseStockTab 基类提供，避免双份代码维护噩梦
 
     def _remember_last_active_tab(self, index: int):
-        self._app_config.last_active_tab = index
+        _remember_active_tab_settings(self._app_config, getattr(self, "_workspace", None), index)
 
     def iter_workspace_tables(self):
         workspace = getattr(self, "_workspace", None)
@@ -832,7 +1299,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
     def _update_last_f5_time(self):
         import datetime
 
-        mtime = cache_file_mtime(RPS_CACHE_FILE)
+        mtime = active_rps_cache_mtime(RPS_CACHE_FILE)
         if mtime > 0:
             dt = datetime.datetime.fromtimestamp(mtime)
             freshness = f"快照 {dt.strftime('%m-%d %H:%M')}"
@@ -856,12 +1323,6 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._native_taskbar_fix_applied:
-            self._native_taskbar_fix_applied = True
-            apply_windows_frameless_taskbar_fix(self)
-            # 优化维度二：在主窗口显现时激活 Windows 底层 DWM 原生投影，带给无边框窗口顶级的立体呼吸感
-            enable_windows_native_shadow(self)
-            enable_windows_system_backdrop(self, backdrop="mica", dark=bool(build_ui_tokens()["is_dark"]))
         if hasattr(self, "_process_watchdog"):
             self._process_watchdog.pulse("showEvent")
 
@@ -875,6 +1336,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         from core.observability import emit_structured_log, record_metric
 
         elapsed_ms = (time.perf_counter() - self._launch_started_at) * 1000.0
+        self._first_paint_elapsed_ms = elapsed_ms
         record_metric("main_window_first_paint_ms", elapsed_ms, unit="ms")
         emit_structured_log(
             "main_window.first_paint",
@@ -888,6 +1350,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         from ui.main_window_runtime import shutdown_main_window
 
         self._post_paint_runtime_timer.stop()
+        _disconnect_main_window_runtime_signals(self)
 
         if self._app_cursor_filter_installed:
             app = QApplication.instance()
@@ -953,6 +1416,12 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
 
     def _action_refresh_f5(self):
         """F5 盘后预计算界面触发层"""
+        if not _f5_runtime_dependencies_ready(self):
+            self._pending_f5_request = True
+            if hasattr(self, "lbl_status"):
+                self.lbl_status.setText("数据服务初始化中，完成后继续全局同步...")
+            self._set_titlebar_sync_state("cache", "数据服务初始化中，完成后继续同步")
+            return
         from PyQt6.QtWidgets import QMessageBox
 
         from ui.components.message_box import show_themed_question
@@ -979,7 +1448,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         self._f5_cancelled = False
         from ui.main_window_runtime import start_f5_precompute
 
-        start_f5_precompute(self, task_manager=task_manager)
+        start_f5_precompute(self)
 
     # =======================================================================
     # 右键菜单委托方法
@@ -1019,7 +1488,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
 
     def _on_show_kline_with_list(self, code: str, code_list: list, current_idx: int):
         """响应带列表上下文的 K 线图请求 — 委托给 KLineWindowManager (#1)"""
-        from app.services.kline_open_service import build_kline_open_request
+        from app.services.kline_open_service import build_kline_open_context
 
         workspace = getattr(self, "_workspace", None)
         source_tab_index = self.tabs.currentIndex() if self.tabs is not None else -1
@@ -1029,7 +1498,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             if 0 <= source_tab_index < len(tab_specs):
                 source_tab_key = str(tab_specs[source_tab_index].get("key") or "").strip()
 
-        request = build_kline_open_request(
+        open_context = build_kline_open_context(
             code=code,
             code_name_map=getattr(self.data_provider, "code2name", {}),
             code_list=code_list,
@@ -1041,12 +1510,13 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
 
         kline_manager.open_chart(
             main_window=self,
-            code=request["code"],
-            name=request["name"],
+            code=open_context.code,
+            name=open_context.name,
             data_provider=self.data_provider,
-            vcp_data=request["vcp_data"],
-            code_list=request["code_list"],
-            current_idx=request["current_idx"],
+            vcp_data=None,
+            code_list=None,
+            current_idx=open_context.current_idx,
+            open_context=open_context,
         )
 
     # ================================================================

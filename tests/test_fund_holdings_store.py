@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 import domains.fund_holdings.store as fund_store_module
@@ -37,6 +40,60 @@ def _qfii_raw_row(holder_name, *, secucode=None, **overrides):
         row = {"SECUCODE": secucode, **row}
     row.update(overrides)
     return row
+
+
+def test_deferred_compare_cache_repair_skips_constructor_but_default_stays_eager(monkeypatch, fund_store):
+    calls = []
+    monkeypatch.setattr(FundHoldingsStore, "refresh_compare_cache", lambda self: calls.append(self))
+
+    deferred_repo = FundHoldingsStore(store=fund_store, defer_compare_cache_repair=True)
+    eager_repo = FundHoldingsStore(store=fund_store)
+
+    assert calls == [eager_repo]
+    assert deferred_repo._compare_cache_repair_pending is True
+
+
+def test_deferred_compare_cache_repair_runs_once_on_first_query(monkeypatch, fund_store):
+    repo = FundHoldingsStore(store=fund_store, defer_compare_cache_repair=True)
+    calls = []
+    monkeypatch.setattr(repo, "refresh_compare_cache", lambda: calls.append("repair"))
+    monkeypatch.setattr(repo, "_query_cached_change_rows", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(repo, "_query_qfii_holder_change_rows", lambda *_args, **_kwargs: [])
+
+    assert repo.query_change_rows(quarter_keys={"2025Q4"}) == []
+    assert repo.query_change_rows(quarter_keys={"2025Q4"}) == []
+
+    assert calls == ["repair"]
+    assert repo._compare_cache_repair_pending is False
+
+
+def test_deferred_compare_cache_repair_is_thread_safe_once(monkeypatch, fund_store):
+    repo = FundHoldingsStore(store=fund_store, defer_compare_cache_repair=True)
+    repair_started = threading.Event()
+    release_repair = threading.Event()
+    calls = []
+    calls_lock = threading.Lock()
+
+    def _repair():
+        with calls_lock:
+            calls.append("repair")
+        repair_started.set()
+        assert release_repair.wait(timeout=5.0)
+
+    monkeypatch.setattr(repo, "refresh_compare_cache", _repair)
+    monkeypatch.setattr(repo, "_query_cached_change_rows", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(repo, "_query_qfii_holder_change_rows", lambda *_args, **_kwargs: [])
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        first = executor.submit(repo.query_change_rows, {"2025Q4"})
+        assert repair_started.wait(timeout=5.0)
+        rest = [executor.submit(repo.query_change_rows, {"2025Q4"}) for _ in range(7)]
+        release_repair.set()
+        results = [first.result(timeout=5.0), *(future.result(timeout=5.0) for future in rest)]
+
+    assert results == [[] for _ in range(8)]
+    assert calls == ["repair"]
+    assert repo._compare_cache_repair_pending is False
 
 
 def test_fund_holdings_store_query_change_rows_uses_signature_cache(monkeypatch, fund_store):

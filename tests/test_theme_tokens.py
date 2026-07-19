@@ -395,12 +395,10 @@ def test_vcp_table_view_width_is_capped_by_available_screen():
         table.deleteLater()
 
 
-def test_vcp_table_view_runtime_style_only_keeps_table_padding():
+def test_vcp_table_view_does_not_duplicate_global_table_style():
     table = VCPTableView()
     try:
-        style = table.styleSheet()
-        assert "QTableView::item" in style
-        assert "QToolTip" not in style
+        assert table.styleSheet() == ""
     finally:
         table.deleteLater()
 

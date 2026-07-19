@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import polars as pl
 
+from core import cache_manager as cache_manager_module
 from core.cache_manager import CacheManager
 
 
@@ -42,7 +43,7 @@ class FakeFrame:
         return self._rows
 
 
-def test_try_load_rps_from_disk_rebuilds_json_cache_when_missing(tmp_path):
+def test_try_load_rps_from_disk_rebuilds_json_cache_when_missing(tmp_path, monkeypatch):
     cache_path = tmp_path / "vcp_rps_precomputed.json"
     legacy_path = tmp_path / "vcp_rps_precomputed.pkl"
     legacy_path.write_bytes(b"legacy")
@@ -55,6 +56,11 @@ def test_try_load_rps_from_disk_rebuilds_json_cache_when_missing(tmp_path):
     provider = DummyProvider({"600000": df_a, "000001": df_b})
     manager = CacheManager()
     manager.rps_path = str(cache_path)
+    monkeypatch.setattr(
+        cache_manager_module,
+        "read_active_rps_bundle",
+        lambda path: (path, json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.is_file() else None),
+    )
 
     manager.try_load_rps_from_disk(engine, data_provider=provider)
 
@@ -70,7 +76,7 @@ def test_try_load_rps_from_disk_rebuilds_json_cache_when_missing(tmp_path):
     assert payload["rps250"]["000001"] == 85.0
 
 
-def test_try_load_rps_from_disk_rebuilds_incomplete_json_cache(tmp_path):
+def test_try_load_rps_from_disk_rebuilds_incomplete_json_cache(tmp_path, monkeypatch):
     cache_path = tmp_path / "vcp_rps_precomputed.json"
     cache_path.write_text(
         json.dumps(
@@ -88,6 +94,11 @@ def test_try_load_rps_from_disk_rebuilds_incomplete_json_cache(tmp_path):
     provider = DummyProvider({f"{i:06d}": FakeFrame(260) for i in range(600000, 601200)})
     manager = CacheManager()
     manager.rps_path = str(cache_path)
+    monkeypatch.setattr(
+        cache_manager_module,
+        "read_active_rps_bundle",
+        lambda path: (path, json.loads(cache_path.read_text(encoding="utf-8"))),
+    )
 
     manager.try_load_rps_from_disk(engine, data_provider=provider)
 

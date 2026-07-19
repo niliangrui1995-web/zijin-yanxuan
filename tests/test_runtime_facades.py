@@ -2,34 +2,11 @@ from __future__ import annotations
 
 import importlib
 
-import pytest
-
 from app.services import (
     runtime_services,
     scan_engine_facade,
-    ui_earnings_service,
-    ui_quote_service,
-    ui_runtime_service,
-    ui_task_service,
 )
 from vcp.models import VCPParams
-
-
-def test_ui_runtime_legacy_barrel_exports_resolvable_names():
-    for name in ui_runtime_service.__all__:
-        assert hasattr(ui_runtime_service, name), name
-
-
-def test_ui_runtime_legacy_barrel_reuses_narrow_service_objects():
-    assert ui_runtime_service.EarningsScheduler is ui_earnings_service.EarningsScheduler
-    assert ui_runtime_service.build_finance_quote_payload is ui_quote_service.build_finance_quote_payload
-    assert ui_runtime_service.background_job_runner is ui_task_service.background_job_runner
-
-
-def test_ui_runtime_legacy_barrel_is_explicitly_deprecated():
-    assert "deprecated" in ui_runtime_service.__deprecated__.lower()
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        importlib.reload(ui_runtime_service)
 
 
 def test_scan_engine_facade_delegates_to_domain_services(monkeypatch):

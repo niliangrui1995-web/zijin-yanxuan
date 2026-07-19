@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import sqlite3
+from contextlib import closing
 
 import pytest
 import requests
@@ -55,7 +56,7 @@ def test_holiday_store_update_and_corrupt_rows(tmp_path):
     module.save_holidays_to_store(root, "HK", 2026, {"2026-01-01"})
     module.save_holidays_to_store(root, "HK", 2026, {"2026-02-01"})
     db = module.holiday_db_path(root)
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         conn.execute(
             "INSERT INTO market_holiday_cache(market, year, days_json, updated_at) VALUES(?,?,?,?)",
             ("HK", 2027, "not-json", "not-a-time"),

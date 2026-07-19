@@ -12,6 +12,7 @@ from ui.workspaces.tab_capabilities import (
     SnapshotRefreshCapability,
     TableCollectionCapability,
 )
+from ui.workspaces.tab_registry import TabF5SnapshotPolicy, get_tab_definition
 
 log = get_logger(__name__)
 
@@ -52,6 +53,11 @@ class WorkspaceTableService:
         return None
 
     @staticmethod
+    def _explicit_f5_snapshot_policy(tab) -> TabF5SnapshotPolicy | None:
+        definition = get_tab_definition(getattr(tab, "workspace_key", ""))
+        return definition.f5_snapshot_policy if definition is not None else None
+
+    @staticmethod
     def _uses_independent_f5_refresh(tab) -> bool:
         if isinstance(tab, PostF5DataRefreshCapability):
             return True
@@ -62,6 +68,19 @@ class WorkspaceTableService:
                 "_schedule_context_refresh",
             )
         )
+
+    @classmethod
+    def _should_refresh_snapshot(cls, tab, *, skip_cache_reload_tabs: bool) -> bool:
+        explicit_policy = cls._explicit_f5_snapshot_policy(tab)
+        if explicit_policy is not None:
+            if explicit_policy is TabF5SnapshotPolicy.NONE:
+                return False
+            return not skip_cache_reload_tabs or explicit_policy is TabF5SnapshotPolicy.SNAPSHOT
+        if not skip_cache_reload_tabs:
+            return True
+        # Compatibility for lightweight/legacy workspace test doubles that do
+        # not carry a registry key.
+        return not cls._uses_independent_f5_refresh(tab)
 
     def _ordered_refreshable_tabs(self, *, skip_cache_reload_tabs: bool = False) -> list:
         current_widget = self._current_tab_widget()
@@ -76,7 +95,7 @@ class WorkspaceTableService:
                     item[0],
                 ),
             )
-            if not skip_cache_reload_tabs or not self._uses_independent_f5_refresh(tab)
+            if self._should_refresh_snapshot(tab, skip_cache_reload_tabs=skip_cache_reload_tabs)
         ]
 
     @staticmethod

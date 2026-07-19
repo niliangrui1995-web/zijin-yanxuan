@@ -38,9 +38,11 @@ from scripts.perf_round4_probe import (
     probe_tab_first_open,
 )
 from ui.main_window_runtime import finish_f5_reload
-from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP
+from ui.workspaces.tab_registry import INFO_SOURCE_GROUP, TAB_DEFINITIONS
 
-INFO_SOURCE_TAB_KEYS = frozenset({"scan", "foreign_block", "earnings", "fund_holdings"})
+INFO_SOURCE_TAB_KEYS = frozenset(
+    definition.key for definition in TAB_DEFINITIONS if definition.group == INFO_SOURCE_GROUP
+)
 NETWORK_TASK_MARKERS = (
     "central_quotes",
     "foreign_block_trade",

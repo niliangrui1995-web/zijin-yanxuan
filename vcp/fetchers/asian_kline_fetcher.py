@@ -22,8 +22,16 @@ import re
 import sys
 import time
 from datetime import date, datetime, timedelta
+from functools import partial
 
 from infra.http_safety import requests_get_https
+from infra.tasks.lifecycle import (
+    bounded_io_timeout,
+    raise_if_cancelled,
+    reraise_task_cancellation,
+    wait_with_cancellation,
+)
+from infra.tasks.owner_lifecycle import invoke_with_cancellation
 from vcp.fetchers.asian_kline_cache import (
     _latest_cache_path as _latest_cache_path,
 )
@@ -154,6 +162,22 @@ _MARKET_CURRENCY_MAP = {
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "N/A", "n/a", "null", "None"}
 _JP_HISTORY_PAGE_SIZE = 20
 _KR_HISTORY_PAGE_SIZE = 20
+
+
+def _history_request_timeout(cancellation_token=None, default_seconds: float = 20.0) -> float:
+    return bounded_io_timeout(default_seconds, cancellation_token)
+
+
+def _response_json(response, cancellation_token=None):
+    payload = response.json()
+    raise_if_cancelled(cancellation_token)
+    return payload
+
+
+def _response_text(response, cancellation_token=None) -> str:
+    text = response.text
+    raise_if_cancelled(cancellation_token)
+    return text
 
 
 def _deadline_from_time_budget(time_budget_sec: float | int | None) -> float | None:
@@ -509,9 +533,16 @@ def _extract_yj_history_value(values: list, index: int) -> float | None:
     return _to_float(cell)
 
 
-def _finalize_klines(raw_rows: list[dict], *, start_date: date, end_date: date) -> list[dict]:
+def _finalize_klines(
+    raw_rows: list[dict],
+    *,
+    start_date: date,
+    end_date: date,
+    cancellation_token=None,
+) -> list[dict]:
     deduped: dict[str, dict] = {}
     for row in raw_rows:
+        raise_if_cancelled(cancellation_token)
         iso_date = str((row or {}).get("date") or "").strip()
         row_date = _date_from_iso(iso_date)
         if row_date is None or row_date < start_date or row_date > end_date:
@@ -551,6 +582,7 @@ def _fetch_tw_history_twse(
     *,
     start_date: date,
     end_date: date,
+    cancellation_token=None,
 ) -> list[dict]:
     base_code = str(ticker or "").split(".")[0].strip()
     if not base_code:
@@ -567,9 +599,9 @@ def _fetch_tw_history_twse(
                 url,
                 session=http_session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.twse.com.tw/"},
-                timeout=20,
+                timeout=_history_request_timeout(cancellation_token),
             )
-            payload = response.json()
+            payload = _response_json(response, cancellation_token)
         except Exception as exc:
             if _is_tls_verification_error(exc):
                 logging.warning("TWSE TLS verification failed for %s: %s", ticker, exc)
@@ -601,6 +633,7 @@ def _fetch_tw_history_tpex(
     *,
     start_date: date,
     end_date: date,
+    cancellation_token=None,
 ) -> list[dict]:
     base_code = str(ticker or "").split(".")[0].strip()
     if not base_code:
@@ -616,9 +649,9 @@ def _fetch_tw_history_tpex(
                 "User-Agent": "Mozilla/5.0",
                 "Referer": "https://www.tpex.org.tw/en-us/mainboard/trading/info/stock-pricing.html",
             },
-            timeout=20,
+            timeout=_history_request_timeout(cancellation_token),
         )
-        payload = response.json()
+        payload = _response_json(response, cancellation_token)
         if str(payload.get("stat") or "").lower() != "ok":
             continue
 
@@ -647,6 +680,7 @@ def _fetch_kr_history_naver(
     *,
     start_date: date,
     end_date: date,
+    cancellation_token=None,
 ) -> list[dict]:
     base_code = str(ticker or "").split(".")[0].strip()
     if not base_code:
@@ -662,9 +696,9 @@ def _fetch_kr_history_naver(
                 "User-Agent": "Mozilla/5.0",
                 "Referer": "https://m.stock.naver.com/",
             },
-            timeout=20,
+            timeout=_history_request_timeout(cancellation_token),
         )
-        payload = response.json() or []
+        payload = _response_json(response, cancellation_token) or []
         if not payload:
             break
 
@@ -698,6 +732,7 @@ def _fetch_jp_history_yahoo_japan(
     *,
     start_date: date,
     end_date: date,
+    cancellation_token=None,
 ) -> list[dict]:
     base_code = str(ticker or "").split(".")[0].strip()
     if not base_code:
@@ -708,12 +743,11 @@ def _fetch_jp_history_yahoo_japan(
         history_url,
         session=http_session,
         headers={"User-Agent": "Mozilla/5.0", "Referer": history_url},
-        timeout=20,
+        timeout=_history_request_timeout(cancellation_token),
     )
-    token_match = _YJ_JWT_TOKEN_RE.search(response.text)
+    token_match = _YJ_JWT_TOKEN_RE.search(_response_text(response, cancellation_token))
     if not token_match:
         return []
-
     jwt_token = token_match.group(1)
     rows: list[dict] = []
     page = 1
@@ -733,9 +767,9 @@ def _fetch_jp_history_yahoo_japan(
                 "Referer": history_url,
                 "x-jwt-token": jwt_token,
             },
-            timeout=20,
+            timeout=_history_request_timeout(cancellation_token),
         )
-        payload = api_response.json()
+        payload = _response_json(api_response, cancellation_token)
         history = ((payload.get("response") or {}).get("history") or {}).get("histories") or []
         if not history:
             break
@@ -771,6 +805,7 @@ def _fetch_yfinance_history_rows(
     *,
     start_date: date,
     end_date: date,
+    cancellation_token=None,
 ) -> list[dict]:
     rate_limit_status = get_yf_rate_limit_status()
     if rate_limit_status["active"]:
@@ -780,18 +815,17 @@ def _fetch_yfinance_history_rows(
             rate_limit_status["remaining_sec"],
         )
         return []
-
     try:
         import yfinance as yf
     except (ImportError, ModuleNotFoundError):
         return []
-
     end_exclusive = end_date + timedelta(days=1)
     try:
         frame = yf.Ticker(ticker, session=http_session).history(
             start=start_date.isoformat(),
             end=end_exclusive.isoformat(),
             auto_adjust=False,
+            timeout=_history_request_timeout(cancellation_token),
         )
     except Exception as exc:
         if not is_yf_rate_limit_error(exc):
@@ -799,9 +833,9 @@ def _fetch_yfinance_history_rows(
         remaining_sec = mark_yf_rate_limited(exc)
         logging.warning(f"⚠️ {ticker}: Yahoo Finance 回退源限流，冷却 {remaining_sec:.0f}s — {exc}")
         return []
+    raise_if_cancelled(cancellation_token)
     if frame is None or frame.empty:
         return []
-
     rows: list[dict] = []
     for index, item in frame.iterrows():
         row_date = getattr(index, "date", lambda: None)()
@@ -830,6 +864,7 @@ def _fetch_hk_history_tencent(
     start_date: date,
     end_date: date,
     target_rows: int,
+    cancellation_token=None,
 ) -> list[dict]:
     base_code = str(ticker or "").split(".")[0].strip().zfill(5)
     if not base_code:
@@ -844,9 +879,9 @@ def _fetch_hk_history_tencent(
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://stockapp.finance.qq.com/",
         },
-        timeout=20,
+        timeout=_history_request_timeout(cancellation_token),
     )
-    payload = response.json()
+    payload = _response_json(response, cancellation_token)
     market_data = (payload.get("data") or {}).get(symbol) or {}
     history = market_data.get("qfqday") or market_data.get("day") or []
 
@@ -870,6 +905,10 @@ def _fetch_hk_history_tencent(
     return rows
 
 
+def _call_history_source(cancellation_token, fetcher, *args, **kwargs):
+    return invoke_with_cancellation(fetcher, cancellation_token, *args, **kwargs)
+
+
 def _fetch_market_history_rows(
     ticker: str,
     http_session,
@@ -877,45 +916,31 @@ def _fetch_market_history_rows(
     start_date: date,
     end_date: date,
     target_rows: int,
+    cancellation_token=None,
 ) -> tuple[list[dict], str]:
+    call = partial(_call_history_source, cancellation_token)
+    args = (ticker, http_session)
+    window = {"start_date": start_date, "end_date": end_date}
     suffix = _get_market_suffix(ticker)
     if suffix == ".TW":
-        rows = _fetch_tw_history_twse(ticker, http_session, start_date=start_date, end_date=end_date)
-        if rows:
-            return rows, "twse_stock_day"
-        return (
-            _fetch_yfinance_history_rows(ticker, http_session, start_date=start_date, end_date=end_date),
+        rows = call(_fetch_tw_history_twse, *args, **window)
+        return (rows, "twse_stock_day") if rows else (
+            call(_fetch_yfinance_history_rows, *args, **window),
             "yfinance_history",
         )
     if suffix == ".TWO":
-        return (
-            _fetch_tw_history_tpex(ticker, http_session, start_date=start_date, end_date=end_date),
-            "tpex_trading_stock",
-        )
+        return call(_fetch_tw_history_tpex, *args, **window), "tpex_trading_stock"
     if suffix == ".KS":
-        return (
-            _fetch_kr_history_naver(ticker, http_session, start_date=start_date, end_date=end_date),
-            "naver_history",
-        )
+        return call(_fetch_kr_history_naver, *args, **window), "naver_history"
     if suffix == ".T":
-        rows = _fetch_jp_history_yahoo_japan(ticker, http_session, start_date=start_date, end_date=end_date)
-        if rows:
-            return rows, "yj_history"
-        return (
-            _fetch_yfinance_history_rows(ticker, http_session, start_date=start_date, end_date=end_date),
+        rows = call(_fetch_jp_history_yahoo_japan, *args, **window)
+        return (rows, "yj_history") if rows else (
+            call(_fetch_yfinance_history_rows, *args, **window),
             "yfinance_history",
         )
     if suffix == ".HK":
-        return (
-            _fetch_hk_history_tencent(
-                ticker,
-                http_session,
-                start_date=start_date,
-                end_date=end_date,
-                target_rows=target_rows,
-            ),
-            "tencent_hk_qfq",
-        )
+        rows = call(_fetch_hk_history_tencent, *args, target_rows=target_rows, **window)
+        return rows, "tencent_hk_qfq"
     return [], "unsupported"
 
 
@@ -924,23 +949,12 @@ def fetch_single_kline(
     ticker: str,
     period: str = "1y",
     session=None,
+    *,
+    cancellation_token=None,
 ) -> dict | None:
-    """拉取单只标的的 K 线数据。
-
-    Returns:
-        {
-            "name": "Tokyo Electron",
-            "ticker": "8035.T",
-            "market": "日本",
-            "track": "前道晶圆设备与量测",
-            "currency": "JPY",
-            "klines": [
-                {"date": "2025-04-01", "open": 100, "high": 105, "low": 98, "close": 103, "volume": 12345},
-                ...
-            ]
-        }
-    """
+    """拉取单只亚洲标的的日线、市场、货币与赛道快照。"""
     try:
+        raise_if_cancelled(cancellation_token)
         ticker = str(ticker or "").strip().upper()
         http_session = session or build_yf_session()
         start_date, end_date, target_rows = _resolve_period_window(period)
@@ -950,8 +964,14 @@ def fetch_single_kline(
             start_date=start_date,
             end_date=end_date,
             target_rows=target_rows,
+            cancellation_token=cancellation_token,
         )
-        klines = _finalize_klines(raw_rows, start_date=start_date, end_date=end_date)
+        klines = _finalize_klines(
+            raw_rows,
+            start_date=start_date,
+            end_date=end_date,
+            cancellation_token=cancellation_token,
+        )
 
         if not klines:
             logging.warning(f"⚠️ {name}({ticker}): 无数据")
@@ -972,6 +992,7 @@ def fetch_single_kline(
         }
 
     except Exception as e:
+        reraise_task_cancellation(e)
         if is_yf_rate_limit_error(e):
             logging.warning(f"⚠️ {name}({ticker}): 上游请求限流 — {e}")
             return None
@@ -999,15 +1020,9 @@ def fetch_all_asian_klines(
     period: str = "1y",
     time_budget_sec: float | int | None = None,
     cancellation_checkpoint=None,
+    cancellation_token=None,
 ) -> list[dict]:
-    """并发拉取亚洲寡头 K 线数据。
-
-    Args:
-        market_filter: 市场筛选（TW/KR/JP/HK）
-        single_ticker: 只拉单只
-        max_workers: 并发线程数（别太高，免费上游会限速）
-        period: 时间窗口参数，默认 1y（约 250 个交易日）
-    """
+    """按市场/单票筛选拉取亚洲寡头 K 线数据。"""
     # Why: 支持单只调试模式
     if single_ticker:
         name = None
@@ -1033,6 +1048,7 @@ def fetch_all_asian_klines(
     yf_session = build_yf_session()
     deadline = _deadline_from_time_budget(time_budget_sec)
     for name, ticker in tickers.items():
+        raise_if_cancelled(cancellation_token)
         if _deadline_exceeded(deadline, cancellation_checkpoint):
             logging.warning(
                 "Asian kline fetch time budget exhausted; stop early after %s/%s",
@@ -1040,9 +1056,11 @@ def fetch_all_asian_klines(
                 len(tickers),
             )
             break
-        time.sleep(0.3)
+        wait_with_cancellation(0.3, cancellation_token)
         try:
-            data = fetch_single_kline(
+            data = invoke_with_cancellation(
+                fetch_single_kline,
+                cancellation_token,
                 name,
                 ticker,
                 period=period,
@@ -1054,6 +1072,7 @@ def fetch_all_asian_klines(
             else:
                 failed.append(f"{name}({ticker})")
         except Exception as e:
+            reraise_task_cancellation(e)
             failed.append(f"{name}({ticker})")
             if is_yf_rate_limit_error(e):
                 logging.warning(f"  ⚠️ {name}({ticker}): 上游请求限流 — {e}")
@@ -1082,15 +1101,9 @@ def sync_asian_kline_cache(
     output_dir: str | None = None,
     time_budget_sec: float | int | None = None,
     cancellation_checkpoint=None,
+    cancellation_token=None,
 ) -> tuple[bool, str, dict]:
-    """严格同步亚洲 K 线缓存。
-
-    统一规则：
-    1. 先按目标池做全量拉取；
-    2. 对缺失票做单票补抓；
-    3. 仍缺失时尝试从旧缓存回填；
-    4. 若最终仍缺票，则拒绝覆盖 latest 缓存。
-    """
+    """全量拉取、单票补抓、旧缓存回填；仍缺票时拒绝覆盖 latest。"""
     target_map = _build_sync_target_map(market_filter=market_filter, single_ticker=single_ticker)
     if not target_map:
         message = "没有找到符合条件的亚洲标的"
@@ -1111,6 +1124,7 @@ def sync_asian_kline_cache(
     output_dir = _resolve_cache_output_dir(output_dir)
     deadline = _deadline_from_time_budget(time_budget_sec)
     _check_cancellation(cancellation_checkpoint)
+    raise_if_cancelled(cancellation_token)
 
     data = fetch_all_asian_klines(
         market_filter=market_filter,
@@ -1119,6 +1133,7 @@ def sync_asian_kline_cache(
         period=period,
         time_budget_sec=_remaining_time_budget(deadline),
         cancellation_checkpoint=cancellation_checkpoint,
+        cancellation_token=cancellation_token,
     )
     if _deadline_exceeded(deadline, cancellation_checkpoint):
         return _time_budget_exhausted_result(target_tickers, output_dir)
@@ -1172,12 +1187,15 @@ def sync_asian_kline_cache(
         rescue_session = build_yf_session()
         for ticker in list(missing):
             _check_cancellation(cancellation_checkpoint)
+            raise_if_cancelled(cancellation_token)
             if _deadline_exceeded(deadline, cancellation_checkpoint):
                 logging.warning("Asian kline sync time budget exhausted; stop single-symbol rescue")
                 break
             name = ticker_to_name.get(ticker, ticker)
             try:
-                one = fetch_single_kline(
+                one = invoke_with_cancellation(
+                    fetch_single_kline,
+                    cancellation_token,
                     name,
                     ticker,
                     period=period,
@@ -1187,6 +1205,7 @@ def sync_asian_kline_cache(
                     row_map[ticker] = one
                     single_recovered.append(ticker)
             except Exception as exc:
+                reraise_task_cancellation(exc)
                 if is_yf_rate_limit_error(exc):
                     logging.warning(f"⚠️ 单票补抓遇到上游限流 {ticker}: {exc}")
                     continue

@@ -242,7 +242,10 @@ class AutoRefreshTaskService:
 
     def run_asian_market_cache_sync(self, trade_date: str, *, cancellation_token=None) -> dict:
         _raise_if_cancelled(cancellation_token)
-        result = self._get_asian_market_service().run_cache_sync_if_stale(emit_event=False)
+        result = self._get_asian_market_service().run_cache_sync_if_stale(
+            emit_event=False,
+            cancellation_token=cancellation_token,
+        )
         _raise_if_cancelled(cancellation_token)
         result["trade_date"] = str(trade_date or "").strip()
         return result

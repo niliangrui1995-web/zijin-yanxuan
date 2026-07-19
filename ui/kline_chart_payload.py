@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+import math
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
-import pandas as pd
 from PyQt6.QtCore import QUrl
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from app.services.kline_open_service import (
     KEY_CODE,
@@ -35,6 +38,12 @@ from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
 _KLINE_SCRIPT_DIR = Path(__file__).resolve().parent / "assets" / "kline"
+
+
+def _pandas_module():
+    import pandas
+
+    return pandas
 
 
 @lru_cache(maxsize=None)
@@ -505,6 +514,78 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
 </html>'''
 
 
+def build_kline_shell_html(title: str, echarts_js_path: str, theme_colors: dict) -> str:
+    """Build the reusable WebEngine document with an intentionally empty data set."""
+    empty_data = {
+        "title": str(title or "K线"),
+        "dates": [],
+        "klines": [],
+        "vols": [],
+        "volMa20": [],
+        "macd": [],
+        "diff": [],
+        "dea": [],
+        "ma10": [],
+        "ma20": [],
+        "ma50": [],
+        "ma150": [],
+        "ma200": [],
+        "maStyles": {},
+        "marketState": {"market": "", "status": "", "active": False, "live": False},
+        "vcpMarkers": None,
+        "vcpLines": None,
+        "vcpArea": None,
+        "earningsMarkers": None,
+    }
+    return build_kline_html(title, empty_data, echarts_js_path, theme_colors)
+
+
+def _build_kline_preheat_data(title: str, theme_colors: dict) -> dict:
+    point_count = 250
+    dates = [f"preheat-{index:03d}" for index in range(point_count)]
+    closes = [round(10.0 + (index % 11) * 0.01, 2) for index in range(point_count)]
+    up_color = str(theme_colors["up_color"])
+    volumes = [
+        {
+            "value": 1_000.0,
+            "itemStyle": {"color": up_color},
+        }
+        for _index in range(point_count)
+    ]
+    macd = [{"value": 0.0, "itemStyle": {"color": up_color}}] * point_count
+    return {
+        "title": str(title or "K线"),
+        "dates": dates,
+        "klines": [[value, value, value - 0.01, value + 0.01] for value in closes],
+        "vols": volumes,
+        "volMa20": [1_000.0] * point_count,
+        "macd": macd,
+        "diff": [0.0] * point_count,
+        "dea": [0.0] * point_count,
+        "ma10": list(closes),
+        "ma20": list(closes),
+        "ma50": list(closes),
+        "ma150": list(closes),
+        "ma200": list(closes),
+        "maStyles": {},
+        "marketState": {"market": "", "status": "", "active": False, "live": False},
+        "vcpMarkers": None,
+        "vcpLines": None,
+        "vcpArea": None,
+        "earningsMarkers": None,
+    }
+
+
+def build_kline_preheated_shell_html(
+    title: str,
+    echarts_js_path: str,
+    theme_colors: dict,
+) -> str:
+    """Build the hidden pool shell with one full-size non-business render."""
+    preheat_data = _build_kline_preheat_data(title, theme_colors)
+    return build_kline_html(title, preheat_data, echarts_js_path, theme_colors)
+
+
 def _pick_payload_value(payload: dict, *keys, default=""):
     for key in keys:
         value = payload.get(key)
@@ -545,6 +626,7 @@ def _event_date_key(value) -> str:
     if len(fallback) == 8 and fallback.isdigit():
         return fallback
     try:
+        pd = _pandas_module()
         timestamp = pd.to_datetime(text, errors="coerce")
     except (TypeError, ValueError):
         return ""
@@ -829,11 +911,40 @@ def _build_moving_average_data(closes) -> dict:
         (200, "ma200"),
     ):
         if len(closes) >= period:
-            ma = pd.Series(closes).rolling(period).mean()
-            ma_data[key] = [round(value, 2) if not np.isnan(value) else None for value in ma.values]
+            ma_data[key] = _rolling_mean(closes, period, digits=2)
         else:
             ma_data[key] = [None] * len(closes)
     return ma_data
+
+
+def _prepared_numeric_series(df: pd.DataFrame, column: str, *, digits: int) -> list:
+    values = []
+    for value in df[column].values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            values.append(None)
+            continue
+        values.append(None if math.isnan(number) else round(number, digits))
+    return values
+
+
+def _moving_average_data(df: pd.DataFrame, closes) -> dict:
+    columns = ("ma10", "ma20", "ma50", "ma150", "ma200")
+    if not all(column in df.columns for column in columns):
+        return _build_moving_average_data(closes)
+    return {column: _prepared_numeric_series(df, column, digits=2) for column in columns}
+
+
+def _rolling_mean(values, period: int, *, digits: int) -> list:
+    numbers = [float(value) for value in values]
+    result = [None] * len(numbers)
+    for index in range(period - 1, len(numbers)):
+        window = numbers[index - period + 1 : index + 1]
+        if any(math.isnan(value) for value in window):
+            continue
+        result[index] = round(sum(window) / period, digits)
+    return result
 
 
 def _last_finite(values) -> float | None:
@@ -844,7 +955,7 @@ def _last_finite(values) -> float | None:
             number = float(value)
         except (TypeError, ValueError):
             continue
-        if not np.isnan(number):
+        if not math.isnan(number):
             return number
     return None
 
@@ -857,7 +968,7 @@ def _finite_close_ma_pairs(closes, ma_values: list) -> list[tuple[float, float]]
             ma_number = float(ma_value)
         except (TypeError, ValueError):
             continue
-        if np.isnan(close_number) or np.isnan(ma_number):
+        if math.isnan(close_number) or math.isnan(ma_number):
             continue
         pairs.append((close_number, ma_number))
     return pairs
@@ -905,18 +1016,44 @@ def _build_ma_line_styles(ma_data: dict, closes) -> dict:
     return styles
 
 
+def _ema_values(values, span: int) -> list[float]:
+    numbers = [float(value) for value in values]
+    if not numbers:
+        return []
+    alpha = 2.0 / (span + 1.0)
+    result = [numbers[0]]
+    for value in numbers[1:]:
+        result.append(value * alpha + result[-1] * (1.0 - alpha))
+    return result
+
+
+def _computed_macd_columns(df: pd.DataFrame) -> tuple[list[float], list[float], list[float]]:
+    closes = [float(value) for value in df["close"].values]
+    ema_fast = _ema_values(closes, 12)
+    ema_slow = _ema_values(closes, 26)
+    diff = [fast - slow for fast, slow in zip(ema_fast, ema_slow)]
+    signal = _ema_values(diff, 9)
+    histogram = [value - average for value, average in zip(diff, signal)]
+    return diff, signal, histogram
+
+
+def _macd_columns(df: pd.DataFrame) -> tuple[list[float], list[float], list[float]]:
+    required = {"MACD", "MACD_Signal", "MACD_Hist"}
+    if not required.issubset(df.columns):
+        return _computed_macd_columns(df)
+    return (
+        [float(value or 0) for value in df["MACD"].values],
+        [float(value or 0) for value in df["MACD_Signal"].values],
+        [float(value or 0) for value in df["MACD_Hist"].values],
+    )
+
+
 def _build_macd_payload(df: pd.DataFrame, up_color: str, down_color: str) -> tuple[list, list, list]:
     macd_bars = []
     diff_line = []
     dea_line = []
-    if "MACD" not in df.columns:
-        return macd_bars, diff_line, dea_line
-
-    for _, row in df.iterrows():
-        macd_val = float(row.get("MACD", 0) or 0)
-        signal_val = float(row.get("MACD_Signal", 0) or 0)
-        hist_val = float(row.get("MACD_Hist", 0) or 0)
-
+    diff_values, signal_values, hist_values = _macd_columns(df)
+    for macd_val, signal_val, hist_val in zip(diff_values, signal_values, hist_values):
         macd_bars.append(
             {
                 "value": hist_val,
@@ -931,17 +1068,22 @@ def _build_macd_payload(df: pd.DataFrame, up_color: str, down_color: str) -> tup
 
 def _build_volume_ma20(vols: list) -> list:
     vol_values = [value["value"] if isinstance(value, dict) else value for value in vols]
-    vol_ma20 = pd.Series(vol_values).rolling(20).mean()
-    return [round(value, 0) if not np.isnan(value) else None for value in vol_ma20.values]
+    return _rolling_mean(vol_values, 20, digits=0)
 
 
-def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
+def _volume_ma20_data(df: pd.DataFrame, vols: list) -> list:
+    if "volMa20" in df.columns:
+        return _prepared_numeric_series(df, "volMa20", digits=0)
+    return _build_volume_ma20(vols)
+
+
+def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None, *, theme: dict | None = None) -> None:
     payload = vcp_data or {}
     if not (_is_vcp_scan_source(payload) or _has_vcp_overlay_fields(payload)):
         return
 
     trigger_date = str(_pick_payload_value(payload, "触发日期", "日期", "时间", "trigger_date", default=""))[:10]
-    theme = theme_manager.current_theme
+    theme = theme or theme_manager.current_theme
     date_to_idx = {d: i for i, d in enumerate(dates)}
     trigger_idx = _find_date_idx(trigger_date, date_to_idx)
 
@@ -965,16 +1107,17 @@ def build_kline_echarts_payload(
     code: str,
     name: str,
     vcp_data: dict | None,
+    theme: dict | None = None,
 ) -> dict:
-    theme = theme_manager.current_theme
+    theme = theme or theme_manager.current_theme
     up_color = theme["KLINE_UP_COLOR"]
     down_color = theme["KLINE_DOWN_COLOR"]
 
     dates, klines, vols = _build_ohlcv_payload(df, up_color, down_color)
     closes = df["close"].values
-    ma_data = _build_moving_average_data(closes)
+    ma_data = _moving_average_data(df, closes)
     macd_bars, diff_line, dea_line = _build_macd_payload(df, up_color, down_color)
-    vol_ma20_data = _build_volume_ma20(vols)
+    vol_ma20_data = _volume_ma20_data(df, vols)
 
     result = {
         "title": f"{name} ({code}) 日线",
@@ -995,7 +1138,7 @@ def build_kline_echarts_payload(
     }
 
     if vcp_data:
-        inject_vcp_overlays(result, dates, vcp_data)
+        inject_vcp_overlays(result, dates, vcp_data, theme=theme)
         inject_earnings_markers(result, dates, vcp_data)
 
     return result

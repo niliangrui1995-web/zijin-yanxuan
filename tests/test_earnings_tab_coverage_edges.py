@@ -200,12 +200,11 @@ def test_status_filter_and_manual_fetch_dialog_paths(monkeypatch):
         tab.deleteLater()
 
 
-def test_dataframe_filter_and_trade_window_failure_edges(monkeypatch):
-    assert EarningsTab._filter_out_st_dataframe(None).empty
-    empty = pd.DataFrame()
-    assert EarningsTab._filter_out_st_dataframe(empty) is empty
-    frame_without_name = pd.DataFrame([{"股票代码": "000001"}])
-    assert EarningsTab._filter_out_st_dataframe(frame_without_name) is frame_without_name
+def test_record_filter_and_trade_window_failure_edges(monkeypatch):
+    assert module._records_from_payload(None) == []
+    assert module._records_from_payload([]) == []
+    rows_without_name = [{"股票代码": "000001"}]
+    assert module._filter_out_st_records(rows_without_name) == rows_without_name
     assert EarningsTab._recent_trade_window_start(0) is None
 
     from app.services.ui_market_calendar_service import MarketCalendar
@@ -317,13 +316,16 @@ def test_routine_refresh_cache_reload_cleanup_and_pe_edges(monkeypatch, qt_appli
     try:
         assert tab.schedule_routine_scan_after_f5()
         assert not tab.schedule_routine_scan_after_f5()
+        assert tab._f5_routine_scan_timer.isActive()
+        assert tab._f5_routine_scan_timer.interval() == tab.F5_ROUTINE_SCAN_DELAY_MS
+        tab._f5_routine_scan_timer.stop()
         tab._ensure_scheduler = lambda: object()
-        assert scheduled[0][1]() is False
+        assert tab._run_pending_routine_scan_after_f5() is False
 
         calls = []
         tab._apply_display_trade_window = lambda force_refresh=False: calls.append(("window", force_refresh))
         tab.refresh_table_from_latest_snapshot = lambda **kwargs: calls.append(("snapshot", kwargs))
-        tab._ensure_scheduler = lambda: SimpleNamespace(engine=object())
+        tab._ensure_scheduler = lambda: SimpleNamespace(load_cached_records_async=lambda **_kwargs: False)
         assert not tab.refresh_data_after_ai_industry_chain_update()
         assert calls[0] == ("window", True)
 
@@ -360,3 +362,20 @@ def test_routine_refresh_cache_reload_cleanup_and_pe_edges(monkeypatch, qt_appli
         tab.shutdown()
     finally:
         tab.deleteLater()
+
+
+def test_earnings_delete_cancels_pending_f5_scan(monkeypatch):
+    tab = EarningsTab()
+    monkeypatch.setattr(
+        tab,
+        "_ensure_scheduler",
+        lambda: (_ for _ in ()).throw(AssertionError("scheduler revived after cleanup")),
+    )
+    assert tab.schedule_routine_scan_after_f5()
+    assert tab._f5_routine_scan_timer.isActive()
+
+    tab.deleteLater()
+
+    assert not tab._f5_routine_scan_timer.isActive()
+    assert tab._pending_f5_routine_scan is False
+    assert tab._run_pending_routine_scan_after_f5() is False

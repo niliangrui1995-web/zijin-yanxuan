@@ -5,47 +5,37 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 
 核心特性：
 - 三面板布局：K线主图 + 成交量 + MACD
-- MA5/10/20/50/150/200 均线系统
+- MA10/20/50/150/200 均线系统
 - VCP 买点信号覆盖层（箱体 + 金星 + 高点连线）
 - 盘中 60 秒增量热更新（无闪烁）
 - 十字光标 + 顶部工具栏实时联动
 """
 
-import json
 import os as _os
 from contextlib import suppress
 
-import pandas as pd
-from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
-from app.services.asian_market_service import is_yf_rate_limit_error, mark_yf_rate_limited
-from app.services.scan_runtime_service import calculate_scan_indicators
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_lifecycle_service import (
     shutdown_task_lifecycle_for_owner,
-    task_lifecycle_for,
 )
-from app.services.ui_task_service import background_job_runner, task_registry
 from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from ui.kline_chart_payload import (
-    build_kline_echarts_payload,
-    build_kline_html,
     build_kline_market_state,
+    build_kline_preheated_shell_html,
+    build_kline_shell_html,
     build_kline_theme_colors,
     dumps_json_for_script,
 )
-from ui.kline_window_asian import (
-    apply_asian_live_quote,
-    build_asian_history_df,
-    build_asian_rt_quote,
-    load_cached_asian_stock,
-    schedule_asian_history_backfill,
-)
+from ui.kline_js_readiness import begin_js_readiness_probe, set_shell_ready
+from ui.kline_render_bridge import build_reset_lease_script
 from ui.kline_window_header import (
+    apply_browser_surface_theme,
     apply_header_badges,
     apply_info_styles,
     apply_qt_theme,
@@ -53,15 +43,23 @@ from ui.kline_window_header import (
     refresh_header_context,
     resolve_vcp_context,
 )
-from ui.kline_window_runtime import _is_current_request as _runtime_is_current_request
-from ui.kline_window_runtime import (
-    load_and_draw,
-    normalize_daily_df_index,
-    poll_rt_update,
-    refresh_last_bar,
-)
+from ui.kline_window_pool_lifecycle import KLineWindowPoolLifecycleMixin
+from ui.kline_window_recovery import install_render_process_recovery, uninstall_render_process_recovery
+from ui.kline_window_rendering import cancel_snapshot_render_confirmation, load_chart_shell
+from ui.kline_window_stages import KLineOpenStageCoordinator, build_chart_host, can_begin_chart_load
+from ui.kline_window_state import initialize_kline_window_state, reset_kline_window_lease_state
+from ui.kline_window_visibility import sync_runtime_visibility
 from ui.theme import theme_manager
 from ui.window_flags import enable_windows_native_shadow, enable_windows_system_backdrop
+
+__all__ = [
+    "KLineChartWindow",
+    "build_reset_lease_script",
+    "cancel_snapshot_render_confirmation",
+    "event_bus",
+    "install_render_process_recovery",
+    "reset_kline_window_lease_state",
+]
 
 log = get_logger(__name__)
 
@@ -69,49 +67,311 @@ log = get_logger(__name__)
 _ECHARTS_JS_PATH = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "assets", "echarts.min.js"
 )
-KLINE_INITIAL_LOAD_DELAY_MS = 80
+KLINE_INITIAL_LOAD_DELAY_MS = 0
+KLINE_BROWSER_ATTACH_DELAY_MS = 0
+KLINE_HEADER_RESIZE_COALESCE_MS = 16
+
+# WebEngine、pandas 和指标计算都只在图表阶段需要。保留模块级名称便于测试注入，
+# 但不在窗口类首次导入时拉起这些重量级依赖。
+QWebEngineView = None
 
 
-def fetch_single_kline(*args, **kwargs):
-    # Avoid importing the full app.services facade during K-line window import.
-    from app.services.asian_market_service import fetch_single_kline as _fetch_single_kline
+def _create_webengine_view(parent=None):
+    browser_class = QWebEngineView
+    if browser_class is None:
+        from PyQt6.QtWebEngineWidgets import QWebEngineView as browser_class
 
-    return _fetch_single_kline(*args, **kwargs)
+    try:
+        return browser_class(parent)
+    except TypeError:
+        return browser_class()
 
 
-def _submit_owned_kline_task(window, name, fn, on_success, on_error, task_id, timeout_sec) -> None:
-    task_lifecycle_for(window, runner=background_job_runner).run_background(
-        name,
-        fn,
-        on_success=on_success,
-        on_error=on_error,
-        task_id=task_id,
-        timeout_sec=timeout_sec,
-        runner=background_job_runner,
+def _start_open_stages(window, open_started_at, browser, browser_page, *, defer_initial_load=False):
+    stages = KLineOpenStageCoordinator(
+        window,
+        open_started_at=open_started_at,
+        browser_factory=_create_webengine_view,
+        record_metric=record_metric,
+        emit_structured_log=emit_structured_log,
+        browser_delay_ms=KLINE_BROWSER_ATTACH_DELAY_MS,
+        initial_load_delay_ms=KLINE_INITIAL_LOAD_DELAY_MS,
+        defer_initial_load=defer_initial_load,
     )
+    stages.start(browser, browser_page)
+    return stages
+
+
+def _install_kline_shortcuts(window) -> None:
+    from PyQt6.QtGui import QKeySequence, QShortcut
+
+    QShortcut(QKeySequence(Qt.Key.Key_Left), window, activated=lambda: window._nav_stock(-1))
+    QShortcut(QKeySequence(Qt.Key.Key_Right), window, activated=lambda: window._nav_stock(1))
+    QShortcut(QKeySequence(Qt.Key.Key_F11), window, activated=window._toggle_fullscreen)
+    QShortcut(QKeySequence(Qt.Key.Key_Escape), window, activated=window._leave_fullscreen)
+
+
+def _configure_kline_window_shell(window, *, name: str, code: str, pool_shell: bool) -> None:
+    from PyQt6.QtGui import QIcon
+
+    window._log = log
+    window._pool_shell_mode = bool(pool_shell)
+    window._pool_idle = False
+    window._pool_tainted = False
+    window._lease_signals_connected = False
+    window._force_dispose = False
+    window.setWindowTitle(f"{name} ({code}) - K线图")
+    window.setWindowFlags(window.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    window.resize(1100, 680)
+    window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, not window._pool_shell_mode)
+    icon_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "bull_icon.ico")
+    if _os.path.exists(icon_path):
+        window.setWindowIcon(QIcon(icon_path))
+
+
+def build_asian_rt_quote(*args, **kwargs):
+    from ui.kline_window_asian import build_asian_rt_quote as _build_asian_rt_quote
+
+    return _build_asian_rt_quote(*args, **kwargs)
+
+
+def _runtime_helper(name: str):
+    from ui import kline_window_runtime
+
+    return getattr(kline_window_runtime, name)
+
+
+def load_and_draw(*args, **kwargs):
+    return _runtime_helper("load_and_draw")(*args, **kwargs)
+
+
+def poll_rt_update(*args, **kwargs):
+    return _runtime_helper("poll_rt_update")(*args, **kwargs)
+
+
+def prepare_and_render_frame(*args, **kwargs):
+    return _runtime_helper("prepare_and_render_frame")(*args, **kwargs)
+
+
+def refresh_last_bar(*args, **kwargs):
+    return _runtime_helper("refresh_last_bar")(*args, **kwargs)
 
 
 def _abandon_owned_kline_tasks(window, code: str, generation: int) -> None:
+    del code, generation
     lifecycle = getattr(window, "_task_lifecycle", None)
     if lifecycle is not None:
-        for name in ("history_load", "realtime_quote", "asian_cache_load", "asian_history_backfill"):
+        for name in (
+            "history_load",
+            "render_prepare",
+            "realtime_quote",
+            "realtime_prepare",
+            "asian_history_backfill",
+        ):
             lifecycle.cancel(name, reason="symbol_switched")
-    normalized_code = str(code or "").strip()
-    if not normalized_code:
-        return
-    for task_key in (
-        task_registry.transient_window(f"kline_{normalized_code}_{generation}"),
-        task_registry.transient_window(f"kline_rt_{normalized_code}_{generation}"),
-        task_registry.transient_window(f"kline_asian_cache_{normalized_code}_{generation}"),
-        task_registry.transient_window(f"kline_asian_{normalized_code}_{generation}"),
+    _runtime_helper("_discard_pending_owned_window_task")(window)
+    _runtime_helper("_clear_realtime_generation_state")(window)
+
+
+def _shutdown_kline_window_tasks(window) -> bool:
+    """Cancel without blocking the GUI; only task-free windows may return to the pool."""
+    controller = window._load_controller
+    controller.close()
+    _runtime_helper("_discard_pending_owned_window_task")(window)
+    _runtime_helper("_clear_realtime_generation_state")(window)
+    window._runtime_lifecycle.begin_close()
+    lifecycle_clean = bool(shutdown_task_lifecycle_for_owner(window, timeout_ms=0))
+    active_tickets = getattr(window, "_active_kline_task_tickets", ())
+    task_clean = getattr(controller, "running_task", None) is None
+    return bool(lifecycle_clean and not active_tickets and task_clean)
+
+
+def _dispose_unowned_page(page) -> bool:
+    if page is None:
+        return True
+    clean = True
+    try:
+        page.stop()
+    except (AttributeError, RuntimeError, TypeError):
+        clean = False
+    try:
+        page.deleteLater()
+    except (AttributeError, RuntimeError, TypeError):
+        clean = False
+    return clean
+
+
+def _release_page_to_pool(page, *, shell_ready: bool, html_bytes: int) -> bool:
+    if page is None or not shell_ready:
+        return False
+    try:
+        from ui.components.kline_window_manager import kline_manager
+
+        return bool(
+            kline_manager.release_page(
+                page,
+                shell_ready=True,
+                html_bytes=int(html_bytes or 0),
+            )
+        )
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _release_or_dispose_pending_page(pending_page, *, allow_page_reuse: bool) -> bool:
+    if pending_page is None:
+        return True
+    released = False
+    if allow_page_reuse:
+        try:
+            released = _release_page_to_pool(
+                pending_page,
+                shell_ready=bool(pending_page.property("klineShellReady")),
+                html_bytes=int(pending_page.property("klineShellHtmlBytes") or 0),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            released = False
+    return released or _dispose_unowned_page(pending_page)
+
+
+def _detach_kline_browser(window, browser):
+    uninstall_render_process_recovery(browser)
+    with suppress(AttributeError, RuntimeError, TypeError):
+        browser.loadFinished.disconnect(window._on_chart_load_finished)
+    with suppress(AttributeError, RuntimeError, TypeError):
+        browser.removeEventFilter(window)
+        focus_proxy = browser.focusProxy()
+        if focus_proxy is not None:
+            focus_proxy.removeEventFilter(window)
+    with suppress(AttributeError, RuntimeError, TypeError):
+        return browser.page()
+    return None
+
+
+def _browser_shell_is_reusable(window, browser) -> bool:
+    try:
+        return bool(
+            getattr(window, "_shell_loaded", False)
+            and getattr(window, "_last_shell_load_ok", None) is True
+            and browser.property("klineShellReady")
+        )
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+
+
+def _release_browser_page(window, browser, page, *, allow_page_reuse: bool) -> bool:
+    if not allow_page_reuse or not _browser_shell_is_reusable(window, browser):
+        return False
+    with suppress(AttributeError, RuntimeError, TypeError):
+        from ui.kline_render_bridge import build_runtime_active_script
+
+        browser.page().runJavaScript(build_runtime_active_script(False), lambda _ack: None)
+    return _release_page_to_pool(
+        page,
+        shell_ready=True,
+        html_bytes=int(getattr(window, "_last_chart_html_bytes", 0) or 0),
+    )
+
+
+def _stop_browser_and_external_page(browser, page) -> bool:
+    try:
+        browser.stop()
+        browser_stopped = True
+    except (AttributeError, RuntimeError, TypeError):
+        browser_stopped = False
+    try:
+        page_owned_by_browser = page is not None and page.parent() is browser
+    except (AttributeError, RuntimeError, TypeError):
+        page_owned_by_browser = False
+    page_clean = True if page_owned_by_browser else _dispose_unowned_page(page)
+    return bool(browser_stopped and page_clean)
+
+
+def _delete_detached_browser(browser) -> bool:
+    with suppress(AttributeError, RuntimeError, TypeError):
+        browser.setUpdatesEnabled(False)
+        browser.hide()
+    try:
+        browser.deleteLater()
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+    return True
+
+
+def _dispose_kline_browser(
+    window,
+    pending_browser,
+    pending_page,
+    *,
+    allow_page_reuse: bool = True,
+) -> bool:
+    browser = getattr(window, "browser", None) or pending_browser
+    window.browser = None
+    if browser is None:
+        return _release_or_dispose_pending_page(pending_page, allow_page_reuse=allow_page_reuse)
+    page = _detach_kline_browser(window, browser)
+    extra_pending_page = pending_page if pending_page is not page else None
+    page_released = _release_browser_page(
+        window,
+        browser,
+        page,
+        allow_page_reuse=allow_page_reuse,
+    )
+    with suppress(AttributeError, RuntimeError, TypeError):
+        window.chart_host_layout.removeWidget(browser)
+    resource_clean = page_released or _stop_browser_and_external_page(browser, page)
+    pending_page_clean = _release_or_dispose_pending_page(
+        extra_pending_page,
+        allow_page_reuse=allow_page_reuse,
+    )
+    browser_deleted = _delete_detached_browser(browser)
+    return bool(resource_clean and pending_page_clean and browser_deleted)
+
+
+def _schedule_header_resize_refresh(window) -> None:
+    window._header_resize_pending = True
+    timer = getattr(window, "_header_resize_timer", None)
+    if (
+        getattr(window, "_closing", False)
+        or not getattr(window, "_runtime_active", True)
+        or (callable(getattr(window, "isHidden", None)) and window.isHidden())
     ):
-        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            background_job_runner.abandon(task_key)
+        if timer is not None:
+            timer.stop()
+        return
+    if timer is None:
+        timer = QTimer(window)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: _flush_header_resize_refresh(window))
+        window._header_resize_timer = timer
+    if not timer.isActive():
+        timer.start(KLINE_HEADER_RESIZE_COALESCE_MS)
 
 
-class KLineChartWindow(QWidget):
+def _flush_header_resize_refresh(window) -> None:
+    if not getattr(window, "_header_resize_pending", False):
+        return
+    if (
+        getattr(window, "_closing", False)
+        or not getattr(window, "_runtime_active", True)
+        or (callable(getattr(window, "isHidden", None)) and window.isHidden())
+    ):
+        return
+    window._header_resize_pending = False
+    if hasattr(window, "summary_cards"):
+        window._refresh_header_context()
+
+
+def _cancel_header_resize_refresh(window) -> None:
+    timer = getattr(window, "_header_resize_timer", None)
+    if timer is not None:
+        timer.stop()
+    window._header_resize_pending = False
+
+
+class KLineChartWindow(KLineWindowPoolLifecycleMixin, QWidget):
     """ECharts 驱动的 K 线图窗口"""
-
     def __init__(
         self,
         main_window,
@@ -123,42 +383,24 @@ class KLineChartWindow(QWidget):
         current_idx=0,
         *,
         browser=None,
+        browser_page=None,
+        pool_shell: bool = False,
+        open_started_at: float | None = None,
+        open_context=None,
     ):
         super().__init__()
-        self.main_window = main_window
-        self.code = code
-        self.name = name
-        self.data_provider = data_provider
-        self._log = log
-        self.vcp_data = self._resolve_vcp_context(code, name, vcp_data or {})
-        self.code_list = code_list or []
-        self.current_idx = current_idx
-        self._closing = False
-        self._render_generation = 0
-        self._native_window_effects_applied = False
-        self._snap_threshold = 15
-        self._snapping_to_main_window = False
-        self._magnetically_attached = False
-        self._fullscreen_geometry = None
-
-        # 盘中实时刷新定时器
-        self._rt_timer = None
-        # 缓存当前展示的 DataFrame（用于增量更新）
-        self.df = None
-
-        self.setWindowTitle(f"{name} ({code}) - K线图")
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(1100, 680)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        event_bus.sig_rt_quotes.connect(self._on_global_rt_quotes)
-
-        # 窗口图标
-        from PyQt6.QtGui import QIcon
-
-        icon_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "bull_icon.ico")
-        if _os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        initialize_kline_window_state(
+            self,
+            main_window=main_window,
+            code=code,
+            name=name,
+            data_provider=data_provider,
+            vcp_data=vcp_data,
+            code_list=code_list,
+            current_idx=current_idx,
+            open_context=open_context,
+        )
+        _configure_kline_window_shell(self, name=name, code=code, pool_shell=pool_shell)
 
         # 外层圆角防锯齿容器
         from PyQt6.QtWidgets import QFrame, QToolButton
@@ -327,22 +569,12 @@ class KLineChartWindow(QWidget):
         container_layout.addWidget(self.summary_widget)
 
         # === ECharts WebEngine 主图区域 ===
-        self.browser = browser or QWebEngineView()
-        self.browser.setParent(self.container)
-        self._pending_chart_status = None
-        with suppress(AttributeError, RuntimeError, TypeError):
-            self.browser.loadFinished.connect(self._on_chart_load_finished)
-        container_layout.addWidget(self.browser)
+        # 首帧只放轻量占位壳；WebEngine 的导入、创建和挂接在窗口显示后的阶段定时器中完成。
+        build_chart_host(self, container_layout, browser)
 
         main_layout.addWidget(self.container)
 
-        # 快捷键 ←/→ 切换上/下一只股票
-        from PyQt6.QtGui import QKeySequence, QShortcut
-
-        QShortcut(QKeySequence(Qt.Key.Key_Left), self, activated=lambda: self._nav_stock(-1))
-        QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=lambda: self._nav_stock(1))
-        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen)
-        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._leave_fullscreen)
+        _install_kline_shortcuts(self)
         self._update_nav_buttons()
 
         # 初始化主题样式（必须在所有控件创建完成后调用）
@@ -350,12 +582,18 @@ class KLineChartWindow(QWidget):
 
         self._check_fav_status()
         self._refresh_header_context()
-        QTimer.singleShot(0, self._refresh_header_context)
         self._set_status_message("正在准备图表...", tone="loading")
-        QTimer.singleShot(KLINE_INITIAL_LOAD_DELAY_MS, self._load_and_draw)
 
-        # 监听全局主题切换 → 重新渲染 K 线图
-        theme_manager.sig_theme_changed.connect(self._on_theme_changed)
+        if not self._pool_shell_mode:
+            self._connect_lease_signals()
+
+        self._open_stages = _start_open_stages(
+            self,
+            open_started_at,
+            browser,
+            browser_page,
+            defer_initial_load=self._pool_shell_mode,
+        )
 
     # ======================== 关注池 ========================
     def _check_fav_status(self):
@@ -366,12 +604,12 @@ class KLineChartWindow(QWidget):
             self.btn_fav.style().unpolish(self.btn_fav)
             self.btn_fav.style().polish(self.btn_fav)
             self.btn_fav.update()
-            if hasattr(self, "summary_cards"):
-                self._refresh_header_context()
         except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             log.debug(f"[K线] 检查关注状态失败: {e}")
             self.is_fav = False
             self.btn_fav.setProperty("watching", False)
+        if hasattr(self, "summary_cards"):
+            self._refresh_header_context()
 
     def _toggle_fav(self):
         try:
@@ -394,16 +632,32 @@ class KLineChartWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._open_stages.record("shell_ready")
+        sync_runtime_visibility(self, hidden=False, minimized=self.isMinimized())
+        if getattr(self, "_header_resize_pending", False):
+            _schedule_header_resize_refresh(self)
         if self._native_window_effects_applied:
             return
         self._native_window_effects_applied = True
         enable_windows_native_shadow(self)
         enable_windows_system_backdrop(self, backdrop="mica", dark=theme_manager.is_dark())
 
+    def hideEvent(self, event):
+        timer = getattr(self, "_header_resize_timer", None)
+        if timer is not None:
+            timer.stop()
+        sync_runtime_visibility(self, hidden=True, minimized=self.isMinimized())
+        super().hideEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            sync_runtime_visibility(self, hidden=self.isHidden(), minimized=self.isMinimized())
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "summary_cards"):
-            self._refresh_header_context()
+            _schedule_header_resize_refresh(self)
 
     def moveEvent(self, event):
         super().moveEvent(event)
@@ -415,6 +669,16 @@ class KLineChartWindow(QWidget):
                 self._toggle_fullscreen()
                 event.accept()
                 return True
+        browser = getattr(self, "browser", None)
+        focus_proxy = browser.focusProxy() if browser is not None else None
+        if obj in (browser, focus_proxy) and event.type() in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.Wheel,
+            QEvent.Type.KeyPress,
+        ):
+            stages = getattr(self, "_open_stages", None)
+            if stages is not None:
+                stages.record("first_interaction")
         return super().eventFilter(obj, event)
 
     def _snap_to_main_window_edges(self) -> None:
@@ -502,6 +766,9 @@ class KLineChartWindow(QWidget):
 
     def _apply_qt_theme(self):
         apply_qt_theme(self)
+
+    def _apply_browser_surface_theme(self):
+        apply_browser_surface_theme(self)
 
     def _apply_chart_theme(self, *, animate: bool = True) -> None:
         browser = getattr(self, "browser", None)
@@ -600,13 +867,15 @@ class KLineChartWindow(QWidget):
             latest_trade_date=latest_trade_date,
         )
 
-    def _normalize_daily_df_index(self, df):
-        return normalize_daily_df_index(df, logger=self._log)
-
     # ======================== 数据加载 ========================
     def _load_and_draw(self):
-        self._render_generation = int(getattr(self, "_render_generation", 0) or 0) + 1
-        load_and_draw(self)
+        if getattr(self, "_closing", False):
+            return
+        identity = self._load_controller.begin(self.code)
+        self._active_load_identity = identity
+        self._render_generation = identity.generation
+        if can_begin_chart_load(self):
+            load_and_draw(self, identity=identity)
 
     def _set_pending_chart_status(self, text: str, tone: str) -> None:
         self._pending_chart_status = (str(text or "").strip(), str(tone or "info").strip() or "info")
@@ -622,222 +891,49 @@ class KLineChartWindow(QWidget):
     def _on_chart_load_finished(self, ok: bool) -> None:
         if getattr(self, "_closing", False):
             return
+        browser = getattr(self, "sender", lambda: None)() or getattr(self, "browser", None)
+        if browser is not getattr(self, "browser", None):
+            return
+        self._last_shell_load_epoch = int(getattr(self, "_browser_epoch", 0) or 0)
+        self._last_shell_load_ok = bool(ok)
         if ok:
-            self._apply_chart_market_state()
-            self._apply_chart_glass_mode()
-            self._finish_pending_chart_status()
-        elif getattr(self, "_pending_chart_status", None):
-            self._pending_chart_status = None
-            self._set_status_message("图表渲染失败，请重试", tone="error")
+            begin_js_readiness_probe(self, browser, self._browser_epoch)
+        else:
+            set_shell_ready(browser, False)
+            self._shell_loaded = False
+            if getattr(self, "_pending_chart_status", None):
+                self._pending_chart_status = None
+                self._set_status_message("图表渲染失败，请重试", tone="error")
 
-    def _load_asian_chart(self):
-        """在后台读取亚洲市场缓存并按需补充最新报价。"""
-        from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE, JSON_CACHE
-        from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
-
-        request_code = str(self.code or "").strip()
-        request_generation = int(getattr(self, "_render_generation", 0) or 0)
-        market = self._get_market()
-        latest_trade_date = MarketCalendar.get_latest_trade_date(market)
-        cached_quote = dict(GLOBAL_ASIAN_RT_CACHE.get(request_code) or {}) or None
-
-        def _bg_load(_cancellation_token):
-            target_stock = load_cached_asian_stock(JSON_CACHE, request_code)
-            quote = cached_quote
-            quote_error = None
-            fetched_quote = False
-            if target_stock and quote is None and latest_trade_date is not None:
-                trade_dates = []
-                for row in target_stock.get("klines", []) or []:
-                    try:
-                        trade_dates.append(pd.Timestamp(row.get("date")).date())
-                    except (AttributeError, TypeError, ValueError):
-                        continue
-                last_date = max(trade_dates, default=None)
-                if last_date is None or last_date < latest_trade_date:
-                    try:
-                        quote = fetch_asian_realtime_quote(request_code)
-                        fetched_quote = quote is not None
-                    except Exception as exc:
-                        quote_error = exc
-            return target_stock, quote, fetched_quote, quote_error
-
-        def _on_load_success(result):
-            if not _runtime_is_current_request(self, request_code, request_generation) or result is None:
-                return
-            target_stock, quote, fetched_quote, quote_error = result
-            if target_stock is None:
-                schedule_asian_history_backfill(
-                    self,
-                    task_manager=background_job_runner,
-                    fetch_single_kline=fetch_single_kline,
-                )
-                return
-
-            if quote_error is not None:
-                exc = quote_error
-                if is_yf_rate_limit_error(exc):
-                    remaining_sec = mark_yf_rate_limited(exc)
-                    self._log.warning(
-                        f"[K线] {request_code} 盘后补足亚洲报价触发 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
-                    )
-                elif isinstance(exc, (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
-                    self._log.warning(f"[K线] {request_code} 盘后补足亚洲报价失败: {exc}")
-                else:
-                    raise exc
-
-            if fetched_quote and quote:
-                GLOBAL_ASIAN_RT_CACHE[request_code] = quote
-
-            df = build_asian_history_df(
-                target_stock,
-                vcp_data=self.vcp_data,
-                refresh_header_context=self._refresh_header_context,
-                normalize_daily_df_index=self._normalize_daily_df_index,
-            )
-            if df is None:
-                self._set_status_message("当前标的暂无历史日线数据", tone="warning")
-                return
-            if quote is not None:
-                df = apply_asian_live_quote(df, quote, market=market)
-            self._render_chart(df, loading=False)
-
-        def _on_load_error(error_message: str):
-            if _runtime_is_current_request(self, request_code, request_generation):
-                self._set_status_message(f"亚洲日线缓存读取失败: {error_message}", tone="error")
-
-        _submit_owned_kline_task(
-            self, "asian_cache_load", _bg_load, _on_load_success, _on_load_error,
-            task_registry.transient_window(f"kline_asian_cache_{request_code}_{request_generation}"), 120.0,
+    def _load_chart_shell(self) -> bool:
+        shell_builder = (
+            build_kline_preheated_shell_html
+            if bool(getattr(self, "_pool_shell_mode", False))
+            else build_kline_shell_html
+        )
+        return load_chart_shell(
+            self,
+            echarts_js_path=_ECHARTS_JS_PATH,
+            shell_builder=shell_builder,
+            theme_colors=build_kline_theme_colors(),
         )
 
     # ======================== 图表渲染 ========================
     def _render_chart(self, df, loading=False):
-        """将 DataFrame 转换成 ECharts 数据格式并渲染到 WebEngine"""
-        if getattr(self, "_closing", False) or getattr(self, "browser", None) is None:
-            return
-        # 兼容 Polars DataFrame
-        if not hasattr(df, "iloc"):
-            df = df.to_pandas()
-
-        # 确保有 DatetimeIndex
-        if "date" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-            df["date"] = pd.to_datetime(df["date"].astype(str))
-            df.set_index("date", inplace=True)
-        df = self._normalize_daily_df_index(df)
-
+        """后台准备完整快照；GUI 线程只负责最终 applySnapshot。"""
         if df is None or len(df) < 5:
             if not loading:
                 self._set_status_message("历史数据不足，暂无法绘图", tone="warning")
             return
-
-        # 始终要求重算完整指标，避免合并了今天盘中的新K线后由于缺少最新日期的MACD导致JS渲染因含有NaN而雪崩不画K线
-        df = calculate_scan_indicators(df)
-
-        if loading:
-            self._set_status_message(f"正在绘制本地缓存 · {len(df)} 条日线", tone="loading")
-            self._set_pending_chart_status(f"已载入本地缓存 · {len(df)} 条日线", "info")
-        else:
-            self._set_status_message(f"正在绘制图表 · {len(df)} 条日线", tone="loading")
-            self._set_pending_chart_status(f"图表已更新 · {len(df)} 条日线", "success")
-
-        # 截取最后 250 根 K 线
-        self.df = df.iloc[-250:].copy()
-        for col in ["open", "high", "low", "close", "volume"]:
-            if col in self.df.columns:
-                self.df[col] = self.df[col].ffill().bfill()
-
-        # 构建 ECharts 数据
-        echarts_data = build_kline_echarts_payload(
-            self.df,
-            code=self.code,
-            name=self.name,
-            vcp_data=self.vcp_data,
-        )
-        self._last_chart_payload_bytes = len(
-            json.dumps(echarts_data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        )
-        self._last_chart_points = len(echarts_data.get("dates") or [])
-
-        # 判断是首次加载还是切换股票
-        if not loading and not hasattr(self, "_first_render_done"):
-            # 首次完整渲染（替换 loading 占位）
-            pass
-
-        # 渲染 HTML 到 WebEngine
-        html_content = build_kline_html(
-            title=f"{self.name} ({self.code}) 日线",
-            echarts_data=echarts_data,
-            echarts_js_path=_ECHARTS_JS_PATH,
-            theme_colors=build_kline_theme_colors(),
-        )
-        self._last_chart_html_bytes = len(html_content.encode("utf-8"))
-
-        # 用 baseUrl 确保本地 file:// 引用正常
-        base_url = QUrl.fromLocalFile(_os.path.dirname(_os.path.abspath(_ECHARTS_JS_PATH)) + "/")
-        if getattr(self, "_first_render_done", False):
-            self._replace_chart_data_or_reload(
-                html_content,
-                base_url,
-                title=f"{self.name} ({self.code}) 日线",
-                echarts_data=echarts_data,
-            )
-            if not loading:
-                self._start_rt_timer()
-            return
-
-        self.browser.setHtml(html_content, base_url)
-        self._first_render_done = True
-
-        # 启动盘中定时器
-        if not loading:
-            self._start_rt_timer()
+        prepare_and_render_frame(self, df, loading=loading)
 
     # ======================== 盘中增量更新 ========================
-    def _replace_chart_data_or_reload(self, html_content: str, base_url: QUrl, *, title: str, echarts_data: dict):
-        browser = getattr(self, "browser", None)
-        if getattr(self, "_closing", False) or browser is None:
-            return
-        payload_json = dumps_json_for_script(
-            {"title": title, "data": echarts_data},
-        )
-        script = (
-            "(function(payload) {"
-            " if (typeof window.replaceKlineData !== 'function') return false;"
-            " return window.replaceKlineData(payload);"
-            " })(" + payload_json + ");"
-        )
-
-        def _fallback_if_needed(applied):
-            if getattr(self, "_closing", False):
-                return
-            if applied:
-                self._finish_pending_chart_status()
-                return
-            callback_browser = getattr(self, "browser", None)
-            if callback_browser is None:
-                return
-            try:
-                callback_browser.setHtml(html_content, base_url)
-            except (AttributeError, RuntimeError, TypeError) as exc:
-                self._log.debug(f"[K线] JS增量渲染回退失败: {exc}")
-
-        try:
-            browser.page().runJavaScript(script, _fallback_if_needed)
-        except (AttributeError, RuntimeError, TypeError) as exc:
-            self._log.debug(f"[K线] JS增量渲染不可用: {exc}")
-            if getattr(self, "_closing", False):
-                return
-            fallback_browser = getattr(self, "browser", None)
-            if fallback_browser is None:
-                return
-            try:
-                fallback_browser.setHtml(html_content, base_url)
-            except (AttributeError, RuntimeError, TypeError) as fallback_exc:
-                self._log.debug(f"[K线] HTML回退渲染失败: {fallback_exc}")
-
     def _start_rt_timer(self):
         """启动盘中实时刷新定时器（60秒间隔），只在交易时段运行"""
+        if getattr(self, "_closing", False) or not getattr(self, "_runtime_active", True):
+            if self._rt_timer is not None:
+                self._rt_timer.stop()
+            return
         market = self._get_market()
         self._apply_chart_market_state()
         if not MarketCalendar.is_quote_refresh_time(market):
@@ -927,41 +1023,3 @@ class KLineChartWindow(QWidget):
         finally:
             self._switching = False
             self._update_nav_buttons()
-
-    # ======================== 资源释放 ========================
-    def closeEvent(self, event):
-        """窗口关闭时彻底释放 WebEngine 资源，防止内存泄漏"""
-        self._closing = True
-        # 断开主题切换信号，防止信号调用已销毁的窗口
-        with suppress(TypeError):
-            theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
-        with suppress(TypeError):
-            event_bus.sig_rt_quotes.disconnect(self._on_global_rt_quotes)
-
-        # 停止定时器
-        if self._rt_timer is not None:
-            self._rt_timer.stop()
-            self._rt_timer = None
-
-        current_generation = int(getattr(self, "_render_generation", 0) or 0)
-        self._abandon_render_tasks(self.code, current_generation)
-        shutdown_task_lifecycle_for_owner(self, timeout_ms=1_000)
-
-        self.df = None
-
-        # 释放 WebEngine：关闭阶段不再发起新的页面导航，避免 Qt/WebEngine teardown 竞态。
-        browser = getattr(self, "browser", None)
-        self.browser = None
-        try:
-            if browser is not None:
-                with suppress(AttributeError, RuntimeError, TypeError):
-                    browser.loadFinished.disconnect(self._on_chart_load_finished)
-                with suppress(AttributeError, RuntimeError, TypeError):
-                    browser.stop()
-                with suppress(AttributeError, RuntimeError, TypeError):
-                    browser.setUpdatesEnabled(False)
-        except (AttributeError, RuntimeError, TypeError) as _e:
-            log.debug(f"[K线] WebEngine 释放异常: {_e}")
-
-        log.debug(f"[K线] {self.code} 窗口关闭")
-        super().closeEvent(event)

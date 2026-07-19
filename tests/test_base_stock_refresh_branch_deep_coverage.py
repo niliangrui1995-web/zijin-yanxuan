@@ -205,12 +205,47 @@ def test_local_quote_target_build_and_sync_prime_paths(monkeypatch):
     monkeypatch.setattr(refresh, "_collect_local_quote_targets", lambda *args: [])
     assert refresh.prime_local_quote_snapshot(owner, owner.model) == {}
     monkeypatch.setattr(refresh, "_collect_local_quote_targets", lambda *args: ["000001"])
-    monkeypatch.setattr(refresh, "_build_local_quote_payload", lambda *args: {})
+    monkeypatch.setattr(refresh, "_build_local_quote_payload", lambda *args, **kwargs: {})
     assert refresh.prime_local_quote_snapshot(owner, owner.model) == {}
-    monkeypatch.setattr(refresh, "_build_local_quote_payload", lambda *args: {"000001": {"close": 10}})
+    monkeypatch.setattr(
+        refresh,
+        "_build_local_quote_payload",
+        lambda *args, **kwargs: {"000001": {"close": 10}},
+    )
     monkeypatch.setattr(refresh, "publish_rt_quotes", lambda payload, source: {**payload, "source": source})
     published = refresh.prime_local_quote_snapshot(owner, owner.model)
     assert published["source"].endswith(".local_cache")
+
+
+def test_local_quote_payload_reuses_current_prices_when_only_finance_is_missing(monkeypatch):
+    owner = _Owner([{"代码": "000001"}, {"代码": "000002"}])
+    latest_quotes = {
+        "000001": {"close": 11.0, "last_close": 10.0},
+        "000002": {"market_cap": 2_000_000_000},
+    }
+    offline_calls = []
+
+    monkeypatch.setattr(refresh, "_latest_quote_snapshot", lambda: latest_quotes)
+    monkeypatch.setattr(
+        refresh,
+        "build_offline_quotes",
+        lambda _provider, codes: offline_calls.append(list(codes))
+        or {"000002": {"close": 20.0, "last_close": 19.0}},
+    )
+    owner._load_cached_finance_snapshot = lambda codes: {
+        code: {"zongguben": 100_000_000} for code in codes
+    }
+
+    payload = refresh._build_local_quote_payload(
+        owner,
+        ["000001", "000002"],
+        latest_quotes=latest_quotes,
+    )
+
+    assert offline_calls == [["000002"]]
+    assert payload["000001"]["close"] == 11.0
+    assert payload["000001"]["market_cap"] == 1_100_000_000
+    assert payload["000002"]["close"] == 20.0
 
 
 def test_async_local_prime_captures_real_callbacks_and_guards(monkeypatch):
@@ -233,7 +268,11 @@ def test_async_local_prime_captures_real_callbacks_and_guards(monkeypatch):
     )
     assert refresh.prime_local_quote_snapshot_async(owner, owner.model)
 
-    monkeypatch.setattr(refresh, "_build_local_quote_payload", lambda *args: {"000001": {"close": 10}})
+    monkeypatch.setattr(
+        refresh,
+        "_build_local_quote_payload",
+        lambda *args, **kwargs: {"000001": {"close": 10}},
+    )
     assert captured["fn"](None)["000001"]["close"] == 10
     published = []
     monkeypatch.setattr(refresh, "publish_rt_quotes", lambda payload, source: published.append(source) or payload)
@@ -545,7 +584,7 @@ def test_default_finance_loader_and_async_prime_remaining_branches(monkeypatch):
     monkeypatch.setattr(
         refresh,
         "_build_local_quote_payload",
-        lambda *args: (_ for _ in ()).throw(RuntimeError("gone")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("gone")),
     )
     assert captured["fn"](None) == {}
 

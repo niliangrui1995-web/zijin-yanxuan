@@ -6,12 +6,17 @@ File-level cache management for JSON cache restore/save and stale cache cleanup.
 
 import os
 
+from app.services.f5_snapshot_service import read_active_rps_bundle
 from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError
-from core.json_cache import load_json_file, remove_cache_file, save_json_file
+from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
 from core.runtime_paths import RPS_CACHE_FILE, ensure_cache_dir
 
 log = get_logger(__name__)
+
+
+def _same_cache_path(left: str, right: str) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
 
 class CacheManager:
@@ -166,53 +171,41 @@ class CacheManager:
             set_status_callback(f"RPS cache rebuilt: {resolved_date}, {count} symbols")
         return True
 
+    def _install_rps_payload(self, engine, data_provider, set_status_callback, active_rps_path, payload) -> None:
+        cached_date = payload.get("date", "")
+        rps120 = payload.get("rps120")
+        rps250 = payload.get("rps250")
+        if rps120 is None or rps250 is None:
+            raise BusinessRuleError("rps120/rps250 missing in cache payload")
+
+        should_rebuild, loaded_count, eligible_count = self._should_rebuild_rps_payload(
+            payload,
+            data_provider=data_provider,
+        )
+        may_rebuild = data_provider is not None and _same_cache_path(active_rps_path, self.rps_path)
+        if should_rebuild and may_rebuild:
+            log.warning(f"[RPS][RULE] 磁盘预计算RPS覆盖不足({loaded_count}/{eligible_count})，尝试基于本地K线缓存重建")
+            try:
+                if self._rebuild_rps_from_cache(engine, data_provider, set_status_callback=set_status_callback):
+                    return
+            except BusinessRuleError as exc:
+                log.warning(f"[RPS][RULE] 预计算RPS重建失败，回退到磁盘缓存: {exc}")
+
+        engine.set_precomputed_rps(cached_date, rps120, rps250)
+        remove_cache_file(self._legacy_pickle_path(active_rps_path))
+        count = self._count_valid_rps_values(rps120)
+        log.info(f"[RPS] 从磁盘加载预计算RPS成功(基准日:{cached_date}, 仅{count}条有效)")
+        if set_status_callback:
+            set_status_callback(f"RPS cache loaded: {cached_date}, {count} symbols")
+
     def try_load_rps_from_disk(self, engine, data_provider=None, set_status_callback=None):
-        """
-        Try loading the precomputed RPS bundle from JSON cache.
-        If JSON cache is missing, optionally rebuild it from local market cache.
-        """
+        """Load active RPS, rebuilding from local market data only when necessary."""
         try:
-            if os.path.exists(self.rps_path):
-                payload = load_json_file(self.rps_path)
-                cached_date = payload.get("date", "")
-                rps120 = payload.get("rps120")
-                rps250 = payload.get("rps250")
-                if rps120 is None or rps250 is None:
-                    raise BusinessRuleError("rps120/rps250 missing in cache payload")
-
-                should_rebuild, loaded_count, eligible_count = self._should_rebuild_rps_payload(
-                    payload,
-                    data_provider=data_provider,
-                )
-                if should_rebuild and data_provider is not None:
-                    log.warning(
-                        f"[RPS][RULE] 磁盘预计算RPS覆盖不足({loaded_count}/{eligible_count})，尝试基于本地K线缓存重建"
-                    )
-                    try:
-                        if self._rebuild_rps_from_cache(
-                            engine,
-                            data_provider,
-                            set_status_callback=set_status_callback,
-                        ):
-                            return
-                    except BusinessRuleError as exc:
-                        log.warning(f"[RPS][RULE] 预计算RPS重建失败，回退到磁盘缓存: {exc}")
-
-                engine.set_precomputed_rps(cached_date, rps120, rps250)
-                remove_cache_file(self._legacy_pickle_path(self.rps_path))
-                count = self._count_valid_rps_values(rps120)
-                log.info(f"[RPS] 从磁盘加载预计算RPS成功(基准日:{cached_date}, 仅{count}条有效)")
-
-                if set_status_callback:
-                    set_status_callback(f"RPS cache loaded: {cached_date}, {count} symbols")
-                return
-
-            if data_provider is not None:
-                self._rebuild_rps_from_cache(
-                    engine,
-                    data_provider,
-                    set_status_callback=set_status_callback,
-                )
+            active_rps_path, payload = read_active_rps_bundle(self.rps_path)
+            if payload is not None:
+                self._install_rps_payload(engine, data_provider, set_status_callback, active_rps_path, payload)
+            elif data_provider is not None:
+                self._rebuild_rps_from_cache(engine, data_provider, set_status_callback=set_status_callback)
         except CacheIOError as exc:
             log.error(f"[RPS][I/O] 磁盘加载失败: {exc}")
         except DataFormatError as exc:

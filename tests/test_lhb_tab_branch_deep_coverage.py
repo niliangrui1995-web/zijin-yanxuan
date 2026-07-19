@@ -112,11 +112,15 @@ def test_finish_retry_and_pool_payload_branches(monkeypatch):
     assert calls[-1] == "load"
 
     token = _Token()
-    owner._get_lhb_trade_dates = lambda: []
+    cache_only_calls = []
+    owner._background_preload_cache_only = True
+    owner._get_lhb_trade_dates = lambda *, allow_refresh: cache_only_calls.append(allow_refresh) or []
     assert lhb._load_lhb_pool_payload(owner, token) == {"status": "calendar_missing"}
+    assert cache_only_calls == [False]
 
     manager = _Manager()
     monkeypatch.setattr(lhb, "LhbPoolManager", lambda: manager)
+    owner._background_preload_cache_only = False
     owner._get_lhb_trade_dates = lambda: ["20260714", "20260715"]
     owner.data_provider = object()
     owner._get_engine = lambda: object()
@@ -262,6 +266,7 @@ class _LhbDummy:
         self._post_f5_pool_emit_event = False
         self._backfill_in_progress = False
         self._pending_backfill_request = None
+        self._pending_backfill_defer_when_inactive = False
         self.pool_manager = None
         self._ai_chain_context_map = None
         self.data_provider = object()
@@ -286,6 +291,13 @@ class _LhbDummy:
     def _start_backfill(self, *args):
         self.calls.append(("backfill", args))
 
+    def _start_or_defer_backfill(self, *args):
+        self._start_backfill(*args)
+        return True
+
+    def _resume_pending_backfill(self):
+        return False
+
     def _schedule_pending_pool_refresh(self):
         self.calls.append(("pending",))
 
@@ -294,6 +306,9 @@ class _LhbDummy:
 
     def _run_post_f5_pool_load(self):
         return lhb.LhbTab._run_post_f5_pool_load(self)
+
+    def prepare_post_f5_refresh(self):
+        return lhb.LhbTab.prepare_post_f5_refresh(self)
 
     def _ensure_pool_bootstrap_started(self):
         self.calls.append(("ensure",))
@@ -350,6 +365,53 @@ def test_load_pool_defer_guards_and_callbacks(monkeypatch):
     assert not tab._pool_bootstrap_started and tab.table_state.calls[-1][0] == "error"
 
 
+def test_lhb_background_preload_is_cache_only_and_completes_on_failure(monkeypatch):
+    tab = _LhbDummy()
+    tab._background_preload_requested = True
+    tab._background_preload_done = False
+    tab._background_preload_cache_only = True
+    remembered = []
+    tab._remember_pending_backfill = lambda request, *, defer_when_inactive: remembered.append(
+        (request, defer_when_inactive)
+    )
+    monkeypatch.setattr(lhb.task_manager, "is_active_task", lambda _task_id: False)
+    captured = {}
+    lifecycle = SimpleNamespace(run_background=lambda *args, **kwargs: captured.update(args=args, **kwargs))
+    monkeypatch.setattr(lhb, "task_lifecycle_for", lambda owner, runner=None: lifecycle)
+
+    lhb.LhbTab._load_and_display_pool(tab, emit_event=False)
+    assert lhb.LhbTab.is_background_preload_complete(tab) is False
+
+    captured["on_success"](
+        {
+            "status": "ok",
+            "pool_manager": _Manager(),
+            "pool": [{"浠ｇ爜": "300750"}],
+            "row_data": [{"浠ｇ爜": "300750"}],
+            "missing": ["20260715"],
+            "pending_validation": [],
+            "validation_ref_date": "20260715",
+        }
+    )
+
+    display_call = next(call for call in tab.calls if call[0] == "display")
+    assert display_call[2]["refresh_quotes"] is False
+    assert not any(call[0] == "backfill" for call in tab.calls)
+    assert remembered == [((["20260715"], [], "20260715"), True)]
+    assert lhb.LhbTab.is_background_preload_complete(tab) is True
+
+    tab._background_preload_done = False
+    tab._pool_load_in_progress = True
+    captured["on_error"]("cache unavailable")
+    assert lhb.LhbTab.is_background_preload_complete(tab) is True
+
+    tab._background_preload_done = False
+    tab._pool_bootstrap_started = True
+    captured["on_success"]({"status": "calendar_missing"})
+    assert tab._pool_bootstrap_started is False
+    assert lhb.LhbTab.is_background_preload_complete(tab) is True
+
+
 def test_post_f5_schedule_run_and_small_pool_helpers(monkeypatch):
     tab = _LhbDummy()
     singles = []
@@ -362,6 +424,7 @@ def test_post_f5_schedule_run_and_small_pool_helpers(monkeypatch):
     assert lhb.LhbTab._run_post_f5_pool_load(tab)
     assert tab.calls[-1] == ("schedule_post", True)
     tab._post_f5_pool_defer_until = 0.0
+    tab._post_f5_pool_pending = True
     assert lhb.LhbTab._run_post_f5_pool_load(tab)
     assert tab.calls[-1] == ("load", True)
 

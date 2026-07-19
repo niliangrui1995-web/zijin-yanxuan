@@ -136,6 +136,24 @@ def test_ai_industry_chain_rows_cache_reuses_matching_signature(monkeypatch, tmp
     assert [row["代码"] for row in cached] == ["300308", "002384"]
 
 
+def test_ai_industry_chain_rows_cache_rejects_stale_source_signature(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    rows_cache = tmp_path / "ai_industry_chain_rows.json"
+    codes_cache = tmp_path / "ai_industry_chain_stock_codes.json"
+    context_cache = tmp_path / "ai_industry_chain_context_map.json"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_ROWS_CACHE_FILE", rows_cache)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CODES_CACHE_FILE", codes_cache)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CONTEXT_CACHE_FILE", context_cache)
+
+    assert refresh_ai_industry_chain_rows()
+    with workbook_path.open("ab") as handle:
+        handle.write(b"stale-signature")
+
+    assert load_cached_ai_industry_chain_rows() == []
+
+
 def test_ai_industry_chain_cache_only_miss_never_reads_workbook(monkeypatch, tmp_path):
     workbook_path = tmp_path / "AI产业链.xlsx"
     _write_workbook(workbook_path)

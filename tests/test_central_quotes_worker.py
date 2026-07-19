@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtTest import QSignalSpy
+from types import SimpleNamespace
+
+import pytest
+from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.event_bus import event_bus
@@ -191,6 +194,108 @@ def test_central_quotes_service_skips_timer_duplicate_after_cache_reload(monkeyp
         service.shutdown()
         service.deleteLater()
         main_window.deleteLater()
+
+
+@pytest.mark.parametrize("terminal", ["success", "error"])
+@pytest.mark.parametrize("market_open", [True, False], ids=["live", "off-market"])
+def test_central_quotes_service_replays_one_merged_cache_reload_after_inflight(
+    monkeypatch,
+    terminal,
+    market_open,
+):
+    app = QApplication.instance() or QApplication([])
+    from ui.workers import central_quotes_worker as worker_module
+
+    service = CentralQuotesService(None, object(), code_supplier=lambda: {"000001"})
+    submitted = []
+
+    def _capture_submit(_service, name, fn, on_success, on_error, task_id, timeout_sec):
+        submitted.append(
+            SimpleNamespace(
+                name=name,
+                fn=fn,
+                on_success=on_success,
+                on_error=on_error,
+                task_id=task_id,
+                timeout_sec=timeout_sec,
+            )
+        )
+
+    monkeypatch.setattr(worker_module, "_submit_central_task", _capture_submit)
+    monkeypatch.setattr(worker_module, "_record_and_publish_quote_refresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        worker_module.MarketCalendar,
+        "is_quote_refresh_time",
+        staticmethod(lambda: market_open),
+    )
+    service._ensure_timer_running = lambda: True
+    service._market_status_text = lambda: "交易中" if market_open else "盘后"
+    service._observe_quote_window = lambda _value: None
+    service._run_maintenance = lambda **_kwargs: {}
+    service._poller = SimpleNamespace(is_online=lambda: True, get_runtime_stats=lambda: {})
+    service._should_skip_fallback_pressure_fetch = lambda *args, **kwargs: False
+    service._fallback_pressure_codes = lambda codes, **_kwargs: codes
+    service.publish_external_quotes = lambda quotes, **_kwargs: quotes
+
+    payload = {"quotes": {"000001": {"close": 10.0, "source": "eastmoney"}}}
+    expected_task_name = "realtime_poll" if market_open else "off_market_snapshot"
+    try:
+        service._trigger_fetch_for_reason("timer")
+        assert len(submitted) == 1
+        assert submitted[0].name == expected_task_name
+        assert (service._is_fetching if market_open else service._off_market_snapshot_fetching) is True
+
+        service.refresh_after_cache_reload()
+        service.refresh_after_cache_reload()
+        assert service._pending_fetch_reason == "cache_reload"
+
+        if terminal == "success":
+            submitted[0].on_success(payload)
+        else:
+            submitted[0].on_error("provider failed")
+
+        assert len(submitted) == 1
+        assert service._pending_fetch_timer.isActive()
+        QTest.qWait(1)
+        app.processEvents()
+
+        assert len(submitted) == 2
+        assert service._pending_fetch_reason == ""
+        assert submitted[1].name == expected_task_name
+        if market_open:
+            assert service._post_cache_reload_signature == ("000001",)
+
+        submitted[1].on_success(payload)
+        assert len(submitted) == 2
+        assert (service._is_fetching if market_open else service._off_market_snapshot_fetching) is False
+    finally:
+        service.shutdown()
+        service.deleteLater()
+
+
+def test_central_quotes_service_shutdown_cancels_pending_cache_reload_replay():
+    app = QApplication.instance() or QApplication([])
+    from ui.workers import central_quotes_worker as worker_module
+
+    service = CentralQuotesService(None, object(), code_supplier=lambda: {"000001"})
+    replayed = []
+    try:
+        service._trigger_fetch_for_reason = replayed.append
+        service._pending_fetch_reason = "cache_reload"
+        worker_module._schedule_pending_fetch_replay(service)
+
+        assert service._pending_fetch_timer.isActive()
+        service.shutdown()
+        QTest.qWait(1)
+        app.processEvents()
+
+        assert replayed == []
+        assert service._pending_fetch_reason == ""
+        assert not service._pending_fetch_timer.isActive()
+    finally:
+        if not service._closed:
+            service.shutdown()
+        service.deleteLater()
 
 
 def test_central_quotes_service_normalizes_codes_from_supplier():

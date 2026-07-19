@@ -18,6 +18,7 @@ from app.services.asian_market_cache_service import (
     ASIAN_REALTIME_CACHE as RT_JSON_CACHE,
 )
 from app.services.asian_market_cache_service import (
+    GLOBAL_ASIAN_RT_CACHE,
     write_realtime_quote_cache,
 )
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -32,7 +33,6 @@ __all__ = ["JSON_CACHE", "RT_JSON_CACHE", "requests"]
 
 log = get_logger(__name__)
 
-GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
 _ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
 _YF_FETCH_MAX_WORKERS = 2
 _FETCH_UPDATES_TIMEOUT_SEC = 45
@@ -163,12 +163,14 @@ def fetch_asian_realtime_quote(
     yf_session=None,
     allow_yfinance_fallback: bool = True,
     raise_on_source_payload_error: bool = False,
+    cancellation_token=None,
 ):
     return quote_service.fetch_asian_realtime_quote(
         code,
         yf_session=yf_session,
         allow_yfinance_fallback=allow_yfinance_fallback,
         raise_on_source_payload_error=raise_on_source_payload_error,
+        cancellation_token=cancellation_token,
         yf_module=yf,
         rate_limit_status=get_yf_rate_limit_status,
         rate_limit_error=is_yf_rate_limit_error,

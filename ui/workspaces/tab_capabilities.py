@@ -8,9 +8,10 @@ of reaching into concrete widget internals such as ``table_scan`` or
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Mapping, Protocol, runtime_checkable
 
-from ui.workspaces.stock_signal import StockSignal
+from app.services.stock_context_model_service import StockSignal
+from ui.workspaces.background_preload_receipt import BackgroundPreloadCancellationReceipt
 
 
 @runtime_checkable
@@ -24,6 +25,19 @@ class SnapshotRefreshCapability(Protocol):
 
 
 @runtime_checkable
+class BackgroundPreloadCapability(Protocol):
+    def prime_background_load(self): ...
+
+    def is_background_preload_complete(self) -> bool: ...
+
+    def cancel_background_preload(
+        self,
+        *,
+        reason: str,
+    ) -> BackgroundPreloadCancellationReceipt: ...
+
+
+@runtime_checkable
 class PostF5DataRefreshCapability(Protocol):
     def refresh_data_after_f5(self) -> bool: ...
 
@@ -31,11 +45,6 @@ class PostF5DataRefreshCapability(Protocol):
 @runtime_checkable
 class AIIndustryChainUpdateCapability(Protocol):
     def refresh_data_after_ai_industry_chain_update(self) -> bool: ...
-
-
-@runtime_checkable
-class PrimaryRowSelectionCapability(Protocol):
-    def select_primary_row(self, index: int) -> bool: ...
 
 
 @runtime_checkable
@@ -51,6 +60,11 @@ class QuoteUniverseCapability(Protocol):
 @runtime_checkable
 class StockSignalSourceCapability(Protocol):
     def iter_stock_signals(self) -> list[StockSignal]: ...
+
+
+@runtime_checkable
+class DataLineageCapability(Protocol):
+    def get_data_lineage(self) -> Mapping: ...
 
 
 @runtime_checkable

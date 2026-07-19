@@ -295,6 +295,15 @@ def test_stock_model_style_visual_payloads_and_identity_helpers():
 
     model.set_plain_style_headers([])
     assert model._visual_payload("来源", model.row_data[0]["来源"], model.row_data[0])["kind"] == "tag_badges"
+    source_index = model.index(0, model.headers.index("来源"))
+    render_payload = model.data(source_index, helpers.STOCK_CELL_RENDER_ROLE)
+    assert render_payload == (
+        model.data(source_index, Qt.ItemDataRole.UserRole + 4),
+        model.data(source_index, Qt.ItemDataRole.UserRole + 3),
+        model.data(source_index, Qt.ItemDataRole.UserRole + 1),
+        model.data(source_index, Qt.ItemDataRole.UserRole + 2),
+        model.data(source_index, Qt.ItemDataRole.UserRole + 5),
+    )
     assert model._visual_payload("上榜净买额(万)", 100, model.row_data[0])["max_abs"] == 250.0
     assert model._money_bar_payload("名称", model.row_data[0]) is None
     assert model._money_bar_payload("上榜净买额(万)", {"上榜净买额(万)": "bad"}) is None
@@ -980,7 +989,7 @@ def _paint_context(
     option.palette = widget.palette()
     option.textElideMode = Qt.TextElideMode.ElideRight
     opt = QStyleOptionViewItem(option)
-    opt.text = str(text or "")
+    StockItemDelegate(widget).initStyleOption(opt, index)
 
     image = QImage(max(1, width), max(1, height), QImage.Format.Format_ARGB32)
     image.fill(Qt.GlobalColor.transparent)
@@ -1029,6 +1038,27 @@ def test_renderer_context_derives_selection_sort_rail_and_current_state():
     with _paint_context(plain_style=True, sorted_column=0, current=False) as (ctx, _image):
         assert ctx.sorted_overlay is None
         assert not ctx.is_current
+
+
+def test_renderer_native_fast_path_only_accepts_plain_cells():
+    with _paint_context(text="plain", current=False) as (ctx, _image):
+        assert renderers.can_use_native_cell_paint(ctx) is True
+
+    with _paint_context(
+        text="selected",
+        state=QStyle.StateFlag.State_Selected,
+        current=False,
+    ) as (ctx, _image):
+        assert renderers.can_use_native_cell_paint(ctx) is False
+
+    with _paint_context(text="触发", pill_color="#ff0000", current=False) as (ctx, _image):
+        assert renderers.can_use_native_cell_paint(ctx) is False
+
+    with _paint_context(text="来源", visual_payload={"kind": "tag_badges"}, current=False) as (ctx, _image):
+        assert renderers.can_use_native_cell_paint(ctx) is False
+
+    with _paint_context(text="flash", flash_data={"time": time.time(), "diff": 1}, current=False) as (ctx, _image):
+        assert renderers.can_use_native_cell_paint(ctx) is False
 
 
 @pytest.mark.parametrize(

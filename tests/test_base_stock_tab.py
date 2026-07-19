@@ -678,6 +678,76 @@ def test_prime_visible_local_quote_snapshot_skips_noninteractive_probe(monkeypat
         tab.deleteLater()
 
 
+def test_hidden_workspace_preload_finishes_local_snapshot_before_first_show_without_duplicate_io(
+    monkeypatch,
+    qt_application,
+):
+    import ui.tabs.base_stock_refresh as refresh_module
+    from core.global_store import global_store
+
+    class TrackingModel(_OfflineSnapshotModel):
+        def __init__(self):
+            super().__init__()
+            self.update_count = 0
+
+        def update_quotes(self, quotes):
+            self.update_count += 1
+            super().update_quotes(quotes)
+
+    class TrackingTab(_OfflineSnapshotTab):
+        def __init__(self, provider):
+            super().__init__(provider)
+            self.model = TrackingModel()
+
+    pending = {}
+
+    def capture_background(_owner, _runner, _name, fn, **kwargs):
+        pending["fn"] = fn
+        pending["success"] = kwargs["on_success"]
+
+    provider = _OfflineSnapshotProvider()
+    tab = TrackingTab(provider)
+    finance_calls = []
+    monkeypatch.setattr(refresh_module, "_run_owner_background", capture_background)
+    monkeypatch.setattr(refresh_module, "publish_rt_quotes", lambda payload, **_kwargs: dict(payload))
+    monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {})
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        lambda codes: finance_calls.append(list(codes)) or {"000001": {"zongguben": 1_000_000_000}},
+        raising=False,
+    )
+
+    try:
+        assert tab.prime_workspace_background_snapshot() is True
+        assert tab.is_workspace_background_snapshot_complete() is False
+        assert provider.offline_calls == []
+
+        warm_payload = pending["fn"](SimpleNamespace())
+        pending["success"](warm_payload)
+        for _ in range(100):
+            qt_application.processEvents()
+            if tab.is_workspace_background_snapshot_complete():
+                break
+            QTest.qWait(1)
+        assert tab.is_workspace_background_snapshot_complete() is True
+        assert provider.offline_calls == [["000001"]]
+        assert finance_calls == [["000001"]]
+        assert tab.model.update_count == 1
+
+        monkeypatch.setattr(tab, "isVisible", lambda: True)
+        tab._workspace_load_reason = "tab_switch"
+        tab._workspace_noninteractive_loaded = False
+        assert tab._prime_visible_local_quote_snapshot() is True
+        qt_application.processEvents()
+
+        assert provider.offline_calls == [["000001"]]
+        assert finance_calls == [["000001"]]
+        assert tab.model.update_count == 1
+    finally:
+        tab.deleteLater()
+
+
 def test_current_workspace_tab_uses_window_workspace_tabs(qt_application):
     host = QWidget()
     current_widget = QWidget(host)

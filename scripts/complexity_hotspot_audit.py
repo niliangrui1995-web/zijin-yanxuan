@@ -14,23 +14,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_BUDGETS = {
-    "core/rps_precomputer.py": {
-        "RPSPrecomputer.run_f5_pipeline": 176,
-    },
-    "app/bootstrap/startup_orchestrator.py": {
-        "StartupOrchestrator.deferred_data_load": 187,
-    },
     "domains/scan/breakout_monitor_service.py": {
         "BreakoutMonitorService.precompute_ready_pool": 165,
     },
     "scripts/perf_budget_check.py": {
-        "_parse_args": 194,
+        "_parse_args": 13,
     },
     "ui/kline_window_header.py": {
-        "apply_qt_theme": 199,
+        "apply_qt_theme": 194,
     },
     "ui/kline_window_qt.py": {
-        "KLineChartWindow.__init__": 244,
+        "KLineChartWindow.__init__": 222,
     },
     "ui/kline_chart_payload.py": {
         "build_kline_html": 28,
@@ -49,9 +43,6 @@ HOTSPOT_BUDGETS = {
     "ui/theme_tokens.py": {
         "build_ui_tokens": 192,
     },
-    "ui/workers/central_quotes_worker.py": {
-        "CentralQuotesService._trigger_fetch_for_reason": 171,
-    },
     "ui/workers/scan_worker.py": {
         "ScanWorker.run": 58,
         "ScanWorker._ensure_scan_source_data": 24,
@@ -62,7 +53,7 @@ HOTSPOT_BUDGETS = {
         "ScanWorker._enrich_hot_sectors": 17,
     },
     "ui/workspaces/classic_workspace.py": {
-        "ClassicWorkspace.__init__": 53,
+        "ClassicWorkspace.__init__": 39,
     },
     "vcp/fetchers/asian_kline_fetcher.py": {
         "sync_asian_kline_cache": 185,
@@ -77,9 +68,6 @@ CHANGED_FUNCTION_MAX_COMPLEXITY = 10
 CHANGED_CLASS_MAX_LINES = 500
 CHANGED_CLASS_MAX_METHODS = 20
 MCCABE_COMPLEXITY_BUDGETS = {
-    "app/bootstrap/startup_orchestrator.py": {
-        "StartupOrchestrator.deferred_data_load": 26,
-    },
     "domains/scan/breakout_monitor_service.py": {
         "BreakoutMonitorService.precompute_ready_pool": 29,
     },

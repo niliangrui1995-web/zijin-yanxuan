@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Mapping, Sequence
 
+from app.services.stock_context_model_service import StockContextSignalIndex
 from domains.runtime.fault_tolerance import provider_fault_tolerance
 
 KEY_CODE = "\u4ee3\u7801"
@@ -13,13 +14,6 @@ KEY_NAME = "\u540d\u79f0"
 KEY_RECENT_TIME = "\u6700\u8fd1\u65f6\u95f4"
 KEY_TRADE_DATE = "\u4ea4\u6613\u65e5"
 KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
-
-DEFAULT_CACHE_REFS = (
-    "workspace.collect_stock_context",
-    "global_store.quotes",
-    "DataStore.scan_cache",
-    "fund_holdings_store",
-)
 
 RECOVERABLE_LOAD_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
@@ -111,11 +105,6 @@ def _stable_signature(rows: Sequence[Mapping[str, Any]]) -> str:
 
 @dataclass(frozen=True)
 class StockCandidatesDataLineage:
-    key: str = "stock_candidates"
-    view: str = "stock_candidates"
-    source: str = "workspace_stock_context"
-    provider: str = "workspace_stock_context"
-    cache_refs: tuple[str, ...] = DEFAULT_CACHE_REFS
     trade_date: str = ""
     triggered_network: bool = False
     fallback_or_degraded: bool = False
@@ -129,11 +118,6 @@ class StockCandidatesDataLineage:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "key": self.key,
-            "view": self.view,
-            "source": self.source,
-            "provider": self.provider,
-            "cache_refs": list(self.cache_refs),
             "trade_date": self.trade_date,
             "triggered_network": self.triggered_network,
             "fallback_or_degraded": self.fallback_or_degraded,
@@ -153,6 +137,7 @@ class StockCandidatesResult:
     rows: list[dict]
     lineage: StockCandidatesDataLineage
     signature: str
+    signal_index: StockContextSignalIndex
 
     def as_dict(self) -> dict[str, Any]:
         payload = self.lineage.as_dict()
@@ -259,6 +244,7 @@ class StockCandidatesDataService:
             rows=rows,
             lineage=lineage,
             signature=_stable_signature(rows),
+            signal_index=StockContextSignalIndex.from_context(context),
         )
 
     def empty_lineage(self, *, row_count: int = 0) -> StockCandidatesDataLineage:

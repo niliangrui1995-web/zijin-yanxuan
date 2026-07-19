@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
 from infra.tasks.lifecycle import CancellationToken
 
@@ -155,3 +157,35 @@ def test_lifecycle_group_shutdown_suppresses_already_queued_owner_callback():
     assert token.cancelled is True
     assert token.reason == "owner_shutdown"
     assert observed == []
+
+
+def test_lifecycle_group_contains_exception_from_queued_owner_callback(caplog, monkeypatch):
+    runner = _QueuedRunner()
+    lifecycle = TaskLifecycleGroup(runner)
+    reported = []
+    monkeypatch.setattr(
+        "infra.tasks.owner_lifecycle.sys.excepthook",
+        lambda exc_type, exc, traceback: reported.append((exc_type, exc, traceback)),
+    )
+
+    def _raise_from_ui_callback(_):
+        raise TypeError("callback contract mismatch")
+
+    lifecycle.run_background(
+        "period-return",
+        lambda _token: "payload",
+        task_id="period-return-task",
+        timeout_sec=5.0,
+        on_success=_raise_from_ui_callback,
+    )
+    _run_fn, kwargs = runner.jobs[-1]
+
+    with caplog.at_level(logging.ERROR, logger="infra.tasks.owner_lifecycle"):
+        kwargs["on_success"]("payload")
+
+    assert lifecycle.active_names == ()
+    assert "[任务生命周期][period-return] 主线程回调异常" in caplog.text
+    assert "callback contract mismatch" in caplog.text
+    assert reported[0][0] is TypeError
+    assert str(reported[0][1]) == "callback contract mismatch"
+    assert reported[0][2] is not None

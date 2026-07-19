@@ -416,7 +416,6 @@ def test_test_network_uses_eastmoney_http(monkeypatch):
         )
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(data_provider_realtime_mixin, "urlopen_https", _fake_urlopen)
     monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
     monkeypatch.setattr(
         "socket.socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not use socket"))
@@ -455,12 +454,11 @@ def test_test_network_records_probe_detail(monkeypatch):
         )
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(data_provider_realtime_mixin, "urlopen_https", _fake_urlopen)
     monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     assert provider.test_network(timeout=3) is True
     assert provider.get_last_network_probe()["ok"] is True
-    assert provider.get_last_network_probe()["page_probe"] == "ok"
+    assert provider.get_last_network_probe()["page_probe"] == "deferred"
     assert provider.get_last_network_probe()["quote_probe"] == "ok"
 
 
@@ -496,7 +494,6 @@ def test_test_network_accepts_tencent_when_primary_quote_sources_fail(monkeypatc
         raise AssertionError(url)
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(data_provider_realtime_mixin, "urlopen_https", _fake_urlopen)
     monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     assert provider.test_network(timeout=3) is True
@@ -505,6 +502,31 @@ def test_test_network_accepts_tencent_when_primary_quote_sources_fail(monkeypatc
     assert probe["eastmoney_quote_probe"].startswith("fail:")
     assert probe["sina_quote_probe"].startswith("fail:")
     assert probe["tencent_quote_probe"] == "ok"
+
+
+def test_test_network_uses_one_total_deadline_across_fallback_sources(monkeypatch):
+    provider = _make_provider()
+    clock = [100.0]
+    calls = []
+
+    def _slow_primary(*_args):
+        calls.append(("eastmoney", provider._rt_api_call_timeout_sec))
+        clock[0] += 2.1
+        raise TimeoutError("primary timed out")
+
+    monkeypatch.setattr(data_provider_realtime_mixin.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(provider, "_request_eastmoney_quote_batch", _slow_primary)
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("deadline must stop fallback")),
+    )
+
+    assert provider.test_network(timeout=2) is False
+    assert calls == [("eastmoney", 2.0)]
+    probe = provider.get_last_network_probe()
+    assert probe["sina_quote_probe"] == "deadline"
+    assert probe["elapsed_ms"] == 2100.0
 
 
 def test_fetch_realtime_quotes_batch_uses_recent_cache_within_dedup_window(monkeypatch):

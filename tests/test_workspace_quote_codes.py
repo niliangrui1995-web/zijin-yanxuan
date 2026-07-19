@@ -1,28 +1,34 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
-import pytest
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
+import domains.stock_context.signal_builders as stock_context_module
 import ui.workspaces.classic_workspace as classic_workspace_module
-import ui.workspaces.stock_context_service as stock_context_module
+import ui.workspaces.stock_context_service as stock_context_runtime_module
+from app.services.stock_context_model_service import StockSignal
 from ui.components.smooth_tab_widget import SmoothTabWidget
+from ui.tabs.base_stock_tab import BaseStockTab
 from ui.workspaces.classic_workspace import ClassicWorkspace
-from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP
 from ui.workspaces.stock_context_service import StockContextService
-from ui.workspaces.stock_signal import StockSignal
-
-
-@pytest.fixture(autouse=True)
-def _isolate_na_daily_cache_fallback(monkeypatch):
-    monkeypatch.setattr(StockContextService, "_load_na_daily_cache_rows", lambda self: [])
+from ui.workspaces.tab_registry import INFO_SOURCE_GROUP, get_tab_definition
+from ui.workspaces.workspace_facade import WorkspaceFacade
 
 
 def _make_workspace(*, tabs=None, engine=None):
     ordered_tabs = dict(tabs or {})
     workspace = SimpleNamespace(engine=engine)
     workspace.get_tab = lambda key: ordered_tabs.get(key)
+    workspace.get_loaded_tab = lambda key: ordered_tabs.get(key)
+    workspace.tab_specs = lambda: [
+        (
+            definition.runtime_spec_metadata()
+            if (definition := get_tab_definition(key)) is not None
+            else {"key": key, "title": key}
+        )
+        for key in ordered_tabs
+    ]
     workspace.iter_tabs = lambda: [tab for tab in ordered_tabs.values() if tab is not None]
     return workspace
 
@@ -91,27 +97,38 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
 
     assert codes == {
         "000001",
-        "600000",
         "300001",
         "300750",
-        "688001",
         "002415",
         "601318",
     }
 
 
-def test_workspace_quote_universe_skips_information_source_group_and_non_a_share_tabs():
-    specs = [
-        {"key": "watchlist", "group": "主工作台"},
-        {"key": "asian_market", "group": "主工作台"},
-        {"key": "stock_candidates", "group": "主工作台"},
-        {"key": "ai_industry_chain", "group": "情报源"},
-        {"key": "lhb", "group": "主工作台"},
-        {"key": "scan", "group": "情报源"},
-        {"key": "foreign_block", "group": "情报源"},
-        {"key": "earnings", "group": "情报源"},
-        {"key": "fund_holdings", "group": "情报源"},
-    ]
+def test_workspace_quote_universe_requires_runtime_specs():
+    loaded_tabs = {"watchlist": _make_quote_tab({"000001"})}
+    workspace = SimpleNamespace(get_loaded_tab=lambda key: loaded_tabs.get(key))
+
+    assert ClassicWorkspace.get_realtime_quote_codes(workspace) == set()
+
+
+def test_workspace_quote_universe_uses_explicit_policy_instead_of_visual_group():
+    specs = []
+    for key in (
+        "watchlist",
+        "asian_market",
+        "stock_candidates",
+        "ai_industry_chain",
+        "lhb",
+        "scan",
+        "foreign_block",
+        "earnings",
+        "fund_holdings",
+    ):
+        definition = get_tab_definition(key)
+        assert definition is not None
+        spec = definition.runtime_spec_metadata()
+        spec["group"] = "情报源" if definition.quote_policy.value == "a_share_realtime" else "主工作台"
+        specs.append(spec)
     workspace = _make_workspace(
         tabs={
             "watchlist": _make_quote_tab({"000001"}),
@@ -139,8 +156,8 @@ def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
     get_tab_calls = []
     workspace = SimpleNamespace(
         tab_specs=lambda: [
-            {"key": "watchlist", "group": "主工作台"},
-            {"key": "lhb", "group": "主工作台"},
+            get_tab_definition("watchlist").runtime_spec_metadata(),
+            get_tab_definition("lhb").runtime_spec_metadata(),
         ],
         get_loaded_tab=lambda key: loaded_tabs.get(key),
         get_tab=lambda key: get_tab_calls.append(key) or _make_quote_tab({key}),
@@ -152,6 +169,31 @@ def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
     assert get_tab_calls == []
 
 
+def test_workspace_quote_universe_uses_only_visible_tab_until_preload_finishes():
+    loaded_tabs = {
+        "watchlist": _make_quote_tab({"000001"}),
+        "lhb": _make_quote_tab({"601318"}),
+        "na_daily": _make_quote_tab({"002415"}),
+    }
+    finished = [False]
+    workspace = _make_workspace(tabs=loaded_tabs)
+    workspace.current_tab_key = lambda: "watchlist"
+    workspace.background_preload_status = lambda: {
+        "enabled": True,
+        "finished": finished[0],
+    }
+
+    assert ClassicWorkspace.get_realtime_quote_codes(workspace) == {"000001"}
+
+    finished[0] = True
+
+    assert ClassicWorkspace.get_realtime_quote_codes(workspace) == {
+        "000001",
+        "601318",
+        "002415",
+    }
+
+
 def test_workspace_primes_watchlist_with_public_startup_hook():
     called = []
     workspace = _make_workspace(
@@ -160,7 +202,7 @@ def test_workspace_primes_watchlist_with_public_startup_hook():
         }
     )
 
-    ClassicWorkspace.schedule_watchlist_special_quotes(workspace, task_manager=None)
+    WorkspaceFacade(workspace).schedule_watchlist_special_quotes(task_manager=None)
 
     assert called == ["watchlist"]
 
@@ -233,16 +275,17 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
 def test_workspace_collects_na_daily_context_from_cache_without_loading_lazy_tab(monkeypatch):
     get_tab_calls = []
     monkeypatch.setattr(
-        StockContextService,
-        "_load_na_daily_cache_rows",
-        lambda self: [
+        "app.services.stock_context_query_service.load_named_cache_rows",
+        lambda filename, **_kwargs: [
             {
                 "代码": "002415",
                 "名称": "海康威视",
                 "催化剂": "北美订单催化",
                 "细分板块": "AI安防",
             }
-        ],
+        ]
+        if filename == "na_daily_latest.json"
+        else [],
     )
     workspace = SimpleNamespace(
         tab_specs=lambda: [{"key": "na_daily", "group": "info"}],
@@ -329,7 +372,6 @@ def test_workspace_earnings_context_signal_includes_report_label():
 
 
 def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):
-    monkeypatch.setattr(StockContextService, "_query_fund_holding_store_rows", lambda self: [])
     workspace = _make_workspace(
         tabs={
             "scan": SimpleNamespace(
@@ -463,59 +505,76 @@ def test_watchlist_radar_skips_scan_cache_fallback_on_ui_thread(monkeypatch):
 
 
 def test_watchlist_radar_passes_target_codes_into_signal_collection(monkeypatch):
-    workspace = SimpleNamespace(
-        engine=None,
-        tab_specs=list,
-        get_loaded_tab=lambda _key: None,
-        iter_tabs=list,
-    )
-    service = StockContextService(workspace)
-    calls = []
-    monkeypatch.setattr(service, "iter_stock_signals", lambda **kwargs: calls.append(kwargs) or [])
-
-    service.collect_watchlist_radar_data(target_codes=["000001", "600000", "000001"])
-
-    assert calls == [
-        {
-            "include_cache_fallback": False,
-            "include_source_cache_fallback": None,
-            "allow_lhb_cache_compute": False,
-            "target_codes": {"000001", "600000"},
+    workspace = _make_workspace(
+        tabs={
+            "ai_industry_chain": _make_rows_tab(
+                [
+                    {"代码": "000001", "细分板块": "A", "备注": "first"},
+                    {"代码": "600000", "细分板块": "B", "备注": "second"},
+                ]
+            )
         }
-    ]
+    )
+
+    remarks, subsectors, *_ = ClassicWorkspace.collect_watchlist_radar_data(
+        workspace,
+        target_codes=["000001", "000001"],
+    )
+
+    assert remarks == {"000001": "first"}
+    assert subsectors == {"000001": "A"}
 
 
 def test_stock_context_explicit_empty_target_codes_skip_signal_sources(monkeypatch):
-    workspace = SimpleNamespace(
-        engine=None,
-        tab_specs=list,
-        get_loaded_tab=lambda _key: None,
-        iter_tabs=list,
-    )
-    service = StockContextService(workspace)
-    monkeypatch.setattr(
-        service,
-        "_iter_direct_stock_signals",
-        lambda: (_ for _ in ()).throw(AssertionError("empty watchlist must not scan signal sources")),
+    workspace = _make_workspace(
+        tabs={
+            "na_daily": SimpleNamespace(
+                get_row_data=lambda: (_ for _ in ()).throw(
+                    AssertionError("empty target set must not capture source rows")
+                )
+            )
+        }
     )
 
-    assert service.iter_stock_signals(target_codes=[]) == []
+    assert ClassicWorkspace.collect_stock_context(workspace, target_codes=[]) == {}
+
+
+def test_watchlist_radar_explicit_empty_targets_skip_capture_and_async_sources(monkeypatch):
+    workspace = _make_workspace(
+        tabs={
+            "lhb": SimpleNamespace(
+                get_row_data=lambda: (_ for _ in ()).throw(
+                    AssertionError("empty radar targets must not capture source rows")
+                )
+            )
+        }
+    )
+    monkeypatch.setattr(
+        StockContextService,
+        "refresh_async_snapshots",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("empty radar targets must not prime async sources")
+        ),
+    )
+
+    assert ClassicWorkspace.collect_watchlist_radar_data(workspace, target_codes=[]) == ({}, {}, {}, {}, {}, None)
 
 
 def test_watchlist_radar_preserves_none_as_unfiltered_target(monkeypatch):
-    workspace = SimpleNamespace(
-        engine=None,
-        tab_specs=list,
-        get_loaded_tab=lambda _key: None,
-        iter_tabs=list,
+    workspace = _make_workspace(
+        tabs={
+            "ai_industry_chain": _make_rows_tab(
+                [
+                    {"代码": "000001", "细分板块": "A", "备注": "first"},
+                    {"代码": "600000", "细分板块": "B", "备注": "second"},
+                ]
+            )
+        }
     )
-    service = StockContextService(workspace)
-    calls = []
-    monkeypatch.setattr(service, "iter_stock_signals", lambda **kwargs: calls.append(kwargs) or [])
 
-    service.collect_watchlist_radar_data(target_codes=None)
+    remarks, *_ = ClassicWorkspace.collect_watchlist_radar_data(workspace, target_codes=None)
 
-    assert calls[0]["target_codes"] is None
+    assert remarks == {"000001": "first", "600000": "second"}
 
 
 def test_stock_context_ai_chain_fallback_is_cache_only(monkeypatch):
@@ -533,14 +592,18 @@ def test_stock_context_ai_chain_fallback_is_cache_only(monkeypatch):
     )
     workspace = SimpleNamespace(
         engine=None,
-        tab_specs=list,
+        tab_specs=lambda: [{"key": "ai_industry_chain"}],
         get_loaded_tab=lambda _key: None,
         iter_tabs=list,
     )
 
-    rows = StockContextService(workspace)._load_ai_chain_cache_rows()
+    context = ClassicWorkspace.collect_stock_context(
+        workspace,
+        allow_async_snapshot_refresh=False,
+        sources={"ai_industry_chain"},
+    )
 
-    assert rows == [{stock_context_module.KEY_CODE: "300308", stock_context_module.KEY_SUBSECTOR: "optics"}]
+    assert [signal.summary for signal in context["300308"]] == ["optics"]
 
 
 def test_watchlist_radar_can_use_source_cache_without_scan_fallback(monkeypatch):
@@ -551,9 +614,8 @@ def test_watchlist_radar_can_use_source_cache_without_scan_fallback(monkeypatch)
 
     monkeypatch.setattr(data_store_module, "DataStore", fail_datastore)
     monkeypatch.setattr(
-        StockContextService,
-        "_load_ai_chain_cache_rows",
-        lambda self: [{"代码": "300750", "细分板块": "液冷", "备注": "液冷主线"}],
+        "app.services.stock_context_query_service.load_ai_chain_cache_rows",
+        lambda: [{"代码": "300750", "细分板块": "液冷", "备注": "液冷主线"}],
     )
     workspace = SimpleNamespace(
         engine=None,
@@ -590,7 +652,7 @@ def test_workspace_collect_stock_context_schedules_lhb_snapshot_by_default(monke
     monkeypatch.setattr(
         StockContextService,
         "refresh_async_snapshots",
-        lambda self, *, force=False: scheduled.append(force) or True,
+        lambda self, *, force=False, **_kwargs: scheduled.append(force) or True,
     )
     workspace = SimpleNamespace(
         data_provider="provider",
@@ -628,7 +690,9 @@ def test_workspace_collect_stock_context_uses_ready_lhb_snapshot_by_default():
         }
     ]
     service._lhb_pool_cache_signature = lambda: ("cache", 1, 2)
-    workspace._workspace_facade = SimpleNamespace(collect_stock_context=service.collect_signals_by_code)
+    facade = WorkspaceFacade(workspace)
+    facade._stock_context_service = service
+    workspace._workspace_facade = facade
 
     context = ClassicWorkspace.collect_stock_context(workspace)
 
@@ -644,7 +708,10 @@ def test_workspace_skips_lhb_cache_fallback_while_loaded_lhb_tab_is_loading(monk
         "_load_lhb_pool_rows",
         lambda self: (_ for _ in ()).throw(AssertionError("loading LHB tab should own its cache read")),
     )
-    lhb_tab = SimpleNamespace(get_row_data=list, _pool_load_in_progress=True)
+    lhb_tab = SimpleNamespace(
+        get_row_data=list,
+        get_data_lineage=lambda: {"status": "loading"},
+    )
     workspace = SimpleNamespace(
         tab_specs=lambda: [{"key": "lhb", "group": "info"}],
         get_loaded_tab=lambda key: lhb_tab if key == "lhb" else None,
@@ -662,7 +729,7 @@ def test_stock_context_service_reuses_lhb_fallback_cache_for_same_signature(monk
 
     calls = []
     checkpoints = []
-    monkeypatch.setattr(stock_context_module, "_checkpoint", lambda token=None: checkpoints.append(token))
+    monkeypatch.setattr(stock_context_runtime_module, "_checkpoint", lambda token=None: checkpoints.append(token))
 
     class _FakePoolManager:
         def compute_pool(self, *, data_provider=None, engine=None):
@@ -703,7 +770,7 @@ def test_watchlist_radar_schedules_lhb_snapshot_instead_of_blocking_cache_comput
     monkeypatch.setattr(
         StockContextService,
         "refresh_async_snapshots",
-        lambda self, *, force=False: scheduled.append(force) or True,
+        lambda self, *, force=False, **_kwargs: scheduled.append(force) or True,
     )
     workspace = SimpleNamespace(
         engine=None,
@@ -734,7 +801,7 @@ def test_workspace_collect_stock_context_schedules_lhb_snapshot_without_blocking
     monkeypatch.setattr(
         StockContextService,
         "refresh_async_snapshots",
-        lambda self, *, force=False: scheduled.append(force) or True,
+        lambda self, *, force=False, **_kwargs: scheduled.append(force) or True,
     )
     workspace = SimpleNamespace(
         engine=None,
@@ -761,7 +828,7 @@ def test_workspace_collect_stock_context_can_suppress_async_snapshot_refresh(mon
     monkeypatch.setattr(
         StockContextService,
         "refresh_async_snapshots",
-        lambda self, *, force=False: scheduled.append(force) or True,
+        lambda self, *, force=False, **_kwargs: scheduled.append(force) or True,
     )
     workspace = SimpleNamespace(
         engine=None,
@@ -799,7 +866,7 @@ def test_stock_context_snapshot_refresh_can_skip_lhb_cache_compute(monkeypatch):
 
 
 def test_stock_context_snapshot_refresh_defers_during_post_f5_window(monkeypatch):
-    monkeypatch.setattr(stock_context_module.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(stock_context_runtime_module.time, "monotonic", lambda: 100.0)
     workspace = SimpleNamespace(engine=None)
     service = StockContextService(workspace)
     service.prepare_post_f5_refresh()
@@ -819,28 +886,27 @@ def test_workspace_fund_holding_update_primes_only_fund_snapshot():
 
 
 def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):
-    monkeypatch.setattr(
-        StockContextService,
-        "_cached_fund_holding_rows",
-        lambda self, *, allow_async_refresh=True: [
-            {
-                "代码": "300750",
-                "名称": "宁德时代",
-                "主体": "睿远基金",
-                "主体代码": "ruiyuan",
-                "季度": "2025Q4",
-                "变化类型": "增持",
-                "本期占比": "2.30%",
-                "持股变化": "+80.00",
-                "_is_latest_subject_quarter": True,
-            }
-        ],
-    )
     workspace = _make_workspace(tabs={})
     workspace.tab_specs = lambda: [{"key": "fund_holdings", "group": "情报源"}]
     load_attempts = []
     workspace.get_loaded_tab = lambda key: None
     workspace.get_tab = lambda key: load_attempts.append(key) or None
+    facade = WorkspaceFacade(workspace)
+    facade._stock_context_service._fund_rows_loaded = True
+    facade._stock_context_service._fund_rows_snapshot = [
+        {
+            "代码": "300750",
+            "名称": "宁德时代",
+            "主体": "睿远基金",
+            "主体代码": "ruiyuan",
+            "季度": "2025Q4",
+            "变化类型": "增持",
+            "本期占比": "2.30%",
+            "持股变化": "+80.00",
+            "_is_latest_subject_quarter": True,
+        }
+    ]
+    workspace._workspace_facade = facade
 
     context = ClassicWorkspace.collect_stock_context(workspace)
 
@@ -852,53 +918,28 @@ def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(
     assert signals[0].summary == "睿远基金 | 增持 | 2025Q4 | 占比2.30% | 变化+80.00"
 
 
-def test_workspace_fund_holding_context_schedules_snapshot_without_blocking(monkeypatch):
+def test_workspace_target_fund_context_schedules_snapshot_without_blocking(monkeypatch):
     calls = []
-    monkeypatch.setattr(
-        StockContextService,
-        "refresh_async_snapshots",
-        lambda self, *, force=False: calls.append(force) or True,
-    )
-    monkeypatch.setattr(
-        StockContextService,
-        "_query_fund_holding_store_rows",
-        lambda self: (_ for _ in ()).throw(AssertionError("store query should not run on UI collect")),
-    )
     workspace = _make_workspace(tabs={})
     workspace.tab_specs = lambda: [{"key": "fund_holdings", "group": "情报源"}]
+    facade = WorkspaceFacade(workspace)
 
-    context = ClassicWorkspace.collect_stock_context(workspace)
+    def schedule_snapshot(*, force=False, **_kwargs):
+        calls.append(force)
+        facade._stock_context_service._fund_rows_loading = True
+        return True
+
+    monkeypatch.setattr(facade._stock_context_service, "refresh_async_snapshots", schedule_snapshot)
+    monkeypatch.setattr(
+        "app.services.stock_context_query_service.load_fund_holding_snapshot",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("store query should not run on UI collect")),
+    )
+    workspace._workspace_facade = facade
+
+    context = ClassicWorkspace.collect_stock_context(workspace, target_codes={"300750"})
 
     assert context == {}
     assert calls == [False]
-
-
-def test_workspace_accepts_direct_stock_signal_capability():
-    workspace = _make_workspace(
-        tabs={
-            "custom": SimpleNamespace(
-                iter_stock_signals=lambda: [
-                    StockSignal(
-                        code="688498",
-                        source_tab="custom",
-                        signal_type="research_note",
-                        summary="自定义研究信号",
-                    )
-                ]
-            )
-        },
-    )
-
-    signals = ClassicWorkspace.collect_stock_signals(workspace)
-
-    assert signals == [
-        StockSignal(
-            code="688498",
-            source_tab="custom",
-            signal_type="research_note",
-            summary="自定义研究信号",
-        )
-    ]
 
 
 def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
@@ -936,9 +977,14 @@ def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
         signal_type="earnings",
         summary="32.5%",
     )
+
+    def collect_stock_context(**kwargs):
+        created["query"] = kwargs
+        return {"300750": [signal]}
+
     workspace = SimpleNamespace(
         data_provider=SimpleNamespace(code2name={"300750": "宁德时代"}),
-        collect_stock_context=lambda: {"300750": [signal]},
+        collect_stock_context=collect_stock_context,
         tab_specs=lambda: [{"key": "earnings", "title": "业绩异动"}],
         window=lambda: None,
         _activate_stock_signal_source=lambda _signal: True,
@@ -949,12 +995,69 @@ def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
     assert created["code"] == "300750"
     assert created["name"] == "宁德时代"
     assert created["signals"] == [signal]
+    assert created["query"] == {
+        "target_codes": {"300750"},
+        "sources": frozenset(
+            {"scan", "ai_industry_chain", "na_daily", "foreign_block", "earnings", "fund_holdings", "lhb"}
+        ),
+    }
     assert created["tab_titles"] == {"earnings": "业绩异动"}
     assert created["context"] == {"市价": "183.50"}
     assert created["show"] is True
     assert created["raise"] is True
     assert created["activate"] is True
     assert workspace._stock_detail_dialogs["300750"] is not None
+    created["destroyed_callback"]()
+
+
+def test_replaced_stock_detail_cleanup_does_not_remove_new_dialog(monkeypatch):
+    dialogs = []
+
+    class FakeSignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class FakeStockDetailDialog:
+        def __init__(self, *_args, **_kwargs):
+            self.destroyed = FakeSignal()
+            dialogs.append(self)
+
+        @staticmethod
+        def isVisible():
+            return False
+
+        @staticmethod
+        def show():
+            return None
+
+        @staticmethod
+        def raise_():
+            return None
+
+        @staticmethod
+        def activateWindow():
+            return None
+
+    monkeypatch.setattr("ui.components.stock_detail_dialog.StockDetailDialog", FakeStockDetailDialog)
+    workspace = SimpleNamespace(
+        data_provider=SimpleNamespace(code2name={"300750": "宁德时代"}),
+        collect_stock_context=lambda **_kwargs: {"300750": []},
+        tab_specs=lambda: [{"key": "earnings", "title": "业绩异动"}],
+        window=lambda: None,
+        _activate_stock_signal_source=lambda _signal: True,
+    )
+
+    assert ClassicWorkspace.open_security_detail(workspace, "300750", {})
+    assert ClassicWorkspace.open_security_detail(workspace, "300750", {})
+    first, second = dialogs
+
+    first.destroyed.callback()
+    assert workspace._stock_detail_dialogs["300750"] is second
+    assert workspace._stock_detail_refresh_slots["300750"] is not None
+
+    second.destroyed.callback()
+    assert workspace._stock_detail_dialogs == {}
+    assert workspace._stock_detail_refresh_slots == {}
 
 
 def test_workspace_open_security_detail_reuses_visible_stock_dialog(monkeypatch):
@@ -981,7 +1084,7 @@ def test_workspace_open_security_detail_reuses_visible_stock_dialog(monkeypatch)
     existing = ExistingDialog()
     workspace = SimpleNamespace(
         data_provider=SimpleNamespace(code2name={"300750": "宁德时代"}),
-        collect_stock_context=lambda: {"300750": []},
+        collect_stock_context=lambda **_kwargs: {"300750": []},
         tab_specs=lambda: [{"key": "earnings", "title": "业绩异动"}],
         window=lambda: None,
         _activate_stock_signal_source=lambda _signal: True,
@@ -1093,8 +1196,6 @@ def test_workspace_refreshes_all_tabs_after_f5():
         "system_log": SimpleNamespace(),
     }
     workspace = _make_workspace(tabs=tabs)
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
-
     ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
 
     assert calls == [
@@ -1117,8 +1218,6 @@ def test_workspace_prepares_tabs_before_f5_snapshot_refresh():
         refresh_table_from_latest_snapshot=lambda: calls.append("refresh"),
     )
     workspace = _make_workspace(tabs={"lhb": tab})
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
-
     ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
 
     assert calls == ["prepare", "refresh"]
@@ -1134,8 +1233,6 @@ def test_workspace_schedules_refreshes_all_tabs_after_f5():
         "system_log": SimpleNamespace(),
     }
     workspace = _make_workspace(tabs=tabs)
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
-
     assert (
         ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
             workspace,
@@ -1175,8 +1272,6 @@ def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
         ),
     }
     workspace = _make_workspace(tabs=tabs)
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
-
     assert (
         ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
             workspace,
@@ -1211,8 +1306,6 @@ def test_workspace_scheduled_f5_skips_post_f5_data_refresh_tabs():
         "ai_industry_chain": PostF5Tab(),
     }
     workspace = _make_workspace(tabs=tabs)
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
-
     assert (
         ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
             workspace,
@@ -1254,7 +1347,7 @@ def test_workspace_refreshes_ai_chain_dependent_tabs_after_update():
     }
     workspace = _make_workspace(tabs=tabs)
 
-    results = ClassicWorkspace.refresh_tabs_after_ai_industry_chain_update(workspace)
+    results = WorkspaceFacade(workspace).refresh_tabs_after_ai_industry_chain_update()
 
     assert calls == ["lhb", "foreign", "fund", "earnings"]
     assert results == {
@@ -1273,8 +1366,6 @@ def test_workspace_f5_snapshot_refresh_uses_async_local_snapshot():
             calls.append(async_local)
 
     workspace = _make_workspace(tabs={"asian_market": SyncAwareTab()})
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
-
     ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
 
     assert calls == [True]
@@ -1289,7 +1380,6 @@ def test_workspace_f5_snapshot_refresh_prioritizes_current_tab():
         "na_daily": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("na_daily")),
     }
     workspace = _make_workspace(tabs=tabs)
-    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
     workspace.tabs = SimpleNamespace(currentWidget=lambda: current_tab)
 
     ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
@@ -1307,6 +1397,15 @@ def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():
 
     assert ClassicWorkspace.run_fund_holdings_auto_sync_after_f5(workspace) is True
     assert calls == ["fund"]
+
+
+def test_workspace_f5_fund_auto_sync_does_not_load_placeholder():
+    workspace = SimpleNamespace(
+        get_loaded_tab=lambda _key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError(f"F5 must not load {key}")),
+    )
+
+    assert WorkspaceFacade(workspace).run_fund_holdings_auto_sync_after_f5() is False
 
 
 def test_workspace_post_online_refresh_skips_heavy_foreign_block_startup():
@@ -1640,6 +1739,44 @@ def test_workspace_shell_activation_bypasses_startup_raw_tab_switch_guard(monkey
         workspace.deleteLater()
 
 
+def test_workspace_shell_navigation_starts_visible_tab_runtime(monkeypatch, qt_application):
+    runtime_starts = []
+
+    class _AIIndustryChainTab(QWidget):
+        def __init__(self, *_args, **_kwargs):
+            super().__init__()
+
+        @staticmethod
+        def _is_current_workspace_tab():
+            return True
+
+        def showEvent(self, event):
+            super().showEvent(event)
+            if BaseStockTab._should_start_interactive_runtime_on_show(self):
+                runtime_starts.append(self._workspace_load_reason)
+
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _AIIndustryChainTab)
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        workspace.show()
+        ai_index = [spec["key"] for spec in workspace.tab_specs()].index("ai_industry_chain")
+        assert workspace.activate_tab(ai_index, reason="shell_nav")
+        _drain_qt_events(qt_application)
+
+        widget = workspace.get_loaded_tab("ai_industry_chain")
+        assert widget is not None
+        assert widget._workspace_noninteractive_loaded is False
+        assert runtime_starts == ["shell_nav"]
+    finally:
+        workspace.shutdown()
+        workspace.close()
+        workspace.deleteLater()
+
+
 def test_workspace_shell_group_rebuild_defers_lazy_load_without_changing_tab_delays(monkeypatch, qt_application):
     constructed = []
     ctor_kwargs = {}
@@ -1670,7 +1807,7 @@ def test_workspace_shell_group_rebuild_defers_lazy_load_without_changing_tab_del
 
         assert constructed == ["fund_holdings"]
         assert ctor_kwargs["fund_holdings"]["initial_load_delay_ms"] == (
-            classic_workspace_module.ClassicWorkspace.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+            classic_workspace_module.ClassicWorkspace.SHELL_NAV_HEAVY_TAB_WORK_DELAY_MS
         )
     finally:
         workspace.shutdown()
@@ -1747,11 +1884,18 @@ def test_workspace_marks_system_log_shell_nav_load_for_f5_grace(monkeypatch, qt_
 
         assert constructed == ["system_log"]
         assert workspace.get_loaded_tab("system_log") is not None
+        assert workspace._last_shell_nav_load_at == 321.5
         assert workspace._last_system_log_shell_nav_load_at == 321.5
 
         clock["now"] = 333.0
         workspace.activate_tab(system_log_index, reason="shell_nav")
 
+        assert workspace._last_shell_nav_load_at == 333.0
+        assert workspace._last_system_log_shell_nav_load_at == 333.0
+
+        clock["now"] = 340.0
+        workspace._mark_system_log_shell_nav("scan", "shell_nav")
+        assert workspace._last_shell_nav_load_at == 340.0
         assert workspace._last_system_log_shell_nav_load_at == 333.0
     finally:
         workspace.shutdown()
@@ -1841,7 +1985,7 @@ def test_workspace_allows_probe_loads_without_controlled_startup_guard():
         workspace.deleteLater()
 
 
-def test_workspace_background_prewarm_primes_context_without_forcing_current_tab(monkeypatch):
+def test_workspace_background_preload_waits_for_initial_activation_without_constructing(monkeypatch):
     ctor_kwargs = {}
     constructed = []
     primed = []
@@ -1881,31 +2025,18 @@ def test_workspace_background_prewarm_primes_context_without_forcing_current_tab
 
         workspace._start_background_tab_prewarm()
 
-        expected_order = [
-            "watchlist",
-            "system_log",
-            "ai_industry_chain",
-            "na_daily",
-            "scan",
-            "foreign_block",
-            "earnings",
-            "fund_holdings",
-            "lhb",
-            "asian_market",
-            "stock_candidates",
-        ]
-        assert constructed == expected_order
-        assert primed == expected_order
-        assert set(ctor_kwargs) == set(expected_order)
-        assert all(spec["loaded"] for spec in workspace.tab_specs())
+        assert constructed == []
+        assert primed == []
+        assert ctor_kwargs == {}
+        assert all(not spec["loaded"] for spec in workspace.tab_specs())
         assert workspace.tabs.currentIndex() == 0
-        assert snapshot_primes == [{"include_lhb": False}]
+        assert snapshot_primes == []
     finally:
         workspace.shutdown()
         workspace.deleteLater()
 
 
-def test_workspace_background_prewarm_can_preload_whitelisted_current_tab(monkeypatch):
+def test_workspace_background_preload_can_run_configured_subset(monkeypatch):
     ctor_kwargs = {}
     constructed = []
     primed = []
@@ -1945,7 +2076,11 @@ def test_workspace_background_prewarm_can_preload_whitelisted_current_tab(monkey
         workspace.prime_stock_context_snapshots = lambda **kwargs: True
         monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
 
+        workspace._initial_real_tab_activated = True
         workspace._start_background_tab_prewarm()
+        workspace._background_prewarm_timer.stop()
+        workspace._prewarm_next_tab()
+        workspace._background_prewarm_timer.stop()
 
         assert constructed == ["watchlist"]
         assert primed == ["watchlist"]
@@ -1956,7 +2091,7 @@ def test_workspace_background_prewarm_can_preload_whitelisted_current_tab(monkey
         workspace.deleteLater()
 
 
-def test_workspace_background_prewarm_creates_whitelisted_current_tab_first_without_restore(monkeypatch):
+def test_workspace_background_prewarm_waits_for_real_current_tab_activation(monkeypatch):
     constructed = []
 
     def _resolve_tab_class(class_name, _module_name):
@@ -1984,8 +2119,8 @@ def test_workspace_background_prewarm_creates_whitelisted_current_tab_first_with
 
         workspace._start_background_tab_prewarm()
 
-        assert constructed[0] == "WatchlistTab"
-        assert constructed == ["WatchlistTab"]
+        assert constructed == []
+        assert workspace._background_prewarm_started is False
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -2079,7 +2214,7 @@ def test_workspace_debounces_table_copy_hook_install(monkeypatch):
         workspace.deleteLater()
 
 
-def test_workspace_startup_sequence_loads_daily_tabs_without_manual_click(monkeypatch):
+def test_workspace_disabled_background_preload_keeps_placeholders(monkeypatch):
     ctor_kwargs = {}
     constructed = []
 
@@ -2111,17 +2246,16 @@ def test_workspace_startup_sequence_loads_daily_tabs_without_manual_click(monkey
     )
     try:
         assert constructed == []
-        workspace.prime_stock_context_snapshots = lambda **_kwargs: True
+        snapshot_primes = []
+        workspace.prime_stock_context_snapshots = lambda **kwargs: snapshot_primes.append(kwargs) or True
         monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
 
         workspace._start_background_tab_prewarm()
 
-        assert constructed == list(classic_workspace_module.ClassicWorkspace.STARTUP_TAB_LOAD_ORDER)
-        assert all(spec["loaded"] for spec in workspace.tab_specs())
-        assert workspace.get_loaded_tab("watchlist") is not None
-        assert workspace.get_loaded_tab("lhb") is not None
-        assert workspace.get_loaded_tab("foreign_block") is not None
-        assert workspace.get_loaded_tab("fund_holdings") is not None
+        assert constructed == []
+        assert all(not spec["loaded"] for spec in workspace.tab_specs())
+        assert workspace.iter_tabs() == []
+        assert snapshot_primes == []
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -2139,13 +2273,13 @@ def test_classic_workspace_default_restore_waits_past_first_paint_window(qt_appl
 
         assert timer is not None
         assert timer.interval() == classic_workspace_module.ClassicWorkspace.RESTORE_LAST_TAB_DELAY_MS
-        assert timer.interval() == 2500
+        assert timer.interval() == 400
     finally:
         workspace.shutdown()
         workspace.deleteLater()
 
 
-def test_classic_workspace_restore_waits_for_startup_tab_sequence(qt_application):
+def test_classic_workspace_restore_preempts_background_tab_sequence(qt_application):
     workspace = classic_workspace_module.ClassicWorkspace(
         data_provider=object(),
         engine=object(),
@@ -2159,13 +2293,6 @@ def test_classic_workspace_restore_waits_for_startup_tab_sequence(qt_application
         timer = workspace._restore_last_tab_timer
 
         assert timer is not None
-        timer.timeout.emit()
-
-        assert restored == []
-        assert workspace._restore_last_tab_timer is timer
-        assert timer.isActive()
-
-        workspace._background_prewarm_queue.clear()
         timer.timeout.emit()
 
         assert restored == [3]

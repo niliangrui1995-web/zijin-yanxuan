@@ -330,7 +330,7 @@ def test_scan_tab_owns_and_passes_scan_lifecycle_token(monkeypatch):
         def cancel(self):
             self.cancelled = True
 
-    monkeypatch.setattr(scan_tab_module, "ScanWorker", _Worker)
+    monkeypatch.setattr("ui.workers.scan_worker.ScanWorker", _Worker)
     spin = SimpleNamespace(value=lambda: 1)
     tab = SimpleNamespace(
         worker=None,

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
+from copy import deepcopy
+from functools import lru_cache
+from pathlib import Path
 
 from domains.market_calendar import MarketCalendar
 from infra.storage.asian_market_cache import (
@@ -13,6 +16,9 @@ from infra.storage.asian_market_cache import (
     read_json_cache,
     write_json_cache,
 )
+from infra.tasks.lifecycle import raise_if_cancelled
+
+GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
 
 
 def read_mapping_cache(path: str) -> dict:
@@ -20,15 +26,47 @@ def read_mapping_cache(path: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def load_cached_asian_stock(path: str, code: str) -> dict | None:
-    stocks = read_mapping_cache(path).get("stocks", [])
-    if not isinstance(stocks, list):
+def _cache_signature(path: str) -> tuple[str, int, int] | None:
+    try:
+        resolved = Path(path).expanduser().resolve(strict=False)
+        stat = resolved.stat()
+    except (OSError, TypeError, ValueError):
         return None
-    normalized_code = str(code or "").strip()
-    for stock in stocks:
-        if isinstance(stock, dict) and str(stock.get("ticker") or "").strip() == normalized_code:
-            return stock
-    return None
+    return str(resolved), int(stat.st_mtime_ns), int(stat.st_size)
+
+
+@lru_cache(maxsize=4)
+def _load_asian_ticker_index(signature: tuple[str, int, int]) -> dict[str, dict]:
+    payload = read_json_cache(signature[0], default={})
+    stocks = payload.get("stocks", []) if isinstance(payload, dict) else []
+    if not isinstance(stocks, list):
+        return {}
+    return {
+        str(stock.get("ticker") or "").strip().upper(): stock
+        for stock in stocks
+        if isinstance(stock, dict) and str(stock.get("ticker") or "").strip()
+    }
+
+
+def _ticker_index_for_path(path: str, cancellation_token=None) -> dict[str, dict]:
+    raise_if_cancelled(cancellation_token)
+    signature = _cache_signature(path)
+    if signature is None:
+        return {}
+    index = _load_asian_ticker_index(signature)
+    raise_if_cancelled(cancellation_token)
+    return index
+
+
+def clear_asian_ticker_index_cache() -> None:
+    _load_asian_ticker_index.cache_clear()
+
+
+def load_cached_asian_stock(path: str, code: str, *, cancellation_token=None) -> dict | None:
+    normalized_code = str(code or "").strip().upper()
+    stock = _ticker_index_for_path(path, cancellation_token).get(normalized_code)
+    raise_if_cancelled(cancellation_token)
+    return deepcopy(stock) if stock is not None else None
 
 
 def _round_percentage(value: object) -> float:
@@ -86,7 +124,7 @@ def _latest_trade_date_item(item: object) -> tuple[str, dt.date] | None:
 
 def load_latest_trade_dates(path: str = ASIAN_KLINE_CACHE) -> dict[str, dt.date]:
     latest_dates: dict[str, dt.date] = {}
-    for item in read_mapping_cache(path).get("stocks", []):
+    for item in _ticker_index_for_path(path).values():
         parsed = _latest_trade_date_item(item)
         if parsed is None:
             continue
@@ -98,6 +136,7 @@ __all__ = [
     "ASIAN_KLINE_CACHE",
     "ASIAN_REALTIME_CACHE",
     "cache_mtime",
+    "clear_asian_ticker_index_cache",
     "load_cached_asian_stock",
     "load_latest_trade_dates",
     "read_mapping_cache",

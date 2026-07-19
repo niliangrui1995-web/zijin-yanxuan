@@ -1,39 +1,38 @@
 # -*- coding: utf-8 -*-
-"""
-core/rps_precomputer.py
-F5 预计算核心组件，封装 RPS大矩阵 以及 Sector板块 RPS的纯后台计算流。
-"""
+"""Strict, cancellable F5 market/RPS snapshot pipeline."""
 
-import datetime
+from __future__ import annotations
+
 import gc
+import math
 import os
 import time
+from pathlib import Path
 
+from app.services.f5_job_contract import (
+    F5JobEvent,
+    F5JobRequest,
+    F5JobResult,
+    F5JobStatus,
+    F5Phase,
+    F5SnapshotArtifacts,
+)
+from core.exceptions import AppError
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger, system_log_backpressure
-from core.runtime_paths import (
-    DEFAULT_TDX_ROOT,
-    PROJECT_ROOT,
-    RPS_CACHE_FILE,
-    SECTOR_RPS_CACHE_FILE,
-    ensure_cache_dir,
-)
+from core.market_snapshot_dates import infer_effective_trade_date, normalize_trade_date
+from core.runtime_paths import DEFAULT_TDX_ROOT, ensure_cache_dir
+from infra.market_data.f5_market_snapshot_store import F5MarketSnapshotStore
+from infra.market_data.market_data_warehouse import MARKET_DATA_SCHEMA_VERSION, MARKET_DATA_SOURCE_VERSION
+from infra.storage.file_integrity import fingerprint_file
+from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
 
 log = get_logger(__name__)
 
-# F5 local reread is Pandas/PyArrow-heavy; keep it below the generic offline bulk budget.
 F5_LOCAL_REREAD_MAX_WORKERS = 2
 
 
-def _should_emit_ui_status(msg: str) -> bool:
-    text = str(msg or "").strip()
-    if not text:
-        return False
-    return set(text) != {"="}
-
-
 def _get_memory_usage_mb() -> float:
-    """获取当前进程内存占用(MB)。psutil 是可选依赖，没装则返回 -1"""
     try:
         import psutil
 
@@ -42,224 +41,383 @@ def _get_memory_usage_mb() -> float:
         return -1.0
 
 
-def _emit_status(set_status_callback, msg: str) -> None:
-    if set_status_callback and _should_emit_ui_status(msg):
-        set_status_callback(msg)
-
-
-def _handle_stage1_progress(done: int, total: int, eta: str, set_status_callback, progress_state=None) -> None:
-    if total <= 0:
-        return
-    should_emit = done == total or done % 1000 == 0
-    if progress_state is not None:
-        bucket = int((done / float(total)) * 10)
-        last_bucket = int(progress_state.get("last_bucket", -1))
-        if bucket > last_bucket and bucket > 0:
-            progress_state["last_bucket"] = bucket
-            should_emit = True
-    if not should_emit:
+def _log_stage1_progress(done: int, total: int, eta: str) -> None:
+    if total <= 0 or (done != total and done % 1000 != 0):
         return
     suffix = f" {eta}" if eta else ""
     msg = f"[F5] 阶段1/3: 重读本地数据 {done}/{total}{suffix}"
-    _emit_status(set_status_callback, msg)
-    if done == total or done % 1000 == 0:
-        log.info(msg)
+    log.info(msg)
 
 
-def _save_stage1_checkpoint(cache_data, today_str: str) -> None:
-    try:
-        from vcp.polars_engine import save_cache_parquet
+def _valid_rps_count(values) -> int:
+    count = 0
+    for value in (values or {}).values():
+        try:
+            count += int(math.isfinite(float(value)))
+        except (TypeError, ValueError):
+            continue
+    return count
 
-        if save_cache_parquet(cache_data, today_str):
-            log.info("[F5] stage1 checkpoint saved; next F5 can resume")
+
+def _log_memory_snapshot(stage_name: str) -> None:
+    mem_mb = _get_memory_usage_mb()
+    if mem_mb > 0:
+        log.info("[F5] 内存快照 [%s]: %.0f MB", stage_name, mem_mb)
+
+
+def _build_rps_matrix(engine, all_data: dict, trade_date: str, cache_path: str) -> dict:
+    from vcp.polars_engine import prices_matrix_cache_scope
+
+    with prices_matrix_cache_scope(cache_path):
+        return engine.build_rps_matrix(all_data, trade_date, trade_date)
+
+
+class _F5EventEmitter:
+    def __init__(self, request: F5JobRequest, callback) -> None:
+        self.request = request
+        self.callback = callback
+        self.seq = 0
+
+    def emit(self, phase: F5Phase, message: str, *, completed: int = 0, total: int = 0) -> None:
+        if self.callback is None:
+            return
+        self.seq += 1
+        self.callback(
+            F5JobEvent(
+                run_id=self.request.run_id,
+                seq=self.seq,
+                phase=phase,
+                message=str(message or ""),
+                completed=int(completed or 0),
+                total=int(total or 0),
+            )
+        )
+
+
+class _F5PipelineExecution:
+    def __init__(
+        self,
+        *,
+        data_provider,
+        engine,
+        request: F5JobRequest,
+        cancelled_checker,
+        event_callback,
+        market_snapshot_writer,
+        rps_path: str,
+        sector_rps_path: str,
+    ) -> None:
+        self.data_provider = data_provider
+        self.engine = engine
+        self.request = request
+        self.cancelled_checker = cancelled_checker
+        self.market_snapshot_writer = market_snapshot_writer
+        self.rps_path = rps_path
+        self.sector_rps_path = sector_rps_path
+        self.requested_date = request.requested_date
+        self.run_id = request.run_id
+        self.start_time = time.time()
+        self.warnings: list[str] = []
+        self.emitter = _F5EventEmitter(request, event_callback)
+        self.market_status = None
+        self.effective_trade_date = ""
+        self.symbol_count = 0
+        self.rps_date = ""
+        self.rps120 = {}
+        self.rps250 = {}
+        self.rps_valid_count = 0
+        self.sector_count = 0
+
+    def run(self) -> F5JobResult:
+        ensure_cache_dir()
+        with system_log_backpressure("F5", allowed_info_loggers=(__name__,)):
+            try:
+                return self._run_stages()
+            except (TaskCancelledError, TaskDeadlineExceeded) as exc:
+                log.info("[F5] 任务已取消: %s", exc)
+                return self._result(F5JobStatus.CANCELLED, error_code="cancelled", error_message=str(exc))
+            except (AppError, AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.error("[F5] 预计算失败: %s", exc, exc_info=True)
+                return self._result(F5JobStatus.FAILED, error_code="f5_pipeline_failed", error_message=str(exc))
+
+    def _run_stages(self) -> F5JobResult:
+        self._checkpoint()
+        self._emit(F5Phase.PREPARE, "[F5] 盘后一键预计算 -- 开始")
+        _log_memory_snapshot("启动基线")
+        self._refresh_adjustments()
+        all_data = self._sync_market()
+        self._build_rps(all_data)
+        self._build_sector_rps(all_data)
+        artifacts = self._build_artifacts()
+        gc.collect()
+        _log_memory_snapshot("全部完成")
+        self._emit(F5Phase.VALIDATE, f"[F5] 快照已就绪 -- 耗时 {self._elapsed():.1f} 秒")
+        return self._result(F5JobStatus.READY_TO_ACTIVATE, artifacts=artifacts)
+
+    def _refresh_adjustments(self) -> None:
+        self._emit(F5Phase.GBBQ, "[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
+        try:
+            self.data_provider.ensure_adjustment_metadata(force=True)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.warnings.append(f"gbbq 解析异常: {exc}")
+            log.warning("[F5] gbbq 解析异常: %s", exc)
+        self._checkpoint()
+
+    def _sync_market(self) -> dict:
+        resumed = self._try_resume_market()
+        if resumed:
+            self._stage_resumed_market()
         else:
-            log.warning("[F5] stage1 checkpoint save returned false")
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-        log.warning(f"[F5] 断点存档失败(不影响后续): {e}")
+            self._full_market_sync()
+        self._checkpoint()
+        cache_data = getattr(self.data_provider, "cache_data", {}) or {}
+        self.symbol_count = len(cache_data)
+        if self.symbol_count <= 0:
+            raise ValueError("market synchronization produced no symbols")
+        self._resolve_market_contract(cache_data)
+        self._emit(
+            F5Phase.MARKET_STAGE,
+            f"[F5] 阶段1/3 完成 -- 共加载 {self.symbol_count} 只标的",
+            completed=self.symbol_count,
+            total=self.symbol_count,
+        )
+        gc.collect()
+        _log_memory_snapshot("阶段1→2 GC后")
+        return {code: frame for code, frame in cache_data.items() if frame is not None and len(frame) >= 60}
 
+    def _try_resume_market(self) -> bool:
+        try:
+            cached_date = self.data_provider.load_cache_from_disk()
+            cached_data = getattr(self.data_provider, "cache_data", {}) or {}
+            if cached_date != self.requested_date or len(cached_data) <= 2000:
+                return False
+            codes_dict = self.data_provider._get_codes_from_vipdoc()
+            self.data_provider.code2name = codes_dict
+            message = f"[F5] 阶段1/3: 从本地仓库续算 ({len(cached_data)} 只标的)"
+            self._emit(F5Phase.MARKET_SYNC, message)
+            return True
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.info("[F5] 断点续算检测失败，执行全量重读: %s", exc)
+            return False
 
-def _provider_saved_stage1_cache(data_provider, today_str: str) -> bool:
-    saved_date = str(getattr(data_provider, "_last_market_data_parquet_saved_date", "") or "").strip()
-    return bool(today_str and saved_date == today_str)
+    def _stage_resumed_market(self) -> None:
+        self.market_status = self.market_snapshot_writer(
+            self.data_provider.cache_data,
+            self.requested_date,
+        )
+
+    def _full_market_sync(self) -> None:
+        self._emit(F5Phase.MARKET_SYNC, "[F5] 阶段1/3: 开始从 vipdoc 全量重读...")
+        with self.data_provider.cache_lock:
+            self.data_provider.cache_data = {}
+        was_online = self.data_provider.is_online()
+        self.data_provider.set_online_mode(False)
+        try:
+            codes_dict = self.data_provider._get_codes_from_vipdoc()
+            if not codes_dict:
+                raise ValueError("vipdoc returned no security codes")
+            self.data_provider.sync_market_data(codes_dict, **self._market_sync_kwargs())
+            self.data_provider.code2name = codes_dict
+        finally:
+            if was_online:
+                self.data_provider.set_online_mode(True)
+
+    def _market_sync_kwargs(self) -> dict:
+        return {
+            "force_refresh": True,
+            "max_workers": F5_LOCAL_REREAD_MAX_WORKERS,
+            "progress_callback": self._market_progress,
+            "cancellation_checker": self._cancelled,
+            "snapshot_writer": self._write_market_snapshot,
+            "snapshot_date": self.requested_date,
+        }
+
+    def _write_market_snapshot(self, cache_data, snapshot_date):
+        self.market_status = self.market_snapshot_writer(cache_data, snapshot_date)
+        return self.market_status
+
+    def _market_progress(self, done: int, total: int, eta: str) -> None:
+        self._checkpoint()
+        _log_stage1_progress(done, total, eta)
+        suffix = f" {eta}" if eta else ""
+        message = f"[F5] 重读本地数据 {done}/{total}{suffix}"
+        self.emitter.emit(F5Phase.MARKET_SYNC, message, completed=done, total=total)
+
+    def _resolve_market_contract(self, cache_data) -> None:
+        if self.market_status is None or not self.market_status.ok:
+            error = getattr(self.market_status, "error", "market snapshot was not staged")
+            raise RuntimeError(error)
+        self.effective_trade_date = infer_effective_trade_date(cache_data)
+        if not self.effective_trade_date:
+            raise ValueError("unable to infer effective trade date")
+
+    def _build_rps(self, all_data: dict) -> None:
+        self._checkpoint()
+        if not all_data:
+            raise ValueError("no symbols have at least 60 market bars")
+        self._emit(F5Phase.RPS, "[F5] 阶段2/3: 预计算 RPS 矩阵...")
+        cache_path = str(Path(self.request.job_dir) / "vcp_prices_matrix.parquet")
+        matrix = _build_rps_matrix(self.engine, all_data, self.effective_trade_date, cache_path)
+        if not matrix:
+            raise ValueError("RPS matrix calculation returned empty")
+        key = list(matrix)[-1]
+        self.rps_date = normalize_trade_date(key)
+        if self.rps_date != self.effective_trade_date:
+            raise ValueError("RPS date does not match effective market trade date")
+        payload = matrix[key] or {}
+        self.rps120, self.rps250 = payload.get("rps120"), payload.get("rps250")
+        if not isinstance(self.rps120, dict) or not isinstance(self.rps250, dict):
+            raise ValueError("RPS payload is missing rps120/rps250")
+        self.rps_valid_count = _valid_rps_count(self.rps120)
+        if self.rps_valid_count <= 0:
+            raise ValueError("RPS payload has no valid rankings")
+        save_json_file(self.rps_path, {"date": self.rps_date, "rps120": self.rps120, "rps250": self.rps250})
+        remove_cache_file(self.rps_path.replace(".json", ".pkl"))
+        self._emit(F5Phase.RPS, f"[F5] 阶段2/3 完成 -- RPS {self.rps_valid_count} 只有效排名")
+
+    def _build_sector_rps(self, all_data: dict) -> None:
+        self._checkpoint()
+        gc.collect()
+        _log_memory_snapshot("阶段2→2.5 GC后")
+        self._emit(F5Phase.SECTOR_RPS, "[F5] 阶段2.5/3: 预计算板块 RPS...")
+        from vcp.sector import SectorManager
+
+        vipdoc = str(getattr(self.data_provider, "tdx_vipdoc", "") or "")
+        tdx_root = os.path.dirname(vipdoc) if vipdoc else DEFAULT_TDX_ROOT
+        sector_rps = SectorManager.get_instance(tdx_root).build_sector_rps(all_data, self.effective_trade_date)
+        if not isinstance(sector_rps, dict) or not sector_rps:
+            raise ValueError("sector RPS calculation returned empty")
+        save_json_file(self.sector_rps_path, {"date": self.effective_trade_date, "sector_rps": sector_rps})
+        remove_cache_file(self.sector_rps_path.replace(".json", ".pkl"))
+        self.sector_count = len(sector_rps)
+        self._emit(F5Phase.SECTOR_RPS, f"[F5] 阶段2.5/3 完成 -- 板块 RPS {self.sector_count} 个")
+
+    def _build_artifacts(self) -> F5SnapshotArtifacts:
+        status = self.market_status
+        market_path = Path(status.parquet_path).resolve()
+        rps_path = Path(self.rps_path).resolve()
+        sector_rps_path = Path(self.sector_rps_path).resolve()
+        gbbq_candidate = Path(self.data_provider.gbbq_cache_file)
+        gbbq_path = gbbq_candidate.resolve() if gbbq_candidate.is_file() else None
+        market_fingerprint = fingerprint_file(market_path)
+        rps_fingerprint = fingerprint_file(rps_path)
+        sector_rps_fingerprint = fingerprint_file(sector_rps_path)
+        gbbq_fingerprint = fingerprint_file(gbbq_path) if gbbq_path is not None else None
+        return F5SnapshotArtifacts(
+            snapshot_id=self.request.run_id,
+            requested_date=self.requested_date,
+            effective_trade_date=self.effective_trade_date,
+            market_parquet_path=str(market_path),
+            market_schema_version=int(status.schema_version or MARKET_DATA_SCHEMA_VERSION),
+            market_source="vipdoc",
+            market_source_version=MARKET_DATA_SOURCE_VERSION,
+            market_symbol_count=int(status.symbol_count),
+            market_row_count=int(status.row_count),
+            rps_path=str(rps_path),
+            rps_date=self.rps_date,
+            rps_valid_count=self.rps_valid_count,
+            sector_rps_path=str(sector_rps_path),
+            sector_date=self.effective_trade_date,
+            sector_count=self.sector_count,
+            market_size_bytes=market_fingerprint.size_bytes,
+            market_sha256=market_fingerprint.sha256,
+            rps_size_bytes=rps_fingerprint.size_bytes,
+            rps_sha256=rps_fingerprint.sha256,
+            sector_rps_size_bytes=sector_rps_fingerprint.size_bytes,
+            sector_rps_sha256=sector_rps_fingerprint.sha256,
+            gbbq_path=str(gbbq_path) if gbbq_path is not None else "",
+            gbbq_size_bytes=gbbq_fingerprint.size_bytes if gbbq_fingerprint is not None else 0,
+            gbbq_sha256=gbbq_fingerprint.sha256 if gbbq_fingerprint is not None else "",
+            rps250_valid_count=_valid_rps_count(self.rps250),
+        )
+
+    def _result(self, status: F5JobStatus, *, artifacts=None, error_code="", error_message="") -> F5JobResult:
+        return F5JobResult(
+            run_id=self.run_id,
+            status=status,
+            requested_date=self.requested_date,
+            effective_trade_date=self.effective_trade_date,
+            symbol_count=self.symbol_count,
+            rps_valid_count=self.rps_valid_count,
+            sector_count=self.sector_count,
+            elapsed_seconds=self._elapsed(),
+            artifacts=artifacts,
+            error_code=error_code,
+            error_message=error_message,
+            warnings=tuple(self.warnings),
+        )
+
+    def _emit(self, phase: F5Phase, message: str, *, completed: int = 0, total: int = 0) -> None:
+        log.info(message)
+        self.emitter.emit(phase, message, completed=completed, total=total)
+
+    def _checkpoint(self) -> None:
+        if self._cancelled():
+            raise TaskCancelledError("F5 job cancelled")
+
+    def _cancelled(self) -> bool:
+        return bool(self.cancelled_checker and self.cancelled_checker())
+
+    def _elapsed(self) -> float:
+        return time.time() - self.start_time
 
 
 class RPSPrecomputer:
-    """封装原本在 MainWindow_DataCacheMixin 中的 _action_refresh 业务。"""
+    """Build a complete F5 snapshot and expose only explicit terminal results."""
 
     @staticmethod
-    def run_f5_pipeline(data_provider, engine, cancelled_checker, set_status_callback, done_callback):
-        """
-        运行 F5 预计算核心流程。这是个纯阻塞方法，应由 TaskManager 在后台线程调用。
+    def run_f5_job(
+        request: F5JobRequest,
+        *,
+        data_provider=None,
+        engine=None,
+        cancelled_checker=None,
+        event_callback=None,
+    ) -> F5JobResult:
+        """Build job-local files without switching shared manifests or fixed cache paths."""
 
-        :param data_provider: TdxDataProvider 实例
-        :param engine: VCPEngine 实例
-        :param cancelled_checker: 一个无参函数 `lambda: bool` 返回是否用户中途取消
-        :param set_status_callback: 回调，用于回传进度日记给界面
-        :param done_callback: 回调，完成后把计算耗时和股票总数传回以更新 UI
-        """
-        ensure_cache_dir()
-        total_start = time.time()
+        Path(request.job_dir).mkdir(parents=True, exist_ok=True)
+        Path(request.snapshot_dir).mkdir(parents=True, exist_ok=True)
+        data_provider = data_provider or RPSPrecomputer._create_data_provider()
+        engine = engine or RPSPrecomputer._create_engine()
+        if request.tdx_vipdoc:
+            data_provider.tdx_vipdoc = request.tdx_vipdoc
+        data_provider.gbbq_cache_file = str(Path(request.snapshot_dir) / "gbbq.json")
+        data_provider.legacy_gbbq_cache_file = str(Path(request.snapshot_dir) / "gbbq.pkl")
+        store = F5MarketSnapshotStore(request.snapshot_dir)
 
-        def _log_and_status(msg):
-            log.info(msg)
-            _emit_status(set_status_callback, msg)
+        def _stage_market(cache_data, _snapshot_date):
+            effective_date = infer_effective_trade_date(cache_data)
+            if not effective_date:
+                raise ValueError("unable to infer effective trade date from market frames")
+            return store.stage_market_dataset(cache_data, effective_date)
 
-        def _log_memory(stage_name: str):
-            """为什么要监控内存？F5 闪退直接原因是 Windows OOM kill，加监控能精确定位哪个阶段吃光内存"""
-            mem_mb = _get_memory_usage_mb()
-            if mem_mb > 0:
-                log.info(f"[F5] 内存快照 [{stage_name}]: {mem_mb:.0f} MB")
+        return RPSPrecomputer._execute(
+            data_provider=data_provider,
+            engine=engine,
+            request=request,
+            cancelled_checker=cancelled_checker,
+            event_callback=event_callback,
+            market_snapshot_writer=_stage_market,
+            rps_path=str(Path(request.snapshot_dir) / "rps.json"),
+            sector_rps_path=str(Path(request.snapshot_dir) / "sector_rps.json"),
+        )
 
-        with system_log_backpressure("F5", allowed_info_loggers=(__name__,)):
-            try:
-                _log_and_status("\n" + "=" * 60)
-                _log_and_status("[F5] 盘后一键预计算 -- 开始")
-                _log_and_status("=" * 60)
-                _log_memory("启动基线")
+    @staticmethod
+    def _execute(**kwargs) -> F5JobResult:
+        return _F5PipelineExecution(**kwargs).run()
 
-                # --- 阶段0: 除权除息 ---
-                _log_and_status("[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
-                try:
-                    data_provider.ensure_adjustment_metadata(force=True)
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.error(f"[F5] gbbq 解析异常(不影响后续): {e}")
+    @staticmethod
+    def _create_data_provider():
+        from app.services.runtime_services import create_data_provider
 
-                # --- 阶段1: 重读日线 ---
-                today_str = datetime.date.today().strftime("%Y%m%d")
-                stage1_progress_state = {}
-                skip_stage1 = False
-                try:
-                    cached_date = data_provider.load_cache_from_disk()
-                    cached_data = getattr(data_provider, "cache_data", {}) or {}
-                    if cached_date == today_str and len(cached_data) > 2000:
-                        codes_dict = data_provider._get_codes_from_vipdoc()
-                        data_provider.code2name = codes_dict
-                        _log_and_status(f"[F5] stage1/3: resume from local warehouse cache ({len(cached_data)} symbols)")
-                        skip_stage1 = True
-                except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.info(f"[F5] 断点续算检测失败(不影响全量重读): {e}")
+        return create_data_provider(offline=True)
 
-                if not skip_stage1:
-                    _log_and_status("[F5] 阶段1/3: 清空缓存,开始从 vipdoc 重读...")
-                    try:
-                        with data_provider.cache_lock:
-                            data_provider.cache_data = {}
-                        was_online = data_provider.is_online()
-                        data_provider.set_online_mode(False)
-                        try:
-                            codes_dict = data_provider._get_codes_from_vipdoc()
-                            _log_and_status(f"[F5] 阶段1/3: 从 vipdoc 扫描到 {len(codes_dict)} 只标的")
+    @staticmethod
+    def _create_engine():
+        from app.services.scan_runtime_service import create_scan_engine
 
-                            data_provider.sync_market_data(
-                                codes_dict,
-                                force_refresh=True,
-                                max_workers=F5_LOCAL_REREAD_MAX_WORKERS,
-                                progress_callback=lambda done, total, eta: _handle_stage1_progress(
-                                    done, total, eta, set_status_callback, stage1_progress_state
-                                ),
-                            )
-                            data_provider.code2name = codes_dict
-                        finally:
-                            if was_online:
-                                data_provider.set_online_mode(True)
-                        count = len(data_provider.cache_data)
-                        _log_and_status(f"[F5] 阶段1/3 完成 -- 共加载 {count} 只标的")
+        return create_scan_engine()
 
-                        if _provider_saved_stage1_cache(data_provider, today_str):
-                            log.info("[F5] stage1 checkpoint skipped; provider already saved today's cache")
-                        else:
-                            _save_stage1_checkpoint(data_provider.cache_data, today_str)
 
-                    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                        log.error(f"[F5] ❌ 阶段1 重读本地数据异常: {e}", exc_info=True)
-                        return
-
-                if cancelled_checker and cancelled_checker():
-                    _log_and_status("[F5] ⏹ 用户取消")
-                    return
-
-                # 阶段1→2 过渡：强制回收阶段1的临时对象（frames、中间DataFrame等）
-                # 为什么重要？如果不回收，阶段2的大矩阵+阶段1的残留同时在内存中，峰值直接翻倍
-                gc.collect()
-                _log_memory("阶段1→2 GC后")
-
-                # --- 阶段2: RPS 矩阵 ---
-                _log_and_status("[F5] 阶段2/3: 预计算 RPS 矩阵...")
-                try:
-                    all_data = {c: df for c, df in data_provider.cache_data.items() if df is not None and len(df) >= 60}
-                    log.info(f"[F5] 阶段2/3: 有效标的 {len(all_data)} 只(>=60根K线)")
-                    today_str = datetime.date.today().strftime("%Y%m%d")
-                    rps_matrix = engine.build_rps_matrix(all_data, today_str, today_str)
-
-                    if rps_matrix:
-                        d_str = list(rps_matrix.keys())[-1]
-                        d_rps = rps_matrix[d_str]
-                        rps120 = d_rps.get("rps120", {})
-                        rps250 = d_rps.get("rps250", {})
-                        rps_pkg = {"date": d_str, "rps120": rps120, "rps250": rps250}
-                        save_json_file(RPS_CACHE_FILE, rps_pkg)
-                        remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
-                        engine.set_precomputed_rps(d_str, rps120, rps250)
-                        # 有效排名 = 值不是 NaN 的条目数
-                        valid_count = sum(1 for v in rps120.values() if v == v)  # NaN != NaN
-                        _log_and_status(f"[F5] 阶段2/3 完成 -- RPS 已存 ({valid_count} 只有效排名)")
-                    else:
-                        log.warning("[F5] ⚠ 阶段2/3: RPS 矩阵计算返回空")
-                    # 释放 rps_matrix 字典（可能上百 MB），只保留已经写入 engine 的 rps120/rps250
-                    del rps_matrix
-                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.error(f"[F5] ❌ 阶段2 RPS 计算异常: {e}", exc_info=True)
-
-                if cancelled_checker and cancelled_checker():
-                    _log_and_status("[F5] ⏹ 用户取消")
-                    return
-
-                # 阶段2→2.5 过渡：释放 RPS 计算的大矩阵残留
-                gc.collect()
-                _log_memory("阶段2→2.5 GC后")
-
-                # --- 阶段2.5: 板块 RPS ---
-                _log_and_status("[F5] 阶段2.5/3: 预计算板块 RPS...")
-                try:
-                    from vcp.sector import SectorManager
-
-                    tdx_root = os.path.dirname(data_provider.tdx_vipdoc) if data_provider.tdx_vipdoc else DEFAULT_TDX_ROOT
-                    sm = SectorManager.get_instance(tdx_root)
-                    all_data_f5 = {
-                        c: df for c, df in data_provider.cache_data.items() if df is not None and len(df) >= 60
-                    }
-                    sector_date = datetime.date.today().strftime("%Y%m%d")
-                    sector_rps = sm.build_sector_rps(all_data_f5, sector_date)
-                    sector_pkg = {"date": sector_date, "sector_rps": sector_rps}
-                    save_json_file(SECTOR_RPS_CACHE_FILE, sector_pkg)
-                    remove_cache_file(SECTOR_RPS_CACHE_FILE.replace(".json", ".pkl"))
-                    _log_and_status(f"[F5] 阶段2.5/3 完成 -- 板块 RPS ({len(sector_rps)} 个)")
-                    del all_data_f5, sector_rps, sector_pkg
-                except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.error(f"[F5] ❌ 阶段2.5 板块 RPS 异常: {e}", exc_info=True)
-
-                # 全部完成后最终回收
-                gc.collect()
-                _log_memory("全部完成")
-
-                elapsed = time.time() - total_start
-                _log_and_status(f"[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
-
-            except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                log.error(f"[F5] ❌ 预计算过程发生未预期异常: {e}", exc_info=True)
-            finally:
-                elapsed = time.time() - total_start
-                count = len(data_provider.cache_data) if data_provider.cache_data else 0
-                log.info(f"[F5] 内部流程结束 (count={count}, elapsed={elapsed:.1f}s)")
-
-                # 收尾过期清理
-                try:
-                    from core.cache_policy import cleanup_stale_caches
-
-                    cleanup_stale_caches(PROJECT_ROOT)
-                except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.warning(f"[F5] 缓存清理跳过: {e}")
-
-                # 使用回调返送给UI以脱钩
-                if done_callback:
-                    done_callback(count, elapsed)
+__all__ = ["F5_LOCAL_REREAD_MAX_WORKERS", "RPSPrecomputer"]

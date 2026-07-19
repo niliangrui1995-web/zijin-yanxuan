@@ -288,6 +288,7 @@ def test_configure_qt_webengine_runtime_merges_flags_without_duplicates():
     assert result["MKL_NUM_THREADS"] == "2"
     assert result["NUMEXPR_NUM_THREADS"] == "2"
     assert result["NUMEXPR_MAX_THREADS"] == "2"
+    assert result["POLARS_MAX_THREADS"] == "2"
 
 
 def test_configure_qt_webengine_runtime_preserves_numeric_thread_override():
@@ -301,3 +302,4 @@ def test_configure_qt_webengine_runtime_preserves_numeric_thread_override():
     assert result["OMP_NUM_THREADS"] == "4"
     assert result["OPENBLAS_NUM_THREADS"] == "3"
     assert result["MKL_NUM_THREADS"] == "4"
+    assert result["POLARS_MAX_THREADS"] == "4"

@@ -177,6 +177,24 @@ def test_vcp_table_view_restores_current_row_selection_after_model_reset(qt_appl
         table.deleteLater()
 
 
+def test_vcp_table_view_skips_restore_snapshot_for_initial_empty_model(qt_application):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    proxy_model = RtSortFilterProxyModel(table)
+    proxy_model.setSourceModel(source_model)
+    table.setModel(proxy_model)
+
+    try:
+        source_model.update_data(_rows(3))
+        _process_events(qt_application)
+
+        assert table._refresh_state_snapshot is None
+        assert table._pending_refresh_state_restore is None
+        assert table._refresh_state_restore_timer.isActive() is False
+    finally:
+        table.deleteLater()
+
+
 def test_vcp_table_view_elides_long_cell_text():
     table = VCPTableView()
     try:
@@ -317,6 +335,9 @@ def test_vcp_table_view_coalesced_flash_repaint_skips_hidden_table(qt_applicatio
 def test_pulsing_dot_delete_later_stops_deferred_animation_start():
     dot = PulsingDot()
     try:
+        assert dot._start_timer.isActive() is False
+
+        dot.show()
         assert dot._start_timer.isActive() is True
 
         dot.deleteLater()
@@ -346,14 +367,25 @@ def test_table_state_overlay_uses_compact_responsive_card(qt_application):
         wrapper.deleteLater()
 
 
-def test_table_state_overlay_loading_skeleton_timer_stops_on_delete():
+def test_table_state_overlay_loading_skeleton_runs_only_while_visible(qt_application):
     overlay = TableStateOverlay()
     try:
         overlay.set_state("loading", "Loading")
 
         assert overlay._skeleton.isVisibleTo(overlay) is True
+        assert overlay._skeleton._timer.isActive() is False
+        overlay.show()
+        _process_events(qt_application)
         assert overlay._skeleton._timer.isActive() is True
         assert overlay._dot.isVisible() is False
+
+        overlay.hide()
+        _process_events(qt_application)
+        assert overlay._skeleton._timer.isActive() is False
+
+        overlay.show()
+        _process_events(qt_application)
+        assert overlay._skeleton._timer.isActive() is True
 
         overlay.deleteLater()
 

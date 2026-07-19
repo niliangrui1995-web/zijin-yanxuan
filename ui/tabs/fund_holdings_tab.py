@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
@@ -43,9 +42,9 @@ from ui.components import (
     VCPTableView,
 )
 from ui.components import format_multi_select_summary as format_multi_select_summary
-from ui.models.table_models import StockItemDelegate, StockTableModel
+from ui.models.table_models import StockItemDelegate
 from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
-from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab
+from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab, mark_runtime_network_activity
 from ui.tabs.fund_holdings_filter_menu import build_change_filter_menu, build_quarter_filter_menu
 from ui.tabs.fund_holdings_filter_proxy import FundHoldingsFilterProxyModel
 from ui.tabs.fund_holdings_filter_state import (
@@ -71,16 +70,79 @@ from ui.tabs.fund_holdings_rules import (
     filter_ai_related_concepts,
     is_ai_related_concept,
 )
+from ui.tabs.fund_holdings_table_model import (
+    FundHoldingsTableModel,
+    FundHoldingsViewCommitter,
+    apply_fund_holdings_view_rows,
+)
 from ui.tabs.fund_holdings_view_state import (
     FundHoldingsViewState,
+    initial_quarter_query_scope,
     quarter_mode_from_filter,
     read_fund_holdings_view_state,
     sort_order_to_int,
     write_fund_holdings_view_state,
 )
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.tab_registry import create_tab_lineage_service
 
 
-class FundHoldingsTab(BaseStockTab):
+def _single_shot_timer(parent, callback, *, interval_ms: int = 0) -> QTimer:
+    timer = QTimer(parent)
+    timer.setSingleShot(True)
+    timer.setInterval(max(0, int(interval_ms)))
+    timer.timeout.connect(callback)
+    return timer
+
+
+def _initialize_fund_runtime_timers(owner) -> None:
+    owner._initial_load_timer = _single_shot_timer(owner, owner._reload_from_db_async)
+    owner._view_state_save_timer = _single_shot_timer(owner, owner._save_view_state, interval_ms=300)
+    owner._f5_auto_sync_timer = _single_shot_timer(owner, owner._run_pending_auto_sync_after_f5)
+
+
+class _FundHoldingsBackgroundPreloadMixin:
+    def prime_background_load(self) -> bool:
+        self._background_preload_requested = True
+        if self._background_preload_done:
+            return False
+        already_started = self._initial_load_started
+        self._ensure_initial_load_started()
+        return not already_started
+
+    def is_background_preload_complete(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return True
+        committer = getattr(self, "_view_committer", None)
+        commit_active = bool(committer is not None and committer.is_active)
+        return bool(
+            self._background_preload_requested
+            and self._background_preload_done
+            and not commit_active
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            self._view_load_generation += 1
+            self._initial_load_timer.stop()
+            self._view_committer.cancel()
+            self._initial_load_started = False
+            self._background_preload_requested = False
+            self._background_preload_done = False
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("view-load",),
+            task_ids=(self._initial_load_task_id,),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._initial_load_timer.isActive()
+            and not self._view_committer.is_active,
+            runner=task_manager,
+        )
+
+
+class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
     _F5_AUTO_SYNC_DELAY_MS = 18000
     _QUOTE_SNAPSHOT_REFRESH_DELAY_MS = 120
     _SUBJECT_CODE_QFII = SUBJECT_QFII["subject_code"]
@@ -106,6 +168,7 @@ class FundHoldingsTab(BaseStockTab):
     _chain_context_provider = staticmethod(load_cached_ai_industry_chain_context_map)
     VIEW_LOAD_TIMEOUT_SEC = 90.0
     SYNC_TIMEOUT_SEC = 15 * 60.0
+    VIEW_ROW_CHUNK_SIZE = 24
 
     def __init__(
         self,
@@ -121,6 +184,9 @@ class FundHoldingsTab(BaseStockTab):
             self._initial_load_delay_ms = 0
         self._autoload = bool(autoload)
         self._initial_load_started = False
+        self._background_preload_requested = False
+        self._background_preload_done = False
+        self._view_load_generation = 0
         self._initial_load_task_id = self._build_workspace_task_id(f"initial_load_{id(self)}")
         self._latest_quarter_map: dict[str, str] = {}
         self._latest_sync_map: dict[str, dict] = {}
@@ -134,15 +200,8 @@ class FundHoldingsTab(BaseStockTab):
         self._change_menu_built = False
         self._concept_sector_cache: dict[str, str] = {}
         self._ai_chain_context_map: dict[str, str] | None = None
-        self._fund_holdings_lineage_service = TabDataLineageService(
-            key="fund_holdings",
-            source="fund_holdings_store + local_quote_snapshot",
-            provider="ui_fund_holdings_service",
-            cache_refs=(
-                "data/vcp_hunter.db:fund holdings tables",
-                "global_store.quotes",
-                "local_tdx_cache",
-            ),
+        self._fund_holdings_lineage_service = create_tab_lineage_service(
+            "fund_holdings",
             provider_status_reader=self._read_provider_status,
         )
         self._last_fund_holdings_result = None
@@ -153,15 +212,11 @@ class FundHoldingsTab(BaseStockTab):
         self._pending_quote_snapshot_model = None
         self._restoring_view_state = False
         self._view_state_restored = False
-        self._view_state_save_timer = QTimer(self)
-        self._view_state_save_timer.setSingleShot(True)
-        self._view_state_save_timer.setInterval(300)
-        self._view_state_save_timer.timeout.connect(self._save_view_state)
+        _initialize_fund_runtime_timers(self)
 
         self._init_ui()
         if self._autoload:
-            self._reload_from_db(quarter_scope=self._QUERY_SCOPE_LATEST)
-            self._initial_load_started = True
+            self._ensure_initial_load_started()
         else:
             self._set_initial_loading_state("基金持仓待加载", "首次进入时自动读取本地数据库")
 
@@ -174,7 +229,7 @@ class FundHoldingsTab(BaseStockTab):
         if self._should_start_runtime_on_show():
             self._ensure_initial_load_started()
 
-    def prime_background_load(self):
+    def on_workspace_tab_activated(self) -> None:
         self._ensure_initial_load_started()
 
     def _is_current_workspace_tab(self) -> bool:
@@ -295,7 +350,8 @@ class FundHoldingsTab(BaseStockTab):
             "概念板块",
         ]
         self.table = VCPTableView(default_row_height=30)
-        self.model = StockTableModel(self.columns)
+        self.model = FundHoldingsTableModel(self.columns)
+        self._view_committer = FundHoldingsViewCommitter(self, chunk_size=self.VIEW_ROW_CHUNK_SIZE)
         self.model.set_plain_style_headers(["主体", "资金属性", "季度", "变化类型", "概念板块"])
         self.model.set_muted_text_headers(
             ["主体", "资金属性", "季度", "本期占比", "本期持股", "上期持股", "持股变化", "概念板块"]
@@ -331,12 +387,12 @@ class FundHoldingsTab(BaseStockTab):
         self.table_state.show_loading(title, subtitle)
 
     def _ensure_initial_load_started(self):
-        if self._autoload or self._initial_load_started:
+        if self._initial_load_started:
             return
         self._initial_load_started = True
         self._set_initial_loading_state("正在加载基金持仓数据...", "首次进入时后台构建持仓视图")
         if self._initial_load_delay_ms > 0:
-            QTimer.singleShot(self._initial_load_delay_ms, self._reload_from_db_async)
+            self._initial_load_timer.start(self._initial_load_delay_ms)
         else:
             self._reload_from_db_async()
 
@@ -387,6 +443,7 @@ class FundHoldingsTab(BaseStockTab):
         )
 
     def _apply_view_payload(self, payload: dict):
+        commit_generation = int(getattr(self, "_view_load_generation", 0))
         with ui_stall_span(
             "FundHoldingsTab._apply_view_payload",
             tab="fund_holdings",
@@ -407,36 +464,36 @@ class FundHoldingsTab(BaseStockTab):
             if defer_update:
                 QTimer.singleShot(
                     0,
-                    lambda view_rows=view_rows: FundHoldingsTab._apply_view_rows_and_finish(
+                    lambda view_rows=view_rows, generation=commit_generation: FundHoldingsTab._apply_view_rows_and_finish(
                         self,
                         view_rows,
                         defer_finish=True,
+                        generation=generation,
                     ),
                 )
             else:
-                FundHoldingsTab._apply_view_rows_and_finish(self, view_rows, defer_finish=False)
+                FundHoldingsTab._apply_view_rows_and_finish(
+                    self,
+                    view_rows,
+                    defer_finish=False,
+                    generation=commit_generation,
+                )
 
-    def _apply_view_rows_and_finish(self, view_rows: list[dict], *, defer_finish: bool) -> None:
-        if getattr(self, "_runtime_cleanup_done", False):
+    def _apply_view_rows_and_finish(
+        self,
+        view_rows: list[dict],
+        *,
+        defer_finish: bool,
+        generation: int | None = None,
+    ) -> None:
+        if generation is not None and generation != int(getattr(self, "_view_load_generation", 0)):
             return
-        with ui_stall_span(
-            "FundHoldingsTab._apply_view_rows_and_finish",
-            tab="fund_holdings",
-            signal="deferred" if defer_finish else "sync",
-        ):
-            self.model.update_data(view_rows, hydrate_latest_quotes=False)
-
-        def finish(rows=view_rows):
-            if getattr(self, "_runtime_cleanup_done", False):
-                return
-            skip_empty_state = FundHoldingsTab._finish_apply_view_payload(self, rows)
-            if not skip_empty_state:
-                FundHoldingsTab._show_empty_view_payload_if_needed(self, rows)
-
-        if defer_finish:
-            QTimer.singleShot(0, finish)
-        else:
-            finish()
+        apply_fund_holdings_view_rows(
+            self,
+            view_rows,
+            defer_finish=defer_finish,
+            generation=generation,
+        )
 
     def _should_defer_view_payload_finish(self) -> bool:
         return callable(getattr(self, "deleteLater", None)) and not bool(getattr(self, "_autoload", True))
@@ -447,7 +504,7 @@ class FundHoldingsTab(BaseStockTab):
         self._refresh_filter_options()
         self._restore_view_state()
         ensure_scope_loaded = getattr(self, "_ensure_current_quarter_scope_loaded", None)
-        if callable(ensure_scope_loaded) and ensure_scope_loaded(async_load=False):
+        if callable(ensure_scope_loaded) and ensure_scope_loaded():
             return True
         self._apply_filters()
         self._schedule_visible_quote_snapshot_refresh(self.model)
@@ -455,20 +512,23 @@ class FundHoldingsTab(BaseStockTab):
         lineage_updater = getattr(self, "_refresh_fund_holdings_lineage", None)
         if callable(lineage_updater):
             lineage_updater(view_rows)
+        self._background_preload_done = True
         return False
 
     def _show_empty_view_payload_if_needed(self, view_rows: list[dict]) -> None:
         if not view_rows and not getattr(self, "_sync_active", False):
             self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
 
-    def _reload_from_db_async(
-        self,
-        *,
-        quarter_scope: str | None = None,
-        quarter_keys=None,
-    ):
+    def _reload_from_db_async(self, *, quarter_scope: str | None = None, quarter_keys=None):
+        self._initial_load_timer.stop()
+        self._view_load_generation += 1
+        generation = self._view_load_generation
         if quarter_scope is None:
-            scope, keys = self._current_quarter_query_scope()
+            if self._view_state_restored:
+                scope, keys = self._current_quarter_query_scope()
+            else:
+                state = read_fund_holdings_view_state(self._settings, self._view_state_key)
+                scope, keys = initial_quarter_query_scope(state)
         else:
             scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
             keys = set(quarter_keys or [])
@@ -482,14 +542,15 @@ class FundHoldingsTab(BaseStockTab):
             )
 
         def _on_success(payload):
-            if getattr(self, "_runtime_cleanup_done", False):
+            if getattr(self, "_runtime_cleanup_done", False) or generation != self._view_load_generation:
                 return
             self._apply_view_payload(payload)
 
         def _on_error(message: str):
-            if getattr(self, "_runtime_cleanup_done", False):
+            if getattr(self, "_runtime_cleanup_done", False) or generation != self._view_load_generation:
                 return
             self._initial_load_started = False
+            self._background_preload_done = True
             detail = str(message or "").strip() or "未知异常"
             self.lbl_status.setText(f"基金持仓加载失败：{detail}")
             self.table_state.show_error(
@@ -499,12 +560,13 @@ class FundHoldingsTab(BaseStockTab):
                 action_callback=self._ensure_initial_load_started,
             )
 
+        self._initial_load_task_id = self._build_workspace_task_id(f"load_{scope}_{id(self)}")
         task_lifecycle_for(self, runner=task_manager).run_background(
             "view-load",
             _load_bg,
             on_success=_on_success,
             on_error=_on_error,
-            task_id=self._build_workspace_task_id(f"load_{scope}_{id(self)}"),
+            task_id=self._initial_load_task_id,
             timeout_sec=self.VIEW_LOAD_TIMEOUT_SEC,
         )
 
@@ -594,19 +656,15 @@ class FundHoldingsTab(BaseStockTab):
             selected_scope=self._QUERY_SCOPE_SELECTED,
         )
 
-    def _ensure_current_quarter_scope_loaded(self, *, async_load: bool) -> bool:
+    def _ensure_current_quarter_scope_loaded(self) -> bool:
         scope, quarter_keys = self._current_quarter_query_scope()
         if self._quarter_scope_loaded(scope, quarter_keys):
             return False
-        if async_load:
-            self._set_initial_loading_state(
-                "Loading fund holding quarters...",
-                "Reading the selected local quarter scope",
-            )
-        if async_load or scope == self._QUERY_SCOPE_LATEST:
-            self._reload_from_db_async(quarter_scope=scope, quarter_keys=quarter_keys)
-        else:
-            self._reload_from_db(quarter_scope=scope, quarter_keys=quarter_keys)
+        self._set_initial_loading_state(
+            "正在加载基金持仓季度...",
+            "后台读取所选本地季度范围",
+        )
+        self._reload_from_db_async(quarter_scope=scope, quarter_keys=quarter_keys)
         return True
 
     def _set_change_filter_values(self, values: set[str] | list[str], *, apply: bool = True):
@@ -660,7 +718,7 @@ class FundHoldingsTab(BaseStockTab):
 
         self._refresh_quarter_button_text()
         if apply:
-            if self._ensure_current_quarter_scope_loaded(async_load=False):
+            if self._ensure_current_quarter_scope_loaded():
                 return
             self._apply_filters()
 
@@ -709,7 +767,7 @@ class FundHoldingsTab(BaseStockTab):
         self.btn_quarter.setToolTip(tooltip)
 
     def _schedule_view_state_save(self):
-        if self._restoring_view_state:
+        if self._restoring_view_state or not self._view_state_restored:
             return
         self._view_state_save_timer.start()
 
@@ -803,7 +861,7 @@ class FundHoldingsTab(BaseStockTab):
         result = self._last_fund_holdings_result
         if result is None:
             result = self._refresh_fund_holdings_lineage()
-        return result.lineage.as_dict()
+        return result.lineage.as_dynamic_dict()
 
     def _current_filter_summary(self) -> str:
         latest_only, selected_quarters = self._quarter_filter_state()
@@ -818,7 +876,7 @@ class FundHoldingsTab(BaseStockTab):
         )
 
     def _save_view_state(self):
-        if self._restoring_view_state:
+        if self._restoring_view_state or not self._view_state_restored:
             return
         try:
             latest_only, selected_quarters = self._quarter_filter_state()
@@ -975,13 +1033,14 @@ class FundHoldingsTab(BaseStockTab):
         event_bus.sig_system_log.emit("error", f"[基金持仓] {message}")
 
     def _run_sync_action(self, label: str, sync_callable):
-        if self._sync_active:
+        if getattr(self, "_runtime_cleanup_done", False) or self._sync_active:
             return
 
         callable_name = getattr(sync_callable, "__name__", "task")
         self._sync_task_id = self._build_workspace_task_id(f"sync_{callable_name}")
         self._set_sync_active(True, "同步基金持仓中...", label)
         self._set_sync_start_status(label)
+        mark_runtime_network_activity(self)
 
         task_lifecycle_for(self, runner=task_manager).run_background(
             "sync",
@@ -993,20 +1052,26 @@ class FundHoldingsTab(BaseStockTab):
         )
 
     def run_auto_sync_after_f5(self) -> bool:
-        if self._sync_active:
+        if getattr(self, "_runtime_cleanup_done", False) or self._sync_active:
             return False
         self._run_sync_action("F5后自动更新", fund_holdings_sync_service.sync_latest_all)
         return True
 
     def schedule_auto_sync_after_f5(self) -> bool:
-        if self._pending_f5_auto_sync:
+        if getattr(self, "_runtime_cleanup_done", False) or self._pending_f5_auto_sync:
             return False
         self._pending_f5_auto_sync = True
-        QTimer.singleShot(self._F5_AUTO_SYNC_DELAY_MS, self._run_pending_auto_sync_after_f5)
+        timer = getattr(self, "_f5_auto_sync_timer", None)
+        if timer is not None:
+            timer.start(self._F5_AUTO_SYNC_DELAY_MS)
+        else:
+            QTimer.singleShot(self._F5_AUTO_SYNC_DELAY_MS, self._run_pending_auto_sync_after_f5)
         return True
 
     def _run_pending_auto_sync_after_f5(self) -> bool:
         self._pending_f5_auto_sync = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
         return self.run_auto_sync_after_f5()
 
     def refresh_data_after_f5(self) -> bool:
@@ -1028,41 +1093,6 @@ class FundHoldingsTab(BaseStockTab):
             return False
         self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
         return True
-
-    def _reload_from_db(
-        self,
-        *,
-        quarter_scope: str | None = None,
-        quarter_keys=None,
-    ):
-        if quarter_scope is None:
-            quarter_scope, quarter_keys = self._current_quarter_query_scope()
-        with ui_stall_span(
-            "FundHoldingsTab._reload_from_db",
-            tab="fund_holdings",
-            signal=str(quarter_scope or ""),
-        ):
-            self._latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
-            self._latest_sync_map = fund_holdings_store.get_latest_sync_map()
-            self._concept_sector_cache.clear()
-            self._ai_chain_context_map = None
-            scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
-            query_quarters = self._resolve_query_quarters(
-                self._latest_quarter_map,
-                quarter_scope=scope,
-                quarter_keys=quarter_keys,
-            )
-            change_rows = self._query_change_rows_for_scope(query_quarters)
-            view_rows = self._build_view_rows(change_rows)
-            payload = {
-                "latest_quarter_map": self._latest_quarter_map,
-                "latest_sync_map": self._latest_sync_map,
-                "concept_sector_cache": self._concept_sector_cache,
-                "view_rows": view_rows,
-                "loaded_quarter_scope": scope,
-                "loaded_quarter_keys": sorted(query_quarters or []),
-            }
-            self._apply_view_payload(payload)
 
     def _refresh_filter_options(self):
         quarters = fund_holdings_store.list_quarters()
@@ -1309,8 +1339,16 @@ class FundHoldingsTab(BaseStockTab):
             )
 
     def _cleanup_runtime_state(self):
+        self._background_preload_done = True
         if not getattr(self, "_fund_holdings_cleanup_done", False):
             self._fund_holdings_cleanup_done = True
+            self._pending_f5_auto_sync = False
+            self._view_load_generation += 1
+            self._view_committer.cancel()
+            self._initial_load_timer.stop()
+            f5_timer = getattr(self, "_f5_auto_sync_timer", None)
+            if f5_timer is not None:
+                f5_timer.stop()
             lifecycle = getattr(self, "_task_lifecycle", None)
             if lifecycle is not None:
                 lifecycle.shutdown(timeout_ms=1000)

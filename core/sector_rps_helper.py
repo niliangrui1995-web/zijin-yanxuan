@@ -12,8 +12,9 @@ import datetime as _dt
 import os
 from typing import Iterable
 
+from app.services.f5_snapshot_service import read_active_sector_rps_bundle
 from core.exceptions import CacheIOError, DataFormatError
-from core.json_cache import load_json_file, save_json_file
+from core.json_cache import save_json_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from core.runtime_paths import DEFAULT_TDX_ROOT, SECTOR_RPS_CACHE_FILE
@@ -63,14 +64,25 @@ def _get_sector_manager(data_provider) -> SectorManager:
     return SectorManager.get_instance(tdx_root)
 
 
-def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=None):
-    """返回 (sector_manager, sector_rps, normalized_date, source)。
+def _read_cached_sector_rps(logger) -> tuple[dict, str, bool]:
+    try:
+        _, payload = read_active_sector_rps_bundle(SECTOR_RPS_CACHE_FILE)
+    except (CacheIOError, DataFormatError) as exc:
+        logger.warning(f"[板块RPS] 缓存读取失败，改为现算: {exc}")
+        return {}, "", False
+    if payload is None:
+        return {}, "", False
+    try:
+        sector_rps = _normalize_sector_rps(payload.get("sector_rps", {}) or {})
+        cached_date = normalize_trade_date(payload.get("date"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        logger.warning(f"[板块RPS] 缓存内容无效，改为现算: {exc}")
+        return {}, "", False
+    return sector_rps, cached_date, bool(sector_rps)
 
-    source 取值：
-    - "cache": 命中同交易日缓存
-    - "rebuild": 重新计算
-    - "error": 构建失败
-    """
+
+def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=None):
+    """返回 ``(sector_manager, sector_rps, normalized_date, source)``。"""
     logger = logger or log
     normalized_date = normalize_trade_date(target_date)
 
@@ -80,23 +92,12 @@ def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=N
         logger.error(f"[板块RPS] 初始化 SectorManager 失败: {exc}")
         return False, {}, normalized_date, "error"
 
-    sector_rps = {}
-    cache_hit = False
-    cached_date = ""
-
-    if os.path.exists(SECTOR_RPS_CACHE_FILE):
-        try:
-            payload = load_json_file(SECTOR_RPS_CACHE_FILE)
-            sector_rps = _normalize_sector_rps(payload.get("sector_rps", {}) or {})
-            cached_date = normalize_trade_date(payload.get("date"))
-            cache_hit = bool(sector_rps) and cached_date == normalized_date
-            if cache_hit:
-                logger.info(f"[板块RPS] 命中缓存 ({cached_date}, {len(sector_rps)} 个板块)")
-            else:
-                logger.info(f"[板块RPS] 缓存过期或为空，重建 ({cached_date or '-'} -> {normalized_date})")
-        except (CacheIOError, DataFormatError) as exc:
-            logger.warning(f"[板块RPS] 缓存读取失败，改为现算: {exc}")
-            sector_rps = {}
+    sector_rps, cached_date, has_cached_rps = _read_cached_sector_rps(logger)
+    cache_hit = has_cached_rps and cached_date == normalized_date
+    if cache_hit:
+        logger.info(f"[板块RPS] 命中缓存 ({cached_date}, {len(sector_rps)} 个板块)")
+    elif has_cached_rps:
+        logger.info(f"[板块RPS] 缓存过期，重建 ({cached_date or '-'} -> {normalized_date})")
 
     if cache_hit:
         return sector_manager, sector_rps, normalized_date, "cache"

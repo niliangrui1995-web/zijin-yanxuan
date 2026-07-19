@@ -4,6 +4,12 @@ import time
 from contextlib import suppress
 
 from core.market_calendar import MarketCalendar
+from infra.tasks.lifecycle import (
+    raise_if_cancelled,
+    reraise_task_cancellation,
+    wait_with_cancellation,
+)
+from infra.tasks.owner_lifecycle import invoke_with_cancellation
 from vcp.realtime_quote_batch import (
     normalize_error_text,
     normalize_quote_codes,
@@ -20,6 +26,10 @@ _OPENING_WARMUP_STATUSES = frozenset(
         "\u5f00\u5e02\u524d\u65f6\u6bb5",
     )
 )
+
+
+def _call_quote_source(fn, cancellation_token, *args):
+    return invoke_with_cancellation(fn, cancellation_token, *args)
 
 
 def summarize_probe_error(exc: Exception) -> str:
@@ -158,14 +168,21 @@ def fetch_eastmoney_quotes_with_split_retry(
     codes,
     inferred_trade_date: str,
     min_batch_size: int,
+    *,
+    cancellation_token=None,
 ):
+    raise_if_cancelled(cancellation_token)
     normalized_codes = normalize_quote_codes(codes)
     if not normalized_codes:
         return {}, []
 
     try:
-        return provider._request_eastmoney_quote_batch(normalized_codes, inferred_trade_date), []
+        quotes = _call_quote_source(
+            provider._request_eastmoney_quote_batch, cancellation_token, normalized_codes, inferred_trade_date
+        )
+        return quotes, []
     except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+        reraise_task_cancellation(exc)
         if len(normalized_codes) <= min_batch_size or is_disconnect_like_error(exc):
             return {}, [str(exc)]
 
@@ -175,12 +192,14 @@ def fetch_eastmoney_quotes_with_split_retry(
         normalized_codes[:mid],
         inferred_trade_date,
         min_batch_size,
+        cancellation_token=cancellation_token,
     )
     right_quotes, right_failures = fetch_eastmoney_quotes_with_split_retry(
         provider,
         normalized_codes[mid:],
         inferred_trade_date,
         min_batch_size,
+        cancellation_token=cancellation_token,
     )
     merged_quotes = dict(left_quotes)
     merged_quotes.update(right_quotes)
@@ -260,19 +279,14 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
 
 
 def _fetch_realtime_quote_batch_sources(
-    provider,
-    batch: list[str],
-    *,
-    inferred_trade_date: str,
-    min_batch_size: int,
+    provider, batch: list[str], *, inferred_trade_date: str, min_batch_size: int,
     eastmoney_available: bool,
     fast_fail_eastmoney_edge_error: bool = False,
+    cancellation_token=None,
 ) -> tuple[dict, list[str], bool, bool, bool]:
-    quotes = {}
-    failures = []
+    quotes, failures = {}, []
     used_sina_fallback = False
     used_tencent_fallback = False
-
     fast_fail_sentinel = object()
     previous_fast_fail = fast_fail_sentinel
     if fast_fail_eastmoney_edge_error:
@@ -280,7 +294,9 @@ def _fetch_realtime_quote_batch_sources(
         setattr(provider, _EASTMONEY_FAST_FAIL_ATTR, True)
     try:
         if eastmoney_available:
-            quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
+            quotes, failures = _call_quote_source(
+                provider._fetch_eastmoney_quotes_with_split_retry,
+                cancellation_token,
                 batch,
                 inferred_trade_date,
                 min_batch_size,
@@ -295,34 +311,37 @@ def _fetch_realtime_quote_batch_sources(
                     delattr(provider, _EASTMONEY_FAST_FAIL_ATTR)
             else:
                 setattr(provider, _EASTMONEY_FAST_FAIL_ATTR, previous_fast_fail)
-
     if (not eastmoney_available) or failures or len(quotes) < len(batch):
         missing_batch = [code for code in batch if code not in quotes]
         if missing_batch:
             try:
-                sina_quotes = provider._request_sina_quote_batch(missing_batch, inferred_trade_date)
+                sina_quotes = _call_quote_source(
+                    provider._request_sina_quote_batch, cancellation_token, missing_batch, inferred_trade_date
+                )
                 if sina_quotes:
                     quotes.update(sina_quotes)
                     used_sina_fallback = True
             except (OSError, RuntimeError, TimeoutError, ValueError) as sina_exc:
+                reraise_task_cancellation(sina_exc)
                 if not failures:
                     failures = [str(sina_exc)]
                 else:
                     failures.append(str(sina_exc))
-
         missing_batch = [code for code in batch if code not in quotes]
         if missing_batch:
             try:
-                tencent_quotes = provider._request_tencent_quote_batch(missing_batch, inferred_trade_date)
+                tencent_quotes = _call_quote_source(
+                    provider._request_tencent_quote_batch, cancellation_token, missing_batch, inferred_trade_date
+                )
                 if tencent_quotes:
                     quotes.update(tencent_quotes)
                     used_tencent_fallback = True
             except (OSError, RuntimeError, TimeoutError, ValueError) as tencent_exc:
+                reraise_task_cancellation(tencent_exc)
                 if not failures:
                     failures = [str(tencent_exc)]
                 else:
                     failures.append(str(tencent_exc))
-
     return quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback
 
 
@@ -384,7 +403,9 @@ def _fetch_realtime_quote_sources(
     batch_size_default: int,
     min_batch_size_default: int,
     batch_pause_default: float,
+    cancellation_token=None,
 ) -> dict:
+    raise_if_cancelled(cancellation_token)
     batch_size = int(getattr(provider, "_rt_quote_batch_size", batch_size_default) or batch_size_default)
     min_batch_size = int(
         getattr(provider, "_rt_quote_min_batch_size", min_batch_size_default) or min_batch_size_default
@@ -400,7 +421,6 @@ def _fetch_realtime_quote_sources(
     opening_warmup_pressure = bool(pressure_fetch_limit and _is_opening_warmup_quote_window())
     network_codes = list(dedup_codes)
     request_stats["triggered_network"] = True
-
     if pressure_fetch_limit and not eastmoney_available:
         network_codes = dedup_codes[:pressure_fetch_limit]
         request_stats["network_throttled"] = True
@@ -410,7 +430,6 @@ def _fetch_realtime_quote_sources(
             "[实时行情] 东方财富回退冷却中，本轮联网限量 "
             f"{len(network_codes)}/{len(dedup_codes)} 只；剩余标的使用缓存/离线兜底"
         )
-
     pressure_log_due = should_log_pressure(
         total_codes=len(normalized_codes),
         pending_codes=len(dedup_codes),
@@ -425,8 +444,8 @@ def _fetch_realtime_quote_sources(
             f"缓存命中={cache_hits} 待联网={len(dedup_codes)} "
             f"batch={batch_size} dedup={dedup_window:.1f}s"
         )
-
     for start in range(0, len(network_codes), batch_size):
+        raise_if_cancelled(cancellation_token)
         batch = network_codes[start : start + batch_size]
         batch_record = {
             "index": int(start // batch_size) + 1,
@@ -443,7 +462,6 @@ def _fetch_realtime_quote_sources(
         }
         request_stats["batches"].append(batch_record)
         request_stats["network_attempted_count"] = int(request_stats.get("network_attempted_count") or 0) + len(batch)
-
         quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback = (
             _fetch_realtime_quote_batch_sources(
                 provider,
@@ -452,6 +470,7 @@ def _fetch_realtime_quote_sources(
                 min_batch_size=min_batch_size,
                 eastmoney_available=eastmoney_available,
                 fast_fail_eastmoney_edge_error=opening_warmup_pressure,
+                cancellation_token=cancellation_token,
             )
         )
 
@@ -482,7 +501,7 @@ def _fetch_realtime_quote_sources(
                         f"后续批次继续尝试备用源: {disconnect_failure_reason_logged}"
                     )
         if batch_pause_sec > 0 and (start + batch_size) < len(dedup_codes):
-            time.sleep(batch_pause_sec)
+            wait_with_cancellation(batch_pause_sec, cancellation_token)
 
         fallback_pressure_active = (not eastmoney_available) or used_sina_fallback or used_tencent_fallback
         attempted_count = int(request_stats.get("network_attempted_count") or 0)
@@ -534,12 +553,15 @@ def _apply_realtime_quote_fallbacks(
     request_stats: dict,
     *,
     inferred_trade_date: str,
+    cancellation_token=None,
 ) -> list[str]:
+    raise_if_cancelled(cancellation_token)
     missing_codes = [code for code in dedup_codes if code not in result]
     if missing_codes:
         stale_quotes = {}
         with provider._rt_quote_lock:
             for code in missing_codes:
+                raise_if_cancelled(cancellation_token)
                 cached = provider._rt_quote_cache.get(code)
                 if cached:
                     quote = dict(cached)
@@ -583,6 +605,7 @@ def fetch_realtime_quotes_batch(
     batch_size_default: int,
     min_batch_size_default: int,
     batch_pause_default: float,
+    cancellation_token=None,
 ):
     provider._ensure_eastmoney_quote_state()
     raw_codes = [str(code).strip() for code in (codes or []) if str(code or "").strip()]
@@ -590,13 +613,10 @@ def fetch_realtime_quotes_batch(
     if not normalized_codes:
         return {}
     request_stats = _new_quote_request_stats(normalized_codes, raw_codes=raw_codes, started_at=time.time())
-
     gate = _apply_realtime_quote_cache_gate(provider, normalized_codes, request_stats, log=log)
     if gate["done"]:
         return gate["result"]
-
-    result = gate["result"]
-    dedup_codes = gate["dedup_codes"]
+    result, dedup_codes = gate["result"], gate["dedup_codes"]
     fetch_state = _fetch_realtime_quote_sources(
         provider,
         normalized_codes,
@@ -610,6 +630,7 @@ def fetch_realtime_quotes_batch(
         batch_size_default=batch_size_default,
         min_batch_size_default=min_batch_size_default,
         batch_pause_default=batch_pause_default,
+        cancellation_token=cancellation_token,
     )
     missing_codes = _apply_realtime_quote_fallbacks(
         provider,
@@ -617,6 +638,7 @@ def fetch_realtime_quotes_batch(
         dedup_codes,
         request_stats,
         inferred_trade_date=gate["inferred_trade_date"],
+        cancellation_token=cancellation_token,
     )
     _finalize_realtime_quote_stats(
         provider,

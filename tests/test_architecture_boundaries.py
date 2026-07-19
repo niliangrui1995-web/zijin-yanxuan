@@ -44,7 +44,10 @@ BROAD_EXCEPTION_ALLOWED_HANDLERS = {
     "domains/global_earnings_calendar/http_utils.py:raise_for_status",
     "domains/global_earnings_calendar/service.py:refresh_events",
     "infra/diagnostics/runtime_health.py:<module>",
+    "infra/diagnostics/ui_exception_boundary.py:ui_exception_hook",
     "infra/market_data/asian_realtime_provider.py:_call_yfinance",
+    "infra/tasks/owner_lifecycle.py:_deliver",
+    "infra/tasks/task_scheduler.py:_handle_terminated",
     "infra/tasks/task_scheduler.py:run",
     "infra/storage/data_store.py:transaction",
 }
@@ -587,6 +590,28 @@ def test_stock_context_app_service_delegates_persistence_to_infra_repository():
     assert "infra.storage.stock_context_repository" in imports
 
 
+def test_stock_context_domain_and_app_pipeline_stay_qt_widget_free():
+    domain_root = REPO_ROOT / "domains" / "stock_context"
+    domain_paths = list(_iter_python_files(domain_root))
+    assert domain_paths, "StockContext domain package is missing"
+    violations = _find_prefix_violations(
+        domain_root,
+        {"PyQt5", "PyQt6", "PySide2", "PySide6", "app", "core", "infra", "qtpy", "ui"},
+    )
+    app_paths = sorted((REPO_ROOT / "app" / "services").glob("stock_context_*.py"))
+    assert app_paths, "StockContext app service pipeline is missing"
+    forbidden_prefixes = ("PyQt5", "PyQt6", "PySide2", "PySide6", "qtpy", "ui")
+    for path in app_paths:
+        matched = sorted(
+            module
+            for module in _collect_imports(path)
+            if any(module == prefix or module.startswith(f"{prefix}.") for prefix in forbidden_prefixes)
+        )
+        violations.extend(f"{path.relative_to(REPO_ROOT).as_posix()}: {module}" for module in matched)
+
+    assert not violations, "StockContext pipeline regained Qt/widget dependencies:\n" + "\n".join(violations)
+
+
 def test_asian_market_ui_delegates_http_and_cache_io_to_app_services():
     paths = [
         REPO_ROOT / "ui" / "tabs" / "asian_market_workers.py",
@@ -1012,6 +1037,29 @@ def test_workspace_facade_and_services_do_not_reach_into_tab_private_state():
     )
     assert not violations, (
         "Workspace facade/services still reach into tab private state instead of public capabilities:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_stock_context_ui_bridge_uses_public_readiness_and_keeps_commands_in_facade():
+    adapter_path = REPO_ROOT / "ui" / "workspaces" / "stock_context_widget_adapter.py"
+    candidate_path = REPO_ROOT / "ui" / "tabs" / "stock_candidate_tab.py"
+    service_path = REPO_ROOT / "ui" / "workspaces" / "stock_context_service.py"
+
+    violations = _find_text_snippets(adapter_path, {'"_pool_load_in_progress"', "'_pool_load_in_progress'"})
+    violations.extend(
+        _find_text_snippets(
+            candidate_path,
+            {'"get_loaded_tab"', "'get_loaded_tab'", '"_workspace_background_preload_ready"'},
+        )
+    )
+    service_source = service_path.read_text(encoding="utf-8")
+    for method_name in ("refresh_watchlist_names", "prime_watchlist_state"):
+        if f"def {method_name}(" in service_source:
+            violations.append(f"stock_context_service.py: {method_name}")
+
+    assert not violations, (
+        "StockContext UI bridge must use public readiness contracts and keep watchlist commands in WorkspaceFacade:\n"
         + "\n".join(violations)
     )
 

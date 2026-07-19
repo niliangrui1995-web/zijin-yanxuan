@@ -3,13 +3,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from app.services.runtime_services import load_local_tdx_capital_snapshot
-from app.services.scan_runtime_service import batch_get_finance_info
 from app.services.ui_quote_service import enrich_quotes_with_finance
 from core.logger import get_logger
 from infra.market_data.provider_ports import RealtimeQuotePort
 
 log = get_logger(__name__)
+
+
+def load_local_tdx_capital_snapshot(codes, tdx_vipdoc):
+    from app.services.runtime_services import load_local_tdx_capital_snapshot as load_snapshot
+
+    return load_snapshot(codes, tdx_vipdoc)
+
+
+def batch_get_finance_info(codes):
+    from app.services.scan_runtime_service import batch_get_finance_info as load_finance
+
+    return load_finance(codes)
 
 
 def _has_valid_share_capital(entry: dict | None) -> bool:

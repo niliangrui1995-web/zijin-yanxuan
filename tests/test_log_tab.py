@@ -1,9 +1,86 @@
 import sys
+import threading
 
 from PyQt6.QtWidgets import QApplication
 
+from app.services.ui_event_service import domain_events
 from infra.events import ui_signal_hub
+from ui.services.log_buffer_service import LogBufferService, install_log_buffer_service
+from ui.tabs import log_tab as log_tab_module
 from ui.tabs.log_tab import LogTab
+
+
+def test_log_buffer_clear_cannot_overtake_an_inflight_append():
+    append_entered = threading.Event()
+    append_release = threading.Event()
+    clear_finished = threading.Event()
+
+    class BlockingEntries:
+        def __init__(self):
+            self.data = []
+
+        def append(self, entry):
+            append_entered.set()
+            assert append_release.wait(1)
+            self.data.append(entry)
+
+        def clear(self):
+            self.data.clear()
+
+        def __iter__(self):
+            return iter(self.data)
+
+    service = LogBufferService()
+    service._entries = BlockingEntries()
+    capture = threading.Thread(target=service._capture_entry, args=("info", "before clear"))
+    clear = threading.Thread(target=lambda: (service.clear(), clear_finished.set()))
+
+    capture.start()
+    assert append_entered.wait(1)
+    clear.start()
+    assert clear_finished.wait(0.05) is False
+    append_release.set()
+    capture.join(1)
+    clear.join(1)
+
+    generation, sequence, history = service.snapshot_versioned()
+    assert (generation, sequence, history) == (1, 1, [])
+
+
+def test_log_tab_flush_timer_only_runs_while_visible():
+    app = QApplication.instance()
+    tab = LogTab()
+    try:
+        assert tab._log_flush_timer.isActive() is False
+
+        tab.show()
+        app.processEvents()
+        assert tab._log_flush_timer.isActive() is True
+
+        tab.hide()
+        app.processEvents()
+        assert tab._log_flush_timer.isActive() is False
+
+        tab._on_log_msg("info", "while hidden\n")
+        tab.show()
+        app.processEvents()
+        assert tab._log_flush_timer.isActive() is True
+        assert "while hidden" in tab.log_text.toPlainText()
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_tab_background_preload_reuses_buffer_snapshot_synchronously():
+    tab = LogTab()
+    try:
+        assert tab.is_background_preload_complete() is False
+        assert tab.prime_background_load() is True
+        assert tab.is_background_preload_complete() is True
+        assert tab._log_flush_timer.isActive() is False
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
 
 
 def test_log_tab_skips_hidden_flush_and_recovers_from_history():
@@ -112,6 +189,40 @@ def test_log_tab_show_rebuilds_history_in_bounded_batches():
         app.processEvents()
 
         assert "third" in tab.log_text.toPlainText()
+        assert tab._history_rebuild_entries == []
+        assert tab._visible_log_count == 3
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_tab_history_rebuild_honors_character_budget_without_dropping_entries(monkeypatch):
+    app = QApplication.instance()
+    tab = LogTab()
+    try:
+        tab.show()
+        app.processEvents()
+        scheduled = []
+        monkeypatch.setattr(
+            "ui.tabs.log_tab.QTimer.singleShot",
+            lambda _delay, callback: scheduled.append(callback),
+        )
+        tab._history_refresh_batch_max = 10
+        tab._history_refresh_char_max = 5
+        tab._log_history = [
+            ("info", "aaaa\n"),
+            ("warn", "bbbb\n"),
+            ("error", "cccc\n"),
+        ]
+
+        tab._start_history_refresh()
+
+        assert tab.log_text.toPlainText() == "aaaa\n"
+        assert len(tab._history_rebuild_entries) == 2
+        while scheduled:
+            scheduled.pop(0)()
+
+        assert tab.log_text.toPlainText() == "aaaa\nbbbb\ncccc\n"
         assert tab._history_rebuild_entries == []
         assert tab._visible_log_count == 3
     finally:
@@ -269,3 +380,90 @@ def test_log_tab_shutdown_restores_redirected_streams():
 
     assert sys.stdout is original_stdout
     assert sys.stderr is original_stderr
+
+
+def test_log_tab_queued_clear_is_ignored_after_shutdown():
+    tab = LogTab()
+    tab._on_log_msg("info", "keep before shutdown\n")
+    before = list(tab._log_history)
+
+    tab.shutdown()
+    log_tab_module._apply_shared_log_clear(tab, tab._log_generation + 1, 0)
+
+    assert tab._log_history == before
+    tab.deleteLater()
+
+
+def test_log_tab_hydrates_entries_captured_before_widget_creation():
+    app = QApplication.instance()
+    service = install_log_buffer_service()
+    try:
+        domain_events.sig_system_log.emit("warn", "startup before log tab\n")
+        app.processEvents()
+
+        tab = LogTab()
+        try:
+            assert ("warn", "startup before log tab\n") in tab._log_history
+        finally:
+            tab.shutdown()
+            tab.deleteLater()
+    finally:
+        service.shutdown()
+
+
+def test_log_tab_rejects_pre_clear_entries_delivered_after_clear():
+    tab = LogTab()
+    try:
+        service = tab._log_service
+        old_generation = service.generation
+        old_sequence = tab._last_log_sequence + 1
+
+        tab._clear_logs()
+        tab._on_versioned_log_msg(old_generation, old_sequence, "warn", "stale before clear\n")
+
+        assert tab._log_history == []
+        assert "stale before clear" not in tab.log_text.toPlainText()
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_clear_propagates_to_all_log_tabs_without_dropping_new_generation():
+    app = QApplication.instance()
+    first = LogTab()
+    second = LogTab()
+    try:
+        first._on_log_msg("info", "old local entry\n")
+        second._on_log_msg("info", "old local entry\n")
+
+        first._clear_logs()
+        domain_events.sig_system_log.emit("info", "new generation entry\n")
+        app.processEvents()
+        app.processEvents()
+
+        assert all("old local entry" not in text for _level, text in second._log_history)
+        assert ("info", "new generation entry\n") in second._log_history
+    finally:
+        first.shutdown()
+        second.shutdown()
+        first.deleteLater()
+        second.deleteLater()
+
+
+def test_log_service_marshals_worker_thread_entries_to_log_tab():
+    app = QApplication.instance()
+    tab = LogTab()
+    try:
+        worker = threading.Thread(
+            target=lambda: domain_events.sig_system_log.emit("warn", "worker thread entry\n"),
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=1)
+        app.processEvents()
+
+        assert worker.is_alive() is False
+        assert ("warn", "worker thread entry\n") in tab._log_history
+    finally:
+        tab.shutdown()
+        tab.deleteLater()

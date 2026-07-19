@@ -40,6 +40,7 @@ def test_project_audit_full_gate_includes_required_checks():
         "runtime-self-check",
     ]
     assert "runtime-health-short" not in labels
+    assert "runtime-health-production" not in labels
     assert "ui-stall-budget" not in labels
     assert "ui-stall-smoke" not in labels
     assert "dependency-audit" not in labels
@@ -114,7 +115,7 @@ def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
         "-q",
         *project_audit.UI_STALL_SMOKE_TESTS,
     ]
-    assert any("background_prewarm" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
+    assert any("workspace_background_preload" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
     assert any("stock_candidate" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
     assert any("fund_holdings" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
     assert "runtime-health-short" not in labels
@@ -161,11 +162,42 @@ def test_project_audit_adds_runtime_health_short_only_when_requested():
         "scripts/runtime_health_stability_suite.py",
         "--mode",
         "short",
+        "--background-prewarm",
+        "--allow-controlled-probe-tab-loads",
+        "--show-window",
         "--fail-on-budget",
         "--output",
         project_audit.RUNTIME_HEALTH_SHORT_OUTPUT,
         "--sample-output-dir",
         project_audit.RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR,
+    ]
+
+
+def test_project_audit_adds_native_production_runtime_gate_only_when_requested():
+    commands = _commands(["--python", "python", "--quick", "--runtime-health-production"])
+
+    runtime_health = next(command for command in commands if command.label == "runtime-health-production")
+
+    assert runtime_health.command == [
+        "python",
+        "scripts/runtime_health_stability_suite.py",
+        "--mode",
+        "short",
+        "--native-qt",
+        "--startup-enabled",
+        "--background-prewarm",
+        "--kline-prewarm-enabled",
+        "--central-quotes-enabled",
+        "--allow-controlled-probe-tab-loads",
+        "--show-window",
+        "--kline-cycles",
+        "1",
+        "--real-f5",
+        "--fail-on-budget",
+        "--output",
+        project_audit.RUNTIME_HEALTH_PRODUCTION_OUTPUT,
+        "--sample-output-dir",
+        project_audit.RUNTIME_HEALTH_PRODUCTION_SAMPLE_OUTPUT_DIR,
     ]
 
 

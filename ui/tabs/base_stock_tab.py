@@ -40,6 +40,12 @@ from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
 )
 from ui.tabs.base_stock_refresh import (
+    cancel_workspace_background_snapshot,
+    replay_deferred_quotes,
+    workspace_background_snapshot_cancellation_settled,
+    workspace_background_snapshot_complete,
+)
+from ui.tabs.base_stock_refresh import (
     collect_quote_refresh_codes as collect_refresh_quote_codes,
 )
 from ui.tabs.base_stock_refresh import (
@@ -52,13 +58,16 @@ from ui.tabs.base_stock_refresh import (
     prime_local_quote_snapshot as warm_local_quote_snapshot,
 )
 from ui.tabs.base_stock_refresh import (
+    prime_workspace_background_snapshot as warm_workspace_background_snapshot,
+)
+from ui.tabs.base_stock_refresh import (
     refresh_table_from_latest_snapshot as refresh_quotes_from_latest_snapshot,
 )
 from ui.tabs.base_stock_refresh import (
     refresh_table_quotes_and_market_caps as refresh_quotes_and_market_caps,
 )
 from ui.tabs.base_stock_refresh import (
-    replay_deferred_quotes,
+    refresh_workspace_preloaded_snapshot as refresh_preloaded_quote_snapshot,
 )
 from ui.tabs.base_stock_refresh import (
     subscribe_global_quotes as subscribe_quote_stream,
@@ -70,6 +79,7 @@ from ui.tabs.tab_quote_bridge import (
 )
 from ui.tabs.table_view_state_binding import bind_table_view_state
 from ui.theme_tokens import build_ui_tokens
+from ui.workspaces.tab_registry import is_interactive_tab_load_reason
 
 
 def _compact_status_text(text: str, limit: int) -> str:
@@ -79,16 +89,59 @@ def _compact_status_text(text: str, limit: int) -> str:
     return value[: max(1, limit - 1)] + "…"
 
 
-def _is_direct_workspace_tab(owner) -> bool:
-    parent = owner.parent()
-    tabs = getattr(parent, "tabs", None)
-    current_widget = getattr(tabs, "currentWidget", None)
-    if not callable(current_widget):
-        return True
+def _workspace_current_widget_match(container, owner, checked: set[int]) -> bool | None:
+    if container is None or id(container) in checked:
+        return None
+    checked.add(id(container))
     try:
-        return current_widget() is owner
+        workspace = getattr(container, "_workspace", None)
+        candidates = (
+            container,
+            getattr(container, "tabs", None),
+            workspace,
+            getattr(workspace, "tabs", None) if workspace is not None else None,
+        )
     except (AttributeError, RuntimeError, TypeError, ValueError):
-        return True
+        return False
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            current_widget = getattr(candidate, "currentWidget", None)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        if callable(current_widget):
+            try:
+                return current_widget() is owner
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return False
+    return None
+
+
+def _is_direct_workspace_tab(owner) -> bool:
+    checked: set[int] = set()
+    try:
+        parent_getter = getattr(owner, "parent", None)
+        parent = parent_getter() if callable(parent_getter) else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    while parent is not None:
+        result = _workspace_current_widget_match(parent, owner, checked)
+        if result is not None:
+            return result
+        try:
+            parent_getter = getattr(parent, "parent", None)
+            parent = parent_getter() if callable(parent_getter) else None
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+    try:
+        window_getter = getattr(owner, "window", None)
+        window = window_getter() if callable(window_getter) else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    result = _workspace_current_widget_match(window, owner, checked)
+    return True if result is None else result
 
 
 def _show_kline_from_proxy_index(owner, index, signal_hub, *, require_code: bool = False):
@@ -204,9 +257,26 @@ class _ProviderHealthMixin:
         return read_provider_health(self.data_provider).as_dict()
 
 
-class BaseStockTab(_ProviderHealthMixin, QWidget):
-    """股票列表 Tab 基类 - 提供通用方法"""
+class _WorkspaceBackgroundSnapshotMixin:
+    def prime_workspace_background_snapshot(self) -> bool:
+        return warm_workspace_background_snapshot(self)
 
+    def is_workspace_background_snapshot_complete(self) -> bool:
+        return workspace_background_snapshot_complete(self)
+
+    def _cancel_workspace_background_snapshot_preload(self) -> None:
+        cancel_workspace_background_snapshot(self)
+
+    def _workspace_background_snapshot_preload_settled(self) -> bool:
+        return workspace_background_snapshot_cancellation_settled(self)
+
+
+def mark_runtime_network_activity(owner) -> None:
+    owner._runtime_network_triggered = True
+
+
+class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWidget):
+    """股票列表 Tab 基类 - 提供通用方法"""
     _TABLE_ATTR_CANDIDATES = ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table")
 
     def __init__(self, data_provider=None, parent=None):
@@ -217,58 +287,26 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
         self._header_state_savers = []
         self._quote_terminal_launcher = ExternalTerminalNavigator(self)
         self._runtime_cleanup_done = False
+        self._runtime_network_triggered = False
         event_bus.sig_app_closing.connect(self._flush_header_persistence)
 
     def _is_current_workspace_tab(self) -> bool:
-        checked: set[int] = set()
-
-        def _check_owner(owner) -> bool | None:
-            if owner is None:
-                return None
-            owner_id = id(owner)
-            if owner_id in checked:
-                return None
-            checked.add(owner_id)
-
-            for container in (owner, getattr(owner, "_workspace", None)):
-                tabs = getattr(container, "tabs", None)
-                current_widget = getattr(tabs, "currentWidget", None)
-                if not callable(current_widget):
-                    continue
-                try:
-                    return current_widget() is self
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    return True
-            return None
-
-        parent = self.parent()
-        while parent is not None:
-            result = _check_owner(parent)
-            if result is not None:
-                return result
-            parent = parent.parent()
-
-        try:
-            result = _check_owner(self.window())
-        except RuntimeError:
-            result = None
-        return True if result is None else result
+        return _is_direct_workspace_tab(self)
 
     def _should_start_interactive_runtime_on_show(self) -> bool:
         is_current = self._is_current_workspace_tab()
         reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
-        interactive_reasons = {"placeholder_action", "tab_switch", "user"}
         noninteractive_loaded = bool(getattr(self, "_workspace_noninteractive_loaded", False))
 
         if noninteractive_loaded:
             if not is_current:
                 return False
-            if reason and reason not in interactive_reasons:
+            if reason and not is_interactive_tab_load_reason(reason):
                 return False
             setattr(self, "_workspace_noninteractive_loaded", False)
             return True
 
-        if reason and reason not in interactive_reasons:
+        if reason and not is_interactive_tab_load_reason(reason):
             return False
         return is_current
 
@@ -324,10 +362,13 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
         if getattr(self, "_workspace_noninteractive_loaded", False):
             return False
         reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
-        if reason and reason not in {"placeholder_action", "tab_switch", "user"}:
+        if reason and not is_interactive_tab_load_reason(reason):
             return False
         if not self.isVisible():
             return False
+        if getattr(self, "_workspace_background_snapshot_ready", False):
+            refresh_preloaded_quote_snapshot(self, current_model=current_model)
+            return True
         self.refresh_table_from_latest_snapshot(current_model=current_model, async_local=True)
         return True
 
@@ -911,7 +952,8 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._should_start_interactive_runtime_on_show()
-        replay_deferred_quotes(self)
+        if not getattr(self, "_workspace_background_snapshot_ready", False):
+            replay_deferred_quotes(self)
         self._prime_visible_local_quote_snapshot()
 
     def async_update_market_caps(self):

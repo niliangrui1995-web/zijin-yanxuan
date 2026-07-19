@@ -1,8 +1,7 @@
-import io
-import sys
 from contextlib import suppress
+from functools import partial
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QFrame,
@@ -16,13 +15,90 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.ui_event_service import domain_events as event_bus
 from ui.components import MultiSelectFilterButton, format_multi_select_summary
 from ui.components.task_status_panel import TaskStatusPanel
+from ui.services.log_buffer_service import get_log_buffer_service
 from ui.theme_tokens import build_ui_tokens
+from ui.workspaces.background_preload_receipt import BackgroundPreloadCancellationReceipt
 
 
-class LogTab(QWidget):
+def _reset_log_tab(tab) -> None:
+    tab._log_buffer.clear()
+    tab._log_history.clear()
+    tab._visible_log_count = 0
+    tab._hidden_diagnostic_count_cache = 0
+    tab._hidden_diagnostic_cache_len = 0
+    tab._log_status_refresh_pending = False
+    tab._history_rebuild_entries.clear()
+    tab._history_refresh_scheduled = False
+    tab._history_refresh_token += 1
+    tab.log_text.clear()
+    tab._refresh_status_summary(0)
+
+
+def _apply_shared_log_clear(tab, generation: int, sequence: int) -> None:
+    if getattr(tab, "_closing", False):
+        return
+    generation = int(generation)
+    sequence = int(sequence)
+    if generation < int(tab._log_generation):
+        return
+    if generation == int(tab._log_generation) and int(tab._last_log_sequence) > sequence:
+        return
+    tab._log_generation = generation
+    tab._last_log_sequence = sequence
+    _reset_log_tab(tab)
+
+
+def _take_history_refresh_batch(entries: list, *, entry_limit: int, char_limit: int) -> list:
+    batch = []
+    batch_chars = 0
+    for entry in entries[:entry_limit]:
+        text = str(entry[1] or "")
+        entry_chars = len(text) if text.endswith("\n") else len(text) + 1
+        if batch and batch_chars + entry_chars > char_limit:
+            break
+        batch.append(entry)
+        batch_chars += entry_chars
+        if batch_chars >= char_limit:
+            break
+    return batch
+
+
+class _LogVisibilityTimerFilter(QObject):
+    def __init__(self, timer: QTimer, parent: QObject):
+        super().__init__(parent)
+        self._timer = timer
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Hide:
+            self._timer.stop()
+        return super().eventFilter(watched, event)
+
+
+class _LogBackgroundPreloadMixin:
+    def prime_background_load(self) -> bool:
+        self._background_preload_requested = True
+        self._background_preload_done = True
+        return True
+
+    def is_background_preload_complete(self) -> bool:
+        return bool(self._background_preload_requested and self._background_preload_done)
+
+    def cancel_background_preload(self, *, reason: str):
+        del reason
+        return BackgroundPreloadCancellationReceipt.immediate()
+
+    def closeEvent(self, event) -> None:
+        self.shutdown()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self.shutdown()
+        super().deleteLater()
+
+
+class LogTab(_LogBackgroundPreloadMixin, QWidget):
     """独立的系统运行日志组件，负责承接 stdout/stderr 与系统日志事件。"""
 
     _DIAGNOSTIC_LOG_MARKERS = (
@@ -33,6 +109,7 @@ class LogTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._closing = False
         self._log_history = []
         self._visible_log_count = 0
         self._hidden_diagnostic_count_cache = 0
@@ -42,11 +119,13 @@ class LogTab(QWidget):
         self._history_rebuild_entries = []
         self._history_refresh_token = 0
         self._history_refresh_batch_max = 96
+        self._history_refresh_char_max = 24_000
         self._history_refresh_delay_ms = 250
         self._history_refresh_interval_ms = 25
+        self._background_preload_requested = False
+        self._background_preload_done = False
         self._init_ui()
-        self._setup_log_redirect()
-        event_bus.sig_system_log.connect(self._on_log_msg, type=Qt.ConnectionType.QueuedConnection)
+        self._setup_log_capture()
 
     @staticmethod
     def _prepare_toolbar_widget(widget):
@@ -158,23 +237,22 @@ class LogTab(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        log_flush_timer = getattr(self, "_log_flush_timer", None)
+        if log_flush_timer is not None and not log_flush_timer.isActive():
+            log_flush_timer.start()
         if self._refresh_from_history_pending:
             self._schedule_history_refresh()
         else:
+            self._flush_log_buffer()
             self._refresh_status_summary()
 
     def _clear_logs(self):
-        self._log_buffer.clear()
-        self._log_history.clear()
-        self._visible_log_count = 0
-        self._hidden_diagnostic_count_cache = 0
-        self._hidden_diagnostic_cache_len = 0
-        self._log_status_refresh_pending = False
-        self._history_rebuild_entries.clear()
-        self._history_refresh_scheduled = False
-        self._history_refresh_token += 1
-        self.log_text.clear()
-        self._refresh_status_summary(0)
+        log_service = getattr(self, "_log_service", None)
+        if log_service is not None:
+            generation, sequence = log_service.clear()
+            self._log_generation = generation
+            self._last_log_sequence = sequence
+        _reset_log_tab(self)
 
     def _refresh_status_summary(self, visible_count: int | None = None):
         total = len(getattr(self, "_log_history", []) or [])
@@ -328,114 +406,72 @@ class LogTab(QWidget):
         if auto_scroll:
             self.log_text.ensureCursorVisible()
 
-    def _setup_log_redirect(self):
-        """将当前进程的 stdout/stderr 重定向，统一往 event_bus 发送。"""
-
-        def _resolve_original_stream(*candidates):
-            for candidate in candidates:
-                current = candidate
-                visited = set()
-                while current is not None and id(current) not in visited:
-                    visited.add(id(current))
-                    if getattr(current, "_is_ui_log_redirect", False):
-                        current = getattr(current, "original", None)
-                        continue
-                    if hasattr(current, "write"):
-                        return current
-                    break
-            return None
-
-        def _safe_fallback_write(message):
-            fallback = _resolve_original_stream(
-                getattr(sys, "__stderr__", None),
-                getattr(sys, "__stdout__", None),
-                getattr(sys, "stderr", None),
-                getattr(sys, "stdout", None),
-            )
-            if fallback is None:
-                return
-            try:
-                fallback.write(message)
-                if hasattr(fallback, "flush"):
-                    fallback.flush()
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                pass
-
-        class LogStream(io.TextIOBase):
-            _is_ui_log_redirect = True
-
-            def __init__(self, original):
-                super().__init__()
-                self.original = _resolve_original_stream(original)
-
-            def write(self, text):
-                if not text:
-                    return 0
-
-                if text.strip():
-                    try:
-                        if self.original is not None:
-                            self.original.write(text)
-                            if hasattr(self.original, "flush"):
-                                self.original.flush()
-                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                        _safe_fallback_write(f"[LogStream] 原始流写入失败: {exc}\n")
-
-                    try:
-                        event_bus.sig_system_log.emit("info", text)
-                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                        _safe_fallback_write(f"[LogStream] 事件总线发送失败: {exc}\n")
-                return len(text)
-
-            def flush(self):
-                try:
-                    if self.original is not None and hasattr(self.original, "flush"):
-                        self.original.flush()
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    _safe_fallback_write(f"[LogStream] flush失败: {exc}\n")
-
-        stdout_original = _resolve_original_stream(
-            getattr(sys, "stdout", None),
-            getattr(sys, "__stdout__", None),
-            getattr(sys, "__stderr__", None),
-        )
-        stderr_original = _resolve_original_stream(
-            getattr(sys, "stderr", None),
-            getattr(sys, "__stderr__", None),
-            stdout_original,
-        )
-
-        sys.stdout = LogStream(stdout_original)
-        sys.stderr = LogStream(stderr_original)
-
+    def _setup_log_capture(self):
         self._log_buffer = []
         self._log_buffer_max = 3000
         self._log_flush_batch_max = 48
         self._log_status_refresh_pending = False
         self._log_flush_timer = QTimer(self)
+        self._log_flush_timer.setInterval(200)
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
-        self._log_flush_timer.start(200)
-
-    @staticmethod
-    def _restore_log_redirect() -> None:
-        for stream_name in ("stdout", "stderr"):
-            current = getattr(sys, stream_name, None)
-            if not getattr(current, "_is_ui_log_redirect", False):
-                continue
-            original = getattr(current, "original", None)
-            if original is not None:
-                setattr(sys, stream_name, original)
+        self._log_visibility_filter = _LogVisibilityTimerFilter(self._log_flush_timer, self)
+        self.installEventFilter(self._log_visibility_filter)
+        self._log_service = get_log_buffer_service()
+        self._log_service.acquire()
+        self._log_generation = 0
+        self._last_log_sequence = 0
+        self._log_service.sig_versioned_entry.connect(
+            self._on_versioned_log_msg,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
+        self._shared_clear_slot = partial(_apply_shared_log_clear, self)
+        self._log_service.sig_cleared.connect(
+            self._shared_clear_slot,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
+        generation, sequence, history = self._log_service.snapshot_versioned()
+        self._log_generation = generation
+        self._last_log_sequence = sequence
+        for _entry_sequence, level, text in history:
+            self._on_log_msg(level, text)
 
     def shutdown(self) -> None:
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
+        self._background_preload_done = True
+        self._history_refresh_scheduled = False
+        self._history_rebuild_entries.clear()
+        self._history_refresh_token += 1
         log_flush_timer = getattr(self, "_log_flush_timer", None)
         if log_flush_timer is not None:
             log_flush_timer.stop()
         task_status_panel = getattr(self, "task_status_panel", None)
         if task_status_panel is not None:
             task_status_panel.shutdown()
-        with suppress(AttributeError, RuntimeError, TypeError):
-            event_bus.sig_system_log.disconnect(self._on_log_msg)
-        self._restore_log_redirect()
+        log_service = getattr(self, "_log_service", None)
+        if log_service is not None:
+            with suppress(AttributeError, RuntimeError, TypeError):
+                log_service.sig_versioned_entry.disconnect(self._on_versioned_log_msg)
+            with suppress(AttributeError, RuntimeError, TypeError):
+                log_service.sig_cleared.disconnect(self._shared_clear_slot)
+            log_service.release()
+            self._log_service = None
+
+    def _on_versioned_log_msg(self, generation: int, sequence: int, level: str, text: str) -> None:
+        service = getattr(self, "_log_service", None)
+        if service is None or int(generation) != int(service.generation):
+            return
+        if int(generation) < int(self._log_generation):
+            return
+        if int(generation) > int(self._log_generation):
+            self._log_generation = int(generation)
+            self._last_log_sequence = 0
+            _reset_log_tab(self)
+        if int(sequence) <= int(self._last_log_sequence):
+            return
+        self._last_log_sequence = int(sequence)
+        self._on_log_msg(level, text)
 
     def _on_log_msg(self, level, text):
         selected_levels = self.level_filter.selected_values() if hasattr(self, "level_filter") else set()
@@ -487,6 +523,8 @@ class LogTab(QWidget):
         QTimer.singleShot(max(0, int(delay)), lambda token=token: self._start_history_refresh(token))
 
     def _start_history_refresh(self, token: int | None = None):
+        if getattr(self, "_closing", False):
+            return
         if token is not None and token != self._history_refresh_token:
             return
         self._history_refresh_scheduled = False
@@ -507,13 +545,20 @@ class LogTab(QWidget):
         self._drain_history_refresh()
 
     def _drain_history_refresh(self):
+        if getattr(self, "_closing", False):
+            return
         if not self.isVisible():
             self._history_rebuild_entries.clear()
             self._refresh_from_history_pending = True
             return
 
         batch_size = max(1, int(getattr(self, "_history_refresh_batch_max", 96) or 96))
-        pending_entries = self._history_rebuild_entries[:batch_size]
+        char_budget = max(1, int(getattr(self, "_history_refresh_char_max", 24_000) or 24_000))
+        pending_entries = _take_history_refresh_batch(
+            self._history_rebuild_entries,
+            entry_limit=batch_size,
+            char_limit=char_budget,
+        )
         del self._history_rebuild_entries[: len(pending_entries)]
         self._append_log_entries(
             pending_entries,
@@ -529,6 +574,8 @@ class LogTab(QWidget):
             QTimer.singleShot(0, self._flush_log_buffer)
 
     def _flush_log_buffer(self):
+        if getattr(self, "_closing", False):
+            return
         if self._history_refresh_scheduled or self._history_rebuild_entries:
             return
 

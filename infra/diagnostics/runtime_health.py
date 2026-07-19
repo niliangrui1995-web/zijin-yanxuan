@@ -4,6 +4,7 @@ import json
 import os
 import threading
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,10 +12,16 @@ from typing import Any
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
+from core.f5_activation_gate import f5_snapshot_read_locked
 from core.process_watchdog import collect_process_snapshot
 from domains.runtime.fault_tolerance import provider_fault_tolerance
 from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
 from infra.market_data.provider_ports import ProviderHealthPort, ProviderHealthSnapshot
+from ui.workspaces.tab_registry import (
+    STATIC_LINEAGE_FIELDS,
+    lineage_exclusion_tab_definitions,
+    lineage_tab_definitions,
+)
 
 try:  # pragma: no cover - psutil is optional outside the packaged runtime.
     import psutil
@@ -42,125 +49,15 @@ EVENT_SIGNAL_NAMES = (
 )
 
 KEY_VIEW_LINEAGE = {
-    "stock_candidates": {
-        "view": "stock_candidates",
-        "source": "workspace_stock_context",
-        "provider": "workspace_stock_context",
-        "cache_refs": ["global_store.quotes", "workspace.collect_stock_context"],
-        "triggered_network": False,
-        "fallback_or_degraded": False,
-        "updated_at": "",
-        "errors": [],
-        "warnings": [],
-    },
-    "asian_market": {
-        "view": "asian_market",
-        "source": "asian_market local cache + realtime quote cache",
-        "provider": "AsianMarketWorker/yfinance/cache",
-        "cache_refs": [
-            "data/Cache/asian_klines_latest.json",
-            "data/Cache/asian_rt_latest.json",
-            "global_store.quotes",
-        ],
-        "triggered_network": True,
-        "fallback_or_degraded": None,
-        "updated_at": "",
-        "errors": [],
-        "warnings": [],
-        "provider_fault_tolerance": {},
-    },
-    "na_daily": {
-        "view": "na_daily",
-        "source": "daily report markdown/json + global_store.quotes",
-        "provider": "NADailyTab local report reader",
-        "cache_refs": [
-            "daily report output:report json/markdown",
-            "global_store.quotes",
-        ],
-        "triggered_network": True,
-        "fallback_or_degraded": None,
-        "updated_at": "",
-        "errors": [],
-        "warnings": [],
-        "provider_fault_tolerance": {},
-    },
-    "ai_industry_chain": {
-        "view": "ai_industry_chain",
-        "source": "AI industry chain workbook + local market data",
-        "provider": "AIIndustryChainTab workbook reader",
-        "cache_refs": [
-            "AI industry chain workbook",
-            "local market data provider",
-            "global_store.quotes",
-        ],
-        "triggered_network": True,
-        "fallback_or_degraded": None,
-        "updated_at": "",
-        "errors": [],
-        "warnings": [],
-        "provider_fault_tolerance": {},
-    },
-    "scan": {
-        "view": "scan",
-        "source": "DataStore.scan_cache",
-        "provider": "scan_runtime_service",
-        "cache_refs": ["data/vcp_hunter.db:kv_store.scan_cache", "data/scan_cache.json.migrated"],
-        "triggered_network": False,
-        "fallback_or_degraded": False,
-        "updated_at": "",
-        "errors": [],
-        "warnings": [],
-        "provider_fault_tolerance": {},
-    },
-    "lhb": {
-        "view": "lhb",
-        "source": "LhbPoolManager cache + local_quote_snapshot",
-        "provider": "LhbPoolManager",
-        "cache_refs": ["data/Cache/lhb_pool_30d.json", "global_store.quotes", "local_tdx_cache"],
-        "triggered_network": False,
-        "fallback_or_degraded": False,
-    },
-    "foreign_block": {
-        "view": "foreign_block",
-        "source": "foreign_block_trade_latest.json",
-        "cache_refs": ["data/Cache/foreign_block_trade_latest.json"],
-        "triggered_network": False,
-        "fallback_or_degraded": False,
-    },
-    "earnings": {
-        "view": "earnings",
-        "source": "earnings_state / local display window",
-        "cache_refs": ["data/vcp_hunter.db:earnings_state", "global_store.quotes"],
-        "triggered_network": False,
-        "fallback_or_degraded": False,
-    },
-    "fund_holdings": {
-        "view": "fund_holdings",
-        "source": "fund_holdings_store",
-        "cache_refs": ["data/vcp_hunter.db:fund holdings tables", "global_store.quotes"],
-        "triggered_network": False,
-        "fallback_or_degraded": False,
-    },
-    "watchlist": {
-        "view": "watchlist",
-        "source": "watchlist_vm + global_store.quotes",
-        "provider": "watchlist_vm/global_store",
-        "cache_refs": ["watchlist store", "global_store.quotes"],
-        "triggered_network": True,
-        "fallback_or_degraded": None,
-        "updated_at": "",
-        "errors": [],
-        "warnings": [],
-        "provider_fault_tolerance": {},
-    },
+    definition.key: definition.lineage.as_runtime_defaults(definition.key)
+    for definition in lineage_tab_definitions()
+    if definition.lineage is not None
 }
-
-DATA_LINEAGE_COVERED_TABS = tuple(KEY_VIEW_LINEAGE.keys())
+DATA_LINEAGE_COVERED_TABS = tuple(KEY_VIEW_LINEAGE)
 DATA_LINEAGE_EXCLUDED_TABS = {
-    "system_log": {
-        "reason": "non_data_tab",
-        "description": "system_log is an operational log surface, not a data table or upstream data source.",
-    },
+    definition.key: definition.lineage_exclusion.as_runtime_defaults()
+    for definition in lineage_exclusion_tab_definitions()
+    if definition.lineage_exclusion is not None
 }
 
 
@@ -213,21 +110,29 @@ def _active_task_snapshot() -> dict[str, Any]:
         from core.background_job_runner import background_job_runner
 
         manager = background_job_runner._resolve_manager()
-        active_workers = getattr(manager, "active_workers", {}) or {}
-    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
-        active_workers = {}
-
-    task_ids = sorted(str(task_id) for task_id in active_workers.keys())
-    workers = []
-    for task_id, worker in sorted(active_workers.items(), key=lambda item: str(item[0])):
-        workers.append(
+        active_workers = getattr(manager, "active_workers")
+        if not isinstance(active_workers, dict):
+            raise TypeError("active_workers must be a dictionary")
+        task_ids = sorted(str(task_id) for task_id in active_workers)
+        workers = [
             {
                 "task_id": str(task_id),
                 "worker_class": worker.__class__.__name__,
                 "cancelled": bool(getattr(worker, "_is_cancelled", False)),
             }
-        )
+            for task_id, worker in sorted(active_workers.items(), key=lambda item: str(item[0]))
+        ]
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+        return {
+            "available": False,
+            "count": None,
+            "ids": [],
+            "workers": [],
+            "diagnostic_error": exc.__class__.__name__,
+        }
+
     return {
+        "available": True,
         "count": len(task_ids),
         "ids": task_ids,
         "workers": workers,
@@ -306,30 +211,33 @@ def _mb(value: int | float | None) -> float:
     return round(float(value or 0) / 1024.0 / 1024.0, 1)
 
 
-def _process_info(process) -> dict[str, Any] | None:
+def _process_info(process, *, include_thread_count: bool = True) -> dict[str, Any] | None:
     if psutil is None:
         return None
     try:
-        memory = process.memory_info()
-        item = {
-            "pid": process.pid,
-            "name": process.name(),
-            "rss_mb": _mb(getattr(memory, "rss", 0)),
-            "vms_mb": _mb(getattr(memory, "vms", 0)),
-            "thread_count": process.num_threads(),
-        }
-        private_value = getattr(memory, "private", None)
-        if private_value is not None:
-            item["private_mb"] = _mb(private_value)
-        working_set = getattr(memory, "wset", None)
-        if working_set is not None:
-            item["working_set_mb"] = _mb(working_set)
-        return item
+        oneshot_factory = getattr(process, "oneshot", None)
+        with oneshot_factory() if callable(oneshot_factory) else nullcontext():
+            memory = process.memory_info()
+            item = {
+                "pid": process.pid,
+                "name": process.name(),
+                "rss_mb": _mb(getattr(memory, "rss", 0)),
+                "vms_mb": _mb(getattr(memory, "vms", 0)),
+            }
+            if include_thread_count:
+                item["thread_count"] = process.num_threads()
+            private_value = getattr(memory, "private", None)
+            if private_value is not None:
+                item["private_mb"] = _mb(private_value)
+            working_set = getattr(memory, "wset", None)
+            if working_set is not None:
+                item["working_set_mb"] = _mb(working_set)
+            return item
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
         return None
 
 
-def _webengine_snapshot() -> dict[str, Any]:
+def _webengine_snapshot(*, detailed: bool = True) -> dict[str, Any]:
     if psutil is None:
         return {
             "available": False,
@@ -340,9 +248,18 @@ def _webengine_snapshot() -> dict[str, Any]:
         }
     try:
         process = psutil.Process(os.getpid())
-        children = [_process_info(child) for child in process.children(recursive=True)]
+        children = [
+            _process_info(child, include_thread_count=detailed)
+            for child in process.children(recursive=False)
+        ]
     except (OSError, RuntimeError, TypeError, ValueError, psutil.Error):
-        children = []
+        return {
+            "available": False,
+            "count": None,
+            "rss_mb": None,
+            "private_mb": None,
+            "processes": [],
+        }
     webengine_children = [
         item
         for item in children
@@ -463,7 +380,7 @@ def _f5_scheduler_snapshot(main_window) -> dict[str, Any]:
             pending_count = len(pending_tasks)
         except TypeError:
             pending_count = None
-    return {
+    snapshot = {
         "workspace_available": workspace is not None,
         "scheduler_active": bool(scheduler is not None and getattr(scheduler, "is_running", lambda: False)()),
         "pending_tasks": pending_count,
@@ -471,8 +388,47 @@ def _f5_scheduler_snapshot(main_window) -> dict[str, Any]:
         "frame_budget_ms": int(getattr(scheduler, "_frame_budget_ms", 0) or 0) if scheduler is not None else 0,
         "max_tasks_per_frame": int(getattr(scheduler, "_max_tasks_per_frame", 0) or 0) if scheduler is not None else 0,
     }
+    snapshot.update(_f5_job_controller_snapshot(main_window))
+    return snapshot
 
 
+def _f5_job_controller_snapshot(main_window) -> dict[str, Any]:
+    controller = None
+    try:
+        controller = getattr(main_window, "_f5_job_controller", None)
+        if controller is None:
+            return {
+                "job_controller_present": False,
+                "job_controller_diagnostics_available": True,
+                "job_controller_running": False,
+            }
+        running = getattr(controller, "is_running")
+        if not isinstance(running, bool):
+            raise TypeError("F5 controller is_running must be a boolean")
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        return {
+            "job_controller_present": controller is not None,
+            "job_controller_diagnostics_available": False,
+            "job_controller_running": None,
+            "job_controller_diagnostic_error": exc.__class__.__name__,
+        }
+    return {
+        "job_controller_present": True,
+        "job_controller_diagnostics_available": True,
+        "job_controller_running": running,
+    }
+
+
+def _active_f5_rps_path(fallback: str) -> str:
+    try:
+        from infra.storage.f5_snapshot_repository import resolve_active_rps_path
+
+        return resolve_active_rps_path(fallback)
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return fallback
+
+
+@f5_snapshot_read_locked
 def _f5_cache_snapshot() -> dict[str, Any]:
     try:
         from core.runtime_paths import APP_VERSION, RPS_CACHE_FILE
@@ -480,7 +436,7 @@ def _f5_cache_snapshot() -> dict[str, Any]:
         APP_VERSION = ""
         RPS_CACHE_FILE = ""
 
-    path = Path(RPS_CACHE_FILE) if RPS_CACHE_FILE else None
+    path = Path(_active_f5_rps_path(RPS_CACHE_FILE)) if RPS_CACHE_FILE else None
     snapshot = {
         "app_version": APP_VERSION,
         "path": str(path) if path else "",
@@ -511,52 +467,92 @@ def _f5_cache_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def _workspace_lineage_specs(workspace) -> dict[str, dict[str, Any]]:
+    tab_specs = getattr(workspace, "tab_specs", None)
+    specs = list(tab_specs() or []) if callable(tab_specs) else []
+    return {str(item.get("key") or "").strip(): item for item in specs}
+
+
+def _new_lineage_entry(key: str, defaults: dict[str, Any], spec: dict, tab) -> dict[str, Any]:
+    entry = dict(defaults)
+    entry.update(
+        {
+            "key": key,
+            "title": str(spec.get("title") or ""),
+            "group": str(spec.get("group") or ""),
+            "loaded": tab is not None,
+            "class_name": tab.__class__.__name__ if tab is not None else "",
+            "row_count": _tab_row_count(tab),
+            "last_updated": "",
+            "trade_date": "",
+            "network_capable": bool(defaults.get("network_capable", False)),
+        }
+    )
+    return entry
+
+
+def _merge_custom_lineage(entry: dict[str, Any], tab) -> None:
+    custom_getter = getattr(tab, "get_data_lineage", None)
+    if not callable(custom_getter):
+        return
+    try:
+        custom = custom_getter() or {}
+        if not isinstance(custom, dict):
+            return
+        rejected_fields = sorted(STATIC_LINEAGE_FIELDS.intersection(custom))
+        if rejected_fields:
+            entry["lineage_error"] = True
+            entry["static_override_rejected"] = rejected_fields
+        entry.update(
+            {field: value for field, value in custom.items() if field not in STATIC_LINEAGE_FIELDS}
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        entry["lineage_error"] = True
+
+
+def _lineage_status_text(tab) -> str:
+    status_label = getattr(tab, "lbl_status", None)
+    if status_label is None:
+        return ""
+    try:
+        return str(status_label.text() or "").strip()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
 def _workspace_lineage(main_window) -> list[dict[str, Any]]:
     workspace = getattr(main_window, "_workspace", None)
     if workspace is None:
         return []
-
-    tab_specs = getattr(workspace, "tab_specs", None)
-    specs = list(tab_specs() or []) if callable(tab_specs) else []
+    specs_by_key = _workspace_lineage_specs(workspace)
     get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
     lineage = []
 
     for key, defaults in KEY_VIEW_LINEAGE.items():
-        spec = next((item for item in specs if str(item.get("key") or "").strip() == key), {})
         tab = get_loaded_tab(key) if callable(get_loaded_tab) else None
-        entry = dict(defaults)
-        entry.update(
-            {
-                "key": key,
-                "title": str(spec.get("title") or ""),
-                "group": str(spec.get("group") or ""),
-                "loaded": tab is not None,
-                "class_name": tab.__class__.__name__ if tab is not None else "",
-                "row_count": _tab_row_count(tab),
-                "last_updated": "",
-                "trade_date": "",
-            }
-        )
-        custom_getter = getattr(tab, "get_data_lineage", None)
-        if callable(custom_getter):
-            try:
-                custom = custom_getter() or {}
-                if isinstance(custom, dict):
-                    entry.update(custom)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                entry["lineage_error"] = True
-        status_label = getattr(tab, "lbl_status", None)
-        status_text = ""
-        if status_label is not None:
-            try:
-                status_text = str(status_label.text() or "").strip()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                status_text = ""
+        entry = _new_lineage_entry(key, defaults, specs_by_key.get(key, {}), tab)
+        _merge_custom_lineage(entry, tab)
+        _merge_runtime_network_activity(entry, tab)
+        status_text = _lineage_status_text(tab)
         if status_text:
             entry["status_text"] = status_text
         lineage.append(entry)
 
     return lineage
+
+
+def _merge_runtime_network_activity(entry: dict[str, Any], tab) -> None:
+    try:
+        observed_network = getattr(tab, "_runtime_network_triggered", None)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        entry["lineage_error"] = True
+        return
+    if observed_network is None:
+        return
+    if type(observed_network) is not bool:
+        entry["lineage_error"] = True
+        return
+    entry["triggered_network"] = bool(observed_network or entry.get("triggered_network") is True)
 
 
 def _workspace_lineage_exclusions(main_window) -> list[dict[str, Any]]:
@@ -603,12 +599,29 @@ def _ui_stall_snapshot() -> dict[str, Any]:
         return {"installed": False, "error": "snapshot_failed"}
 
 
-def collect_runtime_health(main_window=None) -> dict[str, Any]:
+def _runtime_health_root(main_window=None):
     app = QApplication.instance()
     root = main_window
     if root is None and app is not None:
         active = app.activeWindow()
         root = active if active is not None else (app.topLevelWidgets()[0] if app.topLevelWidgets() else None)
+    return root
+
+
+def collect_runtime_health_summary(main_window=None) -> dict[str, Any]:
+    """Collect only the fields needed by frequent stability-cycle checkpoints."""
+    root = _runtime_health_root(main_window)
+    return {
+        "process": collect_process_snapshot(),
+        "background_tasks": _active_task_snapshot(),
+        "timers": _timer_snapshot(root),
+        "event_bus": _event_bus_snapshot(),
+        "webengine": _webengine_snapshot(detailed=False),
+    }
+
+
+def collect_runtime_health(main_window=None) -> dict[str, Any]:
+    root = _runtime_health_root(main_window)
 
     process = collect_process_snapshot()
     return {

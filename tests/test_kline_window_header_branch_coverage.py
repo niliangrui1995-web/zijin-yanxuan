@@ -137,26 +137,27 @@ def test_resolve_vcp_context_handles_watchlist_workspace_and_failures(monkeypatc
         lambda **kwargs: captured.append(kwargs) or {"resolved": True},
     )
     merges = []
-    monkeypatch.setattr(header, "merge_workspace_earnings_context", lambda **kwargs: merges.append(kwargs))
+    monkeypatch.setattr(header, "merge_workspace_kline_context", lambda **kwargs: merges.append(kwargs))
 
     monkeypatch.setattr(
         header.watchlist_vm,
         "get_watchlist_data",
         lambda: {"000001": {"watch": True}},
     )
-    workspace = SimpleNamespace(get_scan_results=lambda: [{"scan": True}])
+    workspace = SimpleNamespace()
     window = SimpleNamespace(main_window=SimpleNamespace(_workspace=workspace))
     assert header.resolve_vcp_context(window, "000001", "Ping", {"item": True}) == {"resolved": True}
     assert captured[-1]["watchlist_entry"] == {"watch": True}
-    assert captured[-1]["scan_results"] == [{"scan": True}]
+    assert captured[-1]["scan_results"] == []
     assert merges and merges[-1]["code_text"] == "000001"
+    assert merges[-1]["vcp_data"] == {"resolved": True}
 
     monkeypatch.setattr(
         header.watchlist_vm,
         "get_watchlist_data",
         lambda: (_ for _ in ()).throw(OSError("bad")),
     )
-    broken_workspace = SimpleNamespace(get_scan_results=lambda: (_ for _ in ()).throw(RuntimeError("bad")))
+    broken_workspace = SimpleNamespace()
     header.resolve_vcp_context(SimpleNamespace(main_window=SimpleNamespace(_workspace=broken_workspace)), "2", "Two")
     assert captured[-1]["watchlist_entry"] == {}
     assert captured[-1]["scan_results"] == []

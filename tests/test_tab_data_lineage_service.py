@@ -36,6 +36,15 @@ def test_tab_data_lineage_service_returns_rows_signature_and_lineage():
     assert lineage["triggered_network"] is False
     assert lineage["fallback_or_degraded"] is False
     assert lineage["provider_fault_tolerance"]["recent_cache_hit_count"] == 3
+    assert service.describe([{"code": "300750"}]).lineage.as_dynamic_dict()["row_count"] == 1
+    assert {
+        "key",
+        "view",
+        "source",
+        "provider",
+        "cache_refs",
+        "network_capable",
+    }.isdisjoint(service.describe([]).lineage.as_dynamic_dict())
 
 
 def test_tab_data_lineage_service_marks_provider_degraded():

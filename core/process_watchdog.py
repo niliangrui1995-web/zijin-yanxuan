@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import traceback
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -32,21 +33,23 @@ def _snapshot_via_psutil() -> dict[str, Any] | None:
 
     try:
         process = psutil.Process()
-        memory = process.memory_info()
-        snapshot = {
-            "pid": process.pid,
-            "rss_mb": _bytes_to_mb(getattr(memory, "rss", 0)),
-            "vms_mb": _bytes_to_mb(getattr(memory, "vms", 0)),
-            "thread_count": process.num_threads(),
-            "source": "psutil",
-        }
-        private_value = getattr(memory, "private", None)
-        if private_value is not None:
-            snapshot["private_mb"] = _bytes_to_mb(private_value)
-        working_set = getattr(memory, "wset", None)
-        if working_set is not None:
-            snapshot["working_set_mb"] = _bytes_to_mb(working_set)
-        return snapshot
+        oneshot_factory = getattr(process, "oneshot", None)
+        with oneshot_factory() if callable(oneshot_factory) else nullcontext():
+            memory = process.memory_info()
+            snapshot = {
+                "pid": process.pid,
+                "rss_mb": _bytes_to_mb(getattr(memory, "rss", 0)),
+                "vms_mb": _bytes_to_mb(getattr(memory, "vms", 0)),
+                "thread_count": process.num_threads(),
+                "source": "psutil",
+            }
+            private_value = getattr(memory, "private", None)
+            if private_value is not None:
+                snapshot["private_mb"] = _bytes_to_mb(private_value)
+            working_set = getattr(memory, "wset", None)
+            if working_set is not None:
+                snapshot["working_set_mb"] = _bytes_to_mb(working_set)
+            return snapshot
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return None
 

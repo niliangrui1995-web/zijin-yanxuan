@@ -8,7 +8,7 @@ from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ui.components import SearchFilter
-from ui.models.table_cell_renderers import build_stock_cell_context, render_stock_cell
+from ui.models.table_cell_renderers import build_stock_cell_context, can_use_native_cell_paint, render_stock_cell
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
@@ -249,6 +249,12 @@ class StockItemDelegate(QStyledItemDelegate):
             widget=widget,
             flash_duration=self.flash_duration,
         )
-        render_stock_cell(ctx)
+        if can_use_native_cell_paint(ctx):
+            opt.state &= ~QStyle.StateFlag.State_HasFocus
+            opt.state &= ~QStyle.StateFlag.State_FocusAtBorder
+            opt.state &= ~QStyle.StateFlag.State_KeyboardFocusChange
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        else:
+            render_stock_cell(ctx)
 
         painter.restore()

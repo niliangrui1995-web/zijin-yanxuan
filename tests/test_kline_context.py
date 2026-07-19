@@ -1,5 +1,6 @@
 import pandas as pd
 
+from app.services.stock_context_model_service import StockSignal
 from ui import kline_chart_payload as payload_module
 from ui.kline_chart_payload import (
     build_kline_echarts_payload,
@@ -12,7 +13,6 @@ from ui.kline_chart_payload import (
     resolve_kline_vcp_context,
 )
 from ui.theme import THEME_YAOHEI, THEME_YUEBAI, theme_manager
-from ui.workspaces.stock_signal import StockSignal
 
 
 def test_embedded_scan_signal_matches_trimmed_code_without_rewriting_payload_code():

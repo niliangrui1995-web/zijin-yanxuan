@@ -78,6 +78,11 @@ def _sync_launch_at_login_action(window) -> None:
         action.blockSignals(previous)
 
 
+def _sync_density_actions(window, density: str) -> None:
+    window._act_density_compact.setChecked(density == "紧凑")
+    window._act_density_comfort.setChecked(density != "紧凑")
+
+
 class MarketPulseStrip(QWidget):
     """A thin titlebar pulse strip that stays outside the content layout."""
 
@@ -87,6 +92,7 @@ class MarketPulseStrip(QWidget):
         self._phase = 0.0
         self._brand = QColor("#B93A32")
         self._deep = QColor("#6F211D")
+        self._disposed = False
         self.setObjectName("marketPulseStrip")
         self.setFixedHeight(3)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -101,7 +107,6 @@ class MarketPulseStrip(QWidget):
 
             theme_manager.sig_theme_changed.connect(self._on_theme_changed)
         self._sync_geometry()
-        self._timer.start()
 
     def _tick(self) -> None:
         self._phase = (self._phase + 0.018) % 1.0
@@ -141,6 +146,26 @@ class MarketPulseStrip(QWidget):
     def hideEvent(self, event) -> None:
         self._timer.stop()
         super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._dispose()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._dispose()
+        super().deleteLater()
+
+    def _dispose(self) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        self._timer.stop()
+        with suppress(AttributeError, RuntimeError, TypeError):
+            self._host.removeEventFilter(self)
+        with suppress(AttributeError, RuntimeError, TypeError):
+            from ui.theme import theme_manager
+
+            theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
 
     def _sync_geometry(self) -> None:
         if self._host is None:
@@ -227,12 +252,17 @@ class StatusFlowStrip(QWidget):
         self._phase = 0.0
         if animate and next_mode != "neutral":
             self._ticks_left = 44 if next_mode == "error" else 34
-            if not self._timer.isActive():
-                self._timer.start()
         else:
             self._ticks_left = 0
-            self._timer.stop()
+        self._sync_timer()
         self.update()
+
+    def _sync_timer(self) -> None:
+        if self._ticks_left > 0 and self.isVisible():
+            if not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
 
     def _tick(self) -> None:
         self._phase = min(1.0, self._phase + 0.035)
@@ -255,6 +285,10 @@ class StatusFlowStrip(QWidget):
     def hideEvent(self, event) -> None:
         self._timer.stop()
         super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_timer()
 
     def _sync_geometry(self) -> None:
         if self._host is None:
@@ -332,9 +366,17 @@ class QuotePulseDot(QWidget):
 
     def pulse(self) -> None:
         self._pulse_started = time.perf_counter()
-        if not self._timer.isActive():
-            self._timer.start()
+        self._sync_timer()
         self.update()
+
+    def _sync_timer(self) -> None:
+        if self._pulse_started > 0 and self._pulse_progress() < 1.0 and self.isVisible():
+            if not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
+        if self._pulse_progress() >= 1.0:
+            self._pulse_started = 0.0
 
     def _pulse_progress(self) -> float:
         if self._pulse_started <= 0:
@@ -350,6 +392,10 @@ class QuotePulseDot(QWidget):
     def hideEvent(self, event) -> None:
         self._timer.stop()
         super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_timer()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -418,7 +464,6 @@ class MainWindowStatusBar(QFrame):
 
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self.refresh_clock)
-        self._clock_timer.start(1000)
         self.refresh_clock()
 
         self.apply_theme()
@@ -439,6 +484,24 @@ class MainWindowStatusBar(QFrame):
         import datetime
 
         self.lbl_clock.setText(datetime.datetime.now().strftime("%H:%M:%S"))
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.refresh_clock()
+        if not self._clock_timer.isActive():
+            self._clock_timer.start(1000)
+
+    def hideEvent(self, event) -> None:
+        self._clock_timer.stop()
+        super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._clock_timer.stop()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._clock_timer.stop()
+        super().deleteLater()
 
     def apply_theme(self):
         from ui.theme import theme_manager
@@ -1099,7 +1162,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
     window._act_density_comfort.triggered.connect(lambda: window._apply_table_density("舒适"))
 
     window._density_menu = density_menu
-    window._apply_table_density(app_config.table_density, persist=False)
+    _sync_density_actions(window, app_config.table_density)
 
     theme_menu = sys_menu.addMenu(f"界面主题：{theme_manager.current_theme_name}")
     install_menu_fade(theme_menu)

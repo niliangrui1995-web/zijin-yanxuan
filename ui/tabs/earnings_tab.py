@@ -1,32 +1,30 @@
 # -*- coding: utf-8 -*-
+from collections.abc import Mapping
 from contextlib import suppress
 from datetime import datetime
-from typing import TYPE_CHECKING, cast
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab, _show_kline_from_proxy_index
-
-if TYPE_CHECKING:
-    import pandas as pd
+from ui.tabs.base_stock_tab import (
+    BaseStockTab,
+    _is_direct_workspace_tab,
+    _show_kline_from_proxy_index,
+    mark_runtime_network_activity,
+)
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
 
 log = get_logger(__name__)
 EARNINGS_DISPLAY_TRADE_DAYS = 30
 EARNINGS_TYPE_OPTIONS = ("预告", "快报", "财报")
 EarningsRefreshService = None
 _EARNINGS_REFRESH_SERVICE_CLASS = None
-
-
-def _pandas_module():
-    import pandas as pd
-
-    return pd
 
 
 def _resolve_earnings_refresh_service_class():
@@ -47,7 +45,110 @@ def _default_earnings_scheduler(parent=None):
 EarningsScheduler = _default_earnings_scheduler
 
 
-class EarningsTab(BaseStockTab):
+def _is_st_stock_name(name: str) -> bool:
+    return "ST" in str(name or "").strip().upper()
+
+
+def _copy_mapping_rows(rows: object) -> list[dict]:
+    if not isinstance(rows, (list, tuple)):
+        return []
+    return [dict(row) for row in rows if isinstance(row, Mapping)]
+
+
+def _adapt_payload_rows(payload: object, method_name: str, *args) -> list[dict] | None:
+    adapter = getattr(payload, method_name, None)
+    if not callable(adapter):
+        return None
+    return _copy_mapping_rows(adapter(*args))
+
+
+def _records_from_payload(payload: object) -> list[dict]:
+    if payload is None:
+        return []
+    if isinstance(payload, Mapping):
+        return [dict(payload)]
+    if isinstance(payload, (list, tuple)):
+        return _copy_mapping_rows(payload)
+    rows = _adapt_payload_rows(payload, "to_dicts")
+    if rows is not None:
+        return rows
+    return _adapt_payload_rows(payload, "to_dict", "records") or []
+
+
+def _filter_out_st_records(rows: list[dict]) -> list[dict]:
+    return [
+        row
+        for row in rows
+        if not _is_st_stock_name(row.get("股票名称") or row.get("股票简称") or row.get("名称") or "")
+    ]
+
+
+def _finish_earnings_background_preload(tab, mode: str) -> None:
+    if mode == "warm_cache":
+        tab._background_preload_loading = False
+        tab._background_preload_done = True
+
+
+def _set_earnings_hit_status(tab, mode: str, record_count: int) -> None:
+    primary = "本地缓存加载中" if mode == "warm_cache" else "本次扫描命中"
+    tab._set_window_status(primary, tab._status_metric("新增 ", record_count, "只"))
+
+
+def _force_manual_earnings_scan(tab, date_list: list[str]) -> None:
+    mark_runtime_network_activity(tab)
+    tab._ensure_scheduler().force_manual_scan(date_list)
+
+
+class _EarningsBackgroundPreloadMixin:
+    def prime_background_load(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        self._background_preload_requested = True
+        if self._background_preload_done:
+            return False
+        self._patrol_started = True
+        scheduler = self._ensure_scheduler()
+        load_cached = getattr(scheduler, "load_cached_records_async", None)
+        if not callable(load_cached):
+            self._background_preload_done = True
+            return False
+        self._background_preload_loading = bool(load_cached())
+        if not self._background_preload_loading:
+            self._background_preload_done = True
+        return self._background_preload_loading
+
+    def is_background_preload_complete(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return True
+        return bool(
+            self._background_preload_requested
+            and self._background_preload_done
+            and not self._background_preload_loading
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        scheduler = self._ensure_scheduler()
+
+        def _reset() -> None:
+            scheduler._cache_load_generation += 1
+            self._background_preload_requested = False
+            self._background_preload_loading = False
+            self._background_preload_done = False
+            self._patrol_started = False
+            self._runtime_start_queued = False
+
+        return cancel_background_preload_tasks(
+            scheduler,
+            lifecycle_names=("warm-cache",),
+            task_ids=(task_registry.workspace("earnings_view_warm_cache"),),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._background_preload_loading,
+            runner=getattr(scheduler, "_job_runner", None),
+        )
+
+
+class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
     """业绩断层与预告高增监控面板"""
 
     F5_ROUTINE_SCAN_DELAY_MS = 12000
@@ -66,6 +167,9 @@ class EarningsTab(BaseStockTab):
         self._recalc_pe_timer = QTimer(self)
         self._recalc_pe_timer.setSingleShot(True)
         self._recalc_pe_timer.timeout.connect(self._recalc_pe_ttm)
+        self._f5_routine_scan_timer = QTimer(self)
+        self._f5_routine_scan_timer.setSingleShot(True)
+        self._f5_routine_scan_timer.timeout.connect(self._run_pending_routine_scan_after_f5)
 
         # 业绩页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
@@ -78,6 +182,9 @@ class EarningsTab(BaseStockTab):
         self._patrol_started = False
         self._runtime_start_queued = False
         self._pending_f5_routine_scan = False
+        self._background_preload_requested = False
+        self._background_preload_loading = False
+        self._background_preload_done = False
 
     def _ensure_scheduler(self):
         if self.scheduler is None:
@@ -324,7 +431,7 @@ class EarningsTab(BaseStockTab):
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
-        self._ensure_scheduler().force_manual_scan(date_list)
+        _force_manual_earnings_scan(self, date_list)
 
     def _refresh_type_filter_button_text(self):
         self.type_filter.apply_summary("分类", all_text="全看")
@@ -345,26 +452,6 @@ class EarningsTab(BaseStockTab):
         self._refresh_window_status()
 
     @staticmethod
-    def _is_st_stock_name(name: str) -> bool:
-        return "ST" in str(name or "").strip().upper()
-
-    @classmethod
-    def _filter_out_st_dataframe(cls, df: "pd.DataFrame") -> "pd.DataFrame":
-        if df is None or df.empty:
-            return df if df is not None else _pandas_module().DataFrame()
-
-        name_col = None
-        for candidate in ("股票名称", "股票简称", "名称"):
-            if candidate in df.columns:
-                name_col = candidate
-                break
-        if not name_col:
-            return df
-
-        keep_mask = ~df[name_col].apply(cls._is_st_stock_name)
-        return df.loc[keep_mask].copy()
-
-    @staticmethod
     def _recent_trade_window_start(trade_days: int = EARNINGS_DISPLAY_TRADE_DAYS) -> str | None:
         """返回展示窗口起点（yyyy-MM-dd），按交易日而不是自然日滚动。"""
         if trade_days <= 0:
@@ -372,7 +459,10 @@ class EarningsTab(BaseStockTab):
         try:
             from app.services.ui_market_calendar_service import MarketCalendar
 
-            recent_trade_dates = MarketCalendar.get_recent_trade_dates(trade_days)
+            recent_trade_dates = MarketCalendar.get_recent_trade_dates(
+                trade_days,
+                allow_refresh=False,
+            )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
             log.debug(f"[业绩监控] 获取交易日窗口失败: {_e}")
             return None
@@ -401,7 +491,7 @@ class EarningsTab(BaseStockTab):
         pruned_rows = []
         for row in rows or []:
             stock_name = row.get("名称") or row.get("股票名称") or row.get("股票简称") or ""
-            if cls._is_st_stock_name(stock_name):
+            if _is_st_stock_name(stock_name):
                 continue
             reveal_date = str(row.get("揭晓日") or row.get("公告日期") or "").strip()[:10]
             if not reveal_date or reveal_date >= start_date:
@@ -428,6 +518,7 @@ class EarningsTab(BaseStockTab):
 
     @pyqtSlot(str, str)
     def _on_fetch_failed(self, mode: str, error_text: str):
+        _finish_earnings_background_preload(self, mode)
         error_text = str(error_text or "未知错误").strip() or "未知错误"
         short_error = error_text if len(error_text) <= 120 else f"{error_text[:117]}..."
         mode_text = {
@@ -447,10 +538,11 @@ class EarningsTab(BaseStockTab):
         self._set_window_status("业绩抓取失败", mode_text, short_error)
 
     @pyqtSlot(object, str)
-    def _on_new_data_found(self, df: "pd.DataFrame", mode: str = "routine"):
-        """当底层推上来新的 DataFrame 时，转成本地字典并无缝合并展示"""
-        df = self._filter_out_st_dataframe(df)
-        if df.empty:
+    def _on_new_data_found(self, payload: object, mode: str = "routine"):
+        """将缓存行或巡检 DataFrame 转成本地字典并无缝合并展示。"""
+        _finish_earnings_background_preload(self, mode)
+        records = _filter_out_st_records(_records_from_payload(payload))
+        if not records:
             rows_changed = self._apply_display_trade_window(force_refresh=False)
             if mode == "warm_cache":
                 if self.row_data:
@@ -474,10 +566,7 @@ class EarningsTab(BaseStockTab):
                 event_bus.sig_earnings_updated.emit()
             return
 
-        if mode == "warm_cache":
-            self._set_window_status("本地缓存加载中", self._status_metric("新增 ", len(df), "只"))
-        else:
-            self._set_window_status("本次扫描命中", self._status_metric("新增 ", len(df), "只"))
+        _set_earnings_hit_status(self, mode, len(records))
 
         # 缓存回放可能有上千行；先建立索引，让去重覆盖保持 O(n)，避免逐行扫描 row_data。
         existing_rows_by_key = {
@@ -495,7 +584,7 @@ class EarningsTab(BaseStockTab):
                 return f"{v / 1e4:.0f}万"
             return f"{v:.0f}"
 
-        for row in df.to_dict("records"):
+        for row in records:
             code = str(row.get("股票代码", "")).zfill(6)
             name = str(row.get("股票名称", ""))
             pct = float(row.get("环比增速_百分比", 0.0))
@@ -595,18 +684,25 @@ class EarningsTab(BaseStockTab):
         return set()
 
     def schedule_routine_scan_after_f5(self) -> bool:
-        if getattr(self, "_pending_f5_routine_scan", False):
+        if getattr(self, "_runtime_cleanup_done", False) or getattr(self, "_pending_f5_routine_scan", False):
             return False
         self._pending_f5_routine_scan = True
         delay_ms = int(getattr(self, "F5_ROUTINE_SCAN_DELAY_MS", EarningsTab.F5_ROUTINE_SCAN_DELAY_MS))
-        QTimer.singleShot(delay_ms, lambda: EarningsTab._run_pending_routine_scan_after_f5(self))
+        timer = getattr(self, "_f5_routine_scan_timer", None)
+        if timer is not None:
+            timer.start(delay_ms)
+        else:
+            QTimer.singleShot(delay_ms, lambda: EarningsTab._run_pending_routine_scan_after_f5(self))
         return True
 
     def _run_pending_routine_scan_after_f5(self) -> bool:
         self._pending_f5_routine_scan = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
         scheduler = self._ensure_scheduler()
         trigger = getattr(scheduler, "trigger_routine_scan", None)
         if callable(trigger):
+            mark_runtime_network_activity(self)
             return bool(trigger(reason="f5"))
         return False
 
@@ -618,17 +714,14 @@ class EarningsTab(BaseStockTab):
 
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
         scheduler = self._ensure_scheduler()
-        engine = getattr(scheduler, "engine", None)
-        get_cached_records = getattr(engine, "get_cached_records", None)
-        if not callable(get_cached_records):
+        load_cached_records = getattr(scheduler, "load_cached_records_async", None)
+        if not callable(load_cached_records) or not load_cached_records(supersede=True):
             self._apply_display_trade_window(force_refresh=True)
             self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
             return False
 
-        cached_records = get_cached_records()
         self.row_data = []
         self.model.update_data([], hydrate_latest_quotes=False)
-        self._on_new_data_found(cast("pd.DataFrame", cached_records), "warm_cache")
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
         return True
 
@@ -646,6 +739,12 @@ class EarningsTab(BaseStockTab):
         return _is_direct_workspace_tab(self)
 
     def _cleanup_runtime_state(self):
+        self._background_preload_loading = False
+        self._background_preload_done = True
+        self._pending_f5_routine_scan = False
+        f5_timer = getattr(self, "_f5_routine_scan_timer", None)
+        if f5_timer is not None:
+            f5_timer.stop()
         recalc_timer = getattr(self, "_recalc_pe_timer", None)
         if recalc_timer is not None:
             recalc_timer.stop()

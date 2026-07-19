@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import sys
 import threading
 from dataclasses import dataclass
 from typing import Protocol
@@ -77,7 +78,23 @@ def _owned_delivery_callbacks(lifecycle, name, token, on_success, on_error):
         if not is_current or token.cancelled:
             return
         if callback is not None:
-            callback(*args)
+            try:
+                callback(*args)
+            except Exception as exc:  # noqa: BLE001 - Qt queued callbacks must not escape into PyQt's fatal hook.
+                callback_name = getattr(callback, "__qualname__", getattr(callback, "__name__", type(callback).__name__))
+                logging.getLogger(__name__).exception(
+                    "[任务生命周期][%s] 主线程回调异常: %s",
+                    name,
+                    callback_name,
+                )
+                try:
+                    sys.excepthook(type(exc), exc, exc.__traceback__)
+                except Exception:  # noqa: BLE001 - the reporting hook cannot be allowed back into Qt.
+                    logging.getLogger(__name__).exception(
+                        "[任务生命周期][%s] 异常上报失败: %s",
+                        name,
+                        callback_name,
+                    )
 
     def _deliver_success(result) -> None:
         _deliver(on_success, result)

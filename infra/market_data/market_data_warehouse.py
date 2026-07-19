@@ -11,7 +11,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 import pandas as pd
 
@@ -127,7 +127,125 @@ def _polars_len_expr(pl):
     return pl.len() if hasattr(pl, "len") else pl.count()
 
 
-class MarketDataWarehouse:
+class _CloseTailSchemaError(ValueError):
+    pass
+
+
+def _normalize_close_tail_request(codes, limit) -> tuple[tuple[str, ...], int]:
+    code_texts = tuple(
+        dict.fromkeys(str(code or "").strip() for code in (codes or []) if str(code or "").strip())
+    )
+    try:
+        tail_size = max(0, int(limit))
+    except (TypeError, ValueError):
+        tail_size = 0
+    return code_texts, tail_size
+
+
+def _empty_close_tail_result(warehouse) -> WarehouseReadResult:
+    return WarehouseReadResult(
+        {},
+        WarehouseStatus(
+            ok=True,
+            dataset=warehouse.dataset,
+            parquet_path=str(warehouse.parquet_path),
+            data_status="ok",
+            active_layer="parquet_sqlite_warehouse",
+        ),
+    )
+
+
+def _collect_close_tail_frame(parquet_path: str, codes: tuple[str, ...], tail_size: int):
+    import polars as pl
+
+    scan = pl.scan_parquet(parquet_path)
+    missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(scan.collect_schema().names()))
+    if missing_columns:
+        raise _CloseTailSchemaError(f"missing columns: {', '.join(missing_columns)}")
+    numeric_close = pl.col("close").cast(pl.Float64, strict=False)
+    return (
+        scan.filter(pl.col("_code").cast(pl.Utf8).is_in(list(codes)))
+        .select(
+            "_code",
+            "datetime",
+            pl.col("close").alias("_raw_close"),
+            numeric_close.alias("close"),
+        )
+        .filter(pl.col("datetime").is_not_null())
+        .with_columns(
+            (pl.col("_raw_close").is_not_null() & pl.col("close").is_null()).alias("_invalid_close")
+        )
+        .sort(["_code", "datetime"])
+        .group_by("_code", maintain_order=True)
+        .agg(
+            pl.col("close")
+            .filter(pl.col("close").is_not_null() & pl.col("close").is_not_nan())
+            .tail(tail_size),
+            pl.col("_invalid_close").any(),
+        )
+        .collect()
+    )
+
+
+def _close_tail_payload(part) -> dict[str, tuple[float, ...]]:
+    return {
+        str(row["_code"]): (() if row["_invalid_close"] else tuple(float(value) for value in row["close"]))
+        for row in part.to_dicts()
+    }
+
+
+def _successful_close_tail_result(status: WarehouseStatus, tails) -> WarehouseReadResult:
+    return WarehouseReadResult(
+        tails,
+        WarehouseStatus(
+            **{
+                **status.to_dict(),
+                "ok": True,
+                "data_status": "ok",
+                "error": "",
+                "symbol_count": len(tails),
+                "row_count": sum(len(values) for values in tails.values()),
+                "active_layer": "parquet_sqlite_warehouse",
+                "fallback_reason": "",
+            }
+        ),
+    )
+
+
+class _CloseTailWarehouseProtocol(Protocol):
+    dataset: str
+    parquet_path: Path
+    _lock: Any
+
+    def current_status(self, *, validate_parquet: bool = False) -> WarehouseStatus: ...
+
+
+class _CloseTailWarehouseMixin:
+    def read_close_tails(self, codes, limit: int) -> WarehouseReadResult:
+        """Read only the final valid close values for each requested symbol."""
+        warehouse = cast(_CloseTailWarehouseProtocol, self)
+        code_texts, tail_size = _normalize_close_tail_request(codes, limit)
+        if not code_texts or tail_size <= 0:
+            return _empty_close_tail_result(warehouse)
+
+        status = warehouse.current_status(validate_parquet=False)
+        if not status.ok:
+            return WarehouseReadResult(None, status)
+        try:
+            with warehouse._lock:
+                part = _collect_close_tail_frame(
+                    str(Path(status.parquet_path or warehouse.parquet_path)),
+                    code_texts,
+                    tail_size,
+                )
+            return _successful_close_tail_result(status, _close_tail_payload(part))
+        except _CloseTailSchemaError as exc:
+            return _read_failure(status, "schema_incompatible", str(exc))
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
+            return _read_failure(status, "parquet_unreadable", str(exc))
+
+
+class MarketDataWarehouse(_CloseTailWarehouseMixin):
     """Read/write facade for local market bars and their SQLite manifest."""
 
     def __init__(

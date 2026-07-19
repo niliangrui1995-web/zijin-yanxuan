@@ -16,6 +16,21 @@ class _DummyLabel:
         self.text = value
 
 
+def _capture_runtime_timers(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        "ui.main_window_runtime.QTimer.singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+    return scheduled
+
+
+def _run_post_f5_quote_timer(scheduled):
+    delay, callback = scheduled.pop(0)
+    assert delay == 16
+    callback()
+
+
 def test_main_window_ui_stall_context_marks_f5_background_on_system_log(monkeypatch):
     app = QApplication.instance() or QApplication([])
     widget = QWidget()
@@ -51,20 +66,18 @@ def test_main_window_f5_done_refreshes_snapshot_and_emits_cache_reload_completed
         ),
     )
 
-    scheduled_delays = []
-    monkeypatch.setattr(
-        "ui.main_window_qt.QTimer.singleShot",
-        lambda delay, callback: scheduled_delays.append(delay),
-    )
+    scheduled = _capture_runtime_timers(monkeypatch)
 
     MainWindowQT._on_f5_done(dummy_window, 321, 4.5)
     app.processEvents()
 
+    assert calls == ["update_last_f5_time"]
+    _run_post_f5_quote_timer(scheduled)
     assert calls == ["update_last_f5_time", "refresh_after_cache_reload"]
     assert dummy_window.lbl_status.text
     assert dummy_window.lbl_code_count.text
     assert len(cache_spy) == 1
-    assert 2000 not in scheduled_delays
+    assert not scheduled
 
 
 def test_scan_progress_completion_does_not_schedule_full_gc(monkeypatch):
@@ -96,16 +109,14 @@ def test_main_window_f5_done_triggers_fund_holdings_auto_sync(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr("ui.main_window_qt.QTimer.singleShot", lambda delay, callback: None)
+    scheduled = _capture_runtime_timers(monkeypatch)
 
     MainWindowQT._on_f5_done(dummy_window, 321, 4.5)
     app.processEvents()
 
-    assert calls == [
-        "update_last_f5_time",
-        "refresh_after_cache_reload",
-        "fund_holdings_auto_sync",
-    ]
+    assert calls == ["update_last_f5_time", "fund_holdings_auto_sync"]
+    _run_post_f5_quote_timer(scheduled)
+    assert calls == ["update_last_f5_time", "fund_holdings_auto_sync", "refresh_after_cache_reload"]
 
 
 def test_main_window_f5_done_prefers_information_source_refresh(monkeypatch):
@@ -125,16 +136,14 @@ def test_main_window_f5_done_prefers_information_source_refresh(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr("ui.main_window_qt.QTimer.singleShot", lambda delay, callback: None)
+    scheduled = _capture_runtime_timers(monkeypatch)
 
     MainWindowQT._on_f5_done(dummy_window, 321, 4.5)
     app.processEvents()
 
-    assert calls == [
-        "update_last_f5_time",
-        "refresh_after_cache_reload",
-        "info_sources_after_f5",
-    ]
+    assert calls == ["update_last_f5_time", "info_sources_after_f5"]
+    _run_post_f5_quote_timer(scheduled)
+    assert calls == ["update_last_f5_time", "info_sources_after_f5", "refresh_after_cache_reload"]
 
 
 def test_main_window_f5_done_prefers_scheduled_information_source_refresh(monkeypatch):
@@ -156,15 +165,17 @@ def test_main_window_f5_done_prefers_scheduled_information_source_refresh(monkey
         ),
     )
 
-    monkeypatch.setattr("ui.main_window_qt.QTimer.singleShot", lambda delay, callback: None)
+    scheduled = _capture_runtime_timers(monkeypatch)
 
     MainWindowQT._on_f5_done(dummy_window, 321, 4.5)
     app.processEvents()
 
+    assert calls == ["update_last_f5_time", ("scheduled_info_sources_after_f5", 2500)]
+    _run_post_f5_quote_timer(scheduled)
     assert calls == [
         "update_last_f5_time",
-        "refresh_after_cache_reload",
         ("scheduled_info_sources_after_f5", 2500),
+        "refresh_after_cache_reload",
     ]
 
 
@@ -184,13 +195,43 @@ def test_main_window_f5_done_refreshes_all_workspace_tabs_after_f5(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr("ui.main_window_qt.QTimer.singleShot", lambda delay, callback: None)
+    scheduled = _capture_runtime_timers(monkeypatch)
 
     MainWindowQT._on_f5_done(dummy_window, 321, 4.5)
     app.processEvents()
 
-    assert calls == [
-        "update_last_f5_time",
-        "refresh_after_cache_reload",
-        "refresh_all_tabs_after_f5",
-    ]
+    assert calls == ["update_last_f5_time", "refresh_all_tabs_after_f5"]
+    _run_post_f5_quote_timer(scheduled)
+    assert calls == ["update_last_f5_time", "refresh_all_tabs_after_f5", "refresh_after_cache_reload"]
+
+
+def test_main_window_f5_done_waits_for_scheduled_tab_refresh_before_quotes(monkeypatch):
+    calls = []
+    captured = {}
+
+    def _schedule_tabs(**kwargs):
+        captured.update(kwargs)
+        calls.append("schedule_tabs")
+        return True
+
+    dummy_window = SimpleNamespace(
+        _update_last_f5_time=lambda: calls.append("update_last_f5_time"),
+        central_quotes_svc=SimpleNamespace(
+            refresh_after_cache_reload=lambda: calls.append("refresh_after_cache_reload")
+        ),
+        _workspace=SimpleNamespace(refresh_all_tabs_after_f5_scheduled=_schedule_tabs),
+    )
+    scheduled = _capture_runtime_timers(monkeypatch)
+
+    MainWindowQT._on_f5_done(dummy_window, 0, 0)
+
+    assert captured["interval_ms"] == 16
+    assert captured["skip_cache_reload_tabs"] is True
+    assert callable(captured["on_finished"])
+    assert calls == ["update_last_f5_time", "schedule_tabs"]
+    assert scheduled == []
+
+    captured["on_finished"]()
+    assert len(scheduled) == 1
+    _run_post_f5_quote_timer(scheduled)
+    assert calls == ["update_last_f5_time", "schedule_tabs", "refresh_after_cache_reload"]

@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services.scan_runtime_service import create_scan_engine
-from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_industry_chain_service import load_cached_ai_industry_chain_context_map, normalize_ai_chain_code
@@ -43,7 +42,10 @@ from ui.tabs.base_stock_tab import (
     _is_direct_workspace_tab,
     _show_kline_from_proxy_index,
     _show_stock_context_menu_from_proxy_index,
+    mark_runtime_network_activity,
 )
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.tab_registry import create_tab_lineage_service
 
 log = get_logger(__name__)
 POST_F5_POOL_BOOTSTRAP_DEFER_MS = 5000
@@ -60,18 +62,47 @@ def _finish_lhb_backfill_error(owner, title: str, message: str) -> None:
     owner.table_state.show_error(title, message, action_text="重试", action_callback=owner._manual_refresh)
 
 
+def _normalized_lhb_dates(*date_groups) -> set[str]:
+    normalized: set[str] = set()
+    for dates in date_groups:
+        for value in dates:
+            text = str(value or "").strip()
+            if text:
+                normalized.add(text)
+    return normalized
+
+
+def _merge_lhb_backfill_requests(existing, incoming):
+    current = existing or ([], [], "")
+    requested = incoming or ([], [], "")
+    missing_dates = sorted(_normalized_lhb_dates(current[0], requested[0]))
+    validation_dates = sorted(_normalized_lhb_dates(current[1], requested[1]) - set(missing_dates))
+    validation_refs = sorted(_normalized_lhb_dates((current[2], requested[2])))
+    return missing_dates, validation_dates, max(validation_refs, default="")
+
+
 def _retry_lhb_pool(owner) -> None:
     request = getattr(owner, "_pending_backfill_request", None)
+    defer_when_inactive = bool(getattr(owner, "_pending_backfill_defer_when_inactive", False))
     owner._pending_backfill_request = None
+    owner._pending_backfill_defer_when_inactive = False
     if request:
-        owner._start_backfill(*request)
+        if defer_when_inactive:
+            owner._start_or_defer_backfill(*request)
+        else:
+            owner._start_backfill(*request)
     else:
         owner._load_and_display_pool()
 
 
 def _load_lhb_pool_payload(owner, cancellation_token) -> dict:
     cancellation_token.raise_if_cancelled()
-    trade_dates = owner._get_lhb_trade_dates()
+    cache_only = bool(getattr(owner, "_background_preload_cache_only", False))
+    trade_dates = (
+        owner._get_lhb_trade_dates(allow_refresh=False)
+        if cache_only
+        else owner._get_lhb_trade_dates()
+    )
     cancellation_token.raise_if_cancelled()
     if not trade_dates:
         return {"status": "calendar_missing"}
@@ -245,7 +276,294 @@ def _build_lhb_backfill_payload(owner, missing, validation, validation_ref_date,
     }
 
 
-class LhbTab(BaseStockTab):
+def _defer_lhb_pool_after_f5(owner) -> None:
+    owner._post_f5_pool_defer_until = max(
+        float(getattr(owner, "_post_f5_pool_defer_until", 0.0) or 0.0),
+        time.monotonic() + POST_F5_POOL_BOOTSTRAP_DEFER_MS / 1000.0,
+    )
+
+
+def _initialize_lhb_backfill_state(owner) -> None:
+    owner._backfill_in_progress = False
+    owner._pending_backfill_request = None
+    owner._pending_backfill_defer_when_inactive = False
+    owner._active_backfill_request = None
+    owner._active_backfill_defer_when_inactive = False
+
+
+def _initialize_lhb_background_preload_state(owner) -> None:
+    owner._pool_bootstrap_started = False
+    owner._pool_bootstrap_generation = 0
+    owner._pool_load_in_progress = False
+    owner._background_preload_requested = False
+    owner._background_preload_done = False
+    owner._background_preload_cache_only = False
+
+
+def _lhb_hide_event(owner, event) -> None:
+    BaseStockTab.hideEvent(owner, event)
+    QTimer.singleShot(0, owner._defer_auto_backfill_if_inactive)
+
+
+def _start_or_defer_lhb_backfill(owner, missing_dates, validation_dates, validation_ref_date) -> bool:
+    request = (list(missing_dates), list(validation_dates), str(validation_ref_date or ""))
+    if not owner._is_current_workspace_tab():
+        owner._remember_pending_backfill(request, defer_when_inactive=True)
+        owner._set_pool_status(
+            "龙虎榜缓存已就绪",
+            freshness=f"快照 {owner._latest_loaded_cached_trade_date()}",
+            next_step="再次进入时继续后台校验",
+        )
+        return False
+    owner._start_backfill(*request, defer_when_inactive=True)
+    return True
+
+
+def _remember_pending_lhb_backfill(owner, request, *, defer_when_inactive: bool) -> None:
+    existing = owner._pending_backfill_request
+    owner._pending_backfill_request = _merge_lhb_backfill_requests(existing, request)
+    if existing is None:
+        owner._pending_backfill_defer_when_inactive = bool(defer_when_inactive)
+        return
+    owner._pending_backfill_defer_when_inactive = bool(
+        owner._pending_backfill_defer_when_inactive and defer_when_inactive
+    )
+
+
+def _resume_pending_lhb_backfill(owner) -> bool:
+    request = getattr(owner, "_pending_backfill_request", None)
+    if not request or owner._backfill_in_progress:
+        return False
+    defer_when_inactive = bool(owner._pending_backfill_defer_when_inactive)
+    owner._pending_backfill_request = None
+    owner._pending_backfill_defer_when_inactive = False
+    if defer_when_inactive:
+        return owner._start_or_defer_backfill(*request)
+    owner._start_backfill(*request)
+    return True
+
+
+def _defer_auto_lhb_backfill_if_inactive(owner) -> bool:
+    request = owner._active_backfill_request
+    if not owner._backfill_in_progress or not owner._active_backfill_defer_when_inactive or not request:
+        return False
+    if owner._is_current_workspace_tab():
+        return False
+    task_lifecycle_for(owner, runner=task_manager).cancel("pool_backfill", reason="workspace_tab_deactivated")
+    owner._active_backfill_request = None
+    owner._active_backfill_defer_when_inactive = False
+    owner._backfill_in_progress = False
+    owner.btn_refresh.setEnabled(True)
+    owner._remember_pending_backfill(request, defer_when_inactive=True)
+    owner._set_pool_status(
+        "龙虎榜缓存已就绪",
+        freshness="本地缓存",
+        next_step="再次进入时继续后台校验",
+    )
+    return True
+
+
+def _clear_active_lhb_backfill(owner) -> None:
+    owner._active_backfill_request = None
+    owner._active_backfill_defer_when_inactive = False
+    owner._backfill_in_progress = False
+    owner.btn_refresh.setEnabled(True)
+
+
+def _complete_lhb_backfill_success(owner, results) -> None:
+    _clear_active_lhb_backfill(owner)
+    payload = results if isinstance(results, dict) else {}
+    fetched_results = payload.get("fetched", {})
+    validated_results = payload.get("validated", {})
+    if not fetched_results and not validated_results:
+        owner._set_pool_status(
+            "同步失败",
+            freshness="远端失败沿用" if getattr(owner.model, "row_data", []) else "待回补",
+            next_step="请稍后重试",
+        )
+        _finish_lhb_backfill_error(owner, "同步失败", "未获取到有效龙虎榜数据")
+        event_bus.sig_system_log.emit("error", owner._ensure_log_line("[龙虎榜池] 同步任务未产出有效结果"))
+        owner._resume_pending_backfill()
+        return
+    pool_manager = payload.get("pool_manager")
+    if pool_manager is not None:
+        owner.pool_manager = pool_manager
+    ai_chain_context_map = payload.get("ai_chain_context_map")
+    if isinstance(ai_chain_context_map, dict):
+        owner._ai_chain_context_map = ai_chain_context_map
+    pool = list(payload.get("pool") or [])
+    owner._display_pool(pool, row_data=list(payload.get("row_data") or []))
+    event_bus.sig_system_log.emit(
+        "info",
+        owner._ensure_log_line(
+            f"[龙虎榜池] 同步完成 | 更新{len(fetched_results)}天 | 校验{len(validated_results)}天 | 入池{len(pool)}只"
+        ),
+    )
+    owner._resume_pending_backfill()
+
+
+def _complete_lhb_backfill_error(owner, error_message: str) -> None:
+    _clear_active_lhb_backfill(owner)
+    owner._set_pool_status(
+        "抓取异常",
+        error_message,
+        freshness="远端失败沿用" if getattr(owner.model, "row_data", []) else "待回补",
+        next_step="请稍后重试",
+    )
+    _finish_lhb_backfill_error(owner, "抓取异常", error_message)
+    event_bus.sig_system_log.emit("error", owner._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
+    owner._resume_pending_backfill()
+
+
+def _mark_lhb_pool_load_complete(owner) -> None:
+    owner._pool_load_in_progress = False
+    owner._background_preload_done = True
+
+
+def _handle_missing_lhb_calendar(owner, *, cache_only: bool) -> None:
+    if cache_only:
+        owner._pool_bootstrap_started = False
+        owner._set_pool_status("交易日历未就绪", freshness="本地缓存", next_step="进入页面后重试")
+        return
+    owner._calendar_retry_count += 1
+    if owner._calendar_retry_count <= 3:
+        owner._set_pool_status("交易日历未就绪", f"第{owner._calendar_retry_count}次重试")
+        owner._schedule_pool_retry()
+        return
+    owner._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
+
+
+def _adopt_lhb_pool_payload(owner, payload: dict) -> tuple[list[dict], list[dict]]:
+    owner._calendar_retry_count = 0
+    pool_manager = payload.get("pool_manager")
+    if pool_manager is not None:
+        owner.pool_manager = pool_manager
+    ai_chain_context_map = payload.get("ai_chain_context_map")
+    if isinstance(ai_chain_context_map, dict):
+        owner._ai_chain_context_map = ai_chain_context_map
+    return list(payload.get("pool") or []), list(payload.get("row_data") or [])
+
+
+def _display_loaded_lhb_pool(owner, pool, row_data, *, cache_only: bool, emit_event: bool) -> None:
+    if not pool:
+        return
+    owner._display_pool(
+        pool,
+        emit_event=emit_event,
+        row_data=row_data,
+        refresh_quotes=not cache_only,
+    )
+
+
+def _handle_lhb_pool_gaps(owner, payload: dict, pool, *, cache_only: bool) -> None:
+    missing = list(payload.get("missing") or [])
+    pending_validation = list(payload.get("pending_validation") or [])
+    validation_ref_date = str(payload.get("validation_ref_date") or "")
+    if missing or pending_validation:
+        request = (missing, pending_validation, validation_ref_date)
+        if cache_only:
+            owner._remember_pending_backfill(request, defer_when_inactive=True)
+        else:
+            owner._start_or_defer_backfill(*request)
+        return
+    if pool:
+        return
+    owner._set_pool_status("暂无龙虎榜数据", freshness="待回补", next_step="点击历史回补开始抓取")
+    if hasattr(owner, "table_state"):
+        owner.table_state.show_empty("暂无龙虎榜数据")
+
+
+def _complete_lhb_pool_load(owner, payload, *, emit_event: bool) -> None:
+    _mark_lhb_pool_load_complete(owner)
+    cache_only = bool(getattr(owner, "_background_preload_cache_only", False))
+    normalized_payload = payload if isinstance(payload, dict) else {}
+    if str(normalized_payload.get("status", "") or "") != "ok":
+        _handle_missing_lhb_calendar(owner, cache_only=cache_only)
+        return
+    pool, row_data = _adopt_lhb_pool_payload(owner, normalized_payload)
+    _display_loaded_lhb_pool(owner, pool, row_data, cache_only=cache_only, emit_event=emit_event)
+    _handle_lhb_pool_gaps(owner, normalized_payload, pool, cache_only=cache_only)
+    if owner._pending_pool_refresh:
+        owner._schedule_pending_pool_refresh()
+
+
+def _complete_lhb_pool_error(owner, error_message: str) -> None:
+    _mark_lhb_pool_load_complete(owner)
+    owner._pool_bootstrap_started = False
+    owner._set_pool_status(
+        "龙虎榜池加载失败",
+        error_message,
+        freshness="待重试",
+        next_step="重新进入或点击历史回补",
+    )
+    if hasattr(owner, "table_state"):
+        owner.table_state.show_error(
+            "龙虎榜池加载失败",
+            str(error_message or ""),
+            action_text="重试",
+            action_callback=owner._ensure_pool_bootstrap_started,
+        )
+
+
+def _refresh_loaded_lhb_quotes(owner, *, rows_changed: bool, refresh_quotes: bool) -> None:
+    if not rows_changed:
+        return
+    if not refresh_quotes:
+        owner._apply_quote_store_snapshot()
+    elif owner._is_opening_warmup_window():
+        owner.refresh_table_from_latest_snapshot(async_local=True)
+    else:
+        owner.refresh_table_quotes_and_market_caps(
+            quote_task_id=task_registry.quote_refresh("lhb").task_id,
+            async_local=True,
+        )
+
+
+class _LhbBackgroundPreloadMixin:
+    def prime_background_load(self) -> bool:
+        self._background_preload_requested = True
+        if self._background_preload_done:
+            return False
+        self._background_preload_cache_only = True
+        already_started = self._pool_bootstrap_started
+        self._ensure_pool_bootstrap_started(delay_ms=0)
+        return not already_started
+
+    def is_background_preload_complete(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return True
+        return bool(
+            self._background_preload_requested
+            and self._background_preload_done
+            and not self._pool_load_in_progress
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            self._pool_bootstrap_generation += 1
+            self._pool_load_in_progress = False
+            self._pool_bootstrap_started = False
+            self._pool_bootstrap_not_before = 0.0
+            self._post_f5_pool_defer_until = 0.0
+            self._post_f5_pool_pending = False
+            self._post_f5_pool_emit_event = False
+            self._background_preload_requested = False
+            self._background_preload_done = False
+            self._background_preload_cache_only = False
+            self._pending_pool_refresh = False
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("pool_bootstrap",),
+            task_ids=(task_registry.workspace("lhb_pool_bootstrap"),),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._pool_load_in_progress and not self._post_f5_pool_pending,
+            runner=task_manager,
+        )
+
+
+class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
     """龙虎榜 30 日关注池 Tab"""
 
     AI_CHAIN_CONTEXT_COLUMN = "AI细分板块/备注"
@@ -276,25 +594,17 @@ class LhbTab(BaseStockTab):
         except (TypeError, ValueError):
             self._initial_load_delay_ms = 0
         self._autoload_pool = bool(autoload_pool)
-        self._pool_bootstrap_started = False
-        self._pool_load_in_progress = False
+        _initialize_lhb_background_preload_state(self)
         self.pool_manager = None
-        self._backfill_in_progress = False
+        _initialize_lhb_backfill_state(self)
         # 交易日历加载重试计数器，防止网络永久断开时无限重试
         self._calendar_retry_count = 0
         self._status_primary = "加载中..."
         self._status_segments = ()
         self._status_freshness = ""
         self._status_next_step = ""
-        self._lhb_lineage_service = TabDataLineageService(
-            key="lhb",
-            source="LhbPoolManager cache + local_quote_snapshot",
-            provider="LhbPoolManager/scan_runtime_service",
-            cache_refs=(
-                "data/Cache/lhb_pool_30d.json",
-                "global_store.quotes",
-                "local_tdx_cache",
-            ),
+        self._lhb_lineage_service = create_tab_lineage_service(
+            "lhb",
             provider_status_reader=self._read_provider_status,
         )
         self._last_lhb_result = None
@@ -348,17 +658,15 @@ class LhbTab(BaseStockTab):
                 self._pending_pool_refresh = False
                 self._ensure_pool_bootstrap_started(delay_ms=self._initial_load_delay_ms)
 
-    def prime_background_load(self):
-        self._ensure_pool_bootstrap_started(delay_ms=0)
+    hideEvent = _lhb_hide_event
 
     def on_workspace_tab_activated(self) -> None:
+        self._background_preload_cache_only = False
         self._ensure_pool_bootstrap_started(delay_ms=self._initial_load_delay_ms)
+        self._resume_pending_backfill()
 
     def prepare_post_f5_refresh(self) -> None:
-        self._post_f5_pool_defer_until = max(
-            float(getattr(self, "_post_f5_pool_defer_until", 0.0) or 0.0),
-            time.monotonic() + POST_F5_POOL_BOOTSTRAP_DEFER_MS / 1000.0,
-        )
+        _defer_lhb_pool_after_f5(self)
 
     def _is_current_workspace_tab(self) -> bool:
         return _is_direct_workspace_tab(self)
@@ -366,10 +674,17 @@ class LhbTab(BaseStockTab):
     def _should_start_pool_on_show(self) -> bool:
         return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
+    _start_or_defer_backfill = _start_or_defer_lhb_backfill
+    _remember_pending_backfill = _remember_pending_lhb_backfill
+    _resume_pending_backfill = _resume_pending_lhb_backfill
+    _defer_auto_backfill_if_inactive = _defer_auto_lhb_backfill_if_inactive
+
     def _ensure_pool_bootstrap_started(self, *, delay_ms: int | None = None):
         if self._pool_bootstrap_started:
             return
         self._pool_bootstrap_started = True
+        self._pool_bootstrap_generation = int(getattr(self, "_pool_bootstrap_generation", 0)) + 1
+        generation = self._pool_bootstrap_generation
         if delay_ms is None:
             delay_ms = self._initial_load_delay_ms
         try:
@@ -381,10 +696,20 @@ class LhbTab(BaseStockTab):
                 float(getattr(self, "_pool_bootstrap_not_before", 0.0) or 0.0),
                 time.monotonic() + delay / 1000.0,
             )
-            QTimer.singleShot(delay, self._load_and_display_pool)
+            QTimer.singleShot(delay, lambda: self._run_pool_bootstrap_if_current(generation))
         else:
             self._pool_bootstrap_not_before = 0.0
             self._load_and_display_pool()
+
+    def _run_pool_bootstrap_if_current(self, generation: int) -> bool:
+        if (
+            generation != getattr(self, "_pool_bootstrap_generation", 0)
+            or not getattr(self, "_pool_bootstrap_started", False)
+            or getattr(self, "_runtime_cleanup_done", False)
+        ):
+            return False
+        self._load_and_display_pool()
+        return True
 
     def _on_lhb_pool_updated(self) -> None:
         if self._handling_lhb_pool_update:
@@ -444,6 +769,7 @@ class LhbTab(BaseStockTab):
     def _on_cache_reload_completed(self):
         if not self._pool_bootstrap_started:
             return
+        self.prepare_post_f5_refresh()
         self._load_and_display_pool()
 
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
@@ -564,7 +890,7 @@ class LhbTab(BaseStockTab):
         result = self._last_lhb_result
         if result is None:
             result = self._refresh_lhb_lineage()
-        return result.lineage.as_dict()
+        return result.lineage.as_dynamic_dict()
 
     @classmethod
     def _build_backfill_progress_log(cls, index: int, total: int, date_str: str, payload: dict) -> tuple[str, str]:
@@ -717,66 +1043,11 @@ class LhbTab(BaseStockTab):
             self.table_state.show_loading("正在加载龙虎榜池", "首次进入先响应，缓存池在后台计算。")
         self._set_pool_status("正在加载龙虎榜池", freshness="后台计算", next_step="结果完成后自动落表")
 
-        def _on_pool_loaded(payload):
-            self._pool_load_in_progress = False
-            status = str((payload or {}).get("status", "") or "")
-            if status != "ok":
-                self._calendar_retry_count += 1
-                if self._calendar_retry_count <= 3:
-                    self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
-                    self._schedule_pool_retry()
-                else:
-                    self._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
-                return
-
-            self._calendar_retry_count = 0
-            pool_manager = payload.get("pool_manager")
-            if pool_manager is not None:
-                self.pool_manager = pool_manager
-            ai_chain_context_map = payload.get("ai_chain_context_map")
-            if isinstance(ai_chain_context_map, dict):
-                self._ai_chain_context_map = ai_chain_context_map
-
-            pool = list(payload.get("pool") or [])
-            row_data = list(payload.get("row_data") or [])
-            if pool:
-                self._display_pool(pool, emit_event=emit_event, row_data=row_data)
-
-            missing = list(payload.get("missing") or [])
-            pending_validation = list(payload.get("pending_validation") or [])
-            validation_ref_date = str(payload.get("validation_ref_date") or "")
-            if missing or pending_validation:
-                self._start_backfill(missing, pending_validation, validation_ref_date)
-            elif not pool:
-                self._set_pool_status("暂无龙虎榜数据", freshness="待回补", next_step="点击历史回补开始抓取")
-                if hasattr(self, "table_state"):
-                    self.table_state.show_empty("暂无龙虎榜数据")
-
-            if self._pending_pool_refresh:
-                self._schedule_pending_pool_refresh()
-
-        def _on_pool_error(error_message: str):
-            self._pool_load_in_progress = False
-            self._pool_bootstrap_started = False
-            self._set_pool_status(
-                "龙虎榜池加载失败",
-                error_message,
-                freshness="待重试",
-                next_step="重新进入或点击历史回补",
-            )
-            if hasattr(self, "table_state"):
-                self.table_state.show_error(
-                    "龙虎榜池加载失败",
-                    str(error_message or ""),
-                    action_text="重试",
-                    action_callback=self._ensure_pool_bootstrap_started,
-                )
-
         task_lifecycle_for(self, runner=task_manager).run_background(
             "pool_bootstrap",
             lambda token: _load_lhb_pool_payload(self, token),
-            on_success=_on_pool_loaded,
-            on_error=_on_pool_error,
+            on_success=lambda payload: _complete_lhb_pool_load(self, payload, emit_event=emit_event),
+            on_error=lambda error_message: _complete_lhb_pool_error(self, error_message),
             task_id=task_id,
             timeout_sec=LHB_POOL_BOOTSTRAP_TIMEOUT_SECONDS,
         )
@@ -795,6 +1066,12 @@ class LhbTab(BaseStockTab):
         return True
 
     def _run_post_f5_pool_load(self) -> bool:
+        if not getattr(self, "_post_f5_pool_pending", False) or getattr(
+            self,
+            "_runtime_cleanup_done",
+            False,
+        ):
+            return False
         defer_until = max(
             float(getattr(self, "_pool_bootstrap_not_before", 0.0) or 0.0),
             float(getattr(self, "_post_f5_pool_defer_until", 0.0) or 0.0),
@@ -813,7 +1090,7 @@ class LhbTab(BaseStockTab):
         return True
 
     @staticmethod
-    def _get_lhb_reference_trade_date():
+    def _get_lhb_reference_trade_date(*, allow_refresh: bool = True):
         """龙虎榜手动/启动回填的参考交易日。
 
         龙虎榜当日数据通常在 20:00 后才稳定可抓。交易日但 20:00 前应回退到上一交易日，
@@ -823,24 +1100,58 @@ class LhbTab(BaseStockTab):
 
         now_cn = MarketCalendar._get_market_now("CN")
         today = now_cn.date()
-        latest = MarketCalendar.get_latest_trade_date("CN", ref_date=today)
+        latest = (
+            MarketCalendar.get_latest_trade_date("CN", ref_date=today)
+            if allow_refresh
+            else MarketCalendar.get_latest_trade_date("CN", ref_date=today, allow_refresh=False)
+        )
         if latest is None:
             return None
 
-        if not MarketCalendar.is_trade_day(today, market="CN"):
+        is_trade_day = (
+            MarketCalendar.is_trade_day(today, market="CN")
+            if allow_refresh
+            else MarketCalendar.is_trade_day(today, market="CN", allow_refresh=False)
+        )
+        if not is_trade_day:
             return latest
 
         hhmm = now_cn.hour * 100 + now_cn.minute
         if hhmm < 2000:
-            return MarketCalendar.get_latest_trade_date("CN", ref_date=today - timedelta(days=1))
+            return (
+                MarketCalendar.get_latest_trade_date("CN", ref_date=today - timedelta(days=1))
+                if allow_refresh
+                else MarketCalendar.get_latest_trade_date(
+                    "CN",
+                    ref_date=today - timedelta(days=1),
+                    allow_refresh=False,
+                )
+            )
 
         return latest
 
-    def _get_lhb_trade_dates(self, n: int = POOL_WINDOW) -> list[str]:
-        ref_trade_date = self._get_lhb_reference_trade_date()
+    def _get_lhb_trade_dates(
+        self,
+        n: int = POOL_WINDOW,
+        *,
+        allow_refresh: bool = True,
+    ) -> list[str]:
+        ref_trade_date = (
+            self._get_lhb_reference_trade_date()
+            if allow_refresh
+            else self._get_lhb_reference_trade_date(allow_refresh=False)
+        )
         if ref_trade_date is None:
             return []
-        return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date)
+        return (
+            MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date)
+            if allow_refresh
+            else MarketCalendar.get_recent_trade_dates(
+                n,
+                ref_date=ref_trade_date,
+                allow_refresh=False,
+            )
+        )
 
     @staticmethod
     def _get_manual_refresh_trade_dates(n: int = POOL_WINDOW) -> tuple[list[str], str, str]:
@@ -1021,7 +1332,14 @@ class LhbTab(BaseStockTab):
             return [dict(row) for row in rows]
         return []
 
-    def _display_pool(self, pool: list[dict], *, emit_event: bool = True, row_data: list[dict] | None = None):
+    def _display_pool(
+        self,
+        pool: list[dict],
+        *,
+        emit_event: bool = True,
+        row_data: list[dict] | None = None,
+        refresh_quotes: bool = True,
+    ):
         """将池数据渲染到表格"""
         if row_data is None:
             row_data = self._build_pool_display_rows(pool, self._get_ai_chain_context_map())
@@ -1058,14 +1376,7 @@ class LhbTab(BaseStockTab):
             finally:
                 self._handling_lhb_pool_update = previous_handling
 
-        if rows_changed:
-            if self._is_opening_warmup_window():
-                self.refresh_table_from_latest_snapshot(async_local=True)
-            else:
-                self.refresh_table_quotes_and_market_caps(
-                    quote_task_id=task_registry.quote_refresh("lhb").task_id,
-                    async_local=True,
-                )
+        _refresh_loaded_lhb_quotes(self, rows_changed=rows_changed, refresh_quotes=refresh_quotes)
 
     # ================================================================
     # 后台回填缺失天数
@@ -1075,15 +1386,25 @@ class LhbTab(BaseStockTab):
         missing_dates: list[str],
         validation_dates: list[str] | None = None,
         validation_ref_date: str = "",
+        *,
+        defer_when_inactive: bool = False,
     ):
         """后台逐日回填缺失的龙虎榜数据"""
+        request = _merge_lhb_backfill_requests(
+            None,
+            (missing_dates, validation_dates or [], validation_ref_date),
+        )
         if self._backfill_in_progress:
+            self._remember_pending_backfill(request, defer_when_inactive=defer_when_inactive)
             return
         task_id = task_registry.workspace("lhb_pool_backfill").task_id
         if task_manager.is_active_task(task_id):
-            self._pending_backfill_request = (missing_dates, validation_dates, validation_ref_date)
+            self._remember_pending_backfill(request, defer_when_inactive=defer_when_inactive)
             self._schedule_pool_retry()
             return
+        missing_dates, validation_dates, validation_ref_date = request
+        self._active_backfill_request = request
+        self._active_backfill_defer_when_inactive = bool(defer_when_inactive)
         self._backfill_in_progress = True
         self.btn_refresh.setEnabled(False)
         def _safe_log_emit(level: str, message: str):
@@ -1098,6 +1419,8 @@ class LhbTab(BaseStockTab):
         validation_sorted = sorted(set(validation_dates or []))
         total = len(missing_sorted) + len(validation_sorted)
         if total <= 0:
+            self._active_backfill_request = None
+            self._active_backfill_defer_when_inactive = False
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
             return
@@ -1137,47 +1460,7 @@ class LhbTab(BaseStockTab):
                 "info",
                 f"[龙虎榜池] 开始校验 {len(validation_sorted)} 个已缓存交易日",
             )
-        def _on_backfill_done(results: dict):
-            self._backfill_in_progress = False
-            self.btn_refresh.setEnabled(True)
-            fetched_results = results.get("fetched", {}) if isinstance(results, dict) else {}
-            validated_results = results.get("validated", {}) if isinstance(results, dict) else {}
-            if not fetched_results and not validated_results:
-                self._set_pool_status(
-                    "同步失败",
-                    freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
-                    next_step="请稍后重试",
-                )
-                _finish_lhb_backfill_error(self, "同步失败", "未获取到有效龙虎榜数据")
-                event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 同步任务未产出有效结果"))
-                return
-            pool_manager = results.get("pool_manager")
-            if pool_manager is not None:
-                self.pool_manager = pool_manager
-            ai_chain_context_map = results.get("ai_chain_context_map")
-            if isinstance(ai_chain_context_map, dict):
-                self._ai_chain_context_map = ai_chain_context_map
-            pool = list(results.get("pool") or [])
-            row_data = list(results.get("row_data") or [])
-            self._display_pool(pool, row_data=row_data)
-            event_bus.sig_system_log.emit(
-                "info",
-                self._ensure_log_line(
-                    f"[龙虎榜池] 同步完成 | 更新{len(fetched_results)}天 | 校验{len(validated_results)}天 | 入池{len(pool)}只"
-                ),
-            )
-        def _on_backfill_error(error_message: str):
-            self._backfill_in_progress = False
-            self.btn_refresh.setEnabled(True)
-            self._set_pool_status(
-                "抓取异常",
-                error_message,
-                freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
-                next_step="请稍后重试",
-            )
-            _finish_lhb_backfill_error(self, "抓取异常", error_message)
-            event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
-
+        mark_runtime_network_activity(self)
         task_lifecycle_for(self, runner=task_manager).run_background(
             "pool_backfill",
             lambda token: _build_lhb_backfill_payload(
@@ -1188,8 +1471,8 @@ class LhbTab(BaseStockTab):
                 _safe_log_emit,
                 token,
             ),
-            on_success=_on_backfill_done,
-            on_error=_on_backfill_error,
+            on_success=lambda results: _complete_lhb_backfill_success(self, results),
+            on_error=lambda error_message: _complete_lhb_backfill_error(self, error_message),
             task_id=task_id,
             timeout_sec=LHB_POOL_BACKFILL_TIMEOUT_SECONDS,
         )
@@ -1224,9 +1507,20 @@ class LhbTab(BaseStockTab):
         self._pool_retry_timer.start(5_000)
 
     def shutdown(self) -> None:
+        self._pool_bootstrap_generation = int(getattr(self, "_pool_bootstrap_generation", 0)) + 1
+        self._pool_bootstrap_started = False
+        self._pool_bootstrap_not_before = 0.0
+        self._post_f5_pool_defer_until = 0.0
+        self._post_f5_pool_pending = False
+        self._post_f5_pool_emit_event = False
         task_lifecycle_for(self, runner=task_manager).shutdown(timeout_ms=LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS)
         self._pool_load_in_progress = False
+        self._background_preload_done = True
         self._backfill_in_progress = False
+        self._pending_backfill_request = None
+        self._pending_backfill_defer_when_inactive = False
+        self._active_backfill_request = None
+        self._active_backfill_defer_when_inactive = False
         retry_timer = getattr(self, "_pool_retry_timer", None)
         if retry_timer is not None:
             retry_timer.stop()

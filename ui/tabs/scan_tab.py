@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -14,7 +15,6 @@ from PyQt6.QtWidgets import (
 
 from app.services.scan_cache_service import load_scan_cache, save_scan_cache
 from app.services.scan_runtime_service import VCPParams
-from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
@@ -22,19 +22,374 @@ from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
-from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.components.thread_shutdown import request_thread_shutdown
 from ui.components.toast_widget import show_toast
-
-# Removed unused imports from ui.theme and PyQt6
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.services.scan_f5_incremental_coordinator import build_scan_f5_incremental_coordinator
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.workers.scan_worker import ScanWorker
+from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.tab_registry import create_tab_lineage_service
 
 log = get_logger(__name__)
 
 
-class ScanTab(BaseStockTab):
+@dataclass
+class _ScanCachePreloadState:
+    started: bool = False
+    done: bool = False
+    committed: bool = False
+    deferred_payload: tuple[dict, list] | None = None
+    prepared_rows: list | None = None
+    committing: bool = False
+    skip_visible_quote_prime: bool = False
+
+
+def _format_worker_scan_date(value: str) -> str:
+    compact = value.replace("-", "")
+    return f"{compact[:4]}-{compact[4:6]}-{compact[6:]}" if len(compact) == 8 else compact
+
+
+def _load_scan_cache_snapshot(cancellation_token):
+    """在 GUI 线程外只读取纯数据缓存快照。"""
+    cancellation_token.raise_if_cancelled()
+    cache_data, migrated = load_scan_cache()
+    cancellation_token.raise_if_cancelled()
+    results = cache_data.get("results", []) if isinstance(cache_data, dict) else []
+    prepared_rows = _prepare_scan_cache_rows(results)
+    cancellation_token.raise_if_cancelled()
+    return cache_data, bool(migrated), prepared_rows
+
+
+def _prepare_scan_cache_rows(results) -> list:
+    """在后台线程完成扫描缓存的去重与排序，首次显示只需提交模型。"""
+
+    def _date_key(row: dict) -> str:
+        return "".join(ch for ch in str(row.get("触发日期", "") or "") if ch.isdigit())[:8]
+
+    def _score_key(row: dict) -> float:
+        try:
+            return float(row.get("评分", float("-inf")))
+        except (TypeError, ValueError):
+            return float("-inf")
+
+    rows_by_code: dict[str, dict] = {}
+    rows_without_code: list[dict] = []
+    for raw_row in results or ():
+        if not isinstance(raw_row, dict):
+            continue
+        row = dict(raw_row)
+        code = str(row.get("代码", "") or "").strip()
+        if not code:
+            rows_without_code.append(row)
+            continue
+        current = rows_by_code.get(code)
+        if current is None or _date_key(row) >= _date_key(current):
+            rows_by_code[code] = row
+
+    prepared = [*rows_by_code.values(), *rows_without_code]
+    prepared.sort(key=lambda row: (_date_key(row), _score_key(row)), reverse=True)
+    return prepared
+
+
+def _scan_worker_params(tab) -> VCPParams:
+    return VCPParams(
+        rps_threshold=tab.spn_scan_rps.value(),
+        amp_threshold=tab.spn_scan_amp.value(),
+        ma_bind_threshold=tab.spn_scan_ma_bind.value(),
+        high_250_threshold=tab.spn_scan_high250.value(),
+        min_amount_20d=tab.spn_scan_amount.value() * 1e8,
+    )
+
+
+def _begin_scan_lifecycle(tab):
+    lifecycle = getattr(tab, "_task_lifecycle", None)
+    if lifecycle is None:
+        lifecycle = TaskLifecycleGroup()
+        tab._task_lifecycle = lifecycle
+    lifecycle.cancel("scan_cache_load", reason="scan_started")
+    preload = getattr(tab, "_scan_cache_preload", None)
+    if preload is not None:
+        preload.deferred_payload = None
+        preload.done = True
+    tab._scan_token = lifecycle.begin("scan", timeout_sec=ScanTab.SCAN_TIMEOUT_SEC)
+    return tab._scan_token
+
+
+def _start_scan_worker(tab, sd: str, ed: str, params: VCPParams) -> None:
+    from ui.workers.scan_worker import ScanWorker
+
+    tab.worker = ScanWorker(
+        tab.data_provider,
+        tab.engine,
+        sd,
+        ed,
+        params,
+        cancellation_token=tab._scan_token,
+        timeout_sec=ScanTab.SCAN_TIMEOUT_SEC,
+    )
+    tab.worker.progress.connect(lambda p, m: ui_signals.sig_task_progress.emit("scan", p, m))
+    tab.worker.result_ready.connect(tab._on_scan_results)
+    tab.worker.finished_scan.connect(tab._on_scan_finished)
+    tab.worker.finished.connect(tab._on_worker_thread_finished)
+    tab.worker.start()
+
+
+def _render_empty_scan_table(owner) -> None:
+    owner._current_results = []
+    result = owner._describe_scan_rows([])
+    owner._last_scan_result = result
+    if result.signature != owner._last_scan_signature:
+        owner.source_model.update_data(result.rows)
+        owner._last_scan_signature = result.signature
+    if hasattr(owner, "table_state"):
+        owner.table_state.show_empty("暂无扫描结果")
+    owner._refresh_scan_status("本次无结果")
+
+
+def _normalize_scan_render_rows(results) -> tuple[object, bool]:
+    import pandas as pd
+
+    try:
+        frame = pd.DataFrame(results).sort_values("触发日期").drop_duplicates(subset=["代码"], keep="last")
+        if "评分" in frame.columns:
+            frame["评分_tmp"] = pd.to_numeric(frame["评分"], errors="coerce")
+            frame = frame.sort_values(by=["触发日期", "评分_tmp"], ascending=[False, False])
+            frame = frame.drop(columns=["评分_tmp"])
+        return frame.to_dict("records"), True
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        event_bus.sig_system_log.emit("error", f"数据整理失败: {exc}")
+        return results, False
+
+
+def _safe_scan_float_text(value, fmt: str = "{:.2f}") -> str:
+    try:
+        return fmt.format(float(value))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _format_scan_row(row_data: dict) -> dict:
+    formatted = {
+        "代码": str(row_data.get("代码", "")),
+        "名称": str(row_data.get("名称", "")),
+        "现价": _safe_scan_float_text(row_data.get("收盘", 0)),
+        "涨幅%": "--",  # Historical static scan lacks intraday % change originally
+        "触发日期": str(row_data.get("触发日期", "")),
+        "评分": str(row_data.get("评分", "")),
+        "RPS强度": str(row_data.get("RPS强度", "")),
+        "市值": str(row_data.get("市值", "")),
+        "距突破": str(row_data.get("距突破", "")),
+        "突破状态": str(row_data.get("突破状态", "")),
+        "区间振幅": str(row_data.get("区间振幅", "")),
+        "热门板块": str(row_data.get("热点板块", "-")),
+        "_suppress_accent_rail": True,
+    }
+    formatted.update({key: value for key, value in row_data.items() if key not in formatted})
+    return formatted
+
+
+def _commit_scan_render(owner, formatted_rows: list[dict]) -> None:
+    result = owner._describe_scan_rows(formatted_rows)
+    owner._last_scan_result = result
+    if result.signature != owner._last_scan_signature:
+        owner.source_model.update_data(result.rows)
+        owner._last_scan_signature = result.signature
+    owner._apply_latest_quotes_from_store()
+    if not owner._scan_cache_preload.committing:
+        owner._prime_visible_local_quote_snapshot(owner.source_model)
+    if hasattr(owner, "table_state"):
+        owner.table_state.show_table()
+    owner._refresh_scan_status()
+
+
+class _ScanCacheLifecycleMixin:
+    """扫描缓存的后台读取、延迟呈现与持久化边界。"""
+
+    def _save_scan_cache(self, results: list):
+        try:
+            params_snapshot = {
+                "rps": self.spn_scan_rps.value(),
+                "amp": self.spn_scan_amp.value(),
+                "ma_bind": self.spn_scan_ma_bind.value(),
+                "amount": self.spn_scan_amount.value(),
+                "high250": self.spn_scan_high250.value(),
+            }
+            status = save_scan_cache(results, params_snapshot)
+            if status == "cleared":
+                log.info("[扫描缓存] 本次扫描无结果，已清空旧缓存")
+                return
+            log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.error(f"[扫描缓存] 保存失败: {exc}")
+
+    def _load_scan_cache(self, *, force: bool = False) -> bool:
+        if getattr(self, "_shutting_down", False):
+            return False
+        preload = self._scan_cache_preload
+        if preload.started and not preload.done:
+            return False
+        if preload.done and not force:
+            return False
+
+        from app.services.ui_task_service import background_job_runner as task_manager
+        from app.services.ui_task_service import task_registry
+
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        if lifecycle is None:
+            lifecycle = TaskLifecycleGroup()
+            self._task_lifecycle = lifecycle
+        preload.started = True
+        preload.done = False
+        preload.committed = False
+        preload.deferred_payload = None
+        preload.prepared_rows = None
+        preload.committing = False
+        task_key = task_registry.workspace("scan_cache_load", description="Load cached scan results")
+        lifecycle.run_background(
+            "scan_cache_load",
+            _load_scan_cache_snapshot,
+            task_id=task_key,
+            timeout_sec=15.0,
+            on_success=self._on_scan_cache_loaded,
+            on_error=self._on_scan_cache_load_error,
+            runner=task_manager,
+        )
+        return True
+
+    def _on_scan_cache_loaded(self, payload) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
+        try:
+            cache_data, migrated, *prepared_payload = payload
+            if migrated:
+                log.info("[扫描缓存] 旧版的 scan_cache.json 已自动迁移入 SQLite")
+            if not isinstance(cache_data, dict):
+                self._commit_empty_scan_cache()
+                return
+            results = cache_data.get("results", [])
+            if not isinstance(results, list) or not results:
+                self._commit_empty_scan_cache()
+                return
+
+            prepared_rows = prepared_payload[0] if prepared_payload else _prepare_scan_cache_rows(results)
+            plain_results = self._refresh_scan_result_names(prepared_rows, refresh_missing=False)
+            preload = self._scan_cache_preload
+            preload.prepared_rows = plain_results
+            preload.skip_visible_quote_prime = not self.isVisible()
+            self._apply_scan_cache_payload(cache_data, plain_results)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._on_scan_cache_load_error(str(exc))
+        finally:
+            self._scan_cache_preload.done = True
+
+    def _on_scan_cache_load_error(self, error_message: str) -> None:
+        self._scan_cache_preload.done = True
+        if not getattr(self, "_shutting_down", False):
+            event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {error_message}")
+
+    def _commit_empty_scan_cache(self) -> None:
+        preload = self._scan_cache_preload
+        preload.committing = True
+        try:
+            _render_empty_scan_table(self)
+            preload.committed = True
+        finally:
+            preload.committing = False
+
+    def _apply_deferred_scan_cache(self) -> None:
+        if getattr(self, "_shutting_down", False) or not self.isVisible():
+            return
+        preload = self._scan_cache_preload
+        payload = preload.deferred_payload
+        if payload is None:
+            return
+        preload.deferred_payload = None
+        self._apply_scan_cache_payload(*payload)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._scan_cache_preload.deferred_payload is not None:
+            QTimer.singleShot(0, self._apply_deferred_scan_cache)
+
+    def _apply_scan_cache_payload(self, cache_data: dict, results: list):
+        if getattr(self, "_shutting_down", False):
+            return
+        try:
+            saved_at = cache_data.get("saved_at", "未知")
+            self._current_results = results
+            preload = self._scan_cache_preload
+            preload.committed = False
+            preload.committing = True
+            try:
+                if self._render_scan_table(results) is False:
+                    return
+                preload.committed = True
+            finally:
+                preload.committing = False
+
+            params_info = cache_data.get("params")
+            params_hint = ""
+            if params_info and isinstance(params_info, dict):
+                params_hint = (
+                    f" | RPS≥{params_info.get('rps', '?')}"
+                    f" 振幅≤{int(params_info.get('amp', 0) * 100)}%"
+                    f" 均线粘合≤{int(params_info.get('ma_bind', 0) * 100)}%"
+                )
+            event_bus.sig_system_log.emit(
+                "info", f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
+            )
+            ui_signals.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {exc}")
+
+    def prime_background_load(self) -> bool:
+        """只读取本地扫描缓存；与构造器延时任务共享同一次加载状态。"""
+        return self._load_scan_cache()
+
+    def is_background_preload_complete(self) -> bool:
+        preload = self._scan_cache_preload
+        return bool(
+            preload.done
+            and preload.committed
+            and preload.deferred_payload is None
+            and preload.prepared_rows is None
+            and not preload.committing
+        )
+
+    def cancel_background_preload(self, *, reason: str):
+        def _reset() -> None:
+            initial_timer = getattr(self, "_initial_cache_load_timer", None)
+            if initial_timer is not None:
+                initial_timer.stop()
+            preload = self._scan_cache_preload
+            preload.started = False
+            preload.done = False
+            preload.committed = False
+            preload.deferred_payload = None
+            preload.prepared_rows = None
+            preload.committing = False
+
+        from app.services.ui_task_service import background_job_runner as task_manager
+        from app.services.ui_task_service import task_registry
+
+        return cancel_background_preload_tasks(
+            self,
+            lifecycle_names=("scan_cache_load",),
+            task_ids=(task_registry.workspace("scan_cache_load"),),
+            reason=reason,
+            reset_state=_reset,
+            local_settled=lambda: not self._scan_cache_preload.committing,
+            runner=task_manager,
+        )
+
+    def on_workspace_tab_activated(self) -> None:
+        preload = self._scan_cache_preload
+        if not preload.started and not preload.done:
+            self._load_scan_cache()
+        self._apply_deferred_scan_cache()
+
+
+class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
     """
     静态扫描 (VCP 区间扫描) 独立组件
     包含扫描渲染、策略表格、本地JSON缓存，并通过事件总线驱动进度。
@@ -59,27 +414,29 @@ class ScanTab(BaseStockTab):
         self._scan_mode = "full"
         self._scan_target_date = ""
         self._last_incremental_stats = None
-        self._scan_lineage_service = TabDataLineageService(
-            key="scan",
-            source="DataStore.scan_cache + local_scan_results",
-            provider="scan_runtime_service",
-            cache_refs=(
-                "data/vcp_hunter.db:kv_store.scan_cache",
-                "data/scan_cache.json.migrated",
-                "global_store.quotes",
-                "local_tdx_cache",
-            ),
+        self._scan_lineage_service = create_tab_lineage_service(
+            "scan",
             provider_status_reader=self._read_provider_status,
         )
         self._last_scan_result = None
         self._last_scan_signature = ""
-        self._pending_f5_auto_incremental = False
+        self._shutting_down = False
+        self._scan_cache_preload = _ScanCachePreloadState()
+        self._f5_incremental = build_scan_f5_incremental_coordinator(
+            self,
+            delay_ms=self.F5_AUTO_INCREMENTAL_DELAY_MS,
+            settings_key=self.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY,
+        )
+        self._f5_auto_incremental_timer = self._f5_incremental.timer
 
         self._init_settings_widgets()
         self._init_ui()
 
-        # 启动时自动加载上次缓存的扫描结果
-        QTimer.singleShot(self._initial_cache_load_delay_ms, self._load_scan_cache)
+        # 启动时自动加载上次缓存的扫描结果；owned timer 可在超时/退出时取消。
+        self._initial_cache_load_timer = QTimer(self)
+        self._initial_cache_load_timer.setSingleShot(True)
+        self._initial_cache_load_timer.timeout.connect(self._load_scan_cache)
+        self._initial_cache_load_timer.start(self._initial_cache_load_delay_ms)
 
         # 情报源只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
@@ -186,7 +543,7 @@ class ScanTab(BaseStockTab):
             result = self._describe_scan_rows(rows)
             self._last_scan_result = result
             self._last_scan_signature = result.signature
-        return result.lineage.as_dict()
+        return result.lineage.as_dynamic_dict()
 
     @staticmethod
     def _normalize_scan_date(value) -> str:
@@ -271,7 +628,7 @@ class ScanTab(BaseStockTab):
 
         return list(merged.values()), stats
 
-    def _refresh_scan_result_names(self, results: list) -> list:
+    def _refresh_scan_result_names(self, results: list, *, refresh_missing: bool = True) -> list:
         normalized_rows = []
         codes = []
         for row in results or []:
@@ -290,7 +647,7 @@ class ScanTab(BaseStockTab):
         try:
             name_map = self.data_provider.ensure_code_name_map(
                 list(dict.fromkeys(codes)),
-                refresh_missing=True,
+                refresh_missing=refresh_missing,
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[扫描结果] 名称回填失败: {exc}")
@@ -575,6 +932,8 @@ class ScanTab(BaseStockTab):
             self.cancel_scan()
             return
 
+        from ui.components.scan_dialogs import VCPScanRangeDialog
+
         dlg = VCPScanRangeDialog(self)
         if dlg.exec() != VCPScanRangeDialog.DialogCode.Accepted:
             return
@@ -590,6 +949,8 @@ class ScanTab(BaseStockTab):
         return self.start_scan(target_date, target_date, merge_mode=True)
 
     def _show_scan_settings(self):
+        from ui.components.scan_dialogs import VCPScanSettingsDialog
+
         dlg = VCPScanSettingsDialog(self._get_scan_params(), self._load_user_presets(), self)
         if dlg.exec() != VCPScanSettingsDialog.DialogCode.Accepted:
             return
@@ -608,34 +969,19 @@ class ScanTab(BaseStockTab):
         return self._on_incremental_scan_clicked()
 
     def run_auto_incremental_scan_after_f5(self) -> bool:
-        if self.worker is not None and self.worker.isRunning():
-            log.info("[扫描] F5后自动补扫跳过：当前已有扫描任务运行中")
-            return False
-
-        target_date = self._resolve_incremental_scan_date()
-        target_key = self._normalize_scan_date(target_date)
-
-        started = self.start_scan(target_date, target_date, merge_mode=True)
-        if not started:
-            return False
-
-        if target_key:
-            self._settings.setValue(self.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY, target_key)
-            self._settings.sync()
-        return True
+        return self._f5_incremental.run_now()
 
     def schedule_auto_incremental_scan_after_f5(self) -> bool:
-        if self._pending_f5_auto_incremental:
-            return False
-        self._pending_f5_auto_incremental = True
-        QTimer.singleShot(self.F5_AUTO_INCREMENTAL_DELAY_MS, self._run_pending_auto_incremental_scan_after_f5)
-        return True
+        return self._f5_incremental.schedule()
 
     def _run_pending_auto_incremental_scan_after_f5(self) -> bool:
-        self._pending_f5_auto_incremental = False
-        return self.run_auto_incremental_scan_after_f5()
+        return self._f5_incremental.run_pending()
 
     def refresh_data_after_f5(self) -> bool:
+        if getattr(self, "_shutting_down", False):
+            return False
+        self._scan_cache_preload.started = False
+        self._scan_cache_preload.done = False
         self._load_scan_cache()
         self.refresh_table_from_latest_snapshot(current_model=self.source_model, async_local=True)
         return self.schedule_auto_incremental_scan_after_f5()
@@ -651,6 +997,12 @@ class ScanTab(BaseStockTab):
     def _apply_latest_quotes_from_store(self):
         self._apply_quote_store_snapshot(current_model=self.source_model)
 
+    def _prime_visible_local_quote_snapshot(self, current_model=None) -> bool:
+        if self._scan_cache_preload.skip_visible_quote_prime:
+            self._scan_cache_preload.skip_visible_quote_prime = False
+            return False
+        return super()._prime_visible_local_quote_snapshot(current_model)
+
     def _on_cache_reload_completed(self):
         self._apply_latest_quotes_from_store()
 
@@ -658,15 +1010,13 @@ class ScanTab(BaseStockTab):
     # 核心引擎调度与任务生命周期
     # ==========================
     def start_scan(self, sd: str, ed: str, merge_mode: bool = False) -> bool:
+        if getattr(self, "_shutting_down", False):
+            return False
         if self.worker is not None and self.worker.isRunning():
             return False
 
-        sd = sd.replace("-", "")
-        ed = ed.replace("-", "")
-        if len(sd) == 8:
-            sd = f"{sd[:4]}-{sd[4:6]}-{sd[6:]}"
-        if len(ed) == 8:
-            ed = f"{ed[:4]}-{ed[4:6]}-{ed[6:]}"
+        sd = _format_worker_scan_date(sd)
+        ed = _format_worker_scan_date(ed)
 
         self._scan_mode = "incremental" if merge_mode else "full"
         self._scan_target_date = ed if merge_mode else f"{sd} ~ {ed}"
@@ -676,35 +1026,10 @@ class ScanTab(BaseStockTab):
         ui_signals.sig_task_progress.emit("scan", 1, "准备新增补扫..." if merge_mode else "准备扫描...")
         self._pending_scan_results = None
 
-        params = VCPParams(
-            rps_threshold=self.spn_scan_rps.value(),
-            amp_threshold=self.spn_scan_amp.value(),
-            ma_bind_threshold=self.spn_scan_ma_bind.value(),
-            high_250_threshold=self.spn_scan_high250.value(),
-            min_amount_20d=self.spn_scan_amount.value() * 1e8,
-        )
-
+        params = _scan_worker_params(self)
         self._save_scan_params()
-
-        lifecycle = getattr(self, "_task_lifecycle", None)
-        if lifecycle is None:
-            lifecycle = TaskLifecycleGroup()
-            self._task_lifecycle = lifecycle
-        self._scan_token = lifecycle.begin("scan", timeout_sec=ScanTab.SCAN_TIMEOUT_SEC)
-        self.worker = ScanWorker(
-            self.data_provider,
-            self.engine,
-            sd,
-            ed,
-            params,
-            cancellation_token=self._scan_token,
-            timeout_sec=ScanTab.SCAN_TIMEOUT_SEC,
-        )
-        self.worker.progress.connect(lambda p, m: ui_signals.sig_task_progress.emit("scan", p, m))
-        self.worker.result_ready.connect(self._on_scan_results)
-        self.worker.finished_scan.connect(self._on_scan_finished)
-        self.worker.finished.connect(self._on_worker_thread_finished)
-        self.worker.start()
+        _begin_scan_lifecycle(self)
+        _start_scan_worker(self, sd, ed, params)
         return True
 
     def cancel_scan(self):
@@ -719,6 +1044,16 @@ class ScanTab(BaseStockTab):
         return False
 
     def shutdown(self) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
+        self._shutting_down = True
+        initial_timer = getattr(self, "_initial_cache_load_timer", None)
+        if initial_timer is not None:
+            initial_timer.stop()
+        self._scan_cache_preload.done = True
+        self._scan_cache_preload.deferred_payload = None
+        self._scan_cache_preload.prepared_rows = None
+        self._f5_incremental.shutdown()
         if self.worker is not None:
             request_thread_shutdown(
                 self.worker,
@@ -730,6 +1065,10 @@ class ScanTab(BaseStockTab):
         lifecycle = getattr(self, "_task_lifecycle", None)
         if lifecycle is not None:
             lifecycle.shutdown(timeout_ms=2000)
+
+    def _cleanup_runtime_state(self):
+        self.shutdown()
+        super()._cleanup_runtime_state()
 
     def _on_scan_finished(self, success, msg):
         if success:
@@ -768,147 +1107,26 @@ class ScanTab(BaseStockTab):
     # ==========================
     def _render_scan_table(self, results):
         if not results:
-            self._current_results = []
-            result = self._describe_scan_rows([])
-            self._last_scan_result = result
-            if result.signature != self._last_scan_signature:
-                self.source_model.update_data(result.rows)
-                self._last_scan_signature = result.signature
-            if hasattr(self, "table_state"):
-                self.table_state.show_empty("暂无扫描结果")
-            self._refresh_scan_status("本次无结果")
-            return
-        import pandas as pd
+            _render_empty_scan_table(self)
+            return True
 
-        try:
-            df_res = pd.DataFrame(results).sort_values("触发日期").drop_duplicates(subset=["代码"], keep="last")
-            if "评分" in df_res.columns:
-                df_res["评分_tmp"] = pd.to_numeric(df_res["评分"], errors="coerce")
-                df_res = df_res.sort_values(by=["触发日期", "评分_tmp"], ascending=[False, False])
-                df_res = df_res.drop(columns=["评分_tmp"])
-            final_list = df_res.to_dict("records")
+        preload = self._scan_cache_preload
+        if results is preload.prepared_rows:
+            final_list = list(results)
+            preload.prepared_rows = None
             self._current_results = final_list
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-            event_bus.sig_system_log.emit("error", f"数据整理失败: {e}")
-            final_list = results
-
-        formatted_list = []
+        else:
+            final_list, normalized = _normalize_scan_render_rows(results)
+            if normalized:
+                self._current_results = final_list
 
         try:
-            for row_idx, row_data in enumerate(final_list):
-                code_str = str(row_data.get("代码", ""))
-                name_str = str(row_data.get("名称", ""))
-
-                def _safe_float_str(val, fmt="{:.2f}"):
-                    try:
-                        return fmt.format(float(val))
-                    except (ValueError, TypeError):
-                        return str(val)
-
-                status = str(row_data.get("突破状态", ""))
-
-                # Format score cleanly
-                score_str = str(row_data.get("评分", ""))
-
-                formatted_row = {
-                    "代码": code_str,
-                    "名称": name_str,
-                    "现价": _safe_float_str(row_data.get("收盘", 0)),
-                    "涨幅%": "--",  # Historical static scan lacks intraday % change originally
-                    "触发日期": str(row_data.get("触发日期", "")),
-                    "评分": score_str,
-                    "RPS强度": str(row_data.get("RPS强度", "")),
-                    "市值": str(row_data.get("市值", "")),
-                    "距突破": str(row_data.get("距突破", "")),
-                    "突破状态": status,
-                    "区间振幅": str(row_data.get("区间振幅", "")),
-                    "热门板块": str(row_data.get("热点板块", "-")),
-                    "_suppress_accent_rail": True,
-                }
-                # Keep original data nested so double clicks can retrieve it
-                for k, v in row_data.items():
-                    if k not in formatted_row:
-                        formatted_row[k] = v
-
-                formatted_list.append(formatted_row)
-
-            result = self._describe_scan_rows(formatted_list)
-            self._last_scan_result = result
-            if result.signature != self._last_scan_signature:
-                self.source_model.update_data(result.rows)
-                self._last_scan_signature = result.signature
-            self._apply_latest_quotes_from_store()
-            self._prime_visible_local_quote_snapshot(self.source_model)
-            if hasattr(self, "table_state"):
-                self.table_state.show_table()
-            self._refresh_scan_status()
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-            event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
-
-    # ==========================
-    # 扫描结果本地缓存 (SQLite)
-    # ==========================
-    def _save_scan_cache(self, results: list):
-        try:
-            params_snapshot = {
-                "rps": self.spn_scan_rps.value(),
-                "amp": self.spn_scan_amp.value(),
-                "ma_bind": self.spn_scan_ma_bind.value(),
-                "amount": self.spn_scan_amount.value(),
-                "high250": self.spn_scan_high250.value(),
-            }
-            status = save_scan_cache(results, params_snapshot)
-            if status == "cleared":
-                log.info("[扫描缓存] 本次扫描无结果，已清空旧缓存")
-                return
-            log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            log.error(f"[扫描缓存] 保存失败: {e}")
-
-    def _load_scan_cache(self):
-        try:
-            cache_data, migrated = load_scan_cache()
-            if migrated:
-                log.info("[扫描缓存] 旧版的 scan_cache.json 已自动迁移入 SQLite")
-            if not isinstance(cache_data, dict):
-                return
-            results = cache_data.get("results", [])
-            if not results:
-                return
-
-            QTimer.singleShot(
-                0,
-                lambda cache_data=cache_data, results=list(results): self._apply_scan_cache_payload(
-                    cache_data,
-                    results,
-                ),
-            )
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
-
-    def _apply_scan_cache_payload(self, cache_data: dict, results: list):
-        try:
-            saved_at = cache_data.get("saved_at", "未知")
-            refreshed_results = self._refresh_scan_result_names(results)
-            self._current_results = refreshed_results
-            self._render_scan_table(refreshed_results)
-
-            # #9: 回显参数快照，让用户知道这批结果用的什么参数
-            params_info = cache_data.get("params")
-            params_hint = ""
-            if params_info and isinstance(params_info, dict):
-                params_hint = (
-                    f" | RPS≥{params_info.get('rps', '?')}"
-                    f" 振幅≤{int(params_info.get('amp', 0) * 100)}%"
-                    f" 均线粘合≤{int(params_info.get('ma_bind', 0) * 100)}%"
-                )
-
-            event_bus.sig_system_log.emit(
-                "info", f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
-            )
-            ui_signals.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
+            formatted_rows = [_format_scan_row(row_data) for row_data in final_list]
+            _commit_scan_render(self, formatted_rows)
+            return True
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            event_bus.sig_system_log.emit("error", f"渲染表格错误: {exc}")
+            return False
 
     # ==========================
     # 右键菜单

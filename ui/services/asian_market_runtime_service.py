@@ -5,6 +5,7 @@ import datetime as dt
 import re
 import time
 from contextlib import suppress
+from functools import wraps
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -21,11 +22,22 @@ from app.services.asian_market_cache_service import (
 )
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import raise_if_cancelled as _raise_if_cancelled
 from core.logger import get_logger
 from ui.components.thread_shutdown import request_thread_shutdown
 
 log = get_logger(__name__)
 _DEFERRED_REPAINT_COUNT_RE = re.compile(r"cached\s+(\d+)\s+updates", re.IGNORECASE)
+
+
+def _return_shutdown_when_closed(callback):
+    @wraps(callback)
+    def _guarded(service, *args, **kwargs):
+        if service._closed:
+            return "shutdown"
+        return callback(service, *args, **kwargs)
+
+    return _guarded
 
 
 def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
@@ -87,6 +99,7 @@ class AsianMarketRuntimeService(QObject):
         self._last_error = ""
         self._auto_refresh_deferred_until = 0.0
         self._auto_refresh_defer_reason = ""
+        self._closed = False
 
     @property
     def runtime_state(self) -> str:
@@ -146,6 +159,8 @@ class AsianMarketRuntimeService(QObject):
         return remaining
 
     def defer_auto_refresh(self, seconds: float, reason: str = "") -> None:
+        if self._closed:
+            return
         duration = max(0.0, float(seconds or 0.0))
         if duration <= 0:
             return
@@ -181,6 +196,8 @@ class AsianMarketRuntimeService(QObject):
         )
 
     def _ensure_worker(self):
+        if self._closed:
+            return None
         worker = self._worker
         if worker is not None:
             try:
@@ -197,6 +214,8 @@ class AsianMarketRuntimeService(QObject):
         return worker
 
     def resume_auto_refresh(self) -> None:
+        if self._closed:
+            return
         self.clear_auto_refresh_defer()
         worker = self._ensure_worker()
         with suppress(AttributeError, RuntimeError):
@@ -204,6 +223,8 @@ class AsianMarketRuntimeService(QObject):
         self._set_runtime_state("running")
 
     def pause_for_cache_sync(self) -> None:
+        if self._closed:
+            return
         worker = self._worker
         if worker is not None:
             with suppress(AttributeError, RuntimeError):
@@ -211,6 +232,8 @@ class AsianMarketRuntimeService(QObject):
         self._set_runtime_state("paused_for_cache_sync")
 
     def trigger_refresh_once(self) -> bool:
+        if self._closed:
+            return False
         worker = self._ensure_worker()
         self._set_runtime_state("manual_refresh_once")
         try:
@@ -223,6 +246,7 @@ class AsianMarketRuntimeService(QObject):
             self._set_runtime_state("error", str(exc))
             return False
 
+    @_return_shutdown_when_closed
     def sync_runtime_state(self) -> str:
         codes = self.target_codes()
         quote_open = is_asian_quote_refresh_time(codes)
@@ -276,6 +300,9 @@ class AsianMarketRuntimeService(QObject):
         return True
 
     def shutdown(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.stop(auto=False)
 
     def _on_worker_finished(self) -> None:
@@ -284,10 +311,14 @@ class AsianMarketRuntimeService(QObject):
             with suppress(RuntimeError):
                 worker.deleteLater()
         self._worker = None
+        if self._closed:
+            return
         if self._runtime_state != "manual_refresh_once":
             self._set_runtime_state("idle")
 
     def _on_worker_progress(self, message: str) -> None:
+        if self._closed:
+            return
         text = str(message or "").strip()
         if not text:
             return
@@ -302,6 +333,8 @@ class AsianMarketRuntimeService(QObject):
         self.sig_progress.emit(text)
 
     def _on_rt_update(self, updates: dict) -> None:
+        if self._closed:
+            return
         if not updates:
             return
         self._last_success_at = dt.datetime.now()
@@ -389,8 +422,10 @@ class AsianMarketRuntimeService(QObject):
             "expected_latest_trade_date": expected_latest_date,
         }
 
-    def run_cache_sync_if_stale(self, *, emit_event: bool = True) -> dict:
+    def run_cache_sync_if_stale(self, *, emit_event: bool = True, cancellation_token=None) -> dict:
+        _raise_if_cancelled(cancellation_token)
         staleness = self.cache_staleness()
+        _raise_if_cancelled(cancellation_token)
         if not staleness.get("stale"):
             return {
                 "job_key": "asian_market_cache_sync",
@@ -403,7 +438,9 @@ class AsianMarketRuntimeService(QObject):
         success, message, report = sync_asian_kline_cache(
             max_workers=3,
             period="1y",
+            cancellation_token=cancellation_token,
         )
+        _raise_if_cancelled(cancellation_token)
         records = 0
         if isinstance(report, dict):
             try:
