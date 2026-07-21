@@ -21,6 +21,10 @@ def is_a_share_code(code) -> bool:
 
 
 def merge_quote_entry(existing: Mapping | None, incoming: Mapping | None) -> dict:
+    if existing is not None and not isinstance(existing, Mapping):
+        raise TypeError("existing quote payload must be a mapping")
+    if incoming is not None and not isinstance(incoming, Mapping):
+        raise TypeError("incoming quote payload must be a mapping")
     merged = dict(existing or {})
     for key, value in dict(incoming or {}).items():
         if value is None:
@@ -33,6 +37,12 @@ def merge_quote_snapshot_inplace(target: dict, incoming: Mapping | None) -> dict
     for code, payload in dict(incoming or {}).items():
         target[str(code)] = merge_quote_entry(target.get(str(code)), payload)
     return target
+
+
+def merge_quote_snapshot(snapshot: Mapping | None, incoming: Mapping | None) -> dict:
+    """Return a merged copy without mutating either input mapping."""
+    merged = {str(code): dict(payload or {}) for code, payload in dict(snapshot or {}).items()}
+    return merge_quote_snapshot_inplace(merged, incoming)
 
 
 def get_missing_a_share_finance_codes(codes: Iterable[str], snapshot: Mapping[str, Mapping] | None) -> list[str]:

@@ -2,6 +2,7 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
@@ -165,7 +166,7 @@ def _shape_watchlist_rows(all_codes, data_dict, old_pool, code_name_map, live_da
     return rows
 
 
-def _merge_watchlist_quote_row(row: dict, quote: dict) -> None:
+def _merge_watchlist_quote_row(row: dict, quote: Mapping) -> None:
     metrics = resolve_quote_metrics(row, quote)
     updates = {
         "现价": metrics.get("price_text"),
@@ -183,7 +184,7 @@ def _merge_watchlist_quote_snapshot(rows, quote_snapshot) -> list:
     snapshot = dict(quote_snapshot or {})
     for row in merged_rows:
         quote = snapshot.get(str(row.get("代码", "") or "").strip())
-        if isinstance(quote, dict):
+        if isinstance(quote, Mapping):
             _merge_watchlist_quote_row(row, quote)
     return merged_rows
 
@@ -193,7 +194,7 @@ def _copy_quote_snapshot(snapshot, codes=None) -> dict:
     copied = {}
     for code, values in dict(snapshot or {}).items():
         code_text = str(code)
-        if not isinstance(values, dict) or (code_filter is not None and code_text not in code_filter):
+        if not isinstance(values, Mapping) or (code_filter is not None and code_text not in code_filter):
             continue
         copied[code_text] = dict(values)
     return copied

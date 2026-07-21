@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         get_missing_a_share_finance_codes,
         is_a_share_code,
         merge_quote_entry,
+        merge_quote_snapshot,
         merge_quote_snapshot_inplace,
         resolve_quote_metrics,
     )
@@ -28,6 +29,7 @@ __all__ = [
     "has_valid_quote",
     "is_a_share_code",
     "merge_quote_entry",
+    "merge_quote_snapshot",
     "merge_quote_snapshot_inplace",
     "normalize_quote_payload",
     "publish_rt_quotes",
@@ -42,6 +44,7 @@ _EXPORTS = {
     "has_valid_quote": ("domains.quotes.dispatcher", "has_valid_quote"),
     "is_a_share_code": ("domains.quotes.snapshot", "is_a_share_code"),
     "merge_quote_entry": ("domains.quotes.snapshot", "merge_quote_entry"),
+    "merge_quote_snapshot": ("domains.quotes.snapshot", "merge_quote_snapshot"),
     "merge_quote_snapshot_inplace": ("domains.quotes.snapshot", "merge_quote_snapshot_inplace"),
     "normalize_quote_payload": ("domains.quotes.dispatcher", "normalize_quote_payload"),
     "publish_rt_quotes": ("domains.quotes.dispatcher", "publish_rt_quotes"),
