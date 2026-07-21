@@ -10,7 +10,13 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol
 
-from infra.tasks.lifecycle import CancellationToken, TaskCancelledError, TaskDeadlineExceeded
+from infra.tasks.lifecycle import (
+    CancellationToken,
+    TaskCancelledError,
+    TaskDeadlineExceeded,
+    call_with_supported_kwargs,
+    invoke_with_cancellation,
+)
 
 
 class _BackgroundRunner(Protocol):
@@ -28,27 +34,6 @@ def _default_background_runner():
     from core.background_job_runner import background_job_runner
 
     return background_job_runner
-
-
-def invoke_with_cancellation(fn, cancellation_token: CancellationToken | None, *args, **kwargs):
-    """Invoke a provider stage with a token when its public signature accepts it."""
-    if cancellation_token is None:
-        return fn(*args, **kwargs)
-    cancellation_token.raise_if_cancelled()
-    try:
-        parameters = inspect.signature(fn).parameters.values()
-        accepts_token = any(
-            parameter.name == "cancellation_token" or parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters
-        )
-    except (TypeError, ValueError):
-        accepts_token = False
-    if accepts_token:
-        result = fn(*args, cancellation_token=cancellation_token, **kwargs)
-    else:
-        result = fn(*args, **kwargs)
-    cancellation_token.raise_if_cancelled()
-    return result
 
 
 def _submit_owned_task(runner, fn, submit_kwargs: dict) -> None:
@@ -164,10 +149,7 @@ class TaskLifecycleGroup:
         method = getattr(runner, method_name, None)
         if not callable(method):
             return False
-        try:
-            return method(*args, **kwargs)
-        except TypeError:
-            return method(*args)
+        return call_with_supported_kwargs(method, *args, **kwargs)
 
     def _cancel_owned(self, owned: _OwnedTask, *, reason: str, abandon: bool) -> bool:
         cancelled = owned.token.cancel(reason)

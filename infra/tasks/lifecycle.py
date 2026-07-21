@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import inspect
 import threading
 import time
+from collections.abc import Mapping
 from typing import cast
 
 CANCELLABLE_IO_MAX_SLICE_SECONDS = 2.0
@@ -17,6 +19,109 @@ class TaskCancelledError(RuntimeError):
 
 class TaskDeadlineExceeded(TimeoutError):
     """Raised when a cooperative task has exceeded its deadline."""
+
+
+def _callable_signature(fn) -> inspect.Signature | None:
+    try:
+        return inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cancellation_token_is_bound(
+    signature: inspect.Signature,
+    call_args: list,
+    call_kwargs: dict,
+) -> bool:
+    try:
+        bound = signature.bind_partial(*call_args, **call_kwargs)
+    except TypeError:
+        return "cancellation_token" in call_kwargs
+    return "cancellation_token" in bound.arguments
+
+
+def _append_positional_token(
+    parameters: Mapping[str, inspect.Parameter],
+    token_parameter: inspect.Parameter,
+    cancellation_token: CancellationToken,
+    call_args: list,
+    call_kwargs: dict,
+) -> None:
+    positional_parameters = [
+        parameter
+        for parameter in parameters.values()
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    token_index = positional_parameters.index(token_parameter)
+    if len(call_args) > token_index:
+        return
+    for parameter in positional_parameters[len(call_args) : token_index]:
+        if parameter.name in call_kwargs:
+            call_args.append(call_kwargs.pop(parameter.name))
+        elif parameter.default is not inspect.Parameter.empty:
+            call_args.append(parameter.default)
+        else:
+            return
+    if len(call_args) == token_index:
+        call_args.append(cancellation_token)
+
+
+def _inject_cancellation_token(
+    signature: inspect.Signature,
+    cancellation_token: CancellationToken,
+    call_args: list,
+    call_kwargs: dict,
+) -> None:
+    parameters = signature.parameters
+    if _cancellation_token_is_bound(signature, call_args, call_kwargs):
+        return
+    token_parameter = parameters.get("cancellation_token")
+    if token_parameter is None:
+        if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+            call_kwargs["cancellation_token"] = cancellation_token
+        return
+    if token_parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+        _append_positional_token(parameters, token_parameter, cancellation_token, call_args, call_kwargs)
+        return
+    if token_parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+        call_kwargs["cancellation_token"] = cancellation_token
+
+
+def _prepare_cancellation_call(fn, cancellation_token: CancellationToken, args: tuple, kwargs: dict) -> tuple[list, dict]:
+    call_args = list(args)
+    call_kwargs = dict(kwargs)
+    signature = _callable_signature(fn)
+    if signature is not None:
+        _inject_cancellation_token(signature, cancellation_token, call_args, call_kwargs)
+    return call_args, call_kwargs
+
+
+def invoke_with_cancellation(fn, cancellation_token: CancellationToken | None, *args, **kwargs):
+    """Invoke a task once, injecting its token when the signature supports it."""
+    if cancellation_token is None:
+        return fn(*args, **kwargs)
+
+    cancellation_token.raise_if_cancelled()
+    call_args, call_kwargs = _prepare_cancellation_call(fn, cancellation_token, args, kwargs)
+    result = fn(*call_args, **call_kwargs)
+    cancellation_token.raise_if_cancelled()
+    return result
+
+
+def call_with_supported_kwargs(fn, *args, **kwargs):
+    """Call once after dropping keyword arguments unsupported by an old API."""
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return fn(*args, **kwargs)
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return fn(*args, **kwargs)
+    supported = {
+        name
+        for name, parameter in parameters.items()
+        if parameter.kind is not inspect.Parameter.POSITIONAL_ONLY
+    }
+    return fn(*args, **{key: value for key, value in kwargs.items() if key in supported})
 
 
 def raise_if_cancelled(cancellation_token=None) -> None:
@@ -141,6 +246,8 @@ __all__ = [
     "TaskCancelledError",
     "TaskDeadlineExceeded",
     "bounded_io_timeout",
+    "call_with_supported_kwargs",
+    "invoke_with_cancellation",
     "raise_if_cancelled",
     "reraise_task_cancellation",
     "wait_with_cancellation",

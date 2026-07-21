@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -8,12 +9,37 @@ import domains.stock_context.signal_builders as stock_context_module
 import ui.workspaces.classic_workspace as classic_workspace_module
 import ui.workspaces.stock_context_service as stock_context_runtime_module
 from app.services.stock_context_model_service import StockSignal
+from infra.tasks.task_scheduler import task_manager
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.workspaces.classic_workspace import ClassicWorkspace
 from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.tab_registry import INFO_SOURCE_GROUP, get_tab_definition
 from ui.workspaces.workspace_facade import WorkspaceFacade
+
+_STOCK_CONTEXT_TASK_IDS = {
+    "stock_context_fund_rows_snapshot",
+    "stock_context_lhb_rows_snapshot",
+}
+
+
+@pytest.fixture(autouse=True)
+def _settle_stock_context_workers_after_test():
+    baseline = set(task_manager.runtime_health_snapshot()["task_ids"])
+    yield
+
+    current = set(task_manager.runtime_health_snapshot()["task_ids"])
+    owned = sorted((current - baseline) & _STOCK_CONTEXT_TASK_IDS)
+    for task_id in owned:
+        task_manager.cancel_task(task_id, reason="pytest_teardown")
+    if owned:
+        task_manager.wait_for_tasks(owned, timeout_ms=3000)
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+    for task_id in owned:
+        if task_manager.is_active_task(task_id):
+            task_manager.abandon_task(task_id)
 
 
 def _make_workspace(*, tabs=None, engine=None):

@@ -6,6 +6,12 @@ from collections.abc import Callable
 from app.services.ui_quote_service import enrich_quotes_with_finance
 from core.logger import get_logger
 from infra.market_data.provider_ports import RealtimeQuotePort
+from infra.tasks.lifecycle import (
+    TaskCancelledError,
+    TaskDeadlineExceeded,
+    invoke_with_cancellation,
+    raise_if_cancelled,
+)
 
 log = get_logger(__name__)
 
@@ -74,20 +80,41 @@ class CentralQuotePoller:
             log.debug(f"[报价站] 读取股本缺口失败: {exc}")
             return []
 
-    def fetch_payload(self, codes: set[str]) -> dict:
-        quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
+    def fetch_payload(self, codes: set[str], *, cancellation_token=None) -> dict:
+        raise_if_cancelled(cancellation_token)
+        quotes = invoke_with_cancellation(
+            self.data_provider.fetch_realtime_quotes_batch,
+            cancellation_token,
+            list(codes),
+        )
+        raise_if_cancelled(cancellation_token)
         quote_request_stats = self.get_quote_request_stats()
-        finance_data = {}
+        finance_data: dict[str, dict] = {}
 
         finance_codes = self.missing_finance_codes(codes)
         if finance_codes:
             try:
-                finance_data = self._finance_lookup(finance_codes) or {}
+                finance_data = (
+                    invoke_with_cancellation(
+                        self._finance_lookup,
+                        cancellation_token,
+                        finance_codes,
+                    )
+                    or {}
+                )
+            except (TaskCancelledError, TaskDeadlineExceeded):
+                raise
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 批量补股本失败: {exc}")
 
+        enriched_quotes = invoke_with_cancellation(
+            self._quote_enricher,
+            cancellation_token,
+            quotes,
+            finance_data,
+        )
         return {
-            "quotes": self._quote_enricher(quotes, finance_data),
+            "quotes": enriched_quotes,
             "finance_data": finance_data,
             "provider_stats": self.get_runtime_stats(),
             "quote_request_stats": quote_request_stats,

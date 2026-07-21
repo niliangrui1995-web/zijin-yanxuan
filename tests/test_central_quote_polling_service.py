@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from typing import cast
+
+import pytest
+
 from app.services import central_quote_polling_service as polling_service
 from app.services.central_quote_polling_service import CentralQuotePoller
+from infra.market_data.provider_ports import RealtimeQuotePort
+from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
 
 
 def test_central_quote_poller_builds_enriched_payload_with_finance_gap():
@@ -186,3 +192,29 @@ def test_central_quote_poller_mapping_guards_reject_non_dict_and_missing_methods
     assert CentralQuotePoller(InvalidProvider()).get_quote_request_stats() == {}
     assert CentralQuotePoller(InvalidProvider()).compact_runtime_caches() == {}
     assert CentralQuotePoller(object()).get_runtime_stats() == {}
+
+
+def test_central_quote_poller_propagates_cancellation_token_to_provider():
+    captured: list[CancellationToken] = []
+
+    class DummyProvider:
+        def fetch_realtime_quotes_batch(self, codes, *, cancellation_token):
+            captured.append(cancellation_token)
+            return {codes[0]: {"close": 10.0}}
+
+    token = CancellationToken()
+    provider = cast(RealtimeQuotePort, DummyProvider())
+    payload = CentralQuotePoller(provider).fetch_payload(
+        {"000001"},
+        cancellation_token=token,
+    )
+
+    assert payload["quotes"] == {"000001": {"close": 10.0}}
+    assert captured == [token]
+
+    token.cancel("test")
+    with pytest.raises(TaskCancelledError):
+        CentralQuotePoller(provider).fetch_payload(
+            {"000001"},
+            cancellation_token=token,
+        )

@@ -12,12 +12,21 @@ import threading
 import time
 import traceback
 import uuid
+from collections.abc import Mapping
 from contextlib import suppress
+from functools import partial
+from types import MappingProxyType
+from typing import Any
 
 from PyQt6.QtCore import QObject, QRunnable, QThread, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.task_errors import UserFacingTaskError
-from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
+from infra.tasks.lifecycle import (
+    CancellationToken,
+    TaskCancelledError,
+    call_with_supported_kwargs,
+    invoke_with_cancellation,
+)
 
 DEFAULT_TASK_THREAD_POOL_MAX = 12
 
@@ -59,14 +68,12 @@ class BackgroundWorker(QRunnable):
         self.thread_priority = thread_priority
         self.cancellation_token = cancellation_token or CancellationToken.with_timeout(timeout_sec)
         self.signals = _WorkerSignals()
-        self._is_cancelled = False
         self.terminated_event = threading.Event()
         self.task_id = ""
         # 不自动删除，由 active_workers 字典持有引用控制生命周期
         self.setAutoDelete(False)
 
     def cancel(self, reason: str = "cancelled"):
-        self._is_cancelled = True
         self.cancellation_token.cancel(reason)
 
     def _apply_thread_priority(self):
@@ -105,28 +112,34 @@ class BackgroundWorker(QRunnable):
         priority_thread = None
         previous_priority = None
         try:
-            if self._is_cancelled:
-                return
             self.cancellation_token.raise_if_cancelled()
             priority_thread, previous_priority = self._apply_thread_priority()
-            result = self.fn(*self.args, **self.kwargs)
-            if self._is_cancelled:
-                return
-            self.cancellation_token.raise_if_cancelled()
+            result = invoke_with_cancellation(
+                self.fn,
+                self.cancellation_token,
+                *self.args,
+                **self.kwargs,
+            )
             self._safe_emit_named(self.signals, "finished", result)
         except TaskCancelledError:
             pass
         except UserFacingTaskError as e:
+            if self.cancellation_token.cancelled:
+                return
             from core.logger import get_logger
 
             get_logger(__name__).warning(f"[任务调度][{task_label}] {e.log_message}")
             self._safe_emit_named(self.signals, "error", e.user_message)
         except TimeoutError as e:
+            if self.cancellation_token.cancelled and not self.cancellation_token.reason == "deadline_exceeded":
+                return
             from core.logger import get_logger
 
             get_logger(__name__).warning(f"[任务调度][{task_label}] 后台任务超时: {e}")
             self._safe_emit_named(self.signals, "error", str(e))
         except Exception as e:
+            if self.cancellation_token.cancelled:
+                return
             tb = traceback.format_exc()
             from core.logger import get_logger
 
@@ -137,6 +150,51 @@ class BackgroundWorker(QRunnable):
             self._restore_thread_priority(priority_thread, previous_priority)
             self.terminated_event.set()
             self._safe_emit_named(self.signals, "terminated")
+
+
+def _connect_queued(signal: Any, callback: Any) -> None:
+    """Connect through an Any boundary shared by PyQt and lightweight test fakes."""
+    from PyQt6.QtCore import Qt
+
+    signal.connect(callback, type=Qt.ConnectionType.QueuedConnection)
+
+
+def _is_current_worker_delivery(manager, task_id: str, worker) -> bool:
+    with manager._lock:
+        current = manager.active_workers.get(task_id)
+        token = getattr(worker, "cancellation_token", None)
+        return current is worker and not bool(getattr(token, "cancelled", False))
+
+
+def _deliver_worker_success(manager, task_id: str, worker, on_success, result) -> None:
+    if _is_current_worker_delivery(manager, task_id, worker) and on_success is not None:
+        on_success(result)
+
+
+def _deliver_worker_error(manager, task_id: str, worker, on_error, error_message: str) -> None:
+    with manager._lock:
+        current = manager.active_workers.get(task_id)
+        token = getattr(worker, "cancellation_token", None)
+        if current is not worker or bool(getattr(token, "cancelled", False)):
+            return
+        manager._failed_count += 1
+    on_error(error_message)
+
+
+def _handle_terminated(manager, task_id: str, worker, on_terminated) -> None:
+    with manager._lock:
+        current = manager.active_workers.get(task_id)
+        if current is not worker:
+            return
+        manager.active_workers.pop(task_id, None)
+    if on_terminated is None:
+        return
+    try:
+        on_terminated()
+    except Exception:  # noqa: BLE001 - a Qt queued callback must not escape.
+        from core.logger import get_logger
+
+        get_logger(__name__).exception(f"[TaskManager] 后台任务 '{task_id}' 终态回调异常")
 
 
 class GlobalTaskManager(QObject):
@@ -167,6 +225,7 @@ class GlobalTaskManager(QObject):
         self.active_workers: dict[str, BackgroundWorker] = {}
         self._lock = threading.RLock()
         self._shutting_down = False
+        self._failed_count = 0
 
     def submit_task(self, worker: BackgroundWorker, task_id: str | None = None, *, priority: int | None = None) -> str:
         """提交 QRunnable Worker"""
@@ -197,33 +256,28 @@ class GlobalTaskManager(QObject):
 
         return _handle
 
-    def _connect_worker_callbacks(self, worker, task_id: str, on_success, on_error, on_terminated) -> None:
-        from PyQt6.QtCore import Qt
-
+    def _connect_worker_callbacks(
+        self,
+        worker: BackgroundWorker,
+        task_id: str,
+        on_success,
+        on_error,
+        on_terminated,
+    ) -> None:
         if on_error is None:
             on_error = self._default_error_handler(task_id)
         if on_success:
-            worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
-        worker.signals.error.connect(on_error, type=Qt.ConnectionType.QueuedConnection)
-
-        def _handle_terminated():
-            with self._lock:
-                current = self.active_workers.get(task_id)
-                if current is worker:
-                    self.active_workers.pop(task_id, None)
-            if on_terminated is not None:
-                try:
-                    on_terminated()
-                except Exception:  # noqa: BLE001 - a Qt queued callback must not escape.
-                    from core.logger import get_logger
-
-                    get_logger(__name__).exception(
-                        f"[TaskManager] 后台任务 '{task_id}' 终态回调异常"
-                    )
-
-        worker.signals.terminated.connect(
-            _handle_terminated,
-            type=Qt.ConnectionType.QueuedConnection,
+            _connect_queued(
+                worker.signals.finished,
+                partial(_deliver_worker_success, self, task_id, worker, on_success),
+            )
+        _connect_queued(
+            worker.signals.error,
+            partial(_deliver_worker_error, self, task_id, worker, on_error),
+        )
+        _connect_queued(
+            worker.signals.terminated,
+            partial(_handle_terminated, self, task_id, worker, on_terminated),
         )
 
     def run_in_background(
@@ -289,10 +343,7 @@ class GlobalTaskManager(QObject):
         for task_id, worker in workers:
             if hasattr(worker, "cancel"):
                 try:
-                    try:
-                        worker.cancel(reason)
-                    except TypeError:
-                        worker.cancel()
+                    call_with_supported_kwargs(worker.cancel, reason=reason)
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     pass
 
@@ -313,10 +364,7 @@ class GlobalTaskManager(QObject):
 
         if hasattr(worker, "cancel"):
             try:
-                try:
-                    worker.cancel("abandoned")
-                except TypeError:
-                    worker.cancel()
+                call_with_supported_kwargs(worker.cancel, reason="abandoned")
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 pass
         return True
@@ -328,9 +376,7 @@ class GlobalTaskManager(QObject):
         if worker is None:
             return False
         try:
-            worker.cancel(reason)
-        except TypeError:
-            worker.cancel()
+            call_with_supported_kwargs(worker.cancel, reason=reason)
         except (AttributeError, OSError, RuntimeError, ValueError):
             return False
         return True
@@ -371,6 +417,37 @@ class GlobalTaskManager(QObject):
     def active_count(self) -> int:
         with self._lock:
             return len(self.active_workers)
+
+    @property
+    def failed_count(self) -> int:
+        """Return the cumulative number of delivered task failures."""
+        with self._lock:
+            return self._failed_count
+
+    def runtime_health_snapshot(self) -> Mapping[str, Any]:
+        """Return one immutable, lock-consistent task health snapshot."""
+        with self._lock:
+            items = tuple(sorted(self.active_workers.items(), key=lambda item: str(item[0])))
+            workers = tuple(
+                MappingProxyType(
+                    {
+                        "task_id": str(task_id),
+                        "worker_class": worker.__class__.__name__,
+                        "cancelled": bool(
+                            getattr(getattr(worker, "cancellation_token", None), "cancelled", False)
+                        ),
+                    }
+                )
+                for task_id, worker in items
+            )
+            return MappingProxyType(
+                {
+                    "active_count": len(items),
+                    "failed_count": self._failed_count,
+                    "task_ids": tuple(str(task_id) for task_id, _worker in items),
+                    "workers": workers,
+                }
+            )
 
 
 # 全局单例
