@@ -283,7 +283,7 @@ def test_runtime_health_helpers_fall_back_on_invalid_inputs():
 def test_runtime_health_active_task_snapshot_handles_workers_and_resolve_errors(monkeypatch):
     from core.background_job_runner import background_job_runner
 
-    worker = SimpleNamespace(_is_cancelled=True)
+    worker = SimpleNamespace(cancellation_token=SimpleNamespace(cancelled=True))
     manager = SimpleNamespace(active_workers={"b": worker, "a": object()})
     monkeypatch.setattr(background_job_runner, "_resolve_manager", lambda: manager)
 

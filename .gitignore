@@ -32,6 +32,8 @@ data/Cache/ai_diag_*.json
 data/Cache/vcp_launch.log
 data/Cache/rt_monitor_*.json
 data/Cache/rt_monitor_*.pkl
+data/Cache/runtime_health_history.jsonl
+data/Cache/.runtime_health_history.jsonl.lock
 data/Cache/ai_industry_chain_stock_codes.json
 data/Cache/ai_industry_chain_context_map.json
 

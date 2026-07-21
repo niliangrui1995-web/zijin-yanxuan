@@ -4,10 +4,11 @@ import json
 import os
 import threading
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
@@ -17,6 +18,7 @@ from core.process_watchdog import collect_process_snapshot
 from domains.runtime.fault_tolerance import provider_fault_tolerance
 from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
 from infra.market_data.provider_ports import ProviderHealthPort, ProviderHealthSnapshot
+from infra.runtime_monitor import runtime_health_report
 from ui.workspaces.tab_registry import (
     STATIC_LINEAGE_FIELDS,
     lineage_exclusion_tab_definitions,
@@ -26,7 +28,7 @@ from ui.workspaces.tab_registry import (
 try:  # pragma: no cover - psutil is optional outside the packaged runtime.
     import psutil
 except Exception:  # pragma: no cover
-    psutil = None
+    psutil = None  # type: ignore[assignment]
 
 EVENT_SIGNAL_NAMES = (
     "sig_system_log",
@@ -96,7 +98,7 @@ def _tab_row_count(tab) -> int | None:
         if count is not None:
             return count
     table_getter = getattr(tab, "get_primary_table", None)
-    table = table_getter() if callable(table_getter) else None
+    table = cast(Any, table_getter() if callable(table_getter) else None)
     if table is not None:
         try:
             return _safe_row_count(table.model())
@@ -110,22 +112,37 @@ def _active_task_snapshot() -> dict[str, Any]:
         from core.background_job_runner import background_job_runner
 
         manager = background_job_runner._resolve_manager()
-        active_workers = getattr(manager, "active_workers")
-        if not isinstance(active_workers, dict):
-            raise TypeError("active_workers must be a dictionary")
-        task_ids = sorted(str(task_id) for task_id in active_workers)
-        workers = [
-            {
-                "task_id": str(task_id),
-                "worker_class": worker.__class__.__name__,
-                "cancelled": bool(getattr(worker, "_is_cancelled", False)),
-            }
-            for task_id, worker in sorted(active_workers.items(), key=lambda item: str(item[0]))
-        ]
+        health_getter = getattr(manager, "runtime_health_snapshot", None)
+        if callable(health_getter):
+            health = health_getter()
+            if not isinstance(health, Mapping):
+                raise TypeError("runtime health snapshot must be a mapping")
+            task_ids = [str(task_id) for task_id in health.get("task_ids", ())]
+            workers = [dict(worker) for worker in health.get("workers", ())]
+            active_count = int(health.get("active_count", len(task_ids)))
+            failed_count = int(health.get("failed_count", 0))
+        else:
+            active_workers = getattr(manager, "active_workers")
+            if not isinstance(active_workers, dict):
+                raise TypeError("active_workers must be a dictionary")
+            task_ids = sorted(str(task_id) for task_id in active_workers)
+            workers = [
+                {
+                    "task_id": str(task_id),
+                    "worker_class": worker.__class__.__name__,
+                    "cancelled": bool(
+                        getattr(getattr(worker, "cancellation_token", None), "cancelled", False)
+                    ),
+                }
+                for task_id, worker in sorted(active_workers.items(), key=lambda item: str(item[0]))
+            ]
+            active_count = len(task_ids)
+            failed_count = int(getattr(manager, "failed_count", 0) or 0)
     except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "available": False,
             "count": None,
+            "failed_count": None,
             "ids": [],
             "workers": [],
             "diagnostic_error": exc.__class__.__name__,
@@ -133,7 +150,8 @@ def _active_task_snapshot() -> dict[str, Any]:
 
     return {
         "available": True,
-        "count": len(task_ids),
+        "count": active_count,
+        "failed_count": failed_count,
         "ids": task_ids,
         "workers": workers,
     }
@@ -182,6 +200,7 @@ def _timer_snapshot(root) -> dict[str, Any]:
 
 
 def _event_bus_snapshot() -> dict[str, Any]:
+    domain_events: Any
     try:
         from domains.runtime import domain_events
     except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
@@ -216,7 +235,8 @@ def _process_info(process, *, include_thread_count: bool = True) -> dict[str, An
         return None
     try:
         oneshot_factory = getattr(process, "oneshot", None)
-        with oneshot_factory() if callable(oneshot_factory) else nullcontext():
+        process_context = cast(Any, oneshot_factory() if callable(oneshot_factory) else nullcontext())
+        with process_context:
             memory = process.memory_info()
             item = {
                 "pid": process.pid,
@@ -279,15 +299,44 @@ def _webengine_snapshot(*, detailed: bool = True) -> dict[str, Any]:
     }
 
 
-def _quote_snapshot(main_window) -> dict[str, Any]:
-    provider = getattr(main_window, "data_provider", None)
-    central = getattr(main_window, "central_quotes_svc", None)
+def _read_provider_health(provider: object | None) -> ProviderHealthSnapshot:
     health = ProviderHealthSnapshot.empty()
     if isinstance(provider, ProviderHealthPort):
         try:
             health = provider.read_provider_health()
         except (AttributeError, RuntimeError, TypeError, ValueError):
             health = ProviderHealthSnapshot.empty()
+    return health
+
+
+def _central_quotes_snapshot(central: object | None) -> dict[str, Any]:
+    runtime_state_getter = getattr(central, "runtime_state_snapshot", None)
+    try:
+        central_state = runtime_state_getter() if callable(runtime_state_getter) else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        central_state = None
+    return {
+        "enabled": central is not None,
+        "fetching": bool(getattr(central_state, "fetching", getattr(central, "_is_fetching", False))),
+        "generation": int(getattr(central_state, "generation", getattr(central, "_fetch_generation", 0)) or 0),
+        "started_at": float(getattr(central_state, "started_at", 0.0) or 0.0),
+        "failure_count": int(getattr(central_state, "failure_count", 0) or 0),
+        "current_source": str(getattr(central_state, "current_source", "") or ""),
+        "pending_reason": str(
+            getattr(central_state, "pending_reason", getattr(central, "_pending_fetch_reason", "")) or ""
+        ),
+        "circuit_breaker_cooldown_ticks": int(getattr(central, "_circuit_breaker_cooldown", 0) or 0),
+        "post_cache_reload_quiet_until": _iso_from_timestamp(
+            getattr(central, "_post_cache_reload_quiet_until", 0.0)
+        ),
+        "post_cache_reload_codes": len(getattr(central, "_post_cache_reload_signature", ()) or ()),
+    }
+
+
+def _quote_snapshot(main_window) -> dict[str, Any]:
+    provider = getattr(main_window, "data_provider", None)
+    central = getattr(main_window, "central_quotes_svc", None)
+    health = _read_provider_health(provider)
     health_payload = health.as_dict()
     request_stats = health_payload["request_stats"]
     provider_runtime = health_payload["runtime_stats"]
@@ -306,16 +355,7 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
     source_layers = list(fault_tolerance.get("recent_source_layers") or [])
     return {
         "request_stats": request_stats,
-        "central_quotes": {
-            "enabled": central is not None,
-            "fetching": bool(getattr(central, "_is_fetching", False)),
-            "generation": int(getattr(central, "_fetch_generation", 0) or 0),
-            "circuit_breaker_cooldown_ticks": int(getattr(central, "_circuit_breaker_cooldown", 0) or 0),
-            "post_cache_reload_quiet_until": _iso_from_timestamp(
-                getattr(central, "_post_cache_reload_quiet_until", 0.0)
-            ),
-            "post_cache_reload_codes": len(getattr(central, "_post_cache_reload_signature", ()) or ()),
-        },
+        "central_quotes": _central_quotes_snapshot(central),
         "provider_runtime": provider_runtime,
         "provider_degraded": provider_degraded,
         "fallback_or_degraded": fallback_or_degraded,
@@ -469,7 +509,8 @@ def _f5_cache_snapshot() -> dict[str, Any]:
 
 def _workspace_lineage_specs(workspace) -> dict[str, dict[str, Any]]:
     tab_specs = getattr(workspace, "tab_specs", None)
-    specs = list(tab_specs() or []) if callable(tab_specs) else []
+    raw_specs = tab_specs() if callable(tab_specs) else []
+    specs = list(cast(Iterable[Any], raw_specs or []))
     return {str(item.get("key") or "").strip(): item for item in specs}
 
 
@@ -558,7 +599,8 @@ def _merge_runtime_network_activity(entry: dict[str, Any], tab) -> None:
 def _workspace_lineage_exclusions(main_window) -> list[dict[str, Any]]:
     workspace = getattr(main_window, "_workspace", None)
     tab_specs = getattr(workspace, "tab_specs", None)
-    specs = list(tab_specs() or []) if callable(tab_specs) else []
+    raw_specs = tab_specs() if callable(tab_specs) else []
+    specs = list(cast(Iterable[Any], raw_specs or []))
     specs_by_key = {
         str(item.get("key") or "").strip(): item
         for item in specs
@@ -600,7 +642,7 @@ def _ui_stall_snapshot() -> dict[str, Any]:
 
 
 def _runtime_health_root(main_window=None):
-    app = QApplication.instance()
+    app = cast(Any, QApplication.instance())
     root = main_window
     if root is None and app is not None:
         active = app.activeWindow()
@@ -611,8 +653,10 @@ def _runtime_health_root(main_window=None):
 def collect_runtime_health_summary(main_window=None) -> dict[str, Any]:
     """Collect only the fields needed by frequent stability-cycle checkpoints."""
     root = _runtime_health_root(main_window)
+    process = collect_process_snapshot()
     return {
-        "process": collect_process_snapshot(),
+        "process": process,
+        "runtime_monitor": runtime_health_report(process_snapshot=process),
         "background_tasks": _active_task_snapshot(),
         "timers": _timer_snapshot(root),
         "event_bus": _event_bus_snapshot(),
@@ -634,6 +678,7 @@ def collect_runtime_health(main_window=None) -> dict[str, Any]:
             "threads": sorted(thread.name for thread in threading.enumerate()),
         },
         "process": process,
+        "runtime_monitor": runtime_health_report(process_snapshot=process),
         "background_tasks": _active_task_snapshot(),
         "timers": _timer_snapshot(root),
         "event_bus": _event_bus_snapshot(),
