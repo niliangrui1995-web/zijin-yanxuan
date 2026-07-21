@@ -3,9 +3,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
+from typing import TYPE_CHECKING, Any, cast
 
 from PyQt6.QtCore import Qt
+
+from ui.kline_pool_state import (
+    KLinePoolState,
+    initialize_kline_pool_state,
+    kline_pool_state_of,
+    transition_kline_pool_state,
+)
+
+if TYPE_CHECKING:
+    from ui.kline_typing import (
+        KLineBrowserProtocol,
+        KLineButtonProtocol,
+        KLineGeometryProtocol,
+        KLineOpenStagesProtocol,
+        KLineRuntimeLifecycleProtocol,
+        SupportsClose,
+        SupportsStop,
+    )
+
+__all__ = [
+    "KLinePoolState",
+    "KLineWindowPoolLifecycleMixin",
+    "initialize_kline_pool_state",
+    "kline_pool_state_of",
+    "transition_kline_pool_state",
+]
 
 _REUSED_ZERO_TIMINGS = {
     "browser_create_ms": 0.0,
@@ -84,7 +112,11 @@ def _clear_closed_lease_state(window) -> None:
 
 
 def _release_chart_to_pool(window, pending_browser, pending_page, *, cleanup_ok: bool) -> bool:
-    if window._force_dispose or pending_browser is not None or pending_page is not None:
+    if (
+        kline_pool_state_of(window) is not KLinePoolState.CLOSING
+        or pending_browser is not None
+        or pending_page is not None
+    ):
         return False
     try:
         from ui.components.kline_window_manager import kline_manager
@@ -120,8 +152,65 @@ def _build_close_diagnostics(
     return diagnostics
 
 
+def _call_next_close_event(window: Any, event: object) -> None:
+    """Dispatch to the next concrete Qt base without constraining mixin order."""
+    super(KLineWindowPoolLifecycleMixin, window).closeEvent(event)
+
+
 class KLineWindowPoolLifecycleMixin:
     """Own signal, lease, pool-return, and close transitions for one window."""
+
+    if TYPE_CHECKING:
+        _apply_chart_glass_mode: Callable[[], object]
+        _apply_chart_market_state: Callable[[], object]
+        _apply_chart_theme: Callable[..., object]
+        _browser_attach_diagnostics: dict[str, object]
+        _close_diagnostics: dict[str, object]
+        _fullscreen_geometry: KLineGeometryProtocol | None
+        _last_shell_load_ok: bool
+        _lease_signals_connected: bool
+        _load_controller: SupportsClose
+        _magnetically_attached: bool
+        _on_global_rt_quotes: Callable[..., object]
+        _on_theme_changed: Callable[..., object]
+        _open_stages: KLineOpenStagesProtocol
+        _pool_shell_mode: bool
+        _rt_timer: SupportsStop | None
+        _runtime_active: bool
+        _runtime_lifecycle: KLineRuntimeLifecycleProtocol
+        _shell_loaded: bool
+        _snapping_to_main_window: bool
+        browser: KLineBrowserProtocol
+        btn_fullscreen: KLineButtonProtocol
+        chart_host: object
+        code: str
+
+    @property
+    def pool_state(self) -> KLinePoolState:
+        return kline_pool_state_of(self)
+
+    @property
+    def _closing(self) -> bool:
+        return self.pool_state in {
+            KLinePoolState.CLOSING,
+            KLinePoolState.IDLE,
+            KLinePoolState.DISPOSED,
+        }
+
+    @property
+    def _pool_idle(self) -> bool:
+        return self.pool_state is KLinePoolState.IDLE
+
+    @property
+    def _pool_tainted(self) -> bool:
+        return self.pool_state is KLinePoolState.TAINTED
+
+    @property
+    def _force_dispose(self) -> bool:
+        return self.pool_state in {KLinePoolState.TAINTED, KLinePoolState.DISPOSED}
+
+    def transition(self, target: KLinePoolState, *, reason: str) -> KLinePoolState:
+        return transition_kline_pool_state(self, target, reason=reason)
 
     def _connect_lease_signals(self) -> bool:
         if self._lease_signals_connected:
@@ -168,7 +257,10 @@ class KLineWindowPoolLifecycleMixin:
 
     def _browser_is_pool_healthy(self) -> bool:
         browser = getattr(self, "browser", None)
-        if browser is None or self._pool_tainted:
+        if browser is None or self.pool_state in {
+            KLinePoolState.TAINTED,
+            KLinePoolState.DISPOSED,
+        }:
             return False
         try:
             return bool(
@@ -189,18 +281,18 @@ class KLineWindowPoolLifecycleMixin:
         signals_clean = self._disconnect_lease_signals()
         recovery_clean = qt_api.uninstall_render_process_recovery(self.browser)
         if not signals_clean or not recovery_clean:
-            self._pool_tainted = True
+            self.transition(KLinePoolState.TAINTED, reason="preheated_shell_cleanup_failed")
             return False
         self._open_stages.stop()
         self._load_controller.close()
         self._runtime_lifecycle.begin_close()
         self._runtime_active = False
-        self._closing = True
         qt_api._cancel_header_resize_refresh(self)
-        self._pool_idle = True
+        self.transition(KLinePoolState.IDLE, reason="preheated_shell_parked")
         self._pool_shell_mode = False
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.hide()
+        widget = cast(Any, self)
+        widget.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        widget.hide()
         return True
 
     def activate_lease(
@@ -217,19 +309,17 @@ class KLineWindowPoolLifecycleMixin:
         open_context=None,
     ) -> bool:
         """Bind a new logical request without moving or rebuilding WebEngine."""
-        if not self._pool_idle or not self._closing or not self._browser_is_pool_healthy():
+        if self.pool_state is not KLinePoolState.IDLE or not self._browser_is_pool_healthy():
             return False
         _reset_physical_window_lease(
             self, main_window, code, name, data_provider, vcp_data, code_list, current_idx, open_context
         )
-        self._closing = False
-        self._pool_idle = False
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.transition(KLinePoolState.ACTIVE, reason="lease_activated")
+        cast(Any, self).setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._connect_lease_signals()
         if not _qt_api().install_render_process_recovery(self, self.browser):
-            self._pool_tainted = True
+            self.transition(KLinePoolState.TAINTED, reason="recovery_guard_install_failed")
             self._disconnect_lease_signals()
-            self._closing = True
             return False
         _refresh_lease_chrome(self)
         self._apply_chart_theme(animate=False)
@@ -246,9 +336,7 @@ class KLineWindowPoolLifecycleMixin:
 
     def final_dispose(self) -> bool:
         """Destroy a parked/reclaiming shell without offering it back."""
-        self._force_dispose = True
-        self._pool_idle = False
-        self._closing = True
+        self.transition(KLinePoolState.DISPOSED, reason="final_dispose")
         _qt_api()._cancel_header_resize_refresh(self)
         self._disconnect_lease_signals()
         pending_browser, pending_page = self._open_stages.stop()
@@ -258,9 +346,10 @@ class KLineWindowPoolLifecycleMixin:
             pending_page,
             allow_page_reuse=False,
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.hide()
-        self.deleteLater()
+        widget = cast(Any, self)
+        widget.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        widget.hide()
+        widget.deleteLater()
         return browser_clean
 
     def reset_browser_for_pool(self, callback) -> bool:
@@ -279,29 +368,30 @@ class KLineWindowPoolLifecycleMixin:
         return True
 
     def complete_pool_return(self) -> bool:
-        if not self._closing or not self._browser_is_pool_healthy():
+        if self.pool_state is not KLinePoolState.CLOSING or not self._browser_is_pool_healthy():
             return False
         self._normalize_window_for_pool_return()
-        self._pool_idle = True
+        self.transition(KLinePoolState.IDLE, reason="pool_return_complete")
         self._runtime_active = False
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        cast(Any, self).setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         return True
 
     def _normalize_window_for_pool_return(self) -> None:
         """Clear lease-specific top-level state while the physical window is hidden."""
         geometry = self._fullscreen_geometry
+        widget = cast(Any, self)
         if geometry is None:
             with suppress(AttributeError, RuntimeError, TypeError):
-                candidate = self.normalGeometry()
+                candidate = widget.normalGeometry()
                 if candidate is not None and not candidate.isNull():
                     geometry = candidate
-        self.hide()
+        widget.hide()
         with suppress(AttributeError, RuntimeError, TypeError):
-            self.setWindowState(Qt.WindowState.WindowNoState)
-        self.setMinimumSize(0, 0)
-        self.setMaximumSize(16777215, 16777215)
+            widget.setWindowState(Qt.WindowState.WindowNoState)
+        widget.setMinimumSize(0, 0)
+        widget.setMaximumSize(16777215, 16777215)
         if geometry is not None and not geometry.isNull():
-            self.setGeometry(geometry)
+            widget.setGeometry(geometry)
         self._fullscreen_geometry = None
         self._magnetically_attached = False
         self._snapping_to_main_window = False
@@ -311,9 +401,12 @@ class KLineWindowPoolLifecycleMixin:
     def closeEvent(self, event):
         """Stop owned work and either reclaim or destroy this physical window."""
         if self._closing:
-            super().closeEvent(event)
+            _call_next_close_event(self, event)
             return
-        self._closing = True
+        if self.pool_state is KLinePoolState.TAINTED:
+            self.transition(KLinePoolState.DISPOSED, reason="tainted_window_closed")
+        else:
+            self.transition(KLinePoolState.CLOSING, reason="window_close_requested")
         _qt_api()._cancel_header_resize_refresh(self)
         qt_api = _qt_api()
         signals_clean = self._disconnect_lease_signals()
@@ -332,7 +425,9 @@ class KLineWindowPoolLifecycleMixin:
         )
         browser_clean = True
         if not pooled:
-            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            if self.pool_state is not KLinePoolState.DISPOSED:
+                self.transition(KLinePoolState.DISPOSED, reason="pool_return_rejected")
+            cast(Any, self).setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             browser_clean = qt_api._dispose_kline_browser(
                 self, pending_browser, pending_page, allow_page_reuse=False
             )
@@ -341,4 +436,4 @@ class KLineWindowPoolLifecycleMixin:
             pooled=pooled, browser_clean=browser_clean,
         )
         qt_api.log.debug(f"[K线] {self.code} 窗口关闭")
-        super().closeEvent(event)
+        _call_next_close_event(self, event)

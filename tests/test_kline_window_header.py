@@ -13,6 +13,7 @@ from ui import kline_window_runtime as runtime_module
 from ui.components import kline_window_manager as manager_module
 from ui.components.kline_window_manager import KLineWindowManager
 from ui.kline_chart_payload import build_kline_shell_html, build_kline_theme_colors
+from ui.kline_pool_state import KLinePoolState
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs import asian_market_workers as asian_workers_module
 from ui.theme import THEME_YAOHEI, theme_manager
@@ -241,7 +242,7 @@ def test_kline_late_render_callback_is_ignored_after_close(monkeypatch):
     )
 
     try:
-        window._closing = True
+        window.transition(KLinePoolState.CLOSING, reason="late_render_test_close")
         window._render_chart(df, loading=False)
 
         assert browser.html_calls == []
@@ -282,7 +283,7 @@ def test_kline_js_fallback_ignores_callback_after_close(monkeypatch):
         callback = browser.page().script_callback
         assert callback is not None
 
-        window._closing = True
+        window.transition(KLinePoolState.CLOSING, reason="js_fallback_test_close")
         window._load_controller.close()
         callback(
             {

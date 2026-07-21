@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QWidget
 
 from infra.diagnostics import qt_webengine_preflight as preflight_module
 from ui.components import kline_window_manager as manager_module
+from ui.kline_pool_state import KLinePoolState
 
 
 def _manager():
@@ -65,6 +66,16 @@ class _Chart:
         self.closed = False
         self.raised = False
         self.activated = False
+
+    def transition(self, target: KLinePoolState, *, reason: str) -> KLinePoolState:
+        self._pool_state = target
+        self._pool_transition_reason = reason
+        self._closing = target in {
+            KLinePoolState.CLOSING,
+            KLinePoolState.IDLE,
+            KLinePoolState.DISPOSED,
+        }
+        return target
 
     def isVisible(self):
         return self.visible

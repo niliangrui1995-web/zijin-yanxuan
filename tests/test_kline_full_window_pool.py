@@ -10,6 +10,7 @@ import pytest
 
 from ui.components import kline_window_manager as manager_module
 from ui.kline_load_controller import KLINE_OPEN_STAGE_ORDER, KlineLoadController
+from ui.kline_window_pool_lifecycle import KLinePoolState, kline_pool_state_of
 from ui.kline_window_stages import KLineOpenStageCoordinator
 
 
@@ -90,6 +91,18 @@ class _ReusableChart:
         self.destroyed = _Signal()
         self._pool_idle = False
         self._pool_tainted = False
+
+    def transition(self, target: KLinePoolState, *, reason: str) -> KLinePoolState:
+        self._pool_state = target
+        self._pool_transition_reason = reason
+        self._pool_idle = target is KLinePoolState.IDLE
+        self._pool_tainted = target is KLinePoolState.TAINTED
+        self._closing = target in {
+            KLinePoolState.CLOSING,
+            KLinePoolState.IDLE,
+            KLinePoolState.DISPOSED,
+        }
+        return target
 
     def metaObject(self):
         return SimpleNamespace()
@@ -720,7 +733,7 @@ def test_idle_renderer_guard_disconnect_failure_rejects_reuse(isolated_manager):
     chart.browser.page().renderProcessTerminated.disconnect = _fail_disconnect
 
     assert manager._take_ready_idle_chart() is None
-    assert chart._pool_tainted is True
+    assert kline_pool_state_of(chart) is KLinePoolState.TAINTED
     assert chart.delete_calls == 1
     assert manager._idle_termination_callback is None
 

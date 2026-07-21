@@ -8,10 +8,14 @@ from contextlib import suppress
 from PyQt6.QtCore import QTimer
 
 from ui.kline_js_readiness import set_shell_ready
+from ui.kline_pool_state import KLinePoolState
+from ui.kline_typing import KLineBrowserProtocol, KLineRecoveryWindowProtocol
 from ui.kline_window_rendering import cancel_snapshot_render_confirmation
 
 
-def install_render_process_recovery(window, browser) -> bool:
+def install_render_process_recovery(
+    window: KLineRecoveryWindowProtocol, browser: KLineBrowserProtocol
+) -> bool:
     def _on_terminated(status, exit_code, owned=browser):
         return handle_render_process_terminated(window, owned, status, exit_code)
 
@@ -25,7 +29,7 @@ def install_render_process_recovery(window, browser) -> bool:
     return True
 
 
-def uninstall_render_process_recovery(browser) -> bool:
+def uninstall_render_process_recovery(browser: KLineBrowserProtocol) -> bool:
     callback = getattr(browser, "_kline_render_process_callback", None)
     if callback is None:
         return False
@@ -37,7 +41,12 @@ def uninstall_render_process_recovery(browser) -> bool:
     return True
 
 
-def handle_render_process_terminated(window, browser, status, exit_code) -> bool:
+def handle_render_process_terminated(
+    window: KLineRecoveryWindowProtocol,
+    browser: KLineBrowserProtocol,
+    status: object,
+    exit_code: object,
+) -> bool:
     if getattr(window, "_closing", False) or getattr(window, "browser", None) is not browser:
         return False
     cancel_snapshot_render_confirmation(window)
@@ -47,7 +56,7 @@ def handle_render_process_terminated(window, browser, status, exit_code) -> bool
             realtime_timer.stop()
     window._runtime_active = False
     decision = window._runtime_lifecycle.request_recovery(browser)
-    window._pool_tainted = True
+    window.transition(KLinePoolState.TAINTED, reason="render_process_terminated")
     if not decision.allowed:
         load_controller = getattr(window, "_load_controller", None)
         if load_controller is not None:

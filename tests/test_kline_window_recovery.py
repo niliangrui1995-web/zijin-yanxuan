@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from ui import kline_window_recovery as recovery
 from ui.kline_load_controller import KlineLoadController
+from ui.kline_pool_state import KLinePoolState
 from ui.kline_runtime_lifecycle import KLineRuntimeLifecycleController
 from ui.kline_window_visibility import sync_runtime_visibility
 
@@ -27,6 +28,13 @@ class _Browser:
         return self._page
 
 
+class _RecoveryWindow(SimpleNamespace):
+    def transition(self, target: KLinePoolState, *, reason: str) -> KLinePoolState:
+        self._pool_state = target
+        self._pool_transition_reason = reason
+        return target
+
+
 def test_render_process_signal_can_be_disconnected_during_browser_disposal():
     browser = _Browser()
     window = SimpleNamespace()
@@ -44,7 +52,7 @@ def test_render_process_recovery_is_scheduled_once_for_current_browser(monkeypat
     lifecycle = SimpleNamespace(
         request_recovery=lambda token: SimpleNamespace(allowed=token is browser, reason="recovery_scheduled")
     )
-    window = SimpleNamespace(
+    window = _RecoveryWindow(
         _closing=False,
         browser=browser,
         _runtime_lifecycle=lifecycle,
@@ -55,6 +63,7 @@ def test_render_process_recovery_is_scheduled_once_for_current_browser(monkeypat
     monkeypatch.setattr(recovery.QTimer, "singleShot", lambda delay, callback: callback())
 
     assert recovery.handle_render_process_terminated(window, browser, "crashed", 9) is True
+    assert window._pool_state is KLinePoolState.TAINTED
     assert calls[-1] is browser
     assert window._snapshot_inflight is None
     assert recovery.handle_render_process_terminated(window, object(), "crashed", 9) is False
@@ -63,7 +72,7 @@ def test_render_process_recovery_is_scheduled_once_for_current_browser(monkeypat
 def test_recovery_denial_does_not_rebuild_browser(monkeypatch):
     scheduled = []
     browser = object()
-    window = SimpleNamespace(
+    window = _RecoveryWindow(
         _closing=False,
         browser=browser,
         _runtime_lifecycle=SimpleNamespace(
@@ -85,7 +94,7 @@ def test_second_renderer_failure_enters_terminal_runtime_state(monkeypatch):
     assert lifecycle.request_recovery(browser).allowed is True
     controller = KlineLoadController(window_id="terminal-window")
     controller.begin("000001")
-    window = SimpleNamespace(
+    window = _RecoveryWindow(
         _closing=False,
         browser=browser,
         _shell_loaded=False,

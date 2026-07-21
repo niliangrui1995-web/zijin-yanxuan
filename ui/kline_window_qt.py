@@ -116,10 +116,7 @@ def _configure_kline_window_shell(window, *, name: str, code: str, pool_shell: b
 
     window._log = log
     window._pool_shell_mode = bool(pool_shell)
-    window._pool_idle = False
-    window._pool_tainted = False
     window._lease_signals_connected = False
-    window._force_dispose = False
     window.setWindowTitle(f"{name} ({code}) - K线图")
     window.setWindowFlags(window.windowFlags() | Qt.WindowType.FramelessWindowHint)
     window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)

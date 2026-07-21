@@ -16,13 +16,20 @@ import sys
 import threading
 import time
 import weakref
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, ClassVar, cast
 
 from app.services.kline_webengine_preflight import check_qt_webengine_available
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
+from ui.kline_pool_state import (
+    KLinePoolState,
+    kline_pool_state_of,
+)
+from ui.kline_typing import KLineManagedWindowProtocol, KLinePoolParticipantProtocol
 
 log = get_logger(__name__)
 
@@ -98,7 +105,10 @@ def _create_pending_open_bridge(callback):
 
             def __init__(self):
                 super().__init__()
-                self.requested.connect(self._dispatch, type=Qt.ConnectionType.QueuedConnection)
+                cast(Any, self.requested).connect(
+                    self._dispatch,
+                    type=Qt.ConnectionType.QueuedConnection,
+                )
 
             @pyqtSlot()
             def _dispatch(self):
@@ -377,10 +387,26 @@ def _full_window_keeper_ready(chart) -> bool:
         return False
 
 
+def _transition_chart_pool_state(
+    chart: KLinePoolParticipantProtocol,
+    target: KLinePoolState,
+    *,
+    reason: str,
+) -> bool:
+    try:
+        transition = getattr(chart, "transition", None)
+        if not callable(transition):
+            return False
+        transition(target, reason=reason)
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+    return True
+
+
 def _full_window_keeper_failed(chart) -> bool:
     try:
         return bool(
-            getattr(chart, "_pool_tainted", False)
+            kline_pool_state_of(chart) in {KLinePoolState.TAINTED, KLinePoolState.DISPOSED}
             or getattr(chart, "_last_shell_load_ok", None) is False
         )
     except (AttributeError, RuntimeError, TypeError):
@@ -641,7 +667,11 @@ def _enforce_chart_limit(manager, main_window) -> bool:
         try:
             old_title = oldest.windowTitle() or "未知"
             with suppress(AttributeError, RuntimeError, TypeError):
-                oldest._force_dispose = True
+                _transition_chart_pool_state(
+                    oldest,
+                    KLinePoolState.TAINTED,
+                    reason="active_window_limit_reached",
+                )
             close_result = oldest.close()
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             emit_structured_log("kline.limit_close_failed", error=str(exc))
@@ -1221,7 +1251,7 @@ class _ChartOpenArguments:
 
 @dataclass(frozen=True, slots=True)
 class _ChartOpenPreparation:
-    chart_window_class: object
+    chart_window_class: Callable[..., Any]
     gate_ready_at: float
     class_ready_at: float
     pruned_at: float
@@ -1503,7 +1533,33 @@ def _open_manager_chart(
 class _KLineManagerPrewarmLifecycle:
     """K 线图窗口池管理器 — 全局单例"""
 
-    _instance = None
+    _instance: ClassVar[Any] = None
+    _charts: list[KLineManagedWindowProtocol]
+    _prewarm_view: Any | None
+    _prewarm_window: KLineManagedWindowProtocol | None
+    _prewarm_main_window: Any | None
+    _idle_chart: KLineManagedWindowProtocol | None
+    _reclaiming_chart: KLineManagedWindowProtocol | None
+    _chart_return_timer: Any | None
+    _idle_termination_callback: tuple[Any, Callable[..., object]] | None
+    _prewarm_started: bool
+    _prewarm_cancelled: bool
+    _prewarm_hidden_view_enabled: bool
+    _prewarm_ready: bool
+    _prewarm_failure: str
+    _prewarm_load_callback: Callable[..., object] | None
+    _prewarm_termination_callback: Callable[..., object] | None
+    _webengine_available: bool | None
+    _webengine_failure: str
+    _webengine_preflight_diagnostics: dict[str, object]
+    _webengine_preflight_started: bool
+    _webengine_preflight_thread: threading.Thread | None
+    _webengine_preflight_run: _WebEnginePreflightRun | None
+    _webengine_preflight_cancel_event: threading.Event
+    _webengine_preflight_lock: threading.RLock
+    _shutting_down: bool
+    _last_shutdown_diagnostics: dict[str, object]
+    _pending_open: _PendingKlineOpenCoordinator
 
     def __new__(cls):
         if cls._instance is None:
@@ -1586,7 +1642,7 @@ class _KLineManagerPrewarmLifecycle:
             self._webengine_preflight_run = preflight_run
             self._webengine_preflight_cancel_event = cancellation_event
             self._webengine_preflight_started = True
-            thread = None
+            thread: threading.Thread | None = None
 
             def _run() -> None:
                 try:
@@ -1754,6 +1810,50 @@ class _KLineManagerPrewarmLifecycle:
         return _dispose_manager_prewarm_resource(self, reason=reason)
 
 
+def _unique_managed_kline_windows(manager) -> tuple:
+    windows: dict[int, object] = {}
+    for chart in (
+        *tuple(manager._charts),
+        manager._idle_chart,
+        manager._reclaiming_chart,
+        manager._prewarm_window,
+    ):
+        if chart is not None:
+            windows.setdefault(id(chart), chart)
+    return tuple(windows.values())
+
+
+def _safe_chart_browser(chart):
+    try:
+        return getattr(chart, "browser", None)
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+
+
+def _safe_browser_page(browser):
+    try:
+        return browser.page()
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+
+
+def _managed_kline_browsers_and_pages(manager) -> tuple[dict[int, object], dict[int, object]]:
+    browsers: dict[int, object] = {}
+    for chart in _unique_managed_kline_windows(manager):
+        browser = _safe_chart_browser(chart)
+        if browser is not None:
+            browsers[id(browser)] = browser
+
+    pages: dict[int, object] = {}
+    for browser in browsers.values():
+        page = _safe_browser_page(browser)
+        if page is not None:
+            pages[id(page)] = page
+    if manager._prewarm_view is not None:
+        pages[id(manager._prewarm_view)] = manager._prewarm_view
+    return browsers, pages
+
+
 class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
     def _disconnect_idle_chart_termination(self) -> bool:
         binding = self._idle_termination_callback
@@ -1770,7 +1870,7 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
         self._idle_termination_callback = None
         return True
 
-    def _install_idle_chart_termination(self, chart) -> bool:
+    def _install_idle_chart_termination(self, chart: KLineManagedWindowProtocol) -> bool:
         if not self._disconnect_idle_chart_termination():
             return False
         try:
@@ -1781,7 +1881,11 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
         def _on_terminated(*_args) -> None:
             if self._idle_chart is not chart and self._reclaiming_chart is not chart:
                 return
-            chart._pool_tainted = True
+            _transition_chart_pool_state(
+                chart,
+                KLinePoolState.TAINTED,
+                reason="idle_render_process_terminated",
+            )
             if self._reclaiming_chart is chart:
                 self._prewarm_failure = "idle_render_process_terminated"
                 self._dispose_reclaiming_chart(chart, reason="render_process_terminated")
@@ -1816,7 +1920,11 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
         if not self._disconnect_idle_chart_termination():
             self._idle_chart = None
             self._prewarm_ready = False
-            chart._pool_tainted = True
+            _transition_chart_pool_state(
+                chart,
+                KLinePoolState.TAINTED,
+                reason="idle_termination_guard_disconnect_failed",
+            )
             _dispose_full_window(chart)
             self._idle_termination_callback = None
             return None
@@ -1846,7 +1954,9 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
             return False
         return True
 
-    def _dispose_reclaiming_chart(self, chart, *, reason: str) -> bool:
+    def _dispose_reclaiming_chart(
+        self, chart: KLineManagedWindowProtocol, *, reason: str
+    ) -> bool:
         if self._reclaiming_chart is not chart:
             return False
         self._stop_chart_return_timeout()
@@ -1873,7 +1983,9 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
         if chart is not None:
             self._dispose_reclaiming_chart(chart, reason="reset_timeout")
 
-    def _complete_chart_return(self, chart, healthy: bool) -> None:
+    def _complete_chart_return(
+        self, chart: KLineManagedWindowProtocol, healthy: bool
+    ) -> None:
         if self._reclaiming_chart is not chart:
             return
         self._stop_chart_return_timeout()
@@ -1957,6 +2069,21 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
                 count += getattr(chart, "browser", None) is not None
         return count
 
+    def runtime_health_snapshot(self):
+        """Return a read-only count of managed KLine browser/page objects."""
+        from types import MappingProxyType
+
+        browsers, pages = _managed_kline_browsers_and_pages(self)
+
+        return MappingProxyType(
+            {
+                "browser_count": len(browsers),
+                "page_count": len(pages),
+                "active_window_count": len(tuple(getattr(self, "_charts", ()))),
+                "keeper_count": self.managed_webengine_keeper_count,
+            }
+        )
+
     def _run_prewarm(self) -> None:
         started_at = time.perf_counter()
         if self._prewarm_cancelled or self._shutting_down:
@@ -2008,8 +2135,8 @@ class KLineWindowManager(_KLineManagerWindowPoolLifecycle):
         code: str,
         name: str,
         data_provider,
-        vcp_data: dict = None,
-        code_list: list = None,
+        vcp_data: dict | None = None,
+        code_list: list | None = None,
         current_idx: int = 0,
         open_context=None,
     ):

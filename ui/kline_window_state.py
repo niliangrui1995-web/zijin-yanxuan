@@ -268,6 +268,8 @@ def initialize_kline_window_state(
     open_context: KlineOpenContext | None,
 ) -> None:
     """Initialize ownership/lifecycle state without growing the QWidget constructor."""
+    from ui.kline_pool_state import initialize_kline_pool_state
+
     _assign_open_values(
         window,
         main_window=main_window,
@@ -280,7 +282,7 @@ def initialize_kline_window_state(
         open_context=open_context,
     )
     window._log = None
-    window._closing = False
+    initialize_kline_pool_state(window)
     _initialize_render_lifecycle(window)
     _initialize_browser_runtime(window)
     _initialize_native_window_state(window)
