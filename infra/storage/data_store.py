@@ -21,12 +21,19 @@ import os
 import sqlite3
 import threading
 import weakref
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 from core.logger import get_logger
 from core.runtime_paths import PROJECT_ROOT
+from infra.storage.migrations import (
+    LATEST_SCHEMA_VERSION,
+    migrate_database_with_backup,
+    read_schema_version,
+    restore_migration_backup,
+    run_migrations,
+)
 
 log = get_logger(__name__)
 
@@ -39,11 +46,37 @@ def resolve_data_store_path(db_path: str = "", *, environ=None) -> Path:
     return (Path(PROJECT_ROOT) / "data" / "vcp_hunter.db").resolve()
 
 
+def _clean_migrated_backups(db_path: str) -> None:
+    """Remove migrated backup files older than 30 days."""
+    import time
+
+    data_dir = os.path.dirname(db_path)
+    cutoff = time.time() - (30 * 86400)
+    try:
+        for filename in os.listdir(data_dir):
+            if not filename.endswith(".migrated"):
+                continue
+            filepath = os.path.join(data_dir, filename)
+            if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
+                os.remove(filepath)
+                log.info(f"[DataStore] 已清理过期备份: {filename}")
+    except OSError as exc:
+        log.debug(f"[DataStore] 迁移备份清理异常: {exc}")
+
+
+def _initialize_store_schema(connection: sqlite3.Connection, db_path: str) -> Path | None:
+    """Upgrade the database after creating one consistent recovery point."""
+    result = migrate_database_with_backup(connection, db_path)
+    if result.backup_path is not None:
+        log.info(f"[DataStore] 升级前备份已验证: {result.backup_path}")
+    return result.backup_path
+
+
 class DataStore:
     """VCP Hunter 统一数据存储 — SQLite 单例"""
 
     _instance: Optional["DataStore"] = None
-    _instances = weakref.WeakSet()
+    _instances: weakref.WeakSet["DataStore"] = weakref.WeakSet()
     _lock = threading.RLock()
 
     def __new__(cls, *args, **kwargs):
@@ -66,45 +99,30 @@ class DataStore:
         self._closed = False
 
         # check_same_thread=False: 因为我们用 _lock 自己管线程安全
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        # WAL 模式：一写多读不阻塞，崩溃自恢复
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.row_factory = sqlite3.Row
+        connection = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn: sqlite3.Connection | None = connection
+        initialized = False
+        try:
+            connection.row_factory = sqlite3.Row
+            with self._lock:
+                self._last_migration_backup = _initialize_store_schema(connection, self._db_path)
+            # 通过版本检查后再切换 WAL，避免误改由更高版本程序创建的数据库。
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            initialized = True
+        finally:
+            if not initialized:
+                connection.close()
+                self._conn = None
+                self._closed = True
+                del self._initialized
+                with self._lock:
+                    if type(self)._instance is self:
+                        type(self)._instance = None
 
-        self._ensure_tables()
-        self._clean_migrated_backups()
+        _clean_migrated_backups(self._db_path)
         self._instances.add(self)
         log.info(f"[DataStore] SQLite 存储已就绪: {db_path}")
-
-    def _ensure_tables(self):
-        """幂等建表：IF NOT EXISTS，脚本可重跑"""
-        with self._lock:
-            self._conn.executescript("""
-                CREATE TABLE IF NOT EXISTS kv_store (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            self._conn.commit()
-
-    def _clean_migrated_backups(self):
-        """启动时自动清理超过 30 天的 .migrated 备份文件"""
-        import time
-
-        data_dir = os.path.dirname(self._db_path)
-        cutoff = time.time() - (30 * 86400)
-        try:
-            for filename in os.listdir(data_dir):
-                if not filename.endswith(".migrated"):
-                    continue
-                filepath = os.path.join(data_dir, filename)
-                if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
-                    os.remove(filepath)
-                    log.info(f"[DataStore] 已清理过期备份: {filename}")
-        except OSError as _e:
-            log.debug(f"[DataStore] 迁移备份清理异常: {_e}")
 
     # ========== 通用 KV 操作 ==========
 
@@ -214,7 +232,7 @@ class DataStore:
 
     def load_earnings_state(self) -> dict:
         """读取业绩异动引擎状态，返回 dict 或空 dict"""
-        return self.load_json("earnings_state", default={})
+        return cast(dict, self.load_json("earnings_state", default={}))
 
     # ========== 生命周期 ==========
 
@@ -222,11 +240,36 @@ class DataStore:
     def is_closed(self) -> bool:
         return bool(getattr(self, "_closed", False) or getattr(self, "_conn", None) is None)
 
-    def _require_open_connection(self):
+    @property
+    def schema_version(self) -> int:
+        """Return the committed SQLite schema version."""
+        with self._lock:
+            return read_schema_version(self._require_open_connection())
+
+    def _require_open_connection(self) -> sqlite3.Connection:
         conn = getattr(self, "_conn", None)
         if getattr(self, "_closed", False) or conn is None:
             raise sqlite3.ProgrammingError("DataStore connection is closed")
         return conn
+
+    def restore_backup(self, backup_path: str | Path) -> int:
+        """恢复已验证的备份，并在同一存储锁内升级到当前 schema。"""
+        with self._lock:
+            connection = self._require_open_connection()
+            restored_version = restore_migration_backup(
+                connection,
+                backup_path,
+                max_supported_version=LATEST_SCHEMA_VERSION,
+            )
+            version = run_migrations(connection)
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            log.info(
+                "[DataStore] 已恢复 schema v%s 备份并升级至 v%s",
+                restored_version,
+                version,
+            )
+            return version
 
     def close(self):
         """应用退出时调用，确保数据落盘"""
@@ -244,8 +287,11 @@ class DataStore:
         log.info("[DataStore] SQLite 连接已关闭")
 
     def __del__(self):
-        with suppress(Exception):
+        try:
             self.close()
+        except (AttributeError, RuntimeError, TypeError):
+            # Interpreter shutdown can clear module globals before finalizers run.
+            pass
 
     @classmethod
     def close_all(cls):
