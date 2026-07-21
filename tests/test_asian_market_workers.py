@@ -104,10 +104,12 @@ def test_asian_market_worker_module_is_only_thread_orchestration_and_cache_state
 
 
 def test_asian_quote_provider_boundary_exists_without_qt_dependencies():
-    provider_path = _REPO_ROOT / "infra" / "market_data" / "asian_realtime_provider.py"
+    provider_path = _REPO_ROOT / "infra" / "market_data" / "asian_quote_provider.py"
+    legacy_path = _REPO_ROOT / "infra" / "market_data" / "asian_realtime_provider.py"
     facade_path = _REPO_ROOT / "app" / "services" / "asian_market_quote_service.py"
 
     assert provider_path.is_file()
+    assert legacy_path.is_file()
     assert facade_path.is_file()
 
     provider_source = provider_path.read_text(encoding="utf-8")
@@ -124,7 +126,9 @@ def test_asian_quote_provider_boundary_exists_without_qt_dependencies():
         for alias in node.names
     }
     assert imported_roots.isdisjoint({"PyQt6", "app", "ui"})
-    assert "asian_realtime_provider" in facade_source
+    assert "_LegacyAsianQuoteFacade" in legacy_path.read_text(encoding="utf-8")
+    assert "asian_quote_provider" in facade_source
+    assert "asian_realtime_provider" not in facade_source
 
 
 def test_save_global_asian_rt_cache_delegates_serialization_to_cache_service(monkeypatch):

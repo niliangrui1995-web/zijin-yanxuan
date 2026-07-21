@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
-from infra.market_data import asian_realtime_provider as _provider
+from infra.market_data import asian_quote_provider as _provider
 
 AsianRealtimePayloadError = _provider.AsianRealtimePayloadError
 build_yf_session = _provider.build_yf_session

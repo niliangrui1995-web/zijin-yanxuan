@@ -11,7 +11,7 @@ import requests
 
 from infra.market_data import asian_kline_provider as kline_provider
 from infra.market_data import asian_market_http as market_http
-from infra.market_data import asian_realtime_provider as provider
+from infra.market_data import asian_quote_provider as provider
 
 
 class _FakeResponse:
