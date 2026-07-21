@@ -40,6 +40,62 @@ def test_central_quotes_service_uses_30s_a_share_polling():
         main_window.deleteLater()
 
 
+def test_realtime_fetch_partial_runs_through_real_task_lifecycle(qt_application):
+    from functools import partial
+
+    from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
+    from app.services.ui_task_service import background_job_runner as task_manager
+    from ui.workers.central_quotes_worker import _run_realtime_fetch, _submit_central_task
+
+    task_id = "central-quotes-real-submit-signature"
+    task_manager.cancel_all()
+    task_manager._shutting_down = False
+    timing = {}
+    results = []
+    errors = []
+    captured_tokens = []
+
+    def fetch_quote_payload(codes, *, cancellation_token):
+        captured_tokens.append(cancellation_token)
+        return {"codes": tuple(sorted(codes))}
+
+    service = SimpleNamespace(
+        _task_lifecycle=TaskLifecycleGroup(task_manager),
+        _fetch_quote_payload=fetch_quote_payload,
+    )
+    background = partial(
+        _run_realtime_fetch,
+        service=service,
+        codes={"600519", "000001"},
+        timing=timing,
+    )
+
+    try:
+        _submit_central_task(
+            service,
+            "signature_probe",
+            background,
+            results.append,
+            errors.append,
+            task_id,
+            2.0,
+        )
+        for _ in range(200):
+            qt_application.processEvents()
+            if results or errors:
+                break
+            QTest.qWait(5)
+
+        assert errors == []
+        assert results == [{"codes": ("000001", "600519")}]
+        assert len(captured_tokens) == 1
+        assert captured_tokens[0].cancelled is False
+        assert timing["worker_finished_at"] >= timing["worker_started_at"]
+    finally:
+        service._task_lifecycle.shutdown(timeout_ms=1_000)
+        task_manager.abandon_task(task_id)
+
+
 def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_snapshot(monkeypatch):
     app = QApplication.instance() or QApplication([])
     main_window = QWidget()

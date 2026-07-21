@@ -4,17 +4,20 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterable
+from functools import partial
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
 from app.services.central_quote_polling_service import CentralQuotePoller
+from app.services.quote_runtime_state import QuoteRuntimeState, QuoteRuntimeStateCompatMixin
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_quote_service import (
     publish_rt_quotes,
     read_provider_health,
     read_realtime_quote_request_policy,
 )
-from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
 from app.services.ui_task_service import CENTRAL_QUOTES_POLL, task_registry
 from app.services.ui_task_service import (
     background_job_runner as task_manager,
@@ -73,28 +76,37 @@ def _submit_central_task(service, name, fn, on_success, on_error, task_id, timeo
     )
 
 
-def _fetch_quote_payload_timed(service, codes: set[str], timing: dict[str, float]) -> dict:
+def _fetch_quote_payload_timed(
+    service,
+    codes: set[str],
+    timing: dict[str, float],
+    cancellation_token=None,
+) -> dict:
     timing["worker_started_at"] = time.perf_counter()
     try:
-        return service._fetch_quote_payload(codes)
+        return invoke_with_cancellation(
+            service._fetch_quote_payload,
+            cancellation_token,
+            codes,
+        )
     finally:
         timing["worker_finished_at"] = time.perf_counter()
 
 
 def _remember_pending_fetch(service, reason: str) -> None:
     if str(reason or "").strip() == "cache_reload":
-        service._pending_fetch_reason = "cache_reload"
+        service.state.update(pending_reason="cache_reload")
 
 
 def _schedule_pending_fetch_replay(service) -> None:
-    if service._closed or not service._pending_fetch_reason or service._pending_fetch_timer.isActive():
+    if service._closed or not service.state.pending_reason or service._pending_fetch_timer.isActive():
         return
     service._pending_fetch_timer.start(0)
 
 
 def _replay_pending_fetch(service) -> None:
-    reason = str(service._pending_fetch_reason or "").strip()
-    service._pending_fetch_reason = ""
+    reason = str(service.state.pending_reason or "").strip()
+    service.state.update(pending_reason="")
     if service._closed or not reason:
         return
     if reason == "cache_reload":
@@ -104,16 +116,17 @@ def _replay_pending_fetch(service) -> None:
 
 def _hold_fetch_while_inflight(service, reason: str, codes: set[str]) -> None:
     _remember_pending_fetch(service, reason)
-    codes_count = int(service._fetch_codes_count or len(codes) or 0)
+    runtime = service.state.read()
+    codes_count = int(runtime.codes_count or len(codes) or 0)
     slow_threshold = _slow_fetch_threshold(service.data_provider, codes_count)
     if (
-        not service._fetch_warned_slow
-        and service._fetch_start_time > 0
-        and (time.time() - service._fetch_start_time) > slow_threshold
+        not runtime.warned_slow
+        and runtime.started_at > 0
+        and (time.time() - runtime.started_at) > slow_threshold
     ):
-        service._fetch_warned_slow = True
+        service.state.update(warned_slow=True)
         log.warning(
-            f"[报价站] 单次抓取耗时过长({time.time() - service._fetch_start_time:.1f}s)，"
+            f"[报价站] 单次抓取耗时过长({time.time() - runtime.started_at:.1f}s)，"
             "继续等待当前单飞行任务结束"
         )
 
@@ -168,7 +181,9 @@ def _record_and_publish_quote_refresh(
         valid_quotes=bool(has_valid),
         provider_failed=bool(provider_failed),
         publish_ms=round(publish_ms, 3),
-        **{key: round(value, 3) for key, value in phase_ms.items()},
+        submit_queue_ms=round(phase_ms["submit_queue_ms"], 3),
+        worker_ms=round(phase_ms["worker_ms"], 3),
+        result_queue_delay_ms=round(phase_ms["result_queue_delay_ms"], 3),
     )
 
 
@@ -203,6 +218,23 @@ def _quote_result_state(payload: dict) -> tuple[dict, dict, dict, bool, bool]:
     return quotes, provider_stats, quote_request_stats, has_valid, provider_failed
 
 
+def _quote_result_source(quotes: dict, provider_stats: dict) -> str:
+    sources = sorted(
+        {
+            str(quote.get("source") or "").strip()
+            for quote in quotes.values()
+            if isinstance(quote, dict) and str(quote.get("source") or "").strip()
+        }
+    )
+    if sources:
+        return "+".join(sources)
+    for key in ("current_source", "last_source", "source"):
+        source = str(provider_stats.get(key) or "").strip()
+        if source:
+            return source
+    return ""
+
+
 def _process_quote_fetch_result(
     service,
     *,
@@ -214,6 +246,9 @@ def _process_quote_fetch_result(
     callback_started_at: float,
 ) -> None:
     quotes, provider_stats, quote_request_stats, has_valid, provider_failed = _quote_result_state(payload)
+    current_source = _quote_result_source(quotes, provider_stats)
+    if current_source:
+        service.state.update(current_source=current_source)
     service._last_central_quote_request_stats = (
         dict(quote_request_stats) if isinstance(quote_request_stats, dict) else {}
     )
@@ -237,6 +272,9 @@ def _process_quote_fetch_result(
 
 def _publish_off_market_snapshot(service, payload: dict) -> None:
     quotes = (payload or {}).get("quotes") or {}
+    current_source = _quote_result_source(quotes, (payload or {}).get("provider_stats") or {})
+    if current_source:
+        service.state.update(current_source=current_source)
     service._off_market_snapshot_emitted = True
     if not any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values()):
         return
@@ -247,7 +285,200 @@ def _publish_off_market_snapshot(service, payload: dict) -> None:
     )
 
 
-class CentralQuotesService(QObject):
+def _active_code_count(codes) -> int:
+    return len(codes) if codes else 0
+
+
+def _prepare_quote_fetch_cycle(service, reason: str) -> tuple[set[str], str, dict] | None:
+    if service._closed:
+        return None
+    service._ensure_timer_running()
+    service._tick_count += 1
+    quote_refreshable = MarketCalendar.is_quote_refresh_time()
+    market_status = service._market_status_text()
+    service._observe_quote_window(quote_refreshable)
+    if quote_refreshable:
+        service._off_market_snapshot_emitted = False
+        if service._off_market_snapshot_fetching:
+            service._off_market_snapshot_generation += 1
+            service._off_market_snapshot_fetching = False
+
+    codes = service._get_all_active_codes()
+    maintenance_stats = service._run_maintenance(
+        active_codes_count=_active_code_count(codes),
+        quote_refreshable=quote_refreshable,
+        market_status=market_status,
+    ) or {}
+    if not codes:
+        return None
+    if not quote_refreshable:
+        if service._off_market_snapshot_fetching:
+            _remember_pending_fetch(service, reason)
+        else:
+            service._emit_off_market_snapshot(codes)
+        return None
+    if not service._poller.is_online():
+        return None
+    if service.state.fetching:
+        _hold_fetch_while_inflight(service, reason, codes)
+        return None
+    return codes, market_status, maintenance_stats
+
+
+def _should_skip_post_cache_reload_duplicate(service, reason: str, codes: set[str], now: float) -> bool:
+    code_signature = tuple(sorted(codes))
+    if reason == "cache_reload":
+        service._post_cache_reload_signature = code_signature
+        service._post_cache_reload_quiet_until = now + _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC
+        return False
+    if (
+        service._post_cache_reload_signature
+        and code_signature == service._post_cache_reload_signature
+        and now < service._post_cache_reload_quiet_until
+    ):
+        log.debug(f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}")
+        return True
+    return False
+
+
+def _consume_circuit_breaker_tick(service) -> bool:
+    if service._circuit_breaker_cooldown <= 0:
+        return False
+    service._circuit_breaker_cooldown -= 1
+    if service._circuit_breaker_cooldown == 0:
+        log.info("[报价站] 冷却结束，恢复轮询")
+    return True
+
+
+def _prepare_realtime_fetch_codes(
+    service,
+    reason: str,
+    codes: set[str],
+    market_status: str,
+    maintenance_stats: dict,
+) -> set[str] | None:
+    codes = service._opening_warmup_codes(codes, market_status=market_status)
+    provider_stats = service._poller.get_runtime_stats()
+    if time.time() < float(provider_stats.get("cooldown_until") or 0):
+        service._circuit_breaker_cooldown = max(service._circuit_breaker_cooldown, service._COOLDOWN_TICKS)
+        return None
+    if service._should_skip_fallback_pressure_fetch(
+        codes,
+        provider_stats=provider_stats,
+        maintenance_stats=maintenance_stats,
+        market_status=market_status,
+        reason=reason,
+    ):
+        return None
+    codes = service._fallback_pressure_codes(codes, provider_stats=provider_stats, market_status=market_status)
+    if _should_skip_post_cache_reload_duplicate(service, reason, codes, time.time()):
+        return None
+    if _consume_circuit_breaker_tick(service):
+        return None
+    return codes
+
+
+def _handle_realtime_fetch_result(
+    payload,
+    *,
+    service,
+    codes: set[str],
+    reason: str,
+    fetch_token: int,
+    timing: dict[str, float],
+) -> None:
+    runtime = service.state.read()
+    if fetch_token != runtime.generation:
+        return
+    callback_started_at = time.perf_counter()
+    elapsed_ms = max(0.0, (time.time() - runtime.started_at) * 1000.0)
+    updated = service.state.update(
+        expected_generation=fetch_token,
+        fetching=False,
+        started_at=0.0,
+        warned_slow=False,
+        codes_count=0,
+    )
+    if updated.generation != fetch_token or service._closed:
+        return
+    try:
+        _process_quote_fetch_result(
+            service,
+            codes=codes,
+            payload=payload,
+            elapsed_ms=elapsed_ms,
+            reason=reason,
+            timing=timing,
+            callback_started_at=callback_started_at,
+        )
+    finally:
+        _schedule_pending_fetch_replay(service)
+
+
+def _handle_realtime_fetch_error(error_message: str, *, service, fetch_token: int) -> None:
+    updated = service.state.update(
+        expected_generation=fetch_token,
+        fetching=False,
+        started_at=0.0,
+        warned_slow=False,
+        codes_count=0,
+    )
+    if updated.generation != fetch_token or service._closed:
+        return
+    try:
+        service._record_failure(error_message or "后台抓取异常")
+        log.error(f"[报价站] 后台抓取异常: {error_message}")
+    finally:
+        _schedule_pending_fetch_replay(service)
+
+
+def _run_realtime_fetch(
+    cancellation_token,
+    *,
+    service,
+    codes: set[str],
+    timing: dict[str, float],
+) -> dict:
+    return _fetch_quote_payload_timed(
+        service,
+        codes,
+        timing,
+        cancellation_token,
+    )
+
+
+def _submit_realtime_fetch(service, codes: set[str], reason: str) -> None:
+    runtime = service.state.update(
+        fetching=True,
+        started_at=time.time(),
+        warned_slow=False,
+        codes_count=len(codes),
+        increments={"generation": 1},
+    )
+    fetch_token = runtime.generation
+    timing = {"submitted_at": time.perf_counter()}
+    background = partial(_run_realtime_fetch, service=service, codes=codes, timing=timing)
+    on_result = partial(
+        _handle_realtime_fetch_result,
+        service=service,
+        codes=codes,
+        reason=reason,
+        fetch_token=fetch_token,
+        timing=timing,
+    )
+    on_error = partial(_handle_realtime_fetch_error, service=service, fetch_token=fetch_token)
+    _submit_central_task(
+        service,
+        "realtime_poll",
+        background,
+        on_result,
+        on_error,
+        CENTRAL_QUOTES_POLL,
+        max(30.0, _slow_fetch_threshold(service.data_provider, len(codes)) + 10.0),
+    )
+
+
+class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
     """
     统一的中央实时报价广播站。
 
@@ -260,7 +491,7 @@ class CentralQuotesService(QObject):
     def __init__(self, main_window, data_provider, code_supplier=None):
         super().__init__(main_window)
         self.data_provider = data_provider
-        self._code_supplier = code_supplier
+        self._code_supplier: Callable[[], Iterable[object] | None] | None = code_supplier
         self._missing_code_supplier_warned = False
         self._closed = False
         self._task_lifecycle = TaskLifecycleGroup(task_manager)
@@ -272,12 +503,7 @@ class CentralQuotesService(QObject):
         self._pending_fetch_timer.setSingleShot(True)
         self._pending_fetch_timer.timeout.connect(lambda: _replay_pending_fetch(self))
 
-        self._is_fetching = False
-        self._fetch_start_time = 0.0
-        self._fetch_warned_slow = False
-        self._fetch_codes_count = 0
-        self._fetch_generation = 0
-        self._pending_fetch_reason = ""
+        self.state = QuoteRuntimeState()
         self._off_market_snapshot_emitted = False
         self._off_market_snapshot_fetching = False
         self._off_market_snapshot_generation = 0
@@ -289,7 +515,6 @@ class CentralQuotesService(QObject):
         self._last_fallback_pressure_skip_log_at = 0.0
         self._last_central_quote_request_stats: dict = {}
 
-        self._consecutive_failures = 0
         self._circuit_breaker_cooldown = 0
         self._FAILURE_THRESHOLD = 3
         self._COOLDOWN_TICKS = max(1, _A_SHARE_FAILURE_COOLDOWN_SEC * 1000 // _A_SHARE_POLL_INTERVAL_MS)
@@ -348,16 +573,16 @@ class CentralQuotesService(QObject):
                 codes.add(normalized)
         return codes
 
-    def _fetch_quote_payload(self, codes: set[str]) -> dict:
-        return self._poller.fetch_payload(codes)
+    def _fetch_quote_payload(self, codes: set[str], *, cancellation_token=None) -> dict:
+        return self._poller.fetch_payload(codes, cancellation_token=cancellation_token)
 
     def _reset_failures(self):
-        self._consecutive_failures = 0
+        self.state.update(failure_count=0)
 
     def _record_failure(self, reason: str):
-        self._consecutive_failures += 1
-        log.warning(f"[报价站] 抓取失败({self._consecutive_failures}/{self._FAILURE_THRESHOLD}): {reason}")
-        if self._consecutive_failures < self._FAILURE_THRESHOLD:
+        failure_count = self.state.update(increments={"failure_count": 1}).failure_count
+        log.warning(f"[报价站] 抓取失败({failure_count}/{self._FAILURE_THRESHOLD}): {reason}")
+        if failure_count < self._FAILURE_THRESHOLD:
             return
 
         self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
@@ -380,7 +605,7 @@ class CentralQuotesService(QObject):
                 pytdx_threads += 1
                 continue
 
-            frame = frames.get(thread.ident)
+            frame = frames.get(thread.ident) if thread.ident is not None else None
             while frame is not None:
                 filename = (frame.f_code.co_filename or "").lower()
                 if "pytdx" in filename:
@@ -447,7 +672,7 @@ class CentralQuotesService(QObject):
         except (TypeError, ValueError):
             consecutive_failures = 0
         last_error = str(runtime_stats.get("last_error") or "").strip()
-        if self._is_fetching or inflight > 0:
+        if self.state.fetching or inflight > 0:
             if opening_warmup:
                 return "opening_warmup_fetching", "集合竞价限量预热中", timer_active, "opening_warmup"
             return "fetching", "等待当前抓取完成", timer_active, "inflight"
@@ -820,8 +1045,12 @@ class CentralQuotesService(QObject):
         self._off_market_snapshot_generation += 1
         request_generation = self._off_market_snapshot_generation
 
-        def _bg_fetch(_cancellation_token):
-            return self._fetch_quote_payload(request_codes)
+        def _bg_fetch(cancellation_token):
+            return invoke_with_cancellation(
+                self._fetch_quote_payload,
+                cancellation_token,
+                request_codes,
+            )
 
         def _on_result(payload):
             if request_generation != self._off_market_snapshot_generation:
@@ -855,143 +1084,32 @@ class CentralQuotesService(QObject):
         self._trigger_fetch_for_reason("timer")
 
     def _trigger_fetch_for_reason(self, reason: str = "timer"):
-        if self._closed:
+        prepared = _prepare_quote_fetch_cycle(self, reason)
+        if prepared is None:
             return
-
-        self._ensure_timer_running()
-        self._tick_count += 1
-        quote_refreshable = MarketCalendar.is_quote_refresh_time()
-        market_status = self._market_status_text()
-        self._observe_quote_window(quote_refreshable)
-        if quote_refreshable:
-            self._off_market_snapshot_emitted = False
-            if self._off_market_snapshot_fetching:
-                self._off_market_snapshot_generation += 1
-                self._off_market_snapshot_fetching = False
-
-        codes = self._get_all_active_codes()
-        maintenance_stats = self._run_maintenance(
-            active_codes_count=len(codes) if codes else 0,
-            quote_refreshable=quote_refreshable,
-            market_status=market_status,
-        ) or {}
-        if not codes:
-            return
-
-        if not quote_refreshable:
-            if self._off_market_snapshot_fetching:
-                _remember_pending_fetch(self, reason)
-                return
-            self._emit_off_market_snapshot(codes)
-            return
-
-        if not self._poller.is_online():
-            return
-
-        if self._is_fetching:
-            _hold_fetch_while_inflight(self, reason, codes)
-            return
-
-        codes = self._opening_warmup_codes(codes, market_status=market_status)
-        provider_stats = self._poller.get_runtime_stats()
-        if time.time() < float(provider_stats.get("cooldown_until") or 0):
-            self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
-            return
-
-        if self._should_skip_fallback_pressure_fetch(
+        codes, market_status, maintenance_stats = prepared
+        ready_codes = _prepare_realtime_fetch_codes(
+            self,
+            reason,
             codes,
-            provider_stats=provider_stats,
-            maintenance_stats=maintenance_stats,
-            market_status=market_status,
-            reason=reason,
-        ):
-            return
-
-        codes = self._fallback_pressure_codes(codes, provider_stats=provider_stats, market_status=market_status)
-        code_signature = tuple(sorted(codes))
-        now = time.time()
-        if reason == "cache_reload":
-            self._post_cache_reload_signature = code_signature
-            self._post_cache_reload_quiet_until = now + _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC
-        elif (
-            self._post_cache_reload_signature
-            and code_signature == self._post_cache_reload_signature
-            and now < self._post_cache_reload_quiet_until
-        ):
-            log.debug(f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}")
-            return
-
-        if self._circuit_breaker_cooldown > 0:
-            self._circuit_breaker_cooldown -= 1
-            if self._circuit_breaker_cooldown == 0:
-                log.info("[报价站] 冷却结束，恢复轮询")
-            return
-
-        self._is_fetching = True
-        self._fetch_start_time = time.time()
-        self._fetch_warned_slow = False
-        self._fetch_codes_count = len(codes)
-        self._fetch_generation += 1
-        fetch_token = self._fetch_generation
-        fetch_timing = {"submitted_at": time.perf_counter()}
-
-        def _bg_task(_cancellation_token):
-            return _fetch_quote_payload_timed(self, codes, fetch_timing)
-
-        def _on_result(payload):
-            if fetch_token != self._fetch_generation:
-                return
-
-            callback_started_at = time.perf_counter()
-            elapsed_ms = max(0.0, (time.time() - self._fetch_start_time) * 1000.0)
-            self._is_fetching = False
-            self._fetch_start_time = 0.0
-            self._fetch_warned_slow = False
-            self._fetch_codes_count = 0
-            if self._closed:
-                return
-
-            try:
-                _process_quote_fetch_result(
-                    self,
-                    codes=codes,
-                    payload=payload,
-                    elapsed_ms=elapsed_ms,
-                    reason=reason,
-                    timing=fetch_timing,
-                    callback_started_at=callback_started_at,
-                )
-            finally:
-                _schedule_pending_fetch_replay(self)
-
-        def _on_error(err_msg):
-            if fetch_token != self._fetch_generation:
-                return
-
-            self._is_fetching = False
-            self._fetch_start_time = 0.0
-            self._fetch_warned_slow = False
-            self._fetch_codes_count = 0
-            if self._closed:
-                return
-
-            try:
-                self._record_failure(err_msg or "后台抓取异常")
-                log.error(f"[报价站] 后台抓取异常: {err_msg}")
-            finally:
-                _schedule_pending_fetch_replay(self)
-
-        _submit_central_task(
-            self, "realtime_poll", _bg_task, _on_result, _on_error, CENTRAL_QUOTES_POLL,
-            max(30.0, _slow_fetch_threshold(self.data_provider, len(codes)) + 10.0),
+            market_status,
+            maintenance_stats,
         )
+        if ready_codes is not None:
+            _submit_realtime_fetch(self, ready_codes, reason)
 
     def shutdown(self):
         self._closed = True
         self._timer.stop()
         self._pending_fetch_timer.stop()
-        self._fetch_generation += 1
-        self._pending_fetch_reason = ""
+        self.state.update(
+            fetching=False,
+            increments={"generation": 1},
+            started_at=0.0,
+            pending_reason="",
+            warned_slow=False,
+            codes_count=0,
+        )
         self._off_market_snapshot_generation += 1
         self._off_market_snapshot_fetching = False
         self._task_lifecycle.shutdown(timeout_ms=1_000)

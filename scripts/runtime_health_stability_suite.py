@@ -1795,11 +1795,25 @@ def _cycle_f5(
 def _central_quote_cycle_idle(central) -> bool:
     lifecycle = getattr(central, "_task_lifecycle", None)
     active_names = getattr(lifecycle, "active_names", ())
+    runtime_state_getter = getattr(central, "runtime_state_snapshot", None)
+    try:
+        runtime_state = runtime_state_getter() if callable(runtime_state_getter) else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        runtime_state = None
     return not any(
         (
-            bool(getattr(central, "_is_fetching", False)),
+            bool(getattr(runtime_state, "fetching", getattr(central, "_is_fetching", False))),
             bool(getattr(central, "_off_market_snapshot_fetching", False)),
-            bool(str(getattr(central, "_pending_fetch_reason", "") or "")),
+            bool(
+                str(
+                    getattr(
+                        runtime_state,
+                        "pending_reason",
+                        getattr(central, "_pending_fetch_reason", ""),
+                    )
+                    or ""
+                )
+            ),
             bool(active_names),
         )
     )
