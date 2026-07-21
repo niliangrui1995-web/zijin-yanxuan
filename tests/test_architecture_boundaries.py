@@ -45,7 +45,7 @@ BROAD_EXCEPTION_ALLOWED_HANDLERS = {
     "domains/global_earnings_calendar/service.py:refresh_events",
     "infra/diagnostics/runtime_health.py:<module>",
     "infra/diagnostics/ui_exception_boundary.py:ui_exception_hook",
-    "infra/market_data/asian_realtime_provider.py:_call_yfinance",
+    "infra/market_data/asian_quote_provider.py:_call_yfinance",
     "infra/tasks/owner_lifecycle.py:_deliver",
     "infra/tasks/task_scheduler.py:_handle_terminated",
     "infra/tasks/task_scheduler.py:run",

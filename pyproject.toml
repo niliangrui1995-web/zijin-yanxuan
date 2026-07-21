@@ -23,5 +23,67 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
 
+[tool.mypy]
+python_version = "3.14"
+explicit_package_bases = true
+follow_imports = "silent"
+check_untyped_defs = true
+show_error_codes = true
+warn_unused_configs = true
+files = [
+  "core/state",
+  "core/global_store.py",
+  "domains/quotes/snapshot.py",
+  "app/services/quote_runtime_state.py",
+  "ui/workers/central_quotes_worker.py",
+  "infra/tasks/lifecycle.py",
+  "infra/tasks/owner_lifecycle.py",
+  "infra/tasks/task_scheduler.py",
+  "ui/kline_pool_state.py",
+  "ui/kline_typing.py",
+  "ui/kline_window_pool_lifecycle.py",
+  "ui/kline_window_recovery.py",
+  "ui/components/kline_window_manager.py",
+  "scripts/mypy_baseline.py",
+  "infra/storage/data_store.py",
+  "infra/storage/migrations",
+  "infra/market_data/asian_realtime_provider.py",
+  "infra/market_data/asian_quote_provider.py",
+  "infra/market_data/providers",
+  "infra/market_data/normalize",
+  "infra/market_data/policies",
+  "infra/runtime_monitor",
+  "infra/diagnostics/runtime_health.py",
+]
+
+[[tool.mypy.overrides]]
+module = [
+  "app.services.quote_runtime_state",
+  "core.state",
+  "core.state.quote_snapshot",
+  "infra.market_data.normalize",
+  "infra.market_data.normalize.quote_normalizer",
+  "infra.market_data.policies",
+  "infra.market_data.policies.fallback_policy",
+  "infra.market_data.providers",
+  "infra.market_data.providers.asian_http_provider",
+  "infra.market_data.providers.yfinance_provider",
+  "infra.runtime_monitor",
+  "infra.runtime_monitor.health_report",
+  "infra.storage.migrations",
+  "infra.storage.migrations.models",
+  "infra.storage.migrations.backup",
+  "infra.storage.migrations.identity",
+  "infra.storage.migrations.registry",
+  "infra.storage.migrations.runner",
+  "infra.storage.migrations.v001_init",
+  "infra.storage.migrations.v002_datastore_identity",
+  "ui.kline_pool_state",
+  "ui.kline_typing",
+  "scripts.mypy_baseline",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
 [tool.coverage.run]
 core = "pytrace"

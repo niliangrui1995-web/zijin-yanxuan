@@ -32,6 +32,7 @@ def test_project_audit_full_gate_includes_required_checks():
         "git-diff-check",
         "compileall",
         "pip-check",
+        "mypy-baseline",
         "architecture-boundaries",
         "complexity-hotspots",
         "cold-import-budget",
@@ -57,6 +58,7 @@ def test_project_audit_can_skip_ruff_for_ci_audit_smoke():
         "git-diff-check",
         "compileall",
         "pip-check",
+        "mypy-baseline",
         "architecture-boundaries",
         "ui-stall-smoke",
         "complexity-hotspots",
@@ -91,6 +93,8 @@ def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
     assert "full-pytest" not in labels
     git_diff = next(command for command in commands if command.label == "git-diff-check")
     assert git_diff.command == ["git", "diff", "--check"]
+    mypy_baseline = next(command for command in commands if command.label == "mypy-baseline")
+    assert mypy_baseline.command == [project_audit._python(args), "scripts/mypy_baseline.py"]
     runtime = next(command for command in commands if command.label == "runtime-self-check")
     assert "--skip-webengine-preflight" in runtime.command
     complexity = next(command for command in commands if command.label == "complexity-hotspots")

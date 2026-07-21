@@ -3,7 +3,9 @@
 
 pytest>=9.0.3
 pytest-cov>=7.0.0
+mypy==2.3.0
 pyright>=1.1.407
 ruff==0.15.15
+types-psutil==7.2.2.20260518
 pip-audit>=2.10.0
 msgpack>=1.2.1

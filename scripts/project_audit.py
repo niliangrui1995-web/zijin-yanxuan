@@ -218,14 +218,14 @@ def _runtime_health_audit_commands(args: argparse.Namespace, python: str) -> lis
     return commands
 
 
-def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
-    python = _python(args)
-    commands = [
+def _standard_audit_commands(python: str) -> list[AuditCommand]:
+    return [
         AuditCommand("ruff", [python, "-m", "ruff", "check", "."]),
         AuditCommand("utf8", [python, "scripts/check_utf8.py"]),
         AuditCommand("git-diff-check", ["git", "diff", "--check"]),
         AuditCommand("compileall", [python, "-m", "compileall", "-q", *PYTHON_TARGETS]),
         AuditCommand("pip-check", [python, "-m", "pip", "check"]),
+        AuditCommand("mypy-baseline", [python, "scripts/mypy_baseline.py"]),
         AuditCommand(
             "architecture-boundaries",
             [python, "-m", "pytest", "-q", "tests/test_architecture_boundaries.py"],
@@ -247,6 +247,11 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             [python, "scripts/http_safety_audit.py", "--output", HTTP_SAFETY_AUDIT_OUTPUT],
         ),
     ]
+
+
+def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
+    python = _python(args)
+    commands = _standard_audit_commands(python)
     if args.skip_ruff:
         commands = [command for command in commands if command.label != "ruff"]
 
