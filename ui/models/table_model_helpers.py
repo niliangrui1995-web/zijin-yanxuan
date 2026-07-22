@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Mapping
 from functools import lru_cache
+from typing import Any
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
@@ -131,9 +133,27 @@ def _qcolor_from_text_cached(text: str) -> QColor:
     return QColor(text)
 
 
-def _apply_quote_metrics_to_row(item_dict: dict, quote: dict) -> tuple[bool, dict]:
+def _apply_quote_metadata_to_row(item_dict: dict, quote: Mapping[str, Any]) -> bool:
+    metadata = (
+        ("quote_time", "_quote_time"),
+        ("quote_received_at", "_quote_received_at"),
+        ("quote_freshness", "_quote_freshness"),
+        ("source", "_quote_source"),
+    )
+    changed = False
+    for quote_key, row_key in metadata:
+        if quote_key not in quote or quote.get(quote_key) in (None, ""):
+            continue
+        value = quote.get(quote_key)
+        if item_dict.get(row_key) != value:
+            item_dict[row_key] = value
+            changed = True
+    return changed
+
+
+def _apply_quote_metrics_to_row(item_dict: dict, quote: Mapping[str, Any]) -> tuple[bool, dict]:
     metrics = resolve_quote_metrics(item_dict, quote)
-    row_changed = False
+    row_changed = _apply_quote_metadata_to_row(item_dict, quote)
 
     zongguben = float(metrics.get("zongguben", 0) or 0)
     if zongguben > 0 and float(item_dict.get("_zongguben", 0) or 0) != zongguben:
@@ -470,6 +490,37 @@ def _build_cell_tooltip(raw_val):
     return _build_cell_tooltip_cached(text)
 
 
+def _quote_freshness_text(freshness: str, source: str) -> str:
+    if freshness and source:
+        return f"{freshness}（{source}）"
+    return freshness
+
+
+def _quote_metadata_lines(key: str, raw_val, display_time: str, freshness_text: str) -> list[str]:
+    lines = [f"{key}：{raw_val}"]
+    if display_time:
+        lines.append(f"报价时间：{display_time}")
+    if freshness_text:
+        lines.append(f"新鲜度：{freshness_text}")
+    return lines
+
+
+def _quote_metadata_tooltip(key: str, raw_val, item_dict: dict):
+    if key not in {"现价", "市价", "最新价", "最新", "收盘"}:
+        return None
+    quote_time = str(item_dict.get("_quote_time") or "").strip()
+    freshness = str(item_dict.get("_quote_freshness") or "").strip()
+    if not quote_time and not freshness:
+        return None
+    display_time = quote_time.replace("T", " ").removesuffix("+08:00")
+    source = str(item_dict.get("_quote_source") or "").strip()
+    return "\n".join(_quote_metadata_lines(key, raw_val, display_time, _quote_freshness_text(freshness, source)))
+
+
+def _quote_tooltip_or_default(key: str, raw_val, item_dict: dict):
+    return _quote_metadata_tooltip(key, raw_val, item_dict) or _build_cell_tooltip(raw_val)
+
+
 def _tooltip_for_cell(key: str, raw_val, item_dict: dict):
     if key == SERIAL_HEADER:
         return None
@@ -477,7 +528,7 @@ def _tooltip_for_cell(key: str, raw_val, item_dict: dict):
         custom_tip = item_dict.get("_外资净买入_tooltip")
         if custom_tip:
             return custom_tip
-    return _build_cell_tooltip(raw_val)
+    return _quote_tooltip_or_default(key, raw_val, item_dict)
 
 
 _DYNAMIC_ELIDE_HEADERS = {

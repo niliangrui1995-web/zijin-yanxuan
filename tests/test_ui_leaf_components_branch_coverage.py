@@ -243,6 +243,9 @@ def test_command_palette_show_event_centers_and_selects_search_text(qt_applicati
 def test_runtime_health_dialog_refresh_export_and_close(monkeypatch, qt_application):
     import ui.components.runtime_health_dialog as runtime_health_dialog
 
+    assert runtime_health_dialog._quote_health_summary(
+        {"recent_batch_count": 4, "recent_cache_hit_count": 3}
+    ) == "行情批次 4"
     reports = [
         {
             "background_tasks": {"count": 2},
@@ -250,7 +253,15 @@ def test_runtime_health_dialog_refresh_export_and_close(monkeypatch, qt_applicat
             "event_bus": {"total_receivers": 7},
             "process": {"thread_count": 11},
             "webengine": {"count": 1},
-            "quotes": {"request_stats": {"recent_batch_count": 4}},
+            "quotes": {
+                "request_stats": {
+                    "recent_batch_count": 4,
+                    "recent_network_result_count": 20,
+                    "recent_cache_hit_count": 3,
+                    "recent_stale_result_count": 5,
+                    "recent_latest_quote_time": "2026-07-22T10:24:06+08:00",
+                }
+            },
             "f5_cache": {"trade_date": "2026-07-14"},
             "中文": "正常",
         },
@@ -276,6 +287,8 @@ def test_runtime_health_dialog_refresh_export_and_close(monkeypatch, qt_applicat
     dialog = RuntimeHealthDialog(main_window)
     assert "任务 2" in dialog.summary_label.text()
     assert "Timer 3/5" in dialog.summary_label.text()
+    assert "行情 10:24:06" in dialog.summary_label.text()
+    assert "联网 20/缓存 3/过期 5" in dialog.summary_label.text()
     assert "F5 2026-07-14" in dialog.summary_label.text()
     assert '"中文": "正常"' in dialog.report_edit.toPlainText()
     assert dialog.report_edit.isReadOnly() is True

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
+from typing import Any
 
 from core.observability import record_metric
 
@@ -38,7 +40,11 @@ def _quote_code_candidates(owner, raw_code) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-def _quote_subset_for_model(owner, model, quotes: dict) -> dict:
+def _quote_subset_for_model(
+    owner,
+    model,
+    quotes: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Mapping[str, Any]]:
     row_data = getattr(model, "row_data", None)
     if not row_data:
         return quotes
@@ -61,7 +67,7 @@ def _quote_subset_for_model(owner, model, quotes: dict) -> dict:
     return subset
 
 
-def apply_quote_snapshot(owner, quotes: dict | None) -> dict:
+def apply_quote_snapshot(owner, quotes: Mapping[str, Mapping[str, Any]] | None) -> dict:
     model = resolve_active_quote_model(owner)
     stats = {
         "payload_codes": len(quotes or {}),

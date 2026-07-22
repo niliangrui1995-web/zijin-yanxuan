@@ -29,6 +29,7 @@ from app.services.watchlist_indicator_service import (
 from core.buy_point import BUY_POINT_TEXT
 from core.logger import get_logger
 from core.observability import record_metric
+from core.state.quote_snapshot import snapshot_to_mutable_dict
 from ui.components.table_controls import VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.stock_table_model import BUY_POINT_TRIGGER_ICON
@@ -190,14 +191,7 @@ def _merge_watchlist_quote_snapshot(rows, quote_snapshot) -> list:
 
 
 def _copy_quote_snapshot(snapshot, codes=None) -> dict:
-    code_filter = None if codes is None else {str(code) for code in codes if str(code).strip()}
-    copied = {}
-    for code, values in dict(snapshot or {}).items():
-        code_text = str(code)
-        if not isinstance(values, Mapping) or (code_filter is not None and code_text not in code_filter):
-            continue
-        copied[code_text] = dict(values)
-    return copied
+    return snapshot_to_mutable_dict(snapshot, codes)
 
 
 def _capture_latest_quote_snapshot(codes=None) -> dict:
@@ -1327,7 +1321,10 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
             log.warning(f"[关注池] 提取工作区雷达数据异常: {exc}")
             return {}, {}, {}, {}, {}, None
 
-    def _apply_quote_snapshot(self, quotes: dict | None):
+    def _apply_quote_snapshot(
+        self,
+        quotes: Mapping[str, Mapping[str, object]] | None,
+    ):
         apply_snapshot = super()._apply_quote_snapshot
         return self._run_coalesced_model_update(lambda: apply_snapshot(quotes))
 
@@ -1807,7 +1804,7 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.set_proxy_filter_text(self.proxy_model, text)
         self._update_status_summary()
 
-    def _on_rt_quotes_direct(self, quotes: dict):
+    def _on_rt_quotes_direct(self, quotes: Mapping[str, Mapping[str, object]]):
         super()._on_rt_quotes_direct(quotes)
         if not self.isVisible() or not quotes:
             return

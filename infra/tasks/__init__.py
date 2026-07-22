@@ -3,6 +3,9 @@ from infra.tasks.owner_lifecycle import (
     TaskCancelledError,
     TaskDeadlineExceeded,
     TaskLifecycleGroup,
+    TaskSubmissionReceipt,
+    TaskSubmissionStatus,
+    accepts_cancellation_token,
     invoke_with_cancellation,
 )
 from infra.tasks.process_runner import (
@@ -58,10 +61,13 @@ __all__ = [
     "TaskCancelledError",
     "TaskDeadlineExceeded",
     "TaskLifecycleGroup",
+    "TaskSubmissionReceipt",
+    "TaskSubmissionStatus",
     "TypedTaskRegistry",
     "UserFacingTaskError",
     "build_python_module_command",
     "build_domestic_process_env",
+    "accepts_cancellation_token",
     "invoke_with_cancellation",
     "run_cancellable_process",
     "run_process",

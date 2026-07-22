@@ -295,6 +295,14 @@ def test_vcp_table_tooltip_decision_and_event_error_paths(monkeypatch, qt_applic
         assert not table._should_show_tooltip_for_index(_Index(tooltip=""))
         assert not table._should_show_tooltip_for_index(_Index(display=""))
         assert not table._should_show_tooltip_for_index(_Index(display="x", width=10))
+        assert not table._should_show_tooltip_for_index(_Index(tooltip="普通提示", display="10.90", width=100))
+        assert table._should_show_tooltip_for_index(
+            _Index(
+                tooltip="现价：10.90\n报价时间：2026-07-22 10:45:06\n新鲜度：network（sina）",
+                display="10.90",
+                width=100,
+            )
+        )
         assert table._should_show_tooltip_for_index(_Index(display="x" * 100, pill="#fff", font=QFont()))
         assert table._should_show_tooltip_for_index(_Index(display="x" * 100, font=QFont()))
 

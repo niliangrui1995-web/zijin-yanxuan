@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 
@@ -828,6 +829,35 @@ class ShellNavigationWidget(QWidget):
         self.tabbar.setStyleSheet(_standalone_tabbar_qss(theme, compact=self._compact_nav))
 
 
+def _build_titlebar_quote_label(parent) -> QLabel:
+    label = QLabel("行情 --:--:--", parent)
+    label.setObjectName("titleBarQuoteStatus")
+    label.setMinimumWidth(190)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setToolTip("等待首次盘中报价")
+    return label
+
+
+def _summarize_quote_status(payload: object):
+    if not isinstance(payload, Mapping):
+        return None
+    counts = {"network": 0, "cache": 0, "stale": 0}
+    quote_times = []
+    for raw_quote in payload.values():
+        if not isinstance(raw_quote, Mapping):
+            continue
+        freshness = str(raw_quote.get("quote_freshness") or "").strip().lower()
+        if freshness not in counts:
+            continue
+        counts[freshness] += 1
+        quote_time = str(raw_quote.get("quote_time") or "").strip()
+        if quote_time:
+            quote_times.append(quote_time)
+    if sum(counts.values()) == 0:
+        return None
+    return counts, max(quote_times, default="")
+
+
 class TitleBarSyncWidget(QFrame):
     """标题栏全局同步入口与同步状态摘要。"""
 
@@ -871,6 +901,9 @@ class TitleBarSyncWidget(QFrame):
         self.quote_pulse_dot.setToolTip("quotes 同步心跳")
         layout.addWidget(self.quote_pulse_dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self.lbl_quote = _build_titlebar_quote_label(self)
+        layout.addWidget(self.lbl_quote, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.lbl_state = QLabel("同步就绪", self)
         self.lbl_state.setObjectName("titleBarSyncState")
         layout.addWidget(self.lbl_state, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -887,6 +920,31 @@ class TitleBarSyncWidget(QFrame):
 
     def pulse_quotes(self) -> None:
         self.quote_pulse_dot.pulse()
+
+    @staticmethod
+    def _quote_clock(value) -> str:
+        text = str(value or "").strip()
+        if "T" in text:
+            return text.split("T", 1)[1][:8]
+        if " " in text:
+            return text.rsplit(" ", 1)[-1][:8]
+        return text or "--:--:--"
+
+    def set_quote_status(self, payload: object) -> None:
+        summary = _summarize_quote_status(payload)
+        if summary is None:
+            return
+        counts, latest_quote_time = summary
+        clock = self._quote_clock(latest_quote_time)
+        self.lbl_quote.setText(
+            f"行情 {clock} · N/C/S {counts['network']}/{counts['cache']}/{counts['stale']}"
+        )
+        tooltip = (
+            f"报价时间 {latest_quote_time or '暂无'} | "
+            f"network {counts['network']} / cache {counts['cache']} / stale {counts['stale']}"
+        )
+        self.lbl_quote.setToolTip(tooltip)
+        self.quote_pulse_dot.setToolTip(tooltip)
 
     def set_state(self, state: str, detail: str = "", freshness: str = "") -> None:
         canonical_state = str(state or "").strip() or "idle"

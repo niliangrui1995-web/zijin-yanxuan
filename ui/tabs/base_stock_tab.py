@@ -10,6 +10,7 @@
 """
 
 import logging
+from collections.abc import Mapping
 from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
@@ -315,7 +316,10 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
     def _resolve_active_quote_model(self):
         return resolve_active_quote_model(self)
 
-    def _apply_quote_snapshot(self, quotes: dict | None):
+    def _apply_quote_snapshot(
+        self,
+        quotes: Mapping[str, Mapping[str, object]] | None,
+    ):
         return apply_quote_snapshot(self, quotes)
 
     def _publish_quote_payload(self, payload, *, source: str, require_valid: bool = False) -> dict:
@@ -945,7 +949,7 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         """订阅中央行情站信号，自动刷新子类持有的 Model 或者通过 current_model 手动传入"""
         subscribe_quote_stream(self, current_model)
 
-    def _on_rt_quotes_direct(self, quotes: dict):
+    def _on_rt_quotes_direct(self, quotes: Mapping[str, Mapping[str, object]]):
         """v4 直达信号：实时行情广播，不再需要 if-elif 路由"""
         apply_rt_quotes_direct(self, quotes)
 

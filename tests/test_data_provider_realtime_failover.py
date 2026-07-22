@@ -6,6 +6,7 @@ import time
 import urllib.error
 
 import pandas as pd
+import pytest
 
 from core.market_calendar import MarketCalendar
 from vcp import data_provider_quotes, data_provider_realtime_mixin
@@ -126,7 +127,7 @@ def _tencent_line(
     low="1380.00",
     quote_time="20260430161422",
 ):
-    fields = [""] * 37
+    fields = [""] * 38
     fields[0] = "1"
     fields[1] = name
     fields[2] = code
@@ -134,14 +135,14 @@ def _tencent_line(
     fields[4] = last_close
     fields[5] = open_price
     fields[6] = volume
-    fields[29] = quote_time
-    fields[30] = change
-    fields[31] = pct
-    fields[32] = high
-    fields[33] = low
-    fields[34] = f"{close}/{volume}/{amount}"
-    fields[35] = volume
-    fields[36] = str(float(amount) / 10000.0)
+    fields[30] = quote_time
+    fields[31] = change
+    fields[32] = pct
+    fields[33] = high
+    fields[34] = low
+    fields[35] = f"{close}/{volume}/{amount}"
+    fields[36] = volume
+    fields[37] = str(float(amount) / 10000.0)
     return f'v_{symbol}="' + "~".join(fields) + '";'
 
 
@@ -160,6 +161,11 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
     provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
     provider.force_reconnect_servers = lambda: None
     provider.set_online_mode = lambda online=True: None
+    quote_epoch = 1_776_219_846
+    quote_time = dt.datetime.fromtimestamp(
+        quote_epoch,
+        tz=dt.timezone(dt.timedelta(hours=8)),
+    ).isoformat(timespec="seconds")
 
     def _fake_urlopen(request, timeout=8):
         del timeout
@@ -181,6 +187,7 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
                             "f16": 11.15,
                             "f17": 11.16,
                             "f18": 11.17,
+                            "f124": quote_epoch,
                         },
                         {
                             "f2": 1462.07,
@@ -191,6 +198,7 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
                             "f16": 1442.0,
                             "f17": 1444.98,
                             "f18": 1446.9,
+                            "f124": quote_epoch,
                         },
                     ]
                 },
@@ -216,6 +224,9 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
             "date": "2026-04-15",
             "source": "eastmoney",
             "name": "",
+            "quote_time": quote_time,
+            "quote_received_at": pytest.approx(time.time(), abs=2.0),
+            "quote_freshness": "network",
         },
         "600519": {
             "open": 1444.98,
@@ -230,6 +241,9 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
             "date": "2026-04-15",
             "source": "eastmoney",
             "name": "",
+            "quote_time": quote_time,
+            "quote_received_at": pytest.approx(time.time(), abs=2.0),
+            "quote_freshness": "network",
         },
     }
 
@@ -262,8 +276,36 @@ def test_request_tencent_quote_batch_parses_realtime_payload(monkeypatch):
             "date": "2026-04-30",
             "source": "tencent",
             "name": "MOUTAI",
+            "quote_time": "2026-04-30T16:14:22+08:00",
+            "quote_freshness": "network",
         }
     }
+
+
+def test_request_sina_quote_batch_preserves_exchange_quote_time(monkeypatch):
+    provider = _make_provider()
+    fields = [""] * 32
+    fields[0] = "MOUTAI"
+    fields[1] = "1400.00"
+    fields[2] = "1401.17"
+    fields[3] = "1384.79"
+    fields[4] = "1401.17"
+    fields[5] = "1380.00"
+    fields[8] = "52753"
+    fields[9] = "7316111748"
+    fields[30] = "2026-04-30"
+    fields[31] = "14:24:06"
+    response = 'var hq_str_sh600519="' + ",".join(fields) + '";'
+    monkeypatch.setattr(
+        data_provider_quotes,
+        "urlopen_https",
+        lambda *_args, **_kwargs: _FakeTextResponse(response),
+    )
+
+    result = provider._request_sina_quote_batch(["600519"], "2026-04-15")
+
+    assert result["600519"]["quote_time"] == "2026-04-30T14:24:06+08:00"
+    assert result["600519"]["quote_freshness"] == "network"
 
 
 def test_fetch_realtime_quotes_batch_off_market_keeps_offline_quotes(monkeypatch):
@@ -296,8 +338,16 @@ def test_fetch_realtime_quotes_batch_off_market_keeps_offline_quotes(monkeypatch
             "amount": 0.0,
             "last_close": 9.8,
             "date": "2026-04-14",
+            "quote_time": "2026-04-14",
+            "quote_freshness": "stale",
         }
     }
+    stats = provider.get_quote_request_stats()
+    assert stats["recent_network_result_count"] == 0
+    assert stats["recent_cache_hit_count"] == 0
+    assert stats["recent_stale_result_count"] == 1
+    assert stats["recent_result_count"] == 1
+    assert stats["recent_missing_result_count"] == 0
 
 
 def test_fetch_realtime_quotes_batch_retries_backup_eastmoney_host(monkeypatch):
@@ -540,6 +590,9 @@ def test_fetch_realtime_quotes_batch_uses_recent_cache_within_dedup_window(monke
         "amount": 160274827.37,
         "last_close": 11.17,
         "date": "2026-04-15",
+        "quote_time": "2026-04-15T10:00:01+08:00",
+        "quote_received_at": 100.0,
+        "quote_freshness": "network",
     }
     provider._rt_quote_cache["000001"] = dict(cached_quote)
     provider._rt_quote_time["000001"] = 100.0
@@ -554,7 +607,111 @@ def test_fetch_realtime_quotes_batch_uses_recent_cache_within_dedup_window(monke
 
     result = provider.fetch_realtime_quotes_batch(["000001"])
 
-    assert result == {"000001": cached_quote}
+    expected = dict(cached_quote)
+    expected["quote_freshness"] = "cache"
+    assert result == {"000001": expected}
+    stats = provider.get_quote_request_stats()
+    assert stats["recent_network_result_count"] == 0
+    assert stats["recent_cache_hit_count"] == 1
+    assert stats["recent_stale_result_count"] == 0
+    assert stats["recent_result_count"] == 1
+    assert stats["recent_missing_result_count"] == 0
+    assert stats["recent_latest_quote_time"] == "2026-04-15T10:00:01+08:00"
+
+
+def test_fetch_realtime_quotes_batch_counts_network_cache_and_stale_results(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._rt_quote_cache["000001"] = {
+        "close": 10.0,
+        "last_close": 9.8,
+        "quote_time": "2026-04-15T10:00:01+08:00",
+        "quote_received_at": 100.0,
+        "quote_freshness": "network",
+    }
+    provider._rt_quote_time["000001"] = 100.0
+    provider._build_offline_quotes = lambda codes: {
+        code: {"close": 9.7, "last_close": 9.6, "date": "2026-04-14", "source": "offline"}
+        for code in codes
+    }
+
+    def _fake_fetch(batch, inferred_trade_date, min_batch_size):
+        del min_batch_size
+        assert batch == ["000002", "000003"]
+        return (
+            {
+                "000002": {
+                    "close": 10.2,
+                    "last_close": 10.0,
+                    "date": inferred_trade_date,
+                    "source": "eastmoney",
+                    "quote_time": "2026-04-15T10:00:02+08:00",
+                }
+            },
+            [],
+        )
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(time, "time", lambda: 105.0)
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("sina unavailable")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("tencent unavailable")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001", "000002", "000003"])
+
+    assert result["000001"]["quote_freshness"] == "cache"
+    assert result["000001"]["quote_time"] == "2026-04-15T10:00:01+08:00"
+    assert result["000002"]["quote_freshness"] == "network"
+    assert result["000002"]["quote_time"] == "2026-04-15T10:00:02+08:00"
+    assert result["000003"]["quote_freshness"] == "stale"
+    assert result["000003"]["quote_time"] == "2026-04-14"
+    stats = provider.get_quote_request_stats()
+    assert stats["recent_network_result_count"] == 1
+    assert stats["recent_cache_hit_count"] == 1
+    assert stats["recent_stale_result_count"] == 1
+    assert stats["recent_result_count"] == 3
+    assert stats["recent_missing_result_count"] == 0
+    assert stats["recent_latest_quote_time"] == "2026-04-15T10:00:02+08:00"
+
+
+def test_fetch_realtime_quotes_batch_counts_missing_when_all_layers_are_empty(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = lambda _codes: {}
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda *_args, **_kwargs: ({}, ["eastmoney unavailable"]),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("sina unavailable")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("tencent unavailable")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert result == {}
+    stats = provider.get_quote_request_stats()
+    assert stats["recent_network_result_count"] == 0
+    assert stats["recent_cache_hit_count"] == 0
+    assert stats["recent_stale_result_count"] == 0
+    assert stats["recent_result_count"] == 0
+    assert stats["recent_missing_result_count"] == 1
 
 
 def test_fetch_realtime_quotes_batch_pauses_between_batches(monkeypatch):
@@ -639,6 +796,11 @@ def test_fetch_realtime_quotes_batch_records_request_stats(monkeypatch):
     assert stats["recent_duplicate_requested_codes"] == {"000001": 2}
     assert stats["recent_triggered_network"] is True
     assert stats["recent_source_layers"] == ["eastmoney"]
+    assert stats["recent_network_result_count"] == 3
+    assert stats["recent_cache_hit_count"] == 0
+    assert stats["recent_stale_result_count"] == 0
+    assert stats["recent_result_count"] == 3
+    assert stats["recent_missing_result_count"] == 0
     assert stats["recent_batches"][0]["codes_count"] == 2
     assert stats["recent_batches"][0]["duplicate_codes"] == {}
 
@@ -833,6 +995,11 @@ def test_fetch_realtime_quotes_batch_throttles_large_request_after_midround_fall
     assert stats["recent_network_throttle_reason"] == "fallback_pressure"
     assert stats["recent_status"] == "network_partial_with_fallback"
     assert stats["recent_batch_count"] == 1
+    assert stats["recent_network_result_count"] == 20
+    assert stats["recent_cache_hit_count"] == 0
+    assert stats["recent_stale_result_count"] == 100
+    assert stats["recent_result_count"] == 120
+    assert stats["recent_missing_result_count"] == 0
     assert "network_throttled_fallback_pressure" in stats["recent_source_layers"]
 
 
@@ -872,6 +1039,11 @@ def test_fetch_realtime_quotes_batch_limits_medium_cooldown_fallback_to_first_ba
     assert stats["recent_network_throttle_reason"] == "fallback_pressure"
     assert stats["recent_status"] == "network_partial_with_fallback"
     assert stats["recent_batch_count"] == 1
+    assert stats["recent_network_result_count"] == 20
+    assert stats["recent_cache_hit_count"] == 0
+    assert stats["recent_stale_result_count"] == 40
+    assert stats["recent_result_count"] == 60
+    assert stats["recent_missing_result_count"] == 0
     assert "network_throttled_fallback_pressure" in stats["recent_source_layers"]
 
 
@@ -938,6 +1110,11 @@ def test_fetch_realtime_quotes_batch_keeps_later_fallback_batches_alive_after_di
     assert stats["recent_batch_count"] == 2
     assert [batch["status"] for batch in stats["recent_batches"]] == ["failed", "ok"]
     assert stats["recent_status"] == "network_partial_with_fallback"
+    assert stats["recent_network_result_count"] == 2
+    assert stats["recent_cache_hit_count"] == 0
+    assert stats["recent_stale_result_count"] == 2
+    assert stats["recent_result_count"] == 4
+    assert stats["recent_missing_result_count"] == 0
     assert "offline_missing_fallback" in stats["recent_source_layers"]
 
 

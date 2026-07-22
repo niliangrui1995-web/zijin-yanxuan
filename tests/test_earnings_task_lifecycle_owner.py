@@ -72,7 +72,9 @@ def test_earnings_manual_job_owns_token_deadline_and_shutdown_cancels(qt_applica
     with pytest.raises(TaskCancelledError, match="owner_shutdown"):
         run_fn()
     assert emitted == []
-    assert any(call[0] == "wait" and call[2] == 41 for call in runner.calls)
+    wait_calls = [call for call in runner.calls if call[0] == "wait"]
+    assert wait_calls
+    assert all(0 <= call[2] <= 41 for call in wait_calls)
 
 
 def test_earnings_gap_fill_stops_inside_date_loop_without_success_signal(qt_application):

@@ -167,6 +167,30 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs(qt_application):
         assert window._titlebar_sync_widget.btn_trade_calendar.accessibleName() == "交易日历"
         assert "outline: none;" in window._titlebar_sync_widget.btn_trade_calendar.styleSheet()
         assert window._titlebar_sync_widget.quote_pulse_dot.toolTip() == "quotes 同步心跳"
+        assert window._titlebar_sync_widget.lbl_quote.text() == "行情 --:--:--"
+        window._titlebar_sync_widget.set_quote_status(
+            {
+                "000001": {
+                    "quote_time": "2026-07-22T10:24:06+08:00",
+                    "quote_freshness": "network",
+                },
+                "000002": {
+                    "quote_time": "2026-07-22T10:23:36+08:00",
+                    "quote_freshness": "cache",
+                },
+                "000003": {
+                    "quote_time": "2026-07-21",
+                    "quote_freshness": "stale",
+                },
+                "000004": {"market_cap": 1_000_000_000},
+            }
+        )
+        assert window._titlebar_sync_widget.lbl_quote.text().startswith("行情 10:24:06")
+        assert "N/C/S 1/1/1" in window._titlebar_sync_widget.lbl_quote.text()
+        assert "network 1 / cache 1 / stale 1" in window._titlebar_sync_widget.lbl_quote.toolTip()
+        quote_status = window._titlebar_sync_widget.lbl_quote.text()
+        window._titlebar_sync_widget.set_quote_status({"000004": {"market_cap": 1_000_000_000}})
+        assert window._titlebar_sync_widget.lbl_quote.text() == quote_status
         window._titlebar_sync_widget.pulse_quotes()
         assert window._titlebar_sync_widget.quote_pulse_dot._timer.isActive() is False
         window.show()

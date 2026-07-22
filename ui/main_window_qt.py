@@ -568,6 +568,15 @@ def _run_post_paint_runtime(main_window) -> None:
     )
 
 
+def _update_titlebar_quote_status(sync_widget, payload: object) -> None:
+    pulse = getattr(sync_widget, "pulse_quotes", None)
+    if callable(pulse):
+        pulse()
+    set_quote_status = getattr(sync_widget, "set_quote_status", None)
+    if callable(set_quote_status):
+        set_quote_status(payload)
+
+
 class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
     """紫金研选主窗口 — 纯外壳控制器（Phase 2 重构后）"""
 
@@ -1465,10 +1474,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         """Blink the titlebar quotes heartbeat when fresh quote payloads arrive."""
         if not payload:
             return
-        sync_widget = getattr(self, "_titlebar_sync_widget", None)
-        pulse = getattr(sync_widget, "pulse_quotes", None)
-        if callable(pulse):
-            pulse()
+        _update_titlebar_quote_status(getattr(self, "_titlebar_sync_widget", None), payload)
 
     @pyqtSlot(str, int, str)
     def _on_task_progress(self, module: str, pct: int, msg: str):

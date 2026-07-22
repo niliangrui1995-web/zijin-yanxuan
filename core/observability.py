@@ -65,6 +65,15 @@ def _compact_join(*parts: str) -> str:
     return " | ".join(part for part in parts if part)
 
 
+def _format_quote_clock(value: Any) -> str:
+    text = str(value or "").strip()
+    if "T" in text and len(text.split("T", 1)[1]) >= 8:
+        return text.split("T", 1)[1][:8]
+    if " " in text and len(text.rsplit(" ", 1)[-1]) >= 8:
+        return text.rsplit(" ", 1)[-1][:8]
+    return text
+
+
 def _format_metric_event(fields: dict[str, Any]) -> str:
     metric = str(fields.get("metric") or "").strip() or "unknown_metric"
     unit = str(fields.get("unit") or "").strip()
@@ -93,20 +102,40 @@ def _format_metric_event(fields: dict[str, Any]) -> str:
     return _compact_join(f"[指标] {metric}", value_text, extra)
 
 
-def _format_event_summary(event: str, fields: dict[str, Any]) -> str:
-    normalized_event = str(event or "").strip() or "unknown"
-
-    if normalized_event == "quotes.refresh.completed":
-        status = "刷新异常" if fields.get("provider_failed") else "刷新完成"
-        extra = ""
-        if not fields.get("valid_quotes"):
-            extra = "无有效行情"
+def _format_quote_refresh_summary(fields: dict[str, Any]) -> str:
+    status = "刷新异常" if fields.get("provider_failed") else "刷新完成"
+    extra = "" if fields.get("valid_quotes") else "无有效行情"
+    has_freshness_counts = any(key in fields for key in ("network_count", "cache_count", "stale_count"))
+    if not has_freshness_counts:
         return _compact_join(
             f"[行情] {status}",
             _format_count(fields.get("batch_size"), "只"),
             _format_elapsed_ms(fields.get("elapsed_ms")),
             extra,
         )
+    count_parts = (
+        f"联网{_format_count(fields.get('network_count'), '只')}",
+        f"缓存{_format_count(fields.get('cache_count'), '只')}",
+        f"过期{_format_count(fields.get('stale_count'), '只')}",
+    )
+    missing_count = _coerce_float(fields.get("missing_count")) or 0.0
+    missing_text = _format_count(missing_count, "只") if missing_count > 0 else ""
+    latest_quote_time = _format_quote_clock(fields.get("latest_quote_time"))
+    return _compact_join(
+        f"[行情] {status}",
+        *count_parts,
+        f"缺失{missing_text}" if missing_text else "",
+        f"报价{latest_quote_time}" if latest_quote_time else "",
+        _format_elapsed_ms(fields.get("elapsed_ms")),
+        extra,
+    )
+
+
+def _format_event_summary(event: str, fields: dict[str, Any]) -> str:
+    normalized_event = str(event or "").strip() or "unknown"
+
+    if normalized_event == "quotes.refresh.completed":
+        return _format_quote_refresh_summary(fields)
 
     if normalized_event == "kline.opened":
         code = str(fields.get("code") or "").strip()

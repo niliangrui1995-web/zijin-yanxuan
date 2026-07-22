@@ -11,6 +11,7 @@ ui/tabs/lhb_tab.py
 """
 
 import time
+from collections.abc import Mapping
 from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
@@ -622,7 +623,7 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
         self._pool_retry_timer.timeout.connect(lambda: _retry_lhb_pool(self))
-        self._pending_quote_snapshot: dict = {}
+        self._pending_quote_snapshot: dict[str, Mapping[str, object]] = {}
         self._applying_pending_quote_snapshot = False
         self._quote_apply_timer = QTimer(self)
         self._quote_apply_timer.setSingleShot(True)
@@ -1257,7 +1258,10 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
             return False
         return str(status or "").strip() in self.OPENING_WARMUP_STATUSES
 
-    def _should_defer_visible_quote_snapshot(self, quotes: dict | None) -> bool:
+    def _should_defer_visible_quote_snapshot(
+        self,
+        quotes: Mapping[str, Mapping[str, object]] | None,
+    ) -> bool:
         if not quotes or self._applying_pending_quote_snapshot:
             return False
         if getattr(self, "_runtime_cleanup_done", False):
@@ -1267,7 +1271,10 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return False
 
-    def _queue_visible_quote_snapshot(self, quotes: dict) -> None:
+    def _queue_visible_quote_snapshot(
+        self,
+        quotes: Mapping[str, Mapping[str, object]],
+    ) -> None:
         self._pending_quote_snapshot.update(dict(quotes or {}))
         self._quote_apply_timer.start(self.QUOTE_APPLY_DEBOUNCE_MS)
 
@@ -1305,7 +1312,7 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
 
     def _apply_quote_snapshot_now(
         self,
-        quotes: dict | None,
+        quotes: Mapping[str, Mapping[str, object]] | None,
         *,
         defer_sort: bool = False,
         skip_sort: bool = False,
@@ -1319,8 +1326,11 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
             self._sort_model_for_default_lhb_order()
         return result
 
-    def _apply_quote_snapshot(self, quotes: dict | None):
-        if self._should_defer_visible_quote_snapshot(quotes):
+    def _apply_quote_snapshot(
+        self,
+        quotes: Mapping[str, Mapping[str, object]] | None,
+    ):
+        if quotes is not None and self._should_defer_visible_quote_snapshot(quotes):
             self._queue_visible_quote_snapshot(quotes)
             return None
         return self._apply_quote_snapshot_now(quotes)

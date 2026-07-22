@@ -72,6 +72,31 @@ def test_rt_table_model_prunes_expired_flash_records_on_update():
     assert 99 not in model._flash_records
 
 
+def test_rt_table_model_preserves_business_time_column_and_exposes_quote_metadata():
+    model = RtTableModel()
+    model.update_data([_row("000001", "10.00", "+1.00%")])
+
+    model.update_quotes(
+        {
+            "000001": {
+                "close": 10.0,
+                "last_close": 10.0,
+                "source": "sina",
+                "quote_time": "2026-07-22T10:45:06+08:00",
+                "quote_received_at": 1_784_689_506.0,
+                "quote_freshness": "network",
+            }
+        }
+    )
+
+    assert model.row_data[0]["时间"] == "09:30"
+    assert model.row_data[0]["_quote_time"] == "2026-07-22T10:45:06+08:00"
+    price_col = model.headers.index("现价")
+    tooltip = model.data(model.index(0, price_col), Qt.ItemDataRole.ToolTipRole)
+    assert "报价时间：2026-07-22 10:45:06" in tooltip
+    assert "新鲜度：network（sina）" in tooltip
+
+
 def test_rt_table_model_incremental_update_uses_layout_change_when_order_changes():
     model = RtTableModel()
     resets = []

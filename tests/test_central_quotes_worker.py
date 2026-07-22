@@ -5,11 +5,24 @@ import pytest
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from app.services.ui_task_lifecycle_service import (
+    CancellationToken,
+    TaskSubmissionReceipt,
+    TaskSubmissionStatus,
+)
 from core.event_bus import event_bus
 from core.global_store import global_store
 from core.market_calendar import MarketCalendar
 from infra.market_data.provider_ports import ProviderHealthSnapshot
 from ui.workers.central_quotes_worker import CentralQuotesService
+
+
+def _accepted_submission(task_id: object) -> TaskSubmissionReceipt:
+    return TaskSubmissionReceipt(
+        token=CancellationToken(),
+        task_id=str(task_id),
+        status=TaskSubmissionStatus.ACCEPTED,
+    )
 
 
 class _SinaQuoteProviderStub:
@@ -71,7 +84,7 @@ def test_realtime_fetch_partial_runs_through_real_task_lifecycle(qt_application)
     )
 
     try:
-        _submit_central_task(
+        receipt = _submit_central_task(
             service,
             "signature_probe",
             background,
@@ -80,6 +93,7 @@ def test_realtime_fetch_partial_runs_through_real_task_lifecycle(qt_application)
             task_id,
             2.0,
         )
+        assert receipt.status is TaskSubmissionStatus.ACCEPTED
         for _ in range(200):
             qt_application.processEvents()
             if results or errors:
@@ -116,11 +130,24 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
     pending = []
 
-    def _capture_background(fn, on_success=None, on_error=None, task_id=None):
+    def _capture_background(
+        fn,
+        on_success=None,
+        on_error=None,
+        task_id=None,
+        cancellation_token=None,
+        timeout_sec=None,
+    ):
+        del cancellation_token, timeout_sec
         pending.append((fn, on_success, on_error, str(task_id)))
         return task_id
 
     monkeypatch.setattr(worker_module.task_manager, "run_in_background", _capture_background)
+    monkeypatch.setattr(
+        worker_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
     global_store.reset_runtime_state()
     service._off_market_snapshot_emitted = True
 
@@ -164,7 +191,15 @@ def test_central_quotes_service_off_market_retry_uses_new_generation_task_id(mon
     active_task_ids = set()
     accepted = []
 
-    def _deduplicating_background(fn, on_success=None, on_error=None, task_id=None):
+    def _deduplicating_background(
+        fn,
+        on_success=None,
+        on_error=None,
+        task_id=None,
+        cancellation_token=None,
+        timeout_sec=None,
+    ):
+        del cancellation_token, timeout_sec
         normalized_task_id = str(task_id)
         if normalized_task_id in active_task_ids:
             return task_id
@@ -173,6 +208,11 @@ def test_central_quotes_service_off_market_retry_uses_new_generation_task_id(mon
         return task_id
 
     monkeypatch.setattr(worker_module.task_manager, "run_in_background", _deduplicating_background)
+    monkeypatch.setattr(
+        worker_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
 
     try:
         service._emit_off_market_snapshot({"000001"})
@@ -276,6 +316,7 @@ def test_central_quotes_service_replays_one_merged_cache_reload_after_inflight(
                 timeout_sec=timeout_sec,
             )
         )
+        return _accepted_submission(task_id)
 
     monkeypatch.setattr(worker_module, "_submit_central_task", _capture_submit)
     monkeypatch.setattr(worker_module, "_record_and_publish_quote_refresh", lambda *args, **kwargs: None)
@@ -289,7 +330,6 @@ def test_central_quotes_service_replays_one_merged_cache_reload_after_inflight(
     service._observe_quote_window = lambda _value: None
     service._run_maintenance = lambda **_kwargs: {}
     service._poller = SimpleNamespace(is_online=lambda: True, get_runtime_stats=lambda: {})
-    service._should_skip_fallback_pressure_fetch = lambda *args, **kwargs: False
     service._fallback_pressure_codes = lambda codes, **_kwargs: codes
     service.publish_external_quotes = lambda quotes, **_kwargs: quotes
 
@@ -303,6 +343,7 @@ def test_central_quotes_service_replays_one_merged_cache_reload_after_inflight(
 
         service.refresh_after_cache_reload()
         service.refresh_after_cache_reload()
+        service._trigger_fetch_for_reason("timer")
         assert service._pending_fetch_reason == "cache_reload"
 
         if terminal == "success":
@@ -324,6 +365,51 @@ def test_central_quotes_service_replays_one_merged_cache_reload_after_inflight(
         submitted[1].on_success(payload)
         assert len(submitted) == 2
         assert (service._is_fetching if market_open else service._off_market_snapshot_fetching) is False
+    finally:
+        service.shutdown()
+        service.deleteLater()
+
+
+def test_central_quotes_service_coalesces_inflight_timer_into_one_replay(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    from ui.workers import central_quotes_worker as worker_module
+
+    service = CentralQuotesService(None, object(), code_supplier=lambda: {"000001"})
+    submitted = []
+
+    def _capture_submit(_service, name, fn, on_success, on_error, task_id, timeout_sec):
+        submitted.append(SimpleNamespace(name=name, on_success=on_success, on_error=on_error))
+        return _accepted_submission(task_id)
+
+    monkeypatch.setattr(worker_module, "_submit_central_task", _capture_submit)
+    monkeypatch.setattr(worker_module, "_record_and_publish_quote_refresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_module.MarketCalendar, "is_quote_refresh_time", staticmethod(lambda: True))
+    service._ensure_timer_running = lambda: True
+    service._market_status_text = lambda: "交易中"
+    service._observe_quote_window = lambda _value: None
+    service._run_maintenance = lambda **_kwargs: {}
+    service._poller = SimpleNamespace(is_online=lambda: True, get_runtime_stats=lambda: {})
+    service._fallback_pressure_codes = lambda codes, **_kwargs: codes
+    service.publish_external_quotes = lambda quotes, **_kwargs: quotes
+    payload = {"quotes": {"000001": {"close": 10.0, "source": "eastmoney"}}}
+
+    try:
+        service._trigger_fetch_for_reason("timer")
+        service._trigger_fetch_for_reason("timer")
+        service._trigger_fetch_for_reason("timer")
+        assert len(submitted) == 1
+        assert service._pending_fetch_reason == "timer"
+
+        submitted[0].on_success(payload)
+        assert service._pending_fetch_timer.isActive()
+        QTest.qWait(1)
+        app.processEvents()
+
+        assert len(submitted) == 2
+        assert submitted[1].name == "realtime_poll"
+        assert service._pending_fetch_reason == ""
+        submitted[1].on_success(payload)
+        assert len(submitted) == 2
     finally:
         service.shutdown()
         service.deleteLater()
@@ -965,7 +1051,7 @@ def test_central_quotes_service_uses_own_pressure_stats_when_scan_recent_overwri
         main_window.deleteLater()
 
 
-def test_central_quotes_service_skips_timer_fetch_when_fallback_pressure_has_fresh_cache(monkeypatch):
+def test_central_quotes_service_rolls_timer_batches_while_fallback_pressure_has_fresh_cache(monkeypatch):
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
 
@@ -1034,31 +1120,96 @@ def test_central_quotes_service_skips_timer_fetch_when_fallback_pressure_has_fre
     provider = DummyProvider()
     service = CentralQuotesService(main_window, provider, code_supplier=lambda: codes)
     service._last_central_quote_request_stats = central_slow_pressure_stats
-    submitted_tasks = []
     messages = []
 
+    def _run_immediately(fn, on_success=None, on_error=None, task_id=None):
+        del on_error, task_id
+        if on_success is not None:
+            on_success(fn())
+
+    monkeypatch.setattr(worker_module, "_FALLBACK_PRESSURE_FETCH_LIMIT", 3)
     monkeypatch.setattr(worker_module.time, "time", lambda: now)
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
     monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "trading"))
     monkeypatch.setattr(
         worker_module.task_manager,
         "run_in_background",
-        lambda fn, on_success=None, on_error=None, task_id=None: submitted_tasks.append(task_id),
+        _run_immediately,
     )
     monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
     global_store.reset_runtime_state()
 
     try:
         service._trigger_fetch()
+        service._trigger_fetch()
+        service._trigger_fetch()
 
-        assert provider.calls == []
-        assert submitted_tasks == []
-        assert any("跳过本轮自动联网" in message for message in messages)
+        assert provider.calls == [
+            ("000001", "000002", "000003"),
+            ("000004", "000005", "000006"),
+            ("000001", "000002", "000007"),
+        ]
+        assert not any("跳过本轮自动联网" in message for message in messages)
     finally:
         global_store.reset_runtime_state()
         service.shutdown()
         service.deleteLater()
         main_window.deleteLater()
+
+
+def test_central_quotes_service_pressure_batches_cover_188_codes_in_ten_ticks(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    from ui.workers import central_quotes_worker as worker_module
+
+    codes = {f"{idx:06d}" for idx in range(1, 189)}
+    service = CentralQuotesService(None, object(), code_supplier=lambda: codes)
+    monkeypatch.setattr(worker_module.time, "time", lambda: 1_800_000_000.0)
+    monkeypatch.setattr(service, "_quote_fallback_cooldown_left", lambda *_args, **_kwargs: 120)
+    monkeypatch.setattr(service, "_recent_quote_fallback_pressure", lambda **_kwargs: (False, ""))
+
+    try:
+        batches = [
+            service._fallback_pressure_codes(codes, provider_stats={}, market_status="交易中")
+            for _ in range(10)
+        ]
+
+        assert all(1 <= len(batch) <= 20 for batch in batches)
+        assert set().union(*batches) == codes
+    finally:
+        service.shutdown()
+        service.deleteLater()
+
+
+def test_central_quotes_service_pressure_cursor_survives_gap_and_code_changes(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    from ui.workers import central_quotes_worker as worker_module
+
+    service = CentralQuotesService(None, object(), code_supplier=lambda: set())
+    pressure = {"active": True}
+    monkeypatch.setattr(worker_module, "_FALLBACK_PRESSURE_FETCH_LIMIT", 2)
+    monkeypatch.setattr(worker_module.time, "time", lambda: 1_800_000_000.0)
+    monkeypatch.setattr(
+        service,
+        "_quote_fallback_cooldown_left",
+        lambda *_args, **_kwargs: 10 if pressure["active"] else 0,
+    )
+    monkeypatch.setattr(service, "_recent_quote_fallback_pressure", lambda **_kwargs: (False, ""))
+    initial_codes = {"000001", "000002", "000003", "000004", "000005"}
+
+    try:
+        first = service._fallback_pressure_codes(initial_codes, provider_stats={}, market_status="交易中")
+        assert first == {"000001", "000002"}
+
+        pressure["active"] = False
+        assert service._fallback_pressure_codes(initial_codes, provider_stats={}, market_status="交易中") == initial_codes
+
+        pressure["active"] = True
+        changed_codes = {"000001", "000002", "000004", "000005", "000006"}
+        resumed = service._fallback_pressure_codes(changed_codes, provider_stats={}, market_status="交易中")
+        assert resumed == {"000004", "000005"}
+    finally:
+        service.shutdown()
+        service.deleteLater()
 
 
 def test_central_quotes_service_heartbeat_counts_eastmoney_quote_cooldown(monkeypatch):

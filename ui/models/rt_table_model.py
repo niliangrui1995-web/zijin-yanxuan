@@ -1,4 +1,6 @@
 import re
+from collections.abc import Mapping
+from typing import Any
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QColor
@@ -188,7 +190,7 @@ class RtTableModel(QAbstractTableModel):
                 continue
             self._record_cell_flash(row, self._headers.index(header), before.get(header), after.get(header))
 
-    def update_quotes(self, quotes: dict):
+    def update_quotes(self, quotes: Mapping[str, Mapping[str, Any]]):
         if not quotes or not self._data:
             return
         _prune_flash_records(self._flash_records)

@@ -12,6 +12,7 @@ import os
 import threading
 import time
 import weakref
+from collections.abc import Mapping
 from contextlib import suppress
 
 try:
@@ -83,7 +84,7 @@ def _should_prime_local_snapshot(owner, *, async_local: bool) -> bool:
     return True
 
 
-def _latest_quote_snapshot() -> dict:
+def _latest_quote_snapshot() -> Mapping[str, Mapping[str, object]]:
     try:
         from core.global_store import global_store
 
@@ -242,12 +243,12 @@ def _resolve_cached_finance_loader(owner):
     return _load
 
 
-def _quote_entry_has_price(entry: dict | None) -> bool:
+def _quote_entry_has_price(entry: Mapping[str, object] | None) -> bool:
     payload = dict(entry or {})
     return coerce_number(payload.get("close")) > 0 or coerce_number(payload.get("last_close")) > 0
 
 
-def _quote_entry_has_cap(entry: dict | None) -> bool:
+def _quote_entry_has_cap(entry: Mapping[str, object] | None) -> bool:
     payload = dict(entry or {})
     return (
         coerce_number(payload.get("_zongguben") or payload.get("zongguben")) > 0
@@ -255,20 +256,28 @@ def _quote_entry_has_cap(entry: dict | None) -> bool:
     )
 
 
-def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None) -> list[str]:
+def _collect_local_quote_targets(
+    owner,
+    model,
+    latest_quotes: Mapping[str, object] | None = None,
+) -> list[str]:
     latest_quotes = latest_quotes or {}
     target_codes: list[str] = []
     for code in collect_table_codes(owner, model):
         if not is_a_share_code(code):
             continue
-        snapshot_entry = dict(latest_quotes.get(code) or {})
+        snapshot_entry = _quote_entry_copy(latest_quotes, code)
         if not _quote_entry_has_price(snapshot_entry) or not _quote_entry_has_cap(snapshot_entry):
             target_codes.append(code)
     return list(dict.fromkeys(target_codes))
 
 
-def _quote_subset_for_codes(snapshot: dict, codes: list[str]) -> dict:
-    return {code: dict(snapshot[code]) for code in codes if snapshot.get(code)}
+def _quote_subset_for_codes(snapshot: Mapping[str, object], codes: list[str]) -> dict:
+    return {
+        code: dict(payload)
+        for code in codes
+        if isinstance((payload := snapshot.get(code)), Mapping) and payload
+    }
 
 
 def _prepare_local_quote_prime(owner, current_model=None) -> tuple[list[str], dict] | None:
@@ -295,9 +304,13 @@ def _owner_data_provider(owner) -> tuple[bool, object | None]:
         return False, None
 
 
-def _build_missing_offline_quotes(provider, target_codes: list[str], latest_quotes: dict) -> dict:
+def _build_missing_offline_quotes(
+    provider,
+    target_codes: list[str],
+    latest_quotes: Mapping[str, object],
+) -> dict:
     missing_price_codes = [
-        code for code in target_codes if not _quote_entry_has_price(latest_quotes.get(code))
+        code for code in target_codes if not _quote_entry_has_price(_quote_entry_copy(latest_quotes, code))
     ]
     return build_offline_quotes(provider, missing_price_codes) if missing_price_codes else {}
 
@@ -310,18 +323,25 @@ def _load_local_finance_snapshot(owner, target_codes: list[str]) -> dict:
         return {}
 
 
-def _quote_entry_copy(snapshot: dict, code: str) -> dict:
+def _quote_entry_copy(snapshot: Mapping[str, object], code: str) -> dict:
     entry = snapshot.get(code)
-    return dict(entry) if entry else {}
+    return dict(entry) if isinstance(entry, Mapping) and entry else {}
 
 
-def _fresh_quotes_for_merge(latest_quotes: dict, payload_codes: set[str]) -> dict:
+def _fresh_quotes_for_merge(
+    latest_quotes: Mapping[str, object],
+    payload_codes: set[str],
+) -> Mapping[str, object]:
     if not latest_quotes or not payload_codes:
         return {}
     return _latest_quote_snapshot()
 
 
-def _merge_local_quote_payload(latest_quotes: dict, offline_quotes: dict, finance_snapshot: dict) -> dict:
+def _merge_local_quote_payload(
+    latest_quotes: Mapping[str, object],
+    offline_quotes: Mapping[str, object],
+    finance_snapshot: dict,
+) -> dict:
     payload_codes = set(offline_quotes) | set(finance_snapshot)
     current_quotes = _fresh_quotes_for_merge(latest_quotes, payload_codes)
     quote_payload = {}
@@ -339,7 +359,7 @@ def _build_local_quote_payload(
     owner,
     target_codes: list[str],
     *,
-    latest_quotes: dict | None = None,
+    latest_quotes: Mapping[str, object] | None = None,
 ) -> dict:
     if not _is_owner_runtime_active(owner):
         return {}
@@ -373,7 +393,21 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
     )
 
 
-def _run_owner_background(owner, runner, name, fn, *, task_id, timeout_sec, on_success, on_error) -> None:
+def _run_owner_background(
+    owner,
+    runner,
+    name,
+    fn,
+    *,
+    task_id,
+    timeout_sec,
+    on_success,
+    on_error,
+    on_terminated=None,
+) -> None:
+    scheduler_kwargs = {}
+    if on_terminated is not None:
+        scheduler_kwargs["on_terminated"] = on_terminated
     task_lifecycle_for(owner, runner=runner).run_background(
         name,
         fn,
@@ -382,6 +416,7 @@ def _run_owner_background(owner, runner, name, fn, *, task_id, timeout_sec, on_s
         on_success=on_success,
         on_error=on_error,
         runner=runner,
+        **scheduler_kwargs,
     )
 
 
@@ -1078,7 +1113,12 @@ def _workspace_background_snapshot_callbacks(owner, table_codes, target_codes, l
         if _is_owner_runtime_active(owner_obj):
             _finish_workspace_background_snapshot(owner_obj, table_codes)
 
-    return _build, _complete, _failed
+    def _terminated() -> None:
+        owner_obj = owner_ref()
+        if owner_obj is not None and not _is_qt_object_deleted(owner_obj):
+            owner_obj._workspace_background_snapshot_io_done = True
+
+    return _build, _complete, _failed, _terminated
 
 
 def _submit_workspace_background_snapshot(owner, table_codes, target_codes, latest_quotes) -> None:
@@ -1087,7 +1127,7 @@ def _submit_workspace_background_snapshot(owner, table_codes, target_codes, late
     latest_target_quotes = _quote_subset_for_codes(latest_quotes, target_codes)
     task_key = _local_quote_task_key(owner, target_codes, scope="workspace_background")
     owner._workspace_background_snapshot_task_id = task_id_of(task_key)
-    build, complete, failed = _workspace_background_snapshot_callbacks(
+    build, complete, failed, terminated = _workspace_background_snapshot_callbacks(
         owner,
         table_codes,
         target_codes,
@@ -1102,6 +1142,7 @@ def _submit_workspace_background_snapshot(owner, table_codes, target_codes, late
         timeout_sec=60.0,
         on_success=complete,
         on_error=failed,
+        on_terminated=terminated,
     )
 
 
@@ -1153,12 +1194,13 @@ def cancel_workspace_background_snapshot(owner) -> None:
 
 
 def workspace_background_snapshot_cancellation_settled(owner) -> bool:
+    if not getattr(owner, "_workspace_background_snapshot_cancelled", False):
+        return False
+    if not getattr(owner, "_workspace_background_snapshot_io_done", False):
+        return False
     if CacheSnapshotApplyQueue.is_pending(owner):
         return False
-    return bool(
-        getattr(owner, "_workspace_background_snapshot_io_done", False)
-        or getattr(owner, "_workspace_background_snapshot_cancelled", False)
-    )
+    return True
 
 
 def refresh_workspace_preloaded_snapshot(owner, current_model=None) -> None:
@@ -1178,6 +1220,7 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
 
     model = owner._resolve_active_quote_model()
     if model and hasattr(model, "update_quotes"):
+        snapshot: Mapping[str, Mapping[str, object]]
         try:
             from core.global_store import global_store
 
@@ -1207,7 +1250,10 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
     owner._quote_signal_connected = True
 
 
-def on_rt_quotes_direct(owner, quotes: dict) -> None:
+def on_rt_quotes_direct(
+    owner,
+    quotes: Mapping[str, Mapping[str, object]],
+) -> None:
     with ui_stall_span(
         "BaseStockRefresh.on_rt_quotes_direct",
         tab=owner.__class__.__name__,

@@ -623,10 +623,17 @@ def test_titlebar_sync_tooltip_pulse_progress_and_show_kline(monkeypatch):
     assert main.MainWindowQT._tooltip_text_for_event(window, obj, object()) == "tip"
 
     pulses = []
-    pulse_window = SimpleNamespace(_titlebar_sync_widget=SimpleNamespace(pulse_quotes=lambda: pulses.append(True)))
+    quote_payloads = []
+    pulse_window = SimpleNamespace(
+        _titlebar_sync_widget=SimpleNamespace(
+            pulse_quotes=lambda: pulses.append(True),
+            set_quote_status=lambda payload: quote_payloads.append(payload),
+        )
+    )
     main.MainWindowQT._on_rt_quotes_pulse(pulse_window, None)
     main.MainWindowQT._on_rt_quotes_pulse(pulse_window, {"1": {}})
     assert pulses == [True]
+    assert quote_payloads == [{"1": {}}]
     main.MainWindowQT._on_rt_quotes_pulse(SimpleNamespace(_titlebar_sync_widget=None), {"1": {}})
 
     progress = []

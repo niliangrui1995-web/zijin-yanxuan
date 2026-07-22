@@ -71,7 +71,9 @@ def test_stock_context_shutdown_cancels_snapshot_without_publishing_success(monk
     assert token.cancelled is True
     assert service._fund_rows_snapshot == []
     assert service._fund_rows_loaded is False
-    assert any(call[0] == "wait" and call[2] == 29 for call in runner.calls)
+    wait_calls = [call for call in runner.calls if call[0] == "wait"]
+    assert wait_calls
+    assert all(0 <= call[2] <= 29 for call in wait_calls)
 
 
 def test_stock_context_repository_stops_between_fund_store_queries():

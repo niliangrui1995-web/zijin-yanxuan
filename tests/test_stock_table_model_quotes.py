@@ -55,6 +55,52 @@ def test_stock_table_model_update_quotes_batches_changed_rows():
     assert samples[-1].tags["changed_rows"] == "2"
 
 
+def test_stock_table_model_updates_quote_metadata_and_price_tooltip_when_price_is_unchanged():
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    model.update_data(
+        [{"代码": "000001", "名称": "A", "现价": "10.00", "涨幅%": 0.0, "市值": "--"}],
+        hydrate_latest_quotes=False,
+    )
+    spy = QSignalSpy(model.dataChanged)
+
+    changed_rows = model.update_quotes(
+        {
+            "000001": {
+                "close": 10.0,
+                "last_close": 10.0,
+                "source": "eastmoney",
+                "quote_time": "2026-07-22T10:24:06+08:00",
+                "quote_received_at": 1_784_688_246.0,
+                "quote_freshness": "network",
+            }
+        }
+    )
+
+    assert changed_rows == 1
+    assert len(spy) == 1
+    assert model.row_data[0]["_quote_time"] == "2026-07-22T10:24:06+08:00"
+    assert model.row_data[0]["_quote_freshness"] == "network"
+    price_col = model.headers.index("现价")
+    tooltip = model.data(model.index(0, price_col), Qt.ItemDataRole.ToolTipRole)
+    assert "报价时间：2026-07-22 10:24:06" in tooltip
+    assert "新鲜度：network（eastmoney）" in tooltip
+
+    changed_rows = model.update_quotes(
+        {
+            "000001": {
+                "close": 10.0,
+                "last_close": 10.0,
+                "source": "eastmoney",
+                "quote_time": "2026-07-22T10:24:36+08:00",
+                "quote_received_at": 1_784_688_276.0,
+                "quote_freshness": "cache",
+            }
+        }
+    )
+    assert changed_rows == 1
+    assert model.row_data[0]["_quote_freshness"] == "cache"
+
+
 def test_stock_table_model_coalesces_sparse_non_flash_updates():
     model = StockTableModel(["代码", "名称", "现价", "RPS强度"])
     model.set_sparse_update_coalescing(True)

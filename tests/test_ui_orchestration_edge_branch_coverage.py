@@ -200,8 +200,10 @@ def test_preload_receipt_status_covers_active_local_and_rejected_edges():
     assert immediate.is_settled() is True
     assert immediate.status() == {
         "accepted": True,
+        "tracking_ok": True,
         "task_ids": [],
         "active_task_ids": [],
+        "unknown_task_ids": [],
         "local_settled": True,
         "settled": True,
     }
@@ -224,9 +226,12 @@ def test_preload_receipt_status_covers_active_local_and_rejected_edges():
         is_task_active=active_or_error,
         local_settled=lambda: True,
     )
-    assert active.active_task_ids() == ("active", "unknown")
+    assert active.active_task_ids() == ("active",)
+    assert active.unknown_task_ids() == ("unknown",)
     assert active.is_settled() is False
-    assert active.status()["active_task_ids"] == ["active", "unknown"]
+    assert active.status()["active_task_ids"] == ["active"]
+    assert active.status()["unknown_task_ids"] == ["unknown"]
+    assert active.status()["tracking_ok"] is False
 
     for local_settled in (
         lambda: False,
@@ -256,7 +261,11 @@ def test_cancel_background_preload_uses_default_runner_and_reports_untrackable_t
         reset_state=lambda: reset_calls.append("reset"),
     )
     assert receipt.task_ids == ("task-a", "task-b")
-    assert receipt.active_task_ids() == ("task-a",)
+    assert receipt.accepted is False
+    assert receipt.active_task_ids() == ()
+    assert receipt.status()["unknown_task_ids"] == ["task-a", "task-b"]
+    assert receipt.status()["tracking_ok"] is False
+    assert receipt.is_settled() is False
     assert cancel_calls == [("task-a", "tab_left"), ("task-b", "tab_left")]
     assert reset_calls == ["reset"]
 

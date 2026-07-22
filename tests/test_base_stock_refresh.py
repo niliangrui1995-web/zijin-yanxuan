@@ -203,6 +203,8 @@ def test_workspace_snapshot_uses_distinct_task_id_while_visible_snapshot_is_acti
         def __init__(self):
             self.data_provider = object()
             self._runtime_cleanup_done = False
+            self._workspace_background_snapshot_io_done = False
+            self._workspace_background_snapshot_task_id = ""
 
         @staticmethod
         def _resolve_active_quote_model():
@@ -217,6 +219,7 @@ def test_workspace_snapshot_uses_distinct_task_id_while_visible_snapshot_is_acti
                 "fn": fn,
                 "task_id": kwargs["task_id"],
                 "on_success": kwargs["on_success"],
+                "on_terminated": kwargs.get("on_terminated"),
             }
         )
 
@@ -245,8 +248,14 @@ def test_workspace_snapshot_uses_distinct_task_id_while_visible_snapshot_is_acti
     assert visible_task_id != workspace_task_id
     assert owner._workspace_background_snapshot_task_id == workspace_task_id
 
-    workspace["on_success"]({})
+    refresh_module.cancel_workspace_background_snapshot(owner)
+    assert owner._workspace_background_snapshot_io_done is False
+    assert refresh_module.workspace_background_snapshot_cancellation_settled(owner) is False
+
+    assert callable(workspace["on_terminated"])
+    workspace["on_terminated"]()
     assert owner._workspace_background_snapshot_io_done is True
+    assert refresh_module.workspace_background_snapshot_cancellation_settled(owner) is True
 
 
 def test_refresh_table_quotes_and_market_caps_can_prime_local_snapshot_async(monkeypatch):
@@ -594,6 +603,9 @@ def test_workspace_background_snapshot_cancellation_discards_pending_apply_queue
         assert owner._workspace_background_snapshot_started is False
         assert owner._workspace_background_snapshot_ready is False
         assert owner._workspace_background_snapshot_cancelled is True
+        assert refresh_module.workspace_background_snapshot_cancellation_settled(owner) is False
+
+        owner._workspace_background_snapshot_io_done = True
         assert refresh_module.workspace_background_snapshot_cancellation_settled(owner) is True
     finally:
         _reset_cache_snapshot_apply_queue(refresh_module)

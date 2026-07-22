@@ -182,11 +182,19 @@ def _deliver_worker_error(manager, task_id: str, worker, on_error, error_message
 
 
 def _handle_terminated(manager, task_id: str, worker, on_terminated) -> None:
+    deliver_terminated = False
     with manager._lock:
         current = manager.active_workers.get(task_id)
-        if current is not worker:
-            return
-        manager.active_workers.pop(task_id, None)
+        if current is worker:
+            manager.active_workers.pop(task_id, None)
+            deliver_terminated = True
+        else:
+            retired = manager._retired_workers.get(task_id, [])
+            manager._retired_workers[task_id] = [item for item in retired if item is not worker]
+            if not manager._retired_workers[task_id]:
+                manager._retired_workers.pop(task_id, None)
+    if not deliver_terminated:
+        return
     if on_terminated is None:
         return
     try:
@@ -223,6 +231,7 @@ class GlobalTaskManager(QObject):
         self.thread_pool.setMaxThreadCount(_task_thread_pool_max_count())
 
         self.active_workers: dict[str, BackgroundWorker] = {}
+        self._retired_workers: dict[str, list[BackgroundWorker]] = {}
         self._lock = threading.RLock()
         self._shutting_down = False
         self._failed_count = 0
@@ -241,10 +250,17 @@ class GlobalTaskManager(QObject):
                 task_id = str(uuid.uuid4())[:8]
 
             self.active_workers[task_id] = worker
-            if priority is None:
-                self.thread_pool.start(worker)
-            else:
-                self.thread_pool.start(worker, int(priority))
+            try:
+                if priority is None:
+                    self.thread_pool.start(worker)
+                else:
+                    self.thread_pool.start(worker, int(priority))
+            except Exception:
+                if self.active_workers.get(task_id) is worker:
+                    self.active_workers.pop(task_id, None)
+                worker.cancel("submission_failed")
+                worker.terminated_event.set()
+                raise
             return task_id
 
     @staticmethod
@@ -329,35 +345,62 @@ class GlobalTaskManager(QObject):
 
         self._connect_worker_callbacks(worker, tid, on_success, on_error, on_terminated)
 
-        if task_priority is None:
-            return self.submit_task(worker, tid)
-        return self.submit_task(worker, tid, priority=task_priority)
+        try:
+            if task_priority is None:
+                return self.submit_task(worker, tid)
+            return self.submit_task(worker, tid, priority=task_priority)
+        except Exception:
+            if on_terminated is not None:
+                try:
+                    on_terminated()
+                except Exception:  # noqa: BLE001 - submission cleanup must not mask the start failure.
+                    from core.logger import get_logger
+
+                    get_logger(__name__).exception(f"[TaskManager] 后台任务 '{tid}' 未启动终态回调异常")
+            raise
 
     def cancel_all(self, *, reason: str = "cancel_all"):
-        """终极清退：停止所有排队和运行中的任务"""
-        self.thread_pool.clear()
+        """终极清退：取消排队任务并保留运行任务的物理终态跟踪。"""
         with self._lock:
             workers = list(self.active_workers.items())
-            self.active_workers.clear()
 
-        for task_id, worker in workers:
+        for _task_id, worker in workers:
             if hasattr(worker, "cancel"):
                 try:
                     call_with_supported_kwargs(worker.cancel, reason=reason)
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     pass
 
+        try_take = getattr(self.thread_pool, "tryTake", None)
+        if not callable(try_take):
+            return
+
+        taken: list[BackgroundWorker] = []
+        for _task_id, worker in workers:
+            if not isinstance(worker, BackgroundWorker):
+                continue
+            try:
+                if try_take(worker) is True:
+                    taken.append(worker)
+            except Exception:  # noqa: BLE001 - failed removal is not termination proof.
+                continue
+        for worker in taken:
+            worker.terminated_event.set()
+            worker._safe_emit_named(worker.signals, "terminated")
+
     def abandon_task(self, task_id: str) -> bool:
         """放弃一个卡住任务的占位，允许同 task_id 后续重新提交。
 
         说明：
         - QRunnable 一旦已经进入阻塞态，Qt 线程池无法强杀。
-        - 这里做的是“忘记它仍在 active_workers 中的占位”，并尽量调用 cancel()。
+        - 这里将其从活跃占位移入 retired 跟踪，并尽量调用 cancel()。
         - 适用于行情轮询这类需要 fail-open 的长寿命任务；旧任务若稍后返回，
-          它的 cleanup 只会再次 pop 同名 key，不会影响新任务。
+          它的 cleanup 只会移除自己的 retired 记录，不会影响新任务。
         """
         with self._lock:
             worker = self.active_workers.pop(task_id, None)
+            if worker is not None:
+                self._retired_workers.setdefault(task_id, []).append(worker)
 
         if worker is None:
             return False
@@ -385,7 +428,13 @@ class GlobalTaskManager(QObject):
         """Wait for a stable snapshot of selected workers using one total deadline."""
         normalized_ids = tuple(dict.fromkeys(str(task_id or "").strip() for task_id in task_ids))
         with self._lock:
-            workers = [self.active_workers[task_id] for task_id in normalized_ids if task_id in self.active_workers]
+            workers = []
+            for task_id in normalized_ids:
+                active = self.active_workers.get(task_id)
+                if active is not None:
+                    workers.append(active)
+                workers.extend(self._retired_workers.get(task_id, ()))
+            workers = list({id(worker): worker for worker in workers}.values())
         deadline = time.monotonic() + max(0, int(timeout_ms or 0)) / 1000.0
         for worker in workers:
             remaining = max(0.0, deadline - time.monotonic())
@@ -400,8 +449,9 @@ class GlobalTaskManager(QObject):
             self._shutting_down = True
         self.cancel_all(reason="manager_shutdown")
         try:
-            return bool(self.thread_pool.waitForDone(max(0, int(wait_timeout_ms or 0))))
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+            result = self.thread_pool.waitForDone(max(0, int(wait_timeout_ms or 0)))
+            return result if type(result) is bool else False
+        except Exception:  # noqa: BLE001 - shutdown proof must fail closed.
             return False
 
     @property
@@ -412,6 +462,28 @@ class GlobalTaskManager(QObject):
     def is_active_task(self, task_id: str) -> bool:
         with self._lock:
             return task_id in self.active_workers
+
+    def is_task_unsettled(self, task_id: str) -> bool:
+        normalized = str(task_id or "").strip()
+        with self._lock:
+            if normalized in self.active_workers:
+                return True
+            retired = self._retired_workers.get(normalized, [])
+            unsettled = [
+                worker
+                for worker in retired
+                if not bool(getattr(getattr(worker, "terminated_event", None), "is_set", lambda: False)())
+            ]
+            if unsettled:
+                self._retired_workers[normalized] = unsettled
+                return True
+            self._retired_workers.pop(normalized, None)
+            return False
+
+    def is_task_token_active(self, task_id: str, cancellation_token: CancellationToken) -> bool:
+        with self._lock:
+            worker = self.active_workers.get(str(task_id or ""))
+            return worker is not None and worker.cancellation_token is cancellation_token
 
     @property
     def active_count(self) -> int:

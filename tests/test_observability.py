@@ -49,6 +49,33 @@ def test_emit_structured_log_serializes_payload():
     assert logger.messages[-1] == ("info", "[启动] 缓存加载完成 | 已载入缓存 | 42ms")
 
 
+def test_quote_refresh_log_displays_actual_freshness_counts_and_quote_time():
+    logger = _DummyLogger()
+
+    emit_structured_log(
+        "quotes.refresh.completed",
+        logger=logger,
+        batch_size=188,
+        result_count=188,
+        network_count=40,
+        cache_count=8,
+        stale_count=140,
+        missing_count=0,
+        latest_quote_time="2026-07-22T10:24:06+08:00",
+        elapsed_ms=12_300,
+        valid_quotes=True,
+        provider_failed=False,
+    )
+
+    message = logger.messages[-1][1]
+    assert "188只" not in message
+    assert "联网40只" in message
+    assert "缓存8只" in message
+    assert "过期140只" in message
+    assert "报价10:24:06" in message
+    assert "12.3秒" in message
+
+
 def test_record_metric_defaults_to_debug_structured_output():
     logger = _DummyLogger()
 

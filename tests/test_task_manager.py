@@ -2,6 +2,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import QCoreApplication
 
 import infra.tasks.task_scheduler as task_scheduler_module
@@ -45,6 +46,144 @@ def test_task_manager_dedupes_same_task_id():
     assert task_manager.active_count == 1
     assert _pump_events_until(lambda: task_manager.active_count == 0)
     assert len(calls) == 1
+
+
+def test_task_manager_start_failure_releases_slot_and_allows_same_id_retry(monkeypatch):
+    class _FlakyPool:
+        def __init__(self):
+            self.starts = 0
+
+        def start(self, worker, *args):
+            del worker, args
+            self.starts += 1
+            if self.starts == 1:
+                raise RuntimeError("thread pool start failed")
+
+        @staticmethod
+        def clear():
+            return None
+
+    pool = _FlakyPool()
+    monkeypatch.setattr(task_manager, "thread_pool", pool)
+    task_manager.active_workers.clear()
+    task_manager._shutting_down = False
+    first = BackgroundWorker(lambda: "first")
+
+    with pytest.raises(RuntimeError, match="thread pool start failed"):
+        task_manager.submit_task(first, task_id="start-failure-retry")
+
+    assert task_manager.is_active_task("start-failure-retry") is False
+    assert task_manager.is_task_unsettled("start-failure-retry") is False
+    assert first.cancellation_token.cancelled is True
+    assert first.cancellation_token.reason == "submission_failed"
+    assert first.terminated_event.is_set() is True
+
+    second = BackgroundWorker(lambda: "second")
+    try:
+        assert task_manager.submit_task(second, task_id="start-failure-retry") == "start-failure-retry"
+        assert task_manager.active_workers["start-failure-retry"] is second
+    finally:
+        task_manager.cancel_all()
+        second.run()
+        _pump_events_until(lambda: not task_manager.is_task_unsettled("start-failure-retry"))
+
+
+def test_cancel_all_without_try_take_keeps_worker_unsettled_until_terminated(monkeypatch):
+    class _LegacyPool:
+        def __init__(self):
+            self.workers = []
+            self.clear_calls = 0
+
+        def start(self, worker, *args):
+            del args
+            self.workers.append(worker)
+
+        def clear(self):
+            self.clear_calls += 1
+
+    pool = _LegacyPool()
+    monkeypatch.setattr(task_manager, "thread_pool", pool)
+    task_manager.active_workers.clear()
+    task_manager._retired_workers.clear()
+    task_manager._shutting_down = False
+    task_id = "legacy-pool-cancel"
+
+    task_manager.run_in_background(lambda: "never-delivered", task_id=task_id)
+    worker = task_manager.active_workers[task_id]
+    task_manager.cancel_all(reason="legacy_pool_cancel")
+
+    assert pool.clear_calls == 0
+    assert task_manager.is_task_unsettled(task_id) is True
+    assert worker.terminated_event.is_set() is False
+
+    worker.run()
+    assert worker.terminated_event.is_set() is True
+    assert _pump_events_until(lambda: not task_manager.is_task_unsettled(task_id))
+
+
+def test_cancel_all_try_take_exception_does_not_clear_or_drop_worker(monkeypatch):
+    class _BrokenTakePool:
+        def __init__(self):
+            self.workers = []
+
+        def start(self, worker, *args):
+            del args
+            self.workers.append(worker)
+
+        @staticmethod
+        def tryTake(worker):
+            del worker
+            raise OSError("take unavailable")
+
+        @staticmethod
+        def clear():
+            raise AssertionError("cancel_all must not use identity-free clear")
+
+    pool = _BrokenTakePool()
+    monkeypatch.setattr(task_manager, "thread_pool", pool)
+    task_manager.active_workers.clear()
+    task_manager._retired_workers.clear()
+    task_manager._shutting_down = False
+    task_id = "broken-try-take"
+
+    task_manager.run_in_background(lambda: "cancelled", task_id=task_id)
+    worker = task_manager.active_workers[task_id]
+    task_manager.cancel_all(reason="broken_take")
+
+    assert task_manager.is_task_unsettled(task_id) is True
+    worker.run()
+    assert _pump_events_until(lambda: not task_manager.is_task_unsettled(task_id))
+
+
+def test_cancel_all_requires_exact_true_from_try_take(monkeypatch):
+    class _InvalidTakePool:
+        def __init__(self):
+            self.workers = []
+
+        def start(self, worker, *args):
+            del args
+            self.workers.append(worker)
+
+        @staticmethod
+        def tryTake(worker):
+            del worker
+            return "taken"
+
+    pool = _InvalidTakePool()
+    monkeypatch.setattr(task_manager, "thread_pool", pool)
+    task_manager.active_workers.clear()
+    task_manager._retired_workers.clear()
+    task_manager._shutting_down = False
+    task_id = "invalid-try-take-receipt"
+
+    task_manager.run_in_background(lambda: "cancelled", task_id=task_id)
+    worker = task_manager.active_workers[task_id]
+    task_manager.cancel_all(reason="invalid_take_receipt")
+
+    assert task_manager.is_task_unsettled(task_id) is True
+    assert worker.terminated_event.is_set() is False
+    worker.run()
+    assert _pump_events_until(lambda: not task_manager.is_task_unsettled(task_id))
 
 
 def test_task_manager_rejects_new_tasks_during_shutdown():
@@ -337,21 +476,31 @@ def test_task_manager_direct_submit_status_and_abandon_branches(monkeypatch):
     monkeypatch.setattr(task_manager, "thread_pool", SimpleNamespace(start=lambda worker: starts.append(worker), clear=lambda: None))
     task_manager.active_workers.clear()
 
-    generated_id = task_manager.submit_task(BackgroundWorker(lambda: None))
-
-    assert starts
-    assert task_manager.is_active_task(generated_id) is True
-    assert task_manager.active_count == 1
-    assert task_manager.abandon_task("missing") is False
-
     class BadCancel:
+        def __init__(self):
+            self.terminated_event = threading.Event()
+
         def cancel(self):
             raise RuntimeError("cancel failed")
 
-    task_manager.active_workers["bad_cancel"] = BadCancel()
-    assert task_manager.abandon_task("bad_cancel") is True
-    assert task_manager.active_count == 1
-    task_manager.cancel_all()
+    bad_cancel = BadCancel()
+    generated_id = task_manager.submit_task(BackgroundWorker(lambda: None))
+    try:
+        assert starts
+        assert task_manager.is_active_task(generated_id) is True
+        assert task_manager.active_count == 1
+        assert task_manager.abandon_task("missing") is False
+
+        task_manager.active_workers["bad_cancel"] = bad_cancel
+        assert task_manager.abandon_task("bad_cancel") is True
+        assert task_manager.active_count == 1
+    finally:
+        task_manager.cancel_all()
+        if starts:
+            starts[0].run()
+            _pump_events_until(lambda: not task_manager.is_task_unsettled(generated_id))
+        bad_cancel.terminated_event.set()
+        task_manager.is_task_unsettled("bad_cancel")
 
 
 def test_task_manager_run_in_background_connects_callbacks_without_starting(monkeypatch):

@@ -5,6 +5,7 @@ import json
 import time
 import urllib.request
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 
 from core.logger import get_logger
 from domains.quotes.snapshot import coerce_number
@@ -17,6 +18,7 @@ from infra.tasks.lifecycle import (
 from vcp.realtime_quote_batch import normalize_error_text
 
 log = get_logger(__name__)
+_CN_TZ = timezone(timedelta(hours=8))
 
 
 def _read_json_response(response, cancellation_token=None):
@@ -125,11 +127,55 @@ def coerce_quote_number(value) -> float:
     return coerce_number(value)
 
 
+def _iso_quote_time_from_epoch(value) -> str:
+    try:
+        timestamp = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if timestamp <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(timestamp, tz=_CN_TZ).isoformat(timespec="seconds")
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def _iso_quote_time_from_parts(date_value, time_value) -> str:
+    date_text = str(date_value or "").strip()
+    time_text = str(time_value or "").strip()
+    if len(date_text) == 8 and date_text.isdigit():
+        date_text = f"{date_text[:4]}-{date_text[4:6]}-{date_text[6:8]}"
+    if len(time_text) == 6 and time_text.isdigit():
+        time_text = f"{time_text[:2]}:{time_text[2:4]}:{time_text[4:6]}"
+    try:
+        parsed = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ""
+    return parsed.replace(tzinfo=_CN_TZ).isoformat(timespec="seconds")
+
+
+def _network_quote_metadata(source: str, quote_time: str) -> dict:
+    return {"source": source, "quote_time": quote_time, "quote_freshness": "network"}
+
+
+def _tencent_volume_amount(fields: list[str]) -> tuple[float, float]:
+    volume = coerce_quote_number(fields[6])
+    amount = 0.0
+    if len(fields) > 35:
+        amount_parts = str(fields[35] or "").split("/")
+        if len(amount_parts) >= 3:
+            volume = coerce_quote_number(amount_parts[1]) or volume
+            amount = coerce_quote_number(amount_parts[2])
+    if amount <= 0 and len(fields) > 37:
+        amount = coerce_quote_number(fields[37]) * 10000.0
+    return volume, amount
+
+
 def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str, *, cancellation_token=None):
     normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
-    fields = "f12,f13,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18"
+    fields = "f12,f13,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18,f124"
     secids = ",".join(to_eastmoney_secid(code) for code in normalized_codes)
     hosts = list(
         dict.fromkeys(
@@ -200,8 +246,8 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str, *, 
                     "change": change_amount,
                     "pct": pct_change,
                     "date": inferred_trade_date,
-                    "source": "eastmoney",
                     "name": name_val,
+                    **_network_quote_metadata("eastmoney", _iso_quote_time_from_epoch(row.get("f124"))),
                 }
 
             if not quotes:
@@ -280,8 +326,8 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str, *, cance
             "change": change_amount,
             "pct": pct_change,
             "date": quote_date,
-            "source": "sina",
             "name": name_val,
+            **_network_quote_metadata("sina", _iso_quote_time_from_parts(quote_date, fields[31])),
         }
 
     if not quotes:
@@ -321,7 +367,7 @@ def request_tencent_quote_batch(provider, codes, inferred_trade_date: str, *, ca
         symbol = left.split("v_", 1)[-1].strip()
         payload = right.rsplit('";', 1)[0]
         fields = payload.split("~")
-        if len(fields) < 34:
+        if len(fields) < 35:
             continue
 
         code_val = str(fields[2] or symbol[-6:]).strip()
@@ -332,24 +378,16 @@ def request_tencent_quote_batch(provider, codes, inferred_trade_date: str, *, ca
         close_price = coerce_quote_number(fields[3])
         last_close = coerce_quote_number(fields[4])
         open_price = coerce_quote_number(fields[5]) or close_price
-        high_price = coerce_quote_number(fields[32]) or max(open_price, close_price)
-        low_price = coerce_quote_number(fields[33]) or min(open_price, close_price)
-        change_amount = coerce_quote_number(fields[30])
-        pct_change = coerce_quote_number(fields[31])
+        high_price = coerce_quote_number(fields[33]) or max(open_price, close_price)
+        low_price = coerce_quote_number(fields[34]) or min(open_price, close_price)
+        change_amount = coerce_quote_number(fields[31])
+        pct_change = coerce_quote_number(fields[32])
 
-        raw_datetime = str(fields[29] or "").strip() if len(fields) > 29 else ""
+        raw_datetime = str(fields[30] or "").strip()
         quote_date = inferred_trade_date
         if len(raw_datetime) >= 8 and raw_datetime[:8].isdigit():
             quote_date = f"{raw_datetime[:4]}-{raw_datetime[4:6]}-{raw_datetime[6:8]}"
-
-        volume = coerce_quote_number(fields[35]) if len(fields) > 35 else coerce_quote_number(fields[6])
-        amount = 0.0
-        if len(fields) > 34:
-            amount_parts = str(fields[34] or "").split("/")
-            if len(amount_parts) >= 3:
-                amount = coerce_quote_number(amount_parts[2])
-        if amount <= 0 and len(fields) > 36:
-            amount = coerce_quote_number(fields[36]) * 10000.0
+        volume, amount = _tencent_volume_amount(fields)
 
         quotes[code_val] = {
             "open": open_price,
@@ -362,8 +400,10 @@ def request_tencent_quote_batch(provider, codes, inferred_trade_date: str, *, ca
             "change": change_amount,
             "pct": pct_change,
             "date": quote_date,
-            "source": "tencent",
             "name": name_val,
+            **_network_quote_metadata(
+                "tencent", _iso_quote_time_from_parts(raw_datetime[:8], raw_datetime[8:14])
+            ),
         }
 
     if not quotes:

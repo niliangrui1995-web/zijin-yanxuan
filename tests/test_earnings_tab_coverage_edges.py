@@ -104,6 +104,27 @@ def test_scheduler_reuses_host_service_and_runtime_start_guards(monkeypatch):
         tab.deleteLater()
 
 
+def test_background_preload_cancellation_uses_tab_as_workspace_snapshot_owner(monkeypatch):
+    tab = EarningsTab()
+    scheduler = SimpleNamespace(_cache_load_generation=0, _job_runner=object())
+    captured = {}
+
+    def _cancel(owner, **kwargs):
+        captured["owner"] = owner
+        captured.update(kwargs)
+        return "receipt"
+
+    try:
+        tab._ensure_scheduler = lambda: scheduler
+        monkeypatch.setattr(module, "cancel_background_preload_tasks", _cancel)
+
+        assert tab.cancel_background_preload(reason="workspace_shutdown") == "receipt"
+        assert captured["owner"] is scheduler
+        assert captured["snapshot_owner"] is tab
+    finally:
+        tab.deleteLater()
+
+
 def test_runtime_queue_and_delayed_visible_work_branches(monkeypatch, qt_application):
     queued = []
     monkeypatch.setattr(module.QTimer, "singleShot", lambda delay, callback: queued.append((delay, callback)))

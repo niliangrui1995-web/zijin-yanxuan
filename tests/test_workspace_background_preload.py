@@ -147,12 +147,26 @@ class _ExplodingStatusTab(_ControlledPreloadTab):
 
 
 class _FakeLifecycle:
-    def __init__(self):
+    def __init__(self, task_ids_by_name=None):
         self.calls = []
+        self.task_ids_by_name = dict(task_ids_by_name or {})
+
+    def task_ids_for(self, names):
+        return tuple(
+            task_id
+            for name in names
+            for task_id in self.task_ids_by_name.get(name, ())
+        )
 
     def cancel(self, name, *, reason):
         self.calls.append((name, reason))
+        self.task_ids_by_name.pop(name, None)
         return name == "first"
+
+    @staticmethod
+    def submissions_settled_for(names):
+        del names
+        return True
 
 
 class _FakeRunner:
@@ -161,6 +175,9 @@ class _FakeRunner:
         self.cancel_calls = []
 
     def is_active_task(self, task_id):
+        return task_id in self.active
+
+    def is_task_unsettled(self, task_id):
         return task_id in self.active
 
     def cancel_task(self, task_id, *, reason):
@@ -563,6 +580,231 @@ def test_cancellation_receipt_tracks_every_real_worker_slot_until_all_exit():
     runner.active.remove("task-a")
     assert receipt.is_settled() is False
     runner.active.remove("task-b")
+    assert receipt.is_settled() is True
+
+
+def test_cancellation_receipt_tracks_dynamic_lifecycle_task_ids():
+    owner = type("Owner", (), {})()
+    owner._task_lifecycle = _FakeLifecycle(
+        {"dynamic-preload": ("runtime-generated-preload",)}
+    )
+    runner = _FakeRunner()
+    runner.active = {"runtime-generated-preload"}
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=("dynamic-preload",),
+        task_ids=(),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert runner.cancel_calls == [
+        ("runtime-generated-preload", "step_timeout"),
+    ]
+    assert receipt.status()["task_ids"] == ["runtime-generated-preload"]
+    assert receipt.is_settled() is False
+
+    runner.active.clear()
+    assert receipt.is_settled() is True
+
+
+def test_cancellation_receipt_rejects_failed_scheduler_cancellation():
+    class _RejectingRunner(_FakeRunner):
+        def cancel_task(self, task_id, *, reason):
+            self.cancel_calls.append((task_id, reason))
+            return False
+
+    owner = type("Owner", (), {})()
+    runner = _RejectingRunner()
+    runner.active = {"task-a"}
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=(),
+        task_ids=("task-a",),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert receipt.accepted is False
+    runner.active.clear()
+    assert receipt.is_settled() is False
+
+
+def test_cancellation_receipt_fails_closed_when_dynamic_task_tracking_raises():
+    class _ExplodingLifecycle:
+        def task_ids_for(self, names):
+            del names
+            raise RuntimeError("task id tracking failed")
+
+        def cancel(self, name, *, reason):
+            del name, reason
+            return True
+
+    owner = type("Owner", (), {})()
+    owner._task_lifecycle = _ExplodingLifecycle()
+    runner = _FakeRunner()
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=("hidden-generated",),
+        task_ids=(),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert receipt.accepted is False
+    assert receipt.is_settled() is False
+    assert receipt.status()["tracking_ok"] is False
+
+
+def test_cancellation_receipt_fails_closed_when_legacy_lifecycle_cannot_list_task_ids():
+    class _LegacyLifecycle:
+        @staticmethod
+        def cancel(name, *, reason):
+            del name, reason
+            return True
+
+    owner = type("Owner", (), {})()
+    owner._task_lifecycle = _LegacyLifecycle()
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=("hidden-generated",),
+        task_ids=(),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=_FakeRunner(),
+    )
+
+    assert receipt.accepted is False
+    assert receipt.status()["tracking_ok"] is False
+    assert receipt.is_settled() is False
+
+
+def test_cancellation_receipt_fails_closed_when_lifecycle_cannot_report_submissions():
+    class _LegacyLifecycle:
+        @staticmethod
+        def task_ids_for(names):
+            del names
+            return ()
+
+        @staticmethod
+        def cancel(name, *, reason):
+            del name, reason
+            return True
+
+    owner = type("Owner", (), {})()
+    owner._task_lifecycle = _LegacyLifecycle()
+
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=("submission-inflight",),
+        task_ids=(),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=_FakeRunner(),
+    )
+
+    assert receipt.accepted is False
+    assert receipt.status()["tracking_ok"] is False
+    assert receipt.is_settled() is False
+
+
+def test_cancellation_receipt_uses_bounded_wait_from_wait_only_legacy_runner():
+    class _WaitOnlyRunner:
+        def __init__(self):
+            self.settled = False
+            self.wait_calls = []
+
+        @staticmethod
+        def cancel_task(task_id, *, reason):
+            del task_id, reason
+            return True
+
+        def wait_for_tasks(self, task_ids, *, timeout_ms):
+            self.wait_calls.append((tuple(task_ids), timeout_ms))
+            return self.settled
+
+    owner = type("Owner", (), {})()
+    runner = _WaitOnlyRunner()
+    receipt = cancel_background_preload_tasks(
+        owner,
+        lifecycle_names=(),
+        task_ids=("legacy-wait-task",),
+        reason="step_timeout",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert receipt.accepted is True
+    assert receipt.is_settled() is False
+    runner.settled = True
+    assert receipt.is_settled() is True
+    assert runner.wait_calls
+    assert all(timeout_ms == 0 for _task_ids, timeout_ms in runner.wait_calls)
+
+
+def test_cancellation_receipt_tracks_workspace_snapshot_on_distinct_owner():
+    lifecycle_owner = type("LifecycleOwner", (), {})()
+    lifecycle_owner._task_lifecycle = _FakeLifecycle(
+        {"warm-cache": ("runtime-generated-warm-cache",)}
+    )
+    snapshot_owner = type("SnapshotOwner", (), {})()
+    snapshot_owner._task_lifecycle = _FakeLifecycle(
+        {"workspace_background_snapshot": ("workspace-snapshot",)}
+    )
+    snapshot_owner._workspace_background_snapshot_started = True
+    snapshot_owner._workspace_background_snapshot_task_id = "workspace-snapshot"
+    snapshot_owner._workspace_background_snapshot_cancelled = False
+    snapshot_owner.snapshot_apply_pending = True
+
+    def _cancel_workspace_background_snapshot_preload() -> None:
+        snapshot_owner._workspace_background_snapshot_cancelled = True
+        snapshot_owner.snapshot_apply_pending = False
+
+    def _workspace_background_snapshot_preload_settled() -> bool:
+        return (
+            snapshot_owner._workspace_background_snapshot_cancelled
+            and not snapshot_owner.snapshot_apply_pending
+        )
+
+    snapshot_owner._cancel_workspace_background_snapshot_preload = (
+        _cancel_workspace_background_snapshot_preload
+    )
+    snapshot_owner._workspace_background_snapshot_preload_settled = (
+        _workspace_background_snapshot_preload_settled
+    )
+    runner = _FakeRunner()
+    runner.active = {"runtime-generated-warm-cache", "workspace-snapshot"}
+
+    receipt = cancel_background_preload_tasks(
+        lifecycle_owner,
+        snapshot_owner=snapshot_owner,
+        lifecycle_names=("warm-cache",),
+        task_ids=(),
+        reason="workspace_shutdown",
+        reset_state=lambda: None,
+        runner=runner,
+    )
+
+    assert lifecycle_owner._task_lifecycle.calls == [
+        ("warm-cache", "workspace_shutdown"),
+    ]
+    assert snapshot_owner._task_lifecycle.calls == [
+        ("workspace_background_snapshot", "workspace_shutdown"),
+    ]
+    assert receipt.status()["task_ids"] == [
+        "runtime-generated-warm-cache",
+        "workspace-snapshot",
+    ]
+    assert receipt.is_settled() is False
+
+    runner.active.clear()
     assert receipt.is_settled() is True
 
 

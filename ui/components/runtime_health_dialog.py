@@ -16,6 +16,24 @@ from PyQt6.QtWidgets import (
 from app.services.runtime_health_service import collect_runtime_health, export_runtime_health_report
 
 
+def _quote_health_summary(request_stats: dict) -> str:
+    count_keys = (
+        "recent_network_result_count",
+        "recent_cache_hit_count",
+        "recent_stale_result_count",
+    )
+    if not all(key in request_stats for key in count_keys):
+        return f"行情批次 {request_stats.get('recent_batch_count', 0)}"
+    quote_time = str(request_stats.get("recent_latest_quote_time") or "").strip()
+    quote_clock = quote_time.split("T", 1)[1][:8] if "T" in quote_time else quote_time or "--:--:--"
+    return (
+        f"行情 {quote_clock} | "
+        f"联网 {request_stats.get('recent_network_result_count', 0)}/"
+        f"缓存 {request_stats.get('recent_cache_hit_count', 0)}/"
+        f"过期 {request_stats.get('recent_stale_result_count', 0)}"
+    )
+
+
 class RuntimeHealthDialog(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent or main_window)
@@ -67,14 +85,16 @@ class RuntimeHealthDialog(QDialog):
         process = report.get("process") or {}
         webengine = report.get("webengine") or {}
         quotes = report.get("quotes") or {}
+        quote_stats = quotes.get("request_stats") or {}
         f5_cache = report.get("f5_cache") or {}
+        quote_summary = _quote_health_summary(quote_stats)
         return (
             f"任务 {tasks.get('count', 0)} | "
             f"Timer {timers.get('active', 0)}/{timers.get('total', 0)} | "
             f"事件订阅 {events.get('total_receivers', 0)} | "
             f"线程 {process.get('thread_count', '-')} | "
             f"WebEngine {webengine.get('count', 0)} | "
-            f"行情批次 {(quotes.get('request_stats') or {}).get('recent_batch_count', 0)} | "
+            f"{quote_summary} | "
             f"F5 {f5_cache.get('trade_date') or '暂无'}"
         )
 

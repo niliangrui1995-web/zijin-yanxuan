@@ -202,7 +202,7 @@ def test_quote_store_snapshot_rows_and_realtime_codes(monkeypatch):
             "latest_quote_snapshot",
             lambda: {"000001": {"close": 10}, "300001": {"close": 20}},
         )
-        tab._apply_quote_snapshot = lambda payload: applied.append(payload)
+        monkeypatch.setattr(tab, "_apply_quote_snapshot", lambda payload: applied.append(payload))
         tab._apply_quote_store_snapshot(model)
         assert applied == [{"000001": {"close": 10}}]
         assert tab.get_row_data(model) == model.row_data[1:]

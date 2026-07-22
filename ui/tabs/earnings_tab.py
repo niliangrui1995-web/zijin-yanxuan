@@ -139,6 +139,7 @@ class _EarningsBackgroundPreloadMixin:
 
         return cancel_background_preload_tasks(
             scheduler,
+            snapshot_owner=self,
             lifecycle_names=("warm-cache",),
             task_ids=(task_registry.workspace("earnings_view_warm_cache"),),
             reason=reason,
@@ -779,7 +780,7 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
         if self.row_data:
             self._recalc_pe_timer.start(0)
 
-    def _on_rt_quotes_direct(self, quotes: dict):
+    def _on_rt_quotes_direct(self, quotes: Mapping[str, Mapping[str, object]]):
         """重写基类的直达信号接收，在刷新行情后补充计算 PE(TTM)"""
         super()._on_rt_quotes_direct(quotes)
         self._recalc_pe_ttm()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from infra.tasks.lifecycle import bounded_wait_for_tasks_status
 from infra.tasks.typed_task_registry import TaskKeyLike, task_id_of
 
 
@@ -57,11 +58,15 @@ class BackgroundJobRunner:
         method = self._manager_method("cancel_task")
         return bool(method(task_id_of(task_id), reason=reason)) if method is not None else False
 
-    def wait_for_tasks(self, task_ids, *, timeout_ms: int = 750) -> bool:
-        method = self._manager_method("wait_for_tasks")
-        if method is None:
-            return False
-        return bool(method(tuple(task_id_of(task_id) for task_id in task_ids), timeout_ms=timeout_ms))
+    def wait_for_tasks(self, task_ids, *, timeout_ms: int = 750) -> bool | None:
+        manager = self._resolve_manager()
+        if not callable(getattr(manager, "wait_for_tasks", None)):
+            return None
+        return bounded_wait_for_tasks_status(
+            manager,
+            tuple(task_id_of(task_id) for task_id in task_ids),
+            timeout_ms=timeout_ms,
+        )
 
     def is_active(self, task_id: TaskKeyLike) -> bool:
         method = self._manager_method("is_active_task")
@@ -69,6 +74,26 @@ class BackgroundJobRunner:
 
     def is_active_task(self, task_id: TaskKeyLike) -> bool:
         return self.is_active(task_id)
+
+    def is_task_unsettled(self, task_id: TaskKeyLike) -> bool | None:
+        method = self._manager_method("is_task_unsettled")
+        if method is None:
+            return None
+        try:
+            result = method(task_id_of(task_id))
+        except Exception:  # noqa: BLE001 - capability failures remain unknown.
+            return None
+        return result if type(result) is bool else None
+
+    def is_task_token_active(self, task_id: TaskKeyLike, cancellation_token) -> bool | None:
+        method = self._manager_method("is_task_token_active")
+        if method is None:
+            return None
+        try:
+            result = method(task_id_of(task_id), cancellation_token)
+        except Exception:  # noqa: BLE001 - capability failures remain unknown.
+            return None
+        return result if type(result) is bool else None
 
     def cancel_all(self):
         method = self._manager_method("cancel_all")

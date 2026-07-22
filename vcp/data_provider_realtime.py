@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 
 from core.market_calendar import MarketCalendar
 from infra.tasks.lifecycle import (
@@ -20,6 +21,8 @@ from vcp.realtime_quote_batch import (
 FALLBACK_PRESSURE_FETCH_LIMIT = 20
 FALLBACK_PRESSURE_MIN_PENDING = 40
 _EASTMONEY_FAST_FAIL_ATTR = "_rt_eastmoney_fast_fail_on_edge_error"
+_CN_TZ = timezone(timedelta(hours=8))
+_QUOTE_FRESHNESS_VALUES = ("network", "cache", "stale")
 _OPENING_WARMUP_STATUSES = frozenset(
     (
         "\u5f00\u76d8\u96c6\u5408\u7ade\u4ef7",
@@ -96,6 +99,59 @@ def _record_quote_request(provider, stats: dict) -> None:
         return
 
 
+def _iso_received_quote_time(received_at: float) -> str:
+    try:
+        return datetime.fromtimestamp(float(received_at), tz=_CN_TZ).isoformat(timespec="seconds")
+    except (OSError, OverflowError, TypeError, ValueError):
+        return ""
+
+
+def _marked_quote(raw_quote, freshness: str, received_at: float | None) -> dict:
+    quote = dict(raw_quote or {})
+    quote["quote_freshness"] = freshness
+    if not str(quote.get("quote_time") or "").strip():
+        if freshness == "network" and received_at is not None:
+            quote["quote_time"] = _iso_received_quote_time(received_at)
+        elif quote.get("date"):
+            quote["quote_time"] = str(quote.get("date") or "").strip()
+    if freshness == "network" and received_at is not None:
+        quote.setdefault("quote_received_at", float(received_at))
+    return quote
+
+
+def _mark_quote_freshness(quotes: dict, freshness: str, *, received_at: float | None = None) -> dict:
+    if freshness not in _QUOTE_FRESHNESS_VALUES:
+        raise ValueError(f"unsupported quote freshness: {freshness}")
+    for code, raw_quote in list((quotes or {}).items()):
+        quotes[code] = _marked_quote(raw_quote, freshness, received_at)
+    return quotes
+
+
+def _normalized_result_quote(raw_quote) -> tuple[dict, str]:
+    quote = dict(raw_quote or {})
+    freshness = str(quote.get("quote_freshness") or "").strip().lower()
+    if freshness in _QUOTE_FRESHNESS_VALUES:
+        return quote, freshness
+    quote["quote_freshness"] = "stale"
+    if not str(quote.get("quote_time") or "").strip() and quote.get("date"):
+        quote["quote_time"] = str(quote.get("date") or "").strip()
+    return quote, "stale"
+
+
+def _final_quote_result_stats(result: dict | None) -> tuple[dict[str, int], str]:
+    counts = {freshness: 0 for freshness in _QUOTE_FRESHNESS_VALUES}
+    quote_times = []
+    for code, raw_quote in list((result or {}).items()):
+        quote, freshness = _normalized_result_quote(raw_quote)
+        if quote != raw_quote:
+            result[code] = quote
+        counts[freshness] += 1
+        quote_time = str(quote.get("quote_time") or "").strip()
+        if quote_time:
+            quote_times.append(quote_time)
+    return counts, max(quote_times, default="")
+
+
 def _new_quote_request_stats(normalized_codes: list[str], *, raw_codes: list[str], started_at: float) -> dict:
     return {
         "started_at": started_at,
@@ -130,6 +186,15 @@ def _finish_quote_request(provider, stats: dict, *, status: str, result: dict | 
             payload["result_count"] = len(result or {})
         except TypeError:
             payload["result_count"] = 0
+        counts, latest_quote_time = _final_quote_result_stats(result)
+        payload["network_result_count"] = counts["network"]
+        payload["cache_hit_count"] = counts["cache"]
+        payload["stale_result_count"] = counts["stale"]
+        payload["missing_result_count"] = max(
+            0,
+            int(payload.get("unique_requested_count") or 0) - int(payload.get("result_count") or 0),
+        )
+        payload["latest_quote_time"] = latest_quote_time
     _record_quote_request(provider, payload)
 
 
@@ -218,6 +283,18 @@ def _infer_quote_trade_date() -> str:
         return MarketCalendar.today("CN").strftime("%Y-%m-%d")
 
 
+def _marked_runtime_cache_hits(provider, normalized_codes: list[str], now: float, dedup_window: float):
+    with provider._rt_quote_lock:
+        result, dedup_codes = split_quote_cache_hits(
+            normalized_codes,
+            provider._rt_quote_cache,
+            provider._rt_quote_time,
+            now=now,
+            dedup_window=dedup_window,
+        )
+    return _mark_quote_freshness(result, "cache"), dedup_codes
+
+
 def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], request_stats: dict, *, log) -> dict:
     try:
         quote_refreshable = MarketCalendar.is_quote_refresh_time()
@@ -226,7 +303,7 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
         quote_refreshable = True
 
     if not quote_refreshable:
-        result = provider._build_offline_quotes(normalized_codes)
+        result = _mark_quote_freshness(provider._build_offline_quotes(normalized_codes), "stale")
         request_stats["recent_codes_count"] = len(normalized_codes)
         _add_quote_source(request_stats, "offline_market_closed")
         _finish_quote_request(provider, request_stats, status="market_closed_offline", result=result)
@@ -236,14 +313,7 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
     now = time.time()
     provider._prune_rt_quote_cache(now=now)
     dedup_window = float(provider._rt_runtime_dedup_window_sec or 0.5)
-    with provider._rt_quote_lock:
-        result, dedup_codes = split_quote_cache_hits(
-            normalized_codes,
-            provider._rt_quote_cache,
-            provider._rt_quote_time,
-            now=now,
-            dedup_window=dedup_window,
-        )
+    result, dedup_codes = _marked_runtime_cache_hits(provider, normalized_codes, now, dedup_window)
     request_stats["cache_hit_count"] = len(result)
     request_stats["pending_count"] = len(dedup_codes)
 
@@ -253,7 +323,7 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
         return {"done": True, "result": result}
 
     if now < float(provider._rt_runtime_cooldown_until or 0):
-        fallback_res = provider._build_offline_quotes(dedup_codes)
+        fallback_res = _mark_quote_freshness(provider._build_offline_quotes(dedup_codes), "stale")
         result.update(fallback_res)
         request_stats["recent_codes_count"] = len(dedup_codes)
         _add_quote_source(request_stats, "offline_runtime_cooldown")
@@ -261,7 +331,7 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
         return {"done": True, "result": result}
 
     if provider._offline:
-        fallback_res = provider._build_offline_quotes(dedup_codes)
+        fallback_res = _mark_quote_freshness(provider._build_offline_quotes(dedup_codes), "stale")
         result.update(fallback_res)
         request_stats["recent_codes_count"] = len(dedup_codes)
         _add_quote_source(request_stats, "offline_mode")
@@ -387,6 +457,15 @@ def _record_realtime_batch_sources(
             f"[realtime quotes] switched to Tencent fallback, covered {len(quotes)}/{len(batch)} codes: {fallback_msg}",
             warning=False,
         )
+
+
+def _cache_network_quote_results(provider, result: dict, new_fetch: dict, fetch_time: float) -> None:
+    _mark_quote_freshness(new_fetch, "network", received_at=fetch_time)
+    with provider._rt_quote_lock:
+        for code, quote_data in new_fetch.items():
+            provider._rt_quote_cache[code] = quote_data
+            provider._rt_quote_time[code] = fetch_time
+            result[code] = dict(quote_data)
 
 
 def _fetch_realtime_quote_sources(
@@ -527,11 +606,7 @@ def _fetch_realtime_quote_sources(
 
     if new_fetch:
         fetch_time = time.time()
-        with provider._rt_quote_lock:
-            for code, quote_data in new_fetch.items():
-                provider._rt_quote_cache[code] = quote_data
-                provider._rt_quote_time[code] = fetch_time
-                result[code] = dict(quote_data)
+        _cache_network_quote_results(provider, result, new_fetch, fetch_time)
         provider._prune_rt_quote_cache(now=fetch_time)
         provider._register_realtime_success()
         if batch_failures:
@@ -568,12 +643,14 @@ def _apply_realtime_quote_fallbacks(
                     quote.setdefault("date", inferred_trade_date)
                     stale_quotes[code] = quote
         if stale_quotes:
+            _mark_quote_freshness(stale_quotes, "stale")
             result.update(stale_quotes)
             missing_codes = [code for code in missing_codes if code not in stale_quotes]
             _add_quote_source(request_stats, "stale_runtime_cache")
 
     if missing_codes:
         fallback_res = provider._build_offline_quotes(missing_codes)
+        _mark_quote_freshness(fallback_res, "stale")
         result.update(fallback_res)
         _add_quote_source(request_stats, "offline_missing_fallback")
 

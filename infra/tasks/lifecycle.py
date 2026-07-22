@@ -6,11 +6,14 @@ from __future__ import annotations
 import inspect
 import threading
 import time
-from collections.abc import Mapping
-from typing import cast
+from collections.abc import Callable, Mapping
+from functools import partial
+from typing import TypeVar, cast
 
 CANCELLABLE_IO_MAX_SLICE_SECONDS = 2.0
 _MIN_IO_TIMEOUT_SECONDS = 0.001
+_CANCELLATION_TOKEN_MARKER = "__accepts_cancellation_token__"
+_CallableT = TypeVar("_CallableT", bound=Callable[..., object])
 
 
 class TaskCancelledError(RuntimeError):
@@ -19,6 +22,15 @@ class TaskCancelledError(RuntimeError):
 
 class TaskDeadlineExceeded(TimeoutError):
     """Raised when a cooperative task has exceeded its deadline."""
+
+
+def accepts_cancellation_token(fn: _CallableT) -> _CallableT:
+    """Explicitly opt a variadic callable into cancellation-token injection."""
+    try:
+        setattr(fn, _CANCELLATION_TOKEN_MARKER, True)
+    except (AttributeError, TypeError) as exc:
+        raise TypeError("cancellation-token marker requires a mutable callable") from exc
+    return fn
 
 
 def _callable_signature(fn) -> inspect.Signature | None:
@@ -38,6 +50,30 @@ def _cancellation_token_is_bound(
     except TypeError:
         return "cancellation_token" in call_kwargs
     return "cancellation_token" in bound.arguments
+
+
+def _partial_binds_cancellation_token(fn) -> bool:
+    current = fn
+    while isinstance(current, partial):
+        if "cancellation_token" in (current.keywords or {}):
+            return True
+        current = current.func
+    return False
+
+
+def _variadic_token_injection_enabled(fn) -> bool:
+    candidates = [fn, getattr(fn, "__func__", None), getattr(type(fn), "__call__", None)]
+    current = fn
+    while isinstance(current, partial):
+        current = current.func
+        candidates.extend(
+            (
+                current,
+                getattr(current, "__func__", None),
+                getattr(type(current), "__call__", None),
+            )
+        )
+    return any(bool(getattr(candidate, _CANCELLATION_TOKEN_MARKER, False)) for candidate in candidates if candidate)
 
 
 def _append_positional_token(
@@ -71,13 +107,18 @@ def _inject_cancellation_token(
     cancellation_token: CancellationToken,
     call_args: list,
     call_kwargs: dict,
+    *,
+    inject_variadic: bool,
 ) -> None:
     parameters = signature.parameters
     if _cancellation_token_is_bound(signature, call_args, call_kwargs):
         return
     token_parameter = parameters.get("cancellation_token")
     if token_parameter is None:
-        if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        if inject_variadic and any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
             call_kwargs["cancellation_token"] = cancellation_token
         return
     if token_parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
@@ -90,9 +131,21 @@ def _inject_cancellation_token(
 def _prepare_cancellation_call(fn, cancellation_token: CancellationToken, args: tuple, kwargs: dict) -> tuple[list, dict]:
     call_args = list(args)
     call_kwargs = dict(kwargs)
+    if _partial_binds_cancellation_token(fn):
+        return call_args, call_kwargs
     signature = _callable_signature(fn)
-    if signature is not None:
-        _inject_cancellation_token(signature, cancellation_token, call_args, call_kwargs)
+    inject_variadic = _variadic_token_injection_enabled(fn)
+    if signature is None:
+        if inject_variadic and "cancellation_token" not in call_kwargs:
+            call_kwargs["cancellation_token"] = cancellation_token
+    else:
+        _inject_cancellation_token(
+            signature,
+            cancellation_token,
+            call_args,
+            call_kwargs,
+            inject_variadic=inject_variadic,
+        )
     return call_args, call_kwargs
 
 
@@ -122,6 +175,62 @@ def call_with_supported_kwargs(fn, *args, **kwargs):
         if parameter.kind is not inspect.Parameter.POSITIONAL_ONLY
     }
     return fn(*args, **{key: value for key, value in kwargs.items() if key in supported})
+
+
+def bounded_wait_for_tasks_status(
+    runner,
+    task_ids,
+    *,
+    timeout_ms: int,
+) -> bool | None:
+    """Call a runner's bounded physical wait without weakening its signature."""
+    wait_for_tasks = getattr(runner, "wait_for_tasks", None)
+    if not callable(wait_for_tasks):
+        return None
+    signature = _callable_signature(wait_for_tasks)
+    if signature is None:
+        return None
+    parameters = signature.parameters
+    accepts_timeout = "timeout_ms" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    if not accepts_timeout:
+        return None
+    try:
+        result = wait_for_tasks(
+            tuple(task_ids),
+            timeout_ms=max(0, int(timeout_ms or 0)),
+        )
+    except Exception:  # noqa: BLE001 - physical settlement must fail closed.
+        return None
+    return result if type(result) is bool else None
+
+
+def task_unsettled_status(runner, task_id: str) -> bool | None:
+    """Return physical termination state without falling back to a dedupe slot.
+
+    ``True`` means the task is proven unsettled, ``False`` means it is proven
+    terminated, and ``None`` means the runner cannot provide that proof.
+    """
+    probe = getattr(runner, "is_task_unsettled", None)
+    if callable(probe):
+        try:
+            result = probe(task_id)
+        except Exception:  # noqa: BLE001 - physical probe failures remain unknown.
+            result = None
+        if type(result) is bool:
+            return result
+    waited = bounded_wait_for_tasks_status(
+        runner,
+        (task_id,),
+        timeout_ms=0,
+    )
+    if waited is True:
+        return False
+    if waited is False:
+        return True
+    return None
 
 
 def raise_if_cancelled(cancellation_token=None) -> None:
@@ -245,10 +354,13 @@ __all__ = [
     "CancellationToken",
     "TaskCancelledError",
     "TaskDeadlineExceeded",
+    "accepts_cancellation_token",
+    "bounded_wait_for_tasks_status",
     "bounded_io_timeout",
     "call_with_supported_kwargs",
     "invoke_with_cancellation",
     "raise_if_cancelled",
     "reraise_task_cancellation",
+    "task_unsettled_status",
     "wait_with_cancellation",
 ]

@@ -99,6 +99,27 @@ def _stop_state_animation(wrapper) -> None:
     wrapper._state_animation = None
 
 
+def _is_quote_metadata_tooltip(tooltip_text: str) -> bool:
+    return "报价时间：" in tooltip_text or "新鲜度：" in tooltip_text
+
+
+def _is_elided_table_cell(table, index) -> bool:
+    display_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+    if not display_text:
+        return False
+    fm = QFontMetrics(table._display_font_for_index(index))
+    visible_rect = table.visualRect(index)
+    available_width = table.columnWidth(index.column())
+    if visible_rect.isValid() and visible_rect.width() > 0:
+        available_width = min(available_width, visible_rect.width())
+    available_width = max(0, available_width - 14)
+    if available_width <= 0:
+        return False
+    pill_color = index.data(Qt.ItemDataRole.UserRole + 2)
+    required_width = fm.horizontalAdvance(display_text) + (12 if pill_color else 0)
+    return required_width > available_width
+
+
 class VCPTableView(QTableView):
     """
     紫金研选统一表格组件 (VCPTableView)
@@ -525,26 +546,10 @@ class VCPTableView(QTableView):
         tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
         if not tooltip_text:
             return False
-
-        display_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        if not display_text:
-            return False
-
-        fm = QFontMetrics(self._display_font_for_index(index))
-        visible_rect = self.visualRect(index)
-        available_width = self.columnWidth(index.column())
-        if visible_rect.isValid() and visible_rect.width() > 0:
-            available_width = min(available_width, visible_rect.width())
-        available_width = max(0, available_width - 14)
-        if available_width <= 0:
-            return False
-
-        pill_color = index.data(Qt.ItemDataRole.UserRole + 2)
-        if pill_color:
-            required_width = fm.horizontalAdvance(display_text) + 12
-            return required_width > available_width
-
-        return fm.horizontalAdvance(display_text) > available_width
+        tooltip_text = str(tooltip_text)
+        if _is_quote_metadata_tooltip(tooltip_text):
+            return True
+        return _is_elided_table_cell(self, index)
 
     def viewportEvent(self, event):
         try:

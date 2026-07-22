@@ -101,8 +101,29 @@ def test_background_job_runner_optional_manager_methods_keep_fallbacks(monkeypat
     assert runner.abandon("job") is False
     assert runner.cancel_task("job", reason="shutdown") is False
     assert runner.is_active("job") is False
+    assert runner.is_task_unsettled("job") is None
+    assert runner.is_task_token_active("job", object()) is None
+    assert runner.wait_for_tasks(("job",), timeout_ms=0) is None
     assert runner.cancel_all() is None
     assert runner.shutdown() is None
+
+
+def test_background_job_runner_probe_exceptions_fail_closed():
+    class _BrokenProbeManager:
+        @staticmethod
+        def is_task_unsettled(task_id):
+            del task_id
+            raise OSError("unsettled probe unavailable")
+
+        @staticmethod
+        def is_task_token_active(task_id, token):
+            del task_id, token
+            raise OSError("identity probe unavailable")
+
+    runner = BackgroundJobRunner(manager=_BrokenProbeManager())
+
+    assert runner.is_task_unsettled("job") is None
+    assert runner.is_task_token_active("job", object()) is None
 
 
 def test_typed_task_registry_validation_and_quote_refresh_helpers():

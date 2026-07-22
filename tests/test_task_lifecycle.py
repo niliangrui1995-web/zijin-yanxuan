@@ -94,7 +94,8 @@ def test_background_worker_ignores_signals_deleted_during_shutdown():
     assert worker.terminated_event.is_set() is True
 
 
-def test_task_manager_shutdown_wait_is_bounded_and_observable(monkeypatch):
+@pytest.mark.parametrize("wait_result", [False, "done"])
+def test_task_manager_shutdown_wait_is_bounded_and_observable(monkeypatch, wait_result):
     calls = []
 
     class _Pool:
@@ -103,14 +104,14 @@ def test_task_manager_shutdown_wait_is_bounded_and_observable(monkeypatch):
 
         def waitForDone(self, timeout_ms):
             calls.append(("waitForDone", timeout_ms))
-            return False
+            return wait_result
 
     monkeypatch.setattr(task_manager, "thread_pool", _Pool())
     task_manager.active_workers.clear()
     task_manager._shutting_down = False
     try:
         assert task_manager.shutdown(wait_timeout_ms=17) is False
-        assert calls == ["clear", ("waitForDone", 17)]
+        assert calls == [("waitForDone", 17)]
         assert task_manager.is_shutting_down is True
     finally:
         task_manager._shutting_down = False

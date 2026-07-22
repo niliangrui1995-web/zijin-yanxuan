@@ -1,6 +1,8 @@
 import logging
 import re
 import time
+from collections.abc import Mapping
+from typing import Any
 
 from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -13,6 +15,7 @@ from ui.models.table_model_helpers import (
     STOCK_CELL_RENDER_ROLE,
     _active_flash_record,
     _alignment_for_cell,
+    _apply_quote_metadata_to_row,
     _build_flash_record,
     _build_table_model_fonts,
     _c,
@@ -543,7 +546,7 @@ class StockTableModel(QAbstractTableModel):
                 self.dataChanged.emit(idx, idx, self._flash_roles(include_flash=flash_recorded))
         return flash_recorded
 
-    def update_quotes(self, quotes: dict) -> int:
+    def update_quotes(self, quotes: Mapping[str, Mapping[str, Any]]) -> int:
         started_at = time.perf_counter()
         payload_codes = len(quotes or {})
         scanned_rows = 0
@@ -572,7 +575,7 @@ class StockTableModel(QAbstractTableModel):
             metrics = resolve_quote_metrics(item_dict, q)
             rt_close = float(metrics.get("rt_close", 0) or 0)
             pct = metrics.get("pct")
-            row_changed = False
+            row_changed = _apply_quote_metadata_to_row(item_dict, q)
             zongguben = float(metrics.get("zongguben", 0) or 0)
             if zongguben > 0 and float(item_dict.get("_zongguben", 0) or 0) != zongguben:
                 item_dict["_zongguben"] = zongguben

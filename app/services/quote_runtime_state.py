@@ -52,7 +52,7 @@ class QuoteRuntimeStateSnapshot:
 class QuoteRuntimeState:
     """Thread-safe state holder whose writes are atomic snapshot replacements."""
 
-    __slots__ = ("_lock", "_snapshot")
+    __slots__ = ("_lock", "_shutdown", "_snapshot")
     _FIELDS = frozenset(QuoteRuntimeStateSnapshot.__dataclass_fields__)
     _COUNTER_FIELDS = frozenset({"generation", "failure_count", "codes_count"})
 
@@ -69,6 +69,7 @@ class QuoteRuntimeState:
         codes_count: int = 0,
     ) -> None:
         self._lock = threading.RLock()
+        self._shutdown = False
         self._snapshot = self._validated(
             QuoteRuntimeStateSnapshot(
                 fetching=fetching,
@@ -107,6 +108,38 @@ class QuoteRuntimeState:
         increments: Mapping[str, int] | None = None,
         **changes: object,
     ) -> QuoteRuntimeStateSnapshot:
+        _applied, snapshot = self._try_update(
+            expected_generation=expected_generation,
+            expected_fetching=None,
+            increments=increments,
+            changes=changes,
+        )
+        return snapshot
+
+    def try_update(
+        self,
+        *,
+        expected_generation: int | None = None,
+        expected_fetching: bool | None = None,
+        increments: Mapping[str, int] | None = None,
+        **changes: object,
+    ) -> tuple[bool, QuoteRuntimeStateSnapshot]:
+        """Conditionally replace the whole snapshot and report whether it changed."""
+        return self._try_update(
+            expected_generation=expected_generation,
+            expected_fetching=expected_fetching,
+            increments=increments,
+            changes=changes,
+        )
+
+    def _try_update(
+        self,
+        *,
+        expected_generation: int | None,
+        expected_fetching: bool | None,
+        increments: Mapping[str, int] | None,
+        changes: Mapping[str, object],
+    ) -> tuple[bool, QuoteRuntimeStateSnapshot]:
         unknown = set(changes) - self._FIELDS
         if unknown:
             names = ", ".join(sorted(unknown))
@@ -123,10 +156,16 @@ class QuoteRuntimeState:
         for field_name, delta in counter_increments.items():
             if isinstance(delta, bool) or not isinstance(delta, int):
                 raise ValueError(f"{field_name} increment must be an integer")
+        if expected_fetching is not None:
+            expected_fetching = _validated_bool(expected_fetching, "expected_fetching")
         with self._lock:
             current = self._snapshot
+            if self._shutdown:
+                return False, current
             if expected_generation is not None and current.generation != expected_generation:
-                return current
+                return False, current
+            if expected_fetching is not None and current.fetching is not expected_fetching:
+                return False, current
             generation = current.generation + counter_increments.get("generation", 0)
             failure_count = current.failure_count + counter_increments.get("failure_count", 0)
             codes_count = current.codes_count + counter_increments.get("codes_count", 0)
@@ -140,7 +179,93 @@ class QuoteRuntimeState:
                 warned_slow=cast(bool, changes.get("warned_slow", current.warned_slow)),
                 codes_count=cast(int, changes.get("codes_count", codes_count)),
             )
-            self._snapshot = self._validated(candidate)
+            validated = self._validated(candidate)
+            if validated == current:
+                return False, current
+            self._snapshot = validated
+            return True, self._snapshot
+
+    def begin_fetch(
+        self,
+        codes_count: int,
+        *,
+        started_at: float,
+    ) -> tuple[bool, QuoteRuntimeStateSnapshot]:
+        normalized_codes_count = _validated_non_negative_int(codes_count, "codes_count")
+        normalized_started_at = _validated_non_negative_float(started_at, "started_at")
+        if normalized_codes_count <= 0:
+            raise ValueError("codes_count must be greater than zero")
+        if normalized_started_at <= 0:
+            raise ValueError("started_at must be greater than zero")
+        return self.try_update(
+            expected_fetching=False,
+            fetching=True,
+            started_at=normalized_started_at,
+            warned_slow=False,
+            codes_count=normalized_codes_count,
+            increments={"generation": 1},
+        )
+
+    def finish_fetch(self, expected_generation: int) -> tuple[bool, QuoteRuntimeStateSnapshot]:
+        return self._end_fetch(expected_generation)
+
+    def fail_fetch(self, expected_generation: int) -> tuple[bool, QuoteRuntimeStateSnapshot]:
+        return self._end_fetch(expected_generation)
+
+    def _end_fetch(self, expected_generation: int) -> tuple[bool, QuoteRuntimeStateSnapshot]:
+        return self.try_update(
+            expected_generation=expected_generation,
+            expected_fetching=True,
+            fetching=False,
+            started_at=0.0,
+            warned_slow=False,
+            codes_count=0,
+        )
+
+    def remember_pending_reason(self, reason: str) -> tuple[bool, QuoteRuntimeStateSnapshot]:
+        """Atomically merge a pending trigger without downgrading cache reload."""
+        normalized_reason = _validated_text(reason, "pending_reason")
+        if not normalized_reason:
+            raise ValueError("pending_reason must not be blank")
+        with self._lock:
+            current = self._snapshot
+            if self._shutdown:
+                return False, current
+            if current.pending_reason == normalized_reason:
+                return False, current
+            if current.pending_reason == "cache_reload" and normalized_reason != "cache_reload":
+                return False, current
+            self._snapshot = self._validated(replace(current, pending_reason=normalized_reason))
+            return True, self._snapshot
+
+    def consume_pending_reason(self) -> tuple[str, QuoteRuntimeStateSnapshot]:
+        """Atomically take and clear the current pending trigger."""
+        with self._lock:
+            current = self._snapshot
+            if self._shutdown or not current.pending_reason:
+                return "", current
+            reason = current.pending_reason
+            self._snapshot = self._validated(replace(current, pending_reason=""))
+            return reason, self._snapshot
+
+    def shutdown(self) -> QuoteRuntimeStateSnapshot:
+        """Enter an absorbing terminal state and invalidate outstanding callbacks."""
+        with self._lock:
+            if self._shutdown:
+                return self._snapshot
+            current = self._snapshot
+            self._snapshot = self._validated(
+                replace(
+                    current,
+                    fetching=False,
+                    generation=current.generation + 1,
+                    started_at=0.0,
+                    pending_reason="",
+                    warned_slow=False,
+                    codes_count=0,
+                )
+            )
+            self._shutdown = True
             return self._snapshot
 
     @property
