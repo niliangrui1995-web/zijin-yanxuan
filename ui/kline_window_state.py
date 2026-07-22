@@ -176,6 +176,10 @@ def _preserved_lease_resources(window):
 
 
 def _reset_lease_render_state(window, *, render_commit_timer, render_watchdog_timer) -> None:
+    # A pooled window's previous owner lifecycle is permanently closed during
+    # closeEvent.  Let the next lease create a fresh group before submitting
+    # history work; otherwise every task is rejected as ``owner_shutdown``.
+    window._task_lifecycle = None
     window._runtime_lifecycle = KLineRuntimeLifecycleController()
     window._active_load_identity = None
     window._active_kline_task_tickets = set()

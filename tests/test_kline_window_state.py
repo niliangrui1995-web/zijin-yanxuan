@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 
 from app.services.kline_open_context import KlineNavItem, KlineOpenContext
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from ui.kline_window_state import (
     current_kline_open_context,
     initialize_kline_window_state,
@@ -141,3 +142,37 @@ def test_reset_lease_preserves_the_single_realtime_timer_instance():
     assert window._snapshot_render_query_pending is False
     assert window._snapshot_render_deadline is None
     assert stopped == ["realtime", "poll", "watchdog"]
+
+
+def test_reset_lease_replaces_the_shutdown_task_lifecycle():
+    window = SimpleNamespace()
+    initialize_kline_window_state(
+        window,
+        main_window=None,
+        code="000001",
+        name="平安银行",
+        data_provider=None,
+        vcp_data=None,
+        code_list=None,
+        current_idx=0,
+        open_context=None,
+    )
+    closed_lifecycle = task_lifecycle_for(window)
+    assert closed_lifecycle.shutdown(timeout_ms=0) is True
+
+    reset_kline_window_lease_state(
+        window,
+        main_window=None,
+        code="002156",
+        name="通富微电",
+        data_provider=None,
+        vcp_data=None,
+        code_list=None,
+        current_idx=0,
+        open_context=None,
+    )
+
+    active_lifecycle = task_lifecycle_for(window)
+    token = active_lifecycle.begin("history_load")
+    assert active_lifecycle is not closed_lifecycle
+    assert token.cancelled is False

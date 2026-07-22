@@ -1344,6 +1344,7 @@ def test_kline_load_and_draw_defers_cached_render_to_background(monkeypatch):
     monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
     monkeypatch.setattr(window, "_get_cn_target_trade_date", lambda: dt.date(2026, 3, 21))
     monkeypatch.setattr(task_manager, "run_in_background", _capture_background)
+    monkeypatch.setattr(task_manager, "is_task_token_active", lambda _task_id, _token: True)
 
     try:
         original_load(window)

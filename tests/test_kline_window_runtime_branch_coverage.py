@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from app.services.kline_open_context import KlineOpenContext
+from app.services.ui_task_lifecycle_service import CancellationToken
 from ui import kline_window_runtime as runtime
 from ui.kline_load_controller import KlineLoadController
 from ui.kline_runtime_lifecycle import KLineRuntimeLifecycleController
@@ -140,6 +141,37 @@ def test_current_request_and_owned_task_registration(monkeypatch):
     assert running_ticket.stage == "history"
     calls[0][1]["on_terminated"]()
     assert window._active_kline_task_tickets == set()
+
+
+def test_rejected_owned_task_reports_error_instead_of_staying_loading(monkeypatch):
+    controller = KlineLoadController(window_id="rejected-window")
+    identity = controller.begin("002156")
+    window = SimpleNamespace(_closing=False, code="002156", _load_controller=controller)
+    token = CancellationToken()
+    token.cancel("owner_shutdown")
+
+    def _reject(*_args, **kwargs):
+        kwargs["on_terminated"]()
+        return token
+
+    lifecycle = SimpleNamespace(run_background=_reject)
+    monkeypatch.setattr(runtime, "task_lifecycle_for", lambda *args, **kwargs: lifecycle)
+    errors: list[str] = []
+
+    runtime._submit_owned_window_task(
+        window,
+        "history_load",
+        lambda _token: None,
+        lambda _result: None,
+        controller.task_id("history", identity=identity),
+        120.0,
+        on_error=errors.append,
+        identity=identity,
+    )
+
+    assert errors == ["后台任务未启动: owner_shutdown"]
+    assert window._active_kline_task_tickets == set()
+    assert controller.running_task is None
 
 
 def test_resolve_quote_trade_date_all_calendar_boundaries(monkeypatch):

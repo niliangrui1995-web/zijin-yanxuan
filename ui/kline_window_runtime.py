@@ -133,7 +133,7 @@ def _start_owned_window_task(window, submission: _QueuedOwnedWindowTask) -> None
                 _drain_realtime_backlog(window)
 
     try:
-        task_lifecycle_for(window, runner=task_manager).run_background(
+        token = task_lifecycle_for(window, runner=task_manager).run_background(
             submission.name,
             submission.fn,
             on_success=submission.on_success,
@@ -143,6 +143,9 @@ def _start_owned_window_task(window, submission: _QueuedOwnedWindowTask) -> None
             timeout_sec=submission.timeout_sec,
             runner=task_manager,
         )
+        if getattr(token, "cancelled", False) and submission.on_error is not None:
+            reason = str(getattr(token, "reason", "") or "submission_rejected")
+            submission.on_error(f"后台任务未启动: {reason}")
     except Exception:  # noqa: BLE001 - scheduler rejection must roll back the exact ticket.
         active_tickets.discard(submission.ticket)
         if getattr(window, "_running_kline_task_submission", None) is submission:
