@@ -383,12 +383,19 @@ def _process_quote_fetch_result(
     )
 
 
-def _publish_off_market_snapshot(service, payload: dict) -> None:
+def _publish_off_market_snapshot(
+    service,
+    payload: dict,
+    *,
+    code_signature: tuple[str, ...] = (),
+) -> None:
     quotes = (payload or {}).get("quotes") or {}
     current_source = _quote_result_source(quotes, (payload or {}).get("provider_stats") or {})
     if current_source:
         service.state.update(current_source=current_source)
     service._off_market_snapshot_emitted = True
+    if code_signature:
+        service._off_market_snapshot_signature = code_signature
     if not any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values()):
         return
     service.publish_external_quotes(
@@ -396,6 +403,113 @@ def _publish_off_market_snapshot(service, payload: dict) -> None:
         source="central_quotes.off_market",
         require_valid=True,
     )
+
+
+def _plan_off_market_snapshot_request(service, codes: set[str]) -> tuple[set[str], tuple[str, ...]] | None:
+    code_signature = tuple(sorted(codes))
+    if (
+        service._closed
+        or service._off_market_snapshot_fetching
+        or not codes
+        or service.data_provider is None
+    ):
+        return None
+
+    request_codes = set(codes)
+    if not service._off_market_snapshot_emitted:
+        return request_codes, code_signature
+
+    previous_codes = set(service._off_market_snapshot_signature)
+    if not previous_codes:
+        return None
+    request_codes.difference_update(previous_codes)
+    if request_codes:
+        return request_codes, code_signature
+
+    service._off_market_snapshot_signature = code_signature
+    return None
+
+
+def _off_market_snapshot_callbacks(
+    service,
+    request_codes: set[str],
+    code_signature: tuple[str, ...],
+    request_generation: int,
+):
+    def _bg_fetch(cancellation_token):
+        return invoke_with_cancellation(
+            service._fetch_quote_payload,
+            cancellation_token,
+            request_codes,
+        )
+
+    def _on_result(payload):
+        if request_generation != service._off_market_snapshot_generation:
+            return
+        service._off_market_snapshot_fetching = False
+        if service._closed:
+            return
+        try:
+            _publish_off_market_snapshot(
+                service,
+                payload,
+                code_signature=code_signature,
+            )
+        finally:
+            _schedule_pending_fetch_replay(service)
+
+    def _on_error(error_message: str):
+        if request_generation != service._off_market_snapshot_generation:
+            return
+        service._off_market_snapshot_fetching = False
+        try:
+            if not service._closed:
+                log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
+        finally:
+            _schedule_pending_fetch_replay(service)
+
+    return _bg_fetch, _on_result, _on_error
+
+
+def _submit_off_market_snapshot_request(
+    service,
+    request_codes: set[str],
+    code_signature: tuple[str, ...],
+) -> None:
+    service._off_market_snapshot_fetching = True
+    service._off_market_snapshot_generation += 1
+    request_generation = service._off_market_snapshot_generation
+    background, on_result, on_error = _off_market_snapshot_callbacks(
+        service,
+        request_codes,
+        code_signature,
+        request_generation,
+    )
+    try:
+        submission_receipt = _submit_central_task(
+            service,
+            "off_market_snapshot",
+            background,
+            on_result,
+            on_error,
+            task_registry.transient_quotes(
+                f"central_quotes_off_market_snapshot_{request_generation}"
+            ),
+            max(30.0, _slow_fetch_threshold(service.data_provider, len(request_codes)) + 10.0),
+        )
+    except Exception:
+        if request_generation == service._off_market_snapshot_generation:
+            service._off_market_snapshot_fetching = False
+        service._task_lifecycle.cancel("off_market_snapshot", reason="submission_failed")
+        raise
+    submission_failure = _central_submission_failure_reason(submission_receipt)
+    if submission_failure:
+        if request_generation == service._off_market_snapshot_generation:
+            service._off_market_snapshot_fetching = False
+        service._task_lifecycle.cancel(
+            "off_market_snapshot",
+            reason=submission_failure,
+        )
 
 
 def _active_code_count(codes) -> int:
@@ -412,6 +526,7 @@ def _prepare_quote_fetch_cycle(service, reason: str) -> tuple[set[str], str, dic
     service._observe_quote_window(quote_refreshable)
     if quote_refreshable:
         service._off_market_snapshot_emitted = False
+        service._off_market_snapshot_signature = ()
         if service._off_market_snapshot_fetching:
             service._off_market_snapshot_generation += 1
             service._off_market_snapshot_fetching = False
@@ -655,6 +770,7 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
 
         self.state = QuoteRuntimeState()
         self._off_market_snapshot_emitted = False
+        self._off_market_snapshot_signature: tuple[str, ...] = ()
         self._off_market_snapshot_fetching = False
         self._off_market_snapshot_generation = 0
         self._opening_warmup_signature: tuple[str, ...] = ()
@@ -691,6 +807,7 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
     def refresh_after_cache_reload(self):
         """F5 或本地缓存更新后，立刻重建一次全局报价快照。"""
         self._off_market_snapshot_emitted = False
+        self._off_market_snapshot_signature = ()
         if self._closed:
             return
         self._trigger_fetch_for_reason("cache_reload")
@@ -1140,73 +1257,10 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
 
     def _emit_off_market_snapshot(self, codes: set[str]):
         with self._fetch_submission_lock:
-            if (
-                self._closed
-                or self._off_market_snapshot_emitted
-                or self._off_market_snapshot_fetching
-                or not codes
-                or self.data_provider is None
-            ):
+            request = _plan_off_market_snapshot_request(self, codes)
+            if request is None:
                 return
-
-            request_codes = set(codes)
-            self._off_market_snapshot_fetching = True
-            self._off_market_snapshot_generation += 1
-            request_generation = self._off_market_snapshot_generation
-
-            def _bg_fetch(cancellation_token):
-                return invoke_with_cancellation(
-                    self._fetch_quote_payload,
-                    cancellation_token,
-                    request_codes,
-                )
-
-            def _on_result(payload):
-                if request_generation != self._off_market_snapshot_generation:
-                    return
-                self._off_market_snapshot_fetching = False
-                if self._closed:
-                    return
-                try:
-                    _publish_off_market_snapshot(self, payload)
-                finally:
-                    _schedule_pending_fetch_replay(self)
-
-            def _on_error(error_message: str):
-                if request_generation != self._off_market_snapshot_generation:
-                    return
-                self._off_market_snapshot_fetching = False
-                try:
-                    if not self._closed:
-                        log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
-                finally:
-                    _schedule_pending_fetch_replay(self)
-
-            try:
-                submission_receipt = _submit_central_task(
-                    self,
-                    "off_market_snapshot",
-                    _bg_fetch,
-                    _on_result,
-                    _on_error,
-                    task_registry.transient_quotes(
-                        f"central_quotes_off_market_snapshot_{request_generation}"
-                    ),
-                    max(30.0, _slow_fetch_threshold(self.data_provider, len(request_codes)) + 10.0),
-                )
-            except Exception:
-                if request_generation == self._off_market_snapshot_generation:
-                    self._off_market_snapshot_fetching = False
-                self._task_lifecycle.cancel("off_market_snapshot", reason="submission_failed")
-                raise
-            submission_failure = _central_submission_failure_reason(submission_receipt)
-            if submission_failure:
-                if request_generation == self._off_market_snapshot_generation:
-                    self._off_market_snapshot_fetching = False
-                self._task_lifecycle.cancel(
-                    "off_market_snapshot",
-                    reason=submission_failure,
-                )
+            _submit_off_market_snapshot_request(self, *request)
 
     @pyqtSlot()
     def _trigger_fetch(self):

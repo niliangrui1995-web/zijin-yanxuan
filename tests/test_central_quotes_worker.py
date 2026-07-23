@@ -174,6 +174,73 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
         main_window.deleteLater()
 
 
+def test_central_quotes_service_off_market_snapshot_fetches_new_universe_codes(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    from ui.workers import central_quotes_worker as worker_module
+
+    class DummyProvider:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_realtime_quotes_batch(self, codes):
+            ordered = tuple(sorted(codes))
+            self.calls.append(ordered)
+            return {
+                code: {"close": 12.3, "last_close": 12.0}
+                for code in ordered
+            }
+
+    provider = DummyProvider()
+    codes = {"000001"}
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: codes)
+    pending = []
+
+    def _capture_background(
+        fn,
+        on_success=None,
+        on_error=None,
+        task_id=None,
+        cancellation_token=None,
+        timeout_sec=None,
+    ):
+        del cancellation_token, timeout_sec
+        pending.append((fn, on_success, on_error, str(task_id)))
+        return task_id
+
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _capture_background)
+    monkeypatch.setattr(
+        worker_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
+
+    def _take_off_market_task():
+        for index, task in enumerate(pending):
+            if task[3].startswith("central_quotes_off_market_snapshot_"):
+                return pending.pop(index)
+        raise AssertionError("off-market snapshot task was not submitted")
+
+    try:
+        service._trigger_fetch()
+        fn, on_success, _on_error, _task_id = _take_off_market_task()
+        on_success(fn())
+        app.processEvents()
+
+        codes.add("301018")
+        service._trigger_fetch()
+        fn, on_success, _on_error, _task_id = _take_off_market_task()
+        on_success(fn())
+
+        assert provider.calls == [("000001",), ("301018",)]
+        assert service._off_market_snapshot_signature == ("000001", "301018")
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_off_market_retry_uses_new_generation_task_id(monkeypatch):
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
