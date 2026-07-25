@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 
 from app.services.stock_context_fund_snapshot_process_service import (
@@ -29,6 +30,18 @@ KEY_LAST_LISTED = "\u6700\u8fd1\u4e0a\u699c"
 POST_F5_CONTEXT_SNAPSHOT_DEFER_SECONDS = 5.0
 FUND_SNAPSHOT_TIMEOUT_SECONDS = 90.0
 LHB_SNAPSHOT_TIMEOUT_SECONDS = 180.0
+
+
+def _normalized_scope(
+    values: Sequence[str] | set[str] | frozenset[str] | None,
+) -> frozenset[str] | None:
+    if values is None:
+        return None
+    return frozenset(str(value or "").strip() for value in values if str(value or "").strip())
+
+
+def _copy_cached_rows(rows) -> list[dict]:
+    return [dict(row) for row in rows]
 
 
 def _cancellable_items(values, cancellation_token=None):
@@ -258,30 +271,50 @@ def capture_stock_context_snapshot(
     service: StockContextService,
     *,
     include_rps_bundle: bool = True,
+    sources: Sequence[str] | set[str] | frozenset[str] | None = None,
 ) -> StockContextSnapshot:
     """Capture loaded-widget rows plus already-published async snapshots."""
 
+    selected_sources = _normalized_scope(sources)
+    include_fund = selected_sources is None or "fund_holdings" in selected_sources
+    include_lhb = selected_sources is None or "lhb" in selected_sources
     cached_rows: dict[str, list[dict]] = {}
     loading_sources: set[str] = set()
-    with service._fund_rows_lock:
-        if service._fund_rows_loaded:
-            cached_rows["fund_holdings"] = [dict(row) for row in service._fund_rows_snapshot]
-        if service._fund_rows_loading:
-            loading_sources.add("fund_holdings")
+    if include_fund:
+        with service._fund_rows_lock:
+            if service._fund_rows_loaded:
+                cached_rows["fund_holdings"] = _copy_cached_rows(
+                    service._fund_rows_snapshot,
+                )
+            if service._fund_rows_loading:
+                loading_sources.add("fund_holdings")
 
-    signature = service._lhb_pool_cache_signature()
-    with service._lhb_rows_lock:
-        if signature is not None and signature == service._lhb_rows_signature:
-            cached_rows["lhb"] = [dict(row) for row in service._lhb_rows_snapshot]
-        if service._lhb_rows_loading:
-            loading_sources.add("lhb")
+    if include_lhb:
+        signature = service._lhb_pool_cache_signature()
+        with service._lhb_rows_lock:
+            if signature is not None and signature == service._lhb_rows_signature:
+                cached_rows["lhb"] = _copy_cached_rows(
+                    service._lhb_rows_snapshot,
+                )
+            if service._lhb_rows_loading:
+                loading_sources.add("lhb")
 
     adapter = StockContextWidgetSnapshotAdapter(service._workspace)
-    snapshot = (
-        adapter.capture(cached_source_rows=cached_rows)
-        if include_rps_bundle
-        else adapter.capture(cached_source_rows=cached_rows, include_rps_bundle=False)
-    )
+    if selected_sources is None:
+        snapshot = (
+            adapter.capture(cached_source_rows=cached_rows)
+            if include_rps_bundle
+            else adapter.capture(
+                cached_source_rows=cached_rows,
+                include_rps_bundle=False,
+            )
+        )
+    else:
+        snapshot = adapter.capture(
+            cached_source_rows=cached_rows,
+            include_rps_bundle=include_rps_bundle,
+            sources=selected_sources,
+        )
     return replace(snapshot, loading_sources=snapshot.loading_sources | frozenset(loading_sources))
 
 

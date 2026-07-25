@@ -70,10 +70,25 @@ def load_active_rps_payload():
     return load_payload()
 
 
-def capture_workspace_stock_context(workspace, *, include_rps_bundle: bool = True):
+def capture_workspace_stock_context(
+    workspace,
+    *,
+    include_rps_bundle: bool = True,
+    sources=None,
+):
     from ui.workspaces.stock_context_widget_adapter import capture_workspace_stock_context as capture_context
 
-    return capture_context(workspace, include_rps_bundle=include_rps_bundle)
+    if sources is None:
+        return (
+            capture_context(workspace)
+            if include_rps_bundle
+            else capture_context(workspace, include_rps_bundle=False)
+        )
+    return capture_context(
+        workspace,
+        include_rps_bundle=include_rps_bundle,
+        sources=sources,
+    )
 
 
 def _task_cancelled(cancellation_token) -> bool:
@@ -437,11 +452,50 @@ def _run_vcp_refresh(codes_with_rows, context_snapshot, fallback_radar_data, can
 
 
 def _build_vcp_refresh_job(owner, codes_with_rows):
+    from domains.stock_context.signal_builders import RADAR_SOURCE_KEYS
+
     window_reader = getattr(owner, "window", None)
     window = window_reader() if callable(window_reader) else None
-    context_snapshot = capture_workspace_stock_context(
-        getattr(window, "_workspace", None),
-        include_rps_bundle=False,
+    target_codes = tuple(
+        dict.fromkeys(
+            str(code or "").strip()
+            for _, code in codes_with_rows
+            if str(code or "").strip()
+        )
+    )
+    capture_started_at = time.perf_counter()
+    with ui_stall_span(
+        "WatchlistTab._capture_stock_context_snapshot",
+        tab="watchlist",
+        signal=str(len(target_codes)),
+    ):
+        context_snapshot = capture_workspace_stock_context(
+            getattr(window, "_workspace", None),
+            include_rps_bundle=False,
+            sources=RADAR_SOURCE_KEYS,
+        )
+    capture_elapsed_ms = (time.perf_counter() - capture_started_at) * 1000.0
+    source_rows = (
+        sum(len(rows) for rows in context_snapshot.source_rows.values())
+        if context_snapshot is not None
+        else 0
+    )
+    cached_rows = (
+        sum(len(rows) for rows in context_snapshot.cached_source_rows.values())
+        if context_snapshot is not None
+        else 0
+    )
+    record_metric(
+        "watchlist_context_snapshot_capture_ms",
+        capture_elapsed_ms,
+        unit="ms",
+        tags={
+            "cached_rows": cached_rows,
+            "selected_sources": ",".join(sorted(RADAR_SOURCE_KEYS)),
+            "source_rows": source_rows,
+            "target_count": len(target_codes),
+        },
+        level="info",
     )
     fallback_radar_data = None
     if context_snapshot is None:

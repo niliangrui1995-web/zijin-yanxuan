@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +11,12 @@ from app.services.stock_context_model_service import (
     StockContextSnapshot,
     StockSignal,
 )
-from app.services.stock_context_query_service import GENERAL_STOCK_CONTEXT_SOURCE_KEYS, StockContextQueryService
+from app.services.stock_context_query_service import (
+    GENERAL_STOCK_CONTEXT_SOURCE_KEYS,
+    RADAR_SOURCE_KEYS,
+    StockContextQueryService,
+)
+from ui.workspaces.stock_context_service import capture_stock_context_snapshot
 from ui.workspaces.stock_context_widget_adapter import (
     SOURCE_KEYS,
     StockContextWidgetSnapshotAdapter,
@@ -94,6 +100,25 @@ def test_workspace_snapshot_helper_forwards_rps_capture_policy():
     assert calls == [False]
 
 
+def test_workspace_snapshot_helper_forwards_source_scope():
+    calls = []
+    workspace = SimpleNamespace(
+        capture_stock_context_snapshot=lambda *, include_rps_bundle, sources: calls.append(
+            (include_rps_bundle, frozenset(sources))
+        )
+        or StockContextSnapshot()
+    )
+
+    snapshot = capture_workspace_stock_context(
+        workspace,
+        include_rps_bundle=False,
+        sources=RADAR_SOURCE_KEYS,
+    )
+
+    assert isinstance(snapshot, StockContextSnapshot)
+    assert calls == [(False, frozenset(RADAR_SOURCE_KEYS))]
+
+
 def test_workspace_snapshot_helper_preserves_legacy_default_reader_contract():
     calls = []
 
@@ -107,6 +132,66 @@ def test_workspace_snapshot_helper_preserves_legacy_default_reader_contract():
 
     assert isinstance(snapshot, StockContextSnapshot)
     assert calls == [True]
+
+
+def test_scoped_widget_snapshot_never_reads_unrequested_tabs():
+    accessed = []
+    tabs = {
+        key: _RowsTab([{"代码": "000001", "来源": key}])
+        for key in SOURCE_KEYS
+    }
+
+    def _get_loaded_tab(key):
+        accessed.append(key)
+        if key in {"scan", "fund_holdings"}:
+            raise AssertionError(f"unrequested source was read: {key}")
+        return tabs.get(key)
+
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=_get_loaded_tab,
+        tab_specs=lambda: [{"key": key, "title": key} for key in SOURCE_KEYS],
+    )
+
+    snapshot = StockContextWidgetSnapshotAdapter(workspace).capture(
+        include_rps_bundle=False,
+        sources=RADAR_SOURCE_KEYS,
+    )
+
+    assert set(accessed) == set(RADAR_SOURCE_KEYS)
+    assert set(snapshot.source_rows) == set(RADAR_SOURCE_KEYS)
+    assert snapshot.available_sources == frozenset(RADAR_SOURCE_KEYS)
+
+
+def test_scoped_service_snapshot_skips_unrequested_cached_sources():
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda _key: None,
+        tab_specs=lambda: [],
+    )
+    service = SimpleNamespace(
+        _workspace=workspace,
+        _fund_rows_lock=threading.Lock(),
+        _fund_rows_loaded=True,
+        _fund_rows_loading=False,
+        _fund_rows_snapshot=[object()],
+        _lhb_rows_lock=threading.Lock(),
+        _lhb_rows_loading=False,
+        _lhb_rows_signature=None,
+        _lhb_rows_snapshot=[object()],
+        _lhb_pool_cache_signature=lambda: (_ for _ in ()).throw(
+            AssertionError("unrequested LHB cache signature was read")
+        ),
+    )
+
+    snapshot = capture_stock_context_snapshot(
+        service,
+        include_rps_bundle=False,
+        sources={"earnings"},
+    )
+
+    assert snapshot.cached_source_rows == {}
+    assert snapshot.loading_sources == frozenset()
 
 
 def test_workspace_snapshot_omits_rps_across_classic_facade_service_chain():
@@ -337,6 +422,61 @@ def test_headless_snapshot_query_matches_stock_context_golden_contract(monkeypat
     assert signals[1].summary == "液冷 / 铜连接"
     assert signals[4].summary == "高盛卖出100万"
     assert signals[-1].observed_at == "20260715"
+
+
+def test_scoped_snapshot_preserves_watchlist_radar_results(monkeypatch):
+    workspace = _golden_workspace()
+    monkeypatch.setattr(
+        "app.services.stock_context_query_service.load_earnings_state_payload",
+        lambda: ({}, ""),
+    )
+    adapter = StockContextWidgetSnapshotAdapter(workspace)
+
+    full_result = StockContextQueryService(
+        adapter.capture(include_rps_bundle=False)
+    ).query_watchlist_radar(
+        target_codes={"000001"},
+        include_source_cache_fallback=False,
+    )
+    scoped_result = StockContextQueryService(
+        adapter.capture(
+            include_rps_bundle=False,
+            sources=RADAR_SOURCE_KEYS,
+        )
+    ).query_watchlist_radar(
+        target_codes={"000001"},
+        include_source_cache_fallback=False,
+    )
+
+    assert scoped_result == full_result
+
+
+def test_scoped_snapshot_keeps_loaded_source_over_cache_precedence(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.stock_context_query_service.load_ai_chain_cache_rows",
+        lambda: [{"代码": "000002", "细分板块": "缓存板块"}],
+    )
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: (
+            _RowsTab([{"代码": "000001", "细分板块": "界面板块"}])
+            if key == "ai_industry_chain"
+            else None
+        ),
+        tab_specs=lambda: [{"key": "ai_industry_chain", "title": "AI产业链"}],
+    )
+    snapshot = StockContextWidgetSnapshotAdapter(workspace).capture(
+        include_rps_bundle=False,
+        sources=RADAR_SOURCE_KEYS,
+    )
+    policy = StockContextReadPolicy.build(
+        include_cache_fallback=False,
+        include_source_cache_fallback=True,
+        target_codes={"000002"},
+        sources={"ai_industry_chain"},
+    )
+
+    assert StockContextQueryService(snapshot).query_by_code(policy) == {}
 
 
 def test_loaded_source_replaces_whole_cache_and_empty_source_uses_cache(monkeypatch):

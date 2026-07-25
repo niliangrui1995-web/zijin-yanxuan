@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
@@ -49,6 +50,12 @@ def _plain_copy(value: Any) -> Any:
         return value
 
 
+def _normalized_scope(values: Sequence[str] | set[str] | frozenset[str] | None) -> frozenset[str] | None:
+    if values is None:
+        return None
+    return frozenset(str(value or "").strip() for value in values if str(value or "").strip())
+
+
 def _copy_rows(rows) -> list[dict]:
     return [_plain_copy(dict(row)) for row in (rows or []) if isinstance(row, Mapping)]
 
@@ -83,7 +90,12 @@ def _direct_signals(key: str, tab) -> tuple[StockSignal, ...]:
     return tuple(signals)
 
 
-def _captured_source(key: str, tab, rows: list[dict], loading: bool) -> _CapturedSource | None:
+def _captured_source(
+    key: str,
+    tab,
+    rows: list[dict],
+    loading: bool,
+) -> _CapturedSource | None:
     if tab is None:
         return None
     signals = _direct_signals(key, tab)
@@ -101,15 +113,28 @@ def _spec_key(spec: Mapping[str, Any]) -> str:
     return str(spec.get("key") or "").strip()
 
 
-def _cached_rows_snapshot(cached_source_rows) -> dict[str, tuple[dict, ...]]:
+def _cached_rows_snapshot(
+    cached_source_rows,
+    selected_sources: frozenset[str] | None = None,
+) -> dict[str, tuple[dict, ...]]:
     return {
         str(key): tuple(_copy_rows(rows))
         for key, rows in (cached_source_rows or {}).items()
+        if selected_sources is None or str(key) in selected_sources
     }
 
 
-def _available_source_keys(specs, sources: list[_CapturedSource]) -> frozenset[str]:
-    keys = {_spec_key(spec) for spec in specs}
+def _available_source_keys(
+    specs,
+    sources: list[_CapturedSource],
+    selected_sources: frozenset[str] | None = None,
+) -> frozenset[str]:
+    keys = {
+        key
+        for spec in specs
+        if (key := _spec_key(spec))
+        and (selected_sources is None or key in selected_sources)
+    }
     keys.discard("")
     keys.update(source.key for source in sources)
     return frozenset(keys)
@@ -144,11 +169,21 @@ def _first_foreign_keywords(sources: list[_CapturedSource]) -> tuple[str, ...]:
     return next((source.foreign_keywords for source in sources if source.foreign_keywords), ())
 
 
-def _build_snapshot(specs, sources, cached_source_rows, rps_bundle) -> StockContextSnapshot:
+def _build_snapshot(
+    specs,
+    sources,
+    cached_source_rows,
+    rps_bundle,
+    *,
+    selected_sources: frozenset[str] | None = None,
+) -> StockContextSnapshot:
     return StockContextSnapshot(
         source_rows=_source_rows_map(sources),
-        cached_source_rows=_cached_rows_snapshot(cached_source_rows),
-        available_sources=_available_source_keys(specs, sources),
+        cached_source_rows=_cached_rows_snapshot(
+            cached_source_rows,
+            selected_sources,
+        ),
+        available_sources=_available_source_keys(specs, sources, selected_sources),
         loading_sources=_loading_source_keys(sources),
         direct_source_keys=_direct_source_keys(sources),
         direct_signals=_direct_source_signals(sources),
@@ -214,51 +249,78 @@ class StockContextWidgetSnapshotAdapter:
         *,
         cached_source_rows: Mapping[str, list[dict] | tuple[dict, ...]] | None = None,
         include_rps_bundle: bool = True,
+        sources: Sequence[str] | set[str] | frozenset[str] | None = None,
     ) -> StockContextSnapshot:
         self._assert_gui_thread()
         specs = self._tab_specs()
-        sources: list[_CapturedSource] = []
+        selected_sources = _normalized_scope(sources)
+        captured_sources: list[_CapturedSource] = []
         for key in SOURCE_KEYS:
-            tab = self._loaded_tab(key)
-            source = _captured_source(key, tab, self._rows(tab, key), self._is_loading(tab))
-            if source is not None:
-                sources.append(source)
-        for spec in specs:
-            key = _spec_key(spec)
-            if not key or key in SOURCE_KEYS:
+            if selected_sources is not None and key not in selected_sources:
                 continue
             tab = self._loaded_tab(key)
-            source = _captured_source(key, tab, [], self._is_loading(tab))
+            source = _captured_source(
+                key,
+                tab,
+                self._rows(tab, key),
+                self._is_loading(tab),
+            )
+            if source is not None:
+                captured_sources.append(source)
+        for spec in specs:
+            key = _spec_key(spec)
+            if (
+                not key
+                or key in SOURCE_KEYS
+                or (selected_sources is not None and key not in selected_sources)
+            ):
+                continue
+            tab = self._loaded_tab(key)
+            source = _captured_source(
+                key,
+                tab,
+                [],
+                self._is_loading(tab),
+            )
             if source is not None and source.direct:
-                sources.append(source)
+                captured_sources.append(source)
         rps_bundle = self._rps_bundle() if include_rps_bundle else None
-        return _build_snapshot(specs, sources, cached_source_rows, rps_bundle)
+        return _build_snapshot(
+            specs,
+            captured_sources,
+            cached_source_rows,
+            rps_bundle,
+            selected_sources=selected_sources,
+        )
 
 
 def capture_workspace_stock_context(
     workspace,
     *,
     include_rps_bundle: bool = True,
+    sources: Sequence[str] | set[str] | frozenset[str] | None = None,
 ) -> StockContextSnapshot | None:
     """Use the workspace compatibility facade without exposing its internals."""
 
     explicit_reader = getattr(workspace, "capture_stock_context_snapshot", None)
     if callable(explicit_reader):
-        snapshot = (
-            explicit_reader()
-            if include_rps_bundle
-            else explicit_reader(include_rps_bundle=False)
-        )
+        options = {}
+        if not include_rps_bundle:
+            options["include_rps_bundle"] = False
+        if sources is not None:
+            options["sources"] = sources
+        snapshot = explicit_reader(**options)
         return snapshot if isinstance(snapshot, StockContextSnapshot) else None
     context_reader = getattr(workspace, "collect_stock_context", None)
     if not callable(context_reader):
         return None
+    options = {"capture_snapshot": True}
+    if not include_rps_bundle:
+        options["include_rps_bundle"] = False
+    if sources is not None:
+        options["sources"] = sources
     try:
-        snapshot = (
-            context_reader(capture_snapshot=True)
-            if include_rps_bundle
-            else context_reader(capture_snapshot=True, include_rps_bundle=False)
-        )
+        snapshot = context_reader(**options)
     except TypeError:
         return None
     return snapshot if isinstance(snapshot, StockContextSnapshot) else None

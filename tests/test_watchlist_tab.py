@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 
 from app.services.stock_context_model_service import StockContextSnapshot
 from core.event_bus import event_bus
+from domains.stock_context.signal_builders import RADAR_SOURCE_KEYS
 from ui.tabs import watchlist_tab as watchlist_module
 from ui.theme import theme_manager
 from ui.viewmodels.watchlist_vm import watchlist_vm
@@ -788,6 +789,11 @@ def test_watchlist_vcp_calc_queries_plain_snapshot_inside_background_task(monkey
         return kwargs.get("task_id")
 
     monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _queue_background)
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
 
     tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
     tab._is_active_workspace_tab_for_vcp = lambda: True
@@ -796,8 +802,8 @@ def test_watchlist_vcp_calc_queries_plain_snapshot_inside_background_task(monkey
     capture_calls = []
     rps_load_calls = []
 
-    def _capture_workspace_stock_context(_workspace, *, include_rps_bundle):
-        capture_calls.append(include_rps_bundle)
+    def _capture_workspace_stock_context(_workspace, *, include_rps_bundle, sources):
+        capture_calls.append((include_rps_bundle, frozenset(sources)))
         return StockContextSnapshot()
 
     monkeypatch.setattr(watchlist_module, "capture_workspace_stock_context", _capture_workspace_stock_context)
@@ -812,7 +818,7 @@ def test_watchlist_vcp_calc_queries_plain_snapshot_inside_background_task(monkey
         tab._do_vcp_calc()
 
         assert gather_calls == []
-        assert capture_calls == [False]
+        assert capture_calls == [(False, frozenset(RADAR_SOURCE_KEYS))]
         assert rps_load_calls == []
         assert queued[0]["kwargs"]["task_id"] == "watchlist_vcp_refresh"
         closure = dict(
@@ -1599,6 +1605,70 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
         assert tab.model.row_data[2]["细分板块"] == "银行"
         assert tab.proxy_model.data(tab.proxy_model.index(0, rps_column), Qt.ItemDataRole.DisplayRole) == "95"
         assert persist_calls[0]["task_id"] == "watchlist_vcp_persist"
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_indicator_apply_41_rows_avoids_reset_and_redundant_signals(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", lambda *_args, **_kwargs: True)
+    persist_calls = []
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: persist_calls.append(
+            {"fn": fn, "args": args, "kwargs": kwargs, "task_id": task_id}
+        )
+        or (task_id or "queued"),
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        rows = [
+            {
+                "代码": f"{600000 + index:06d}",
+                "名称": f"样本{index}",
+                "来源": "手动",
+                "现价": "--",
+                "涨幅%": "--",
+                "市值": "--",
+                "RPS强度": "",
+                "细分板块": "",
+                "摘要": "",
+                "备注": "",
+                "业绩异动": "",
+                "大宗交易": "",
+                "龙虎榜": "",
+            }
+            for index in range(41)
+        ]
+        payload = {
+            row["代码"]: {
+                "rps": str(99 - index),
+                "subsector": f"板块{index % 5}",
+                "remark": f"备注{index}",
+            }
+            for index, row in enumerate(rows)
+        }
+        tab.model.update_data(rows)
+        rps_column = tab.model.headers.index("RPS强度")
+        tab.proxy_model.sort(rps_column, Qt.SortOrder.DescendingOrder)
+        reset_spy = QSignalSpy(tab.model.modelReset)
+        data_spy = QSignalSpy(tab.model.dataChanged)
+        proxy_layout_spy = QSignalSpy(tab.proxy_model.layoutChanged)
+
+        tab._apply_vcp_indicators_ui(payload)
+        first_data_signal_count = len(data_spy)
+        first_layout_signal_count = len(proxy_layout_spy)
+        tab._apply_vcp_indicators_ui(payload)
+
+        assert len(reset_spy) == 0
+        assert 1 <= first_data_signal_count <= 3
+        assert len(data_spy) == first_data_signal_count
+        assert len(proxy_layout_spy) == first_layout_signal_count
+        assert first_layout_signal_count <= 1
+        assert len(persist_calls) == 1
+        assert tab.model.row_data[-1]["RPS强度"] == "59"
     finally:
         tab.deleteLater()
 

@@ -126,10 +126,13 @@ class StockContextQueryService:
 
     @staticmethod
     def _filter_rows(rows: Sequence[Mapping[str, Any]], target_codes: frozenset[str] | None) -> list[dict]:
-        copied = [dict(row) for row in rows]
         if target_codes is None:
-            return copied
-        return [row for row in copied if str(row.get("代码") or "").strip() in target_codes]
+            return [dict(row) for row in rows]
+        return [
+            dict(row)
+            for row in rows
+            if str(row.get("代码") or "").strip() in target_codes
+        ]
 
     def _source_signals(self, source: str, policy: StockContextReadPolicy) -> list[StockSignal]:
         rows = self._source_rows(source, policy)
@@ -198,4 +201,8 @@ class StockContextQueryService:
         return self.query_signals(policy)
 
 
-__all__ = ["GENERAL_STOCK_CONTEXT_SOURCE_KEYS", "StockContextQueryService"]
+__all__ = [
+    "GENERAL_STOCK_CONTEXT_SOURCE_KEYS",
+    "RADAR_SOURCE_KEYS",
+    "StockContextQueryService",
+]

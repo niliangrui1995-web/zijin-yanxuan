@@ -339,12 +339,18 @@ def _capture_workspace_stock_context(
     workspace,
     *,
     include_rps_bundle: bool = True,
+    sources=None,
 ) -> StockContextSnapshot:
     facade = _resolve_workspace_facade(workspace)
-    return (
-        facade.capture_stock_context_snapshot()
-        if include_rps_bundle
-        else facade.capture_stock_context_snapshot(include_rps_bundle=False)
+    if sources is None:
+        return (
+            facade.capture_stock_context_snapshot()
+            if include_rps_bundle
+            else facade.capture_stock_context_snapshot(include_rps_bundle=False)
+        )
+    return facade.capture_stock_context_snapshot(
+        include_rps_bundle=include_rps_bundle,
+        sources=sources,
     )
 
 
@@ -1317,6 +1323,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         allow_lhb_cache_compute: bool = False,
         allow_async_snapshot_refresh: bool = True,
         capture_snapshot: bool = False,
+        include_rps_bundle: bool = True,
         target_codes=None,
         sources=None,
     ) -> dict[str, list[StockSignal]] | StockContextSnapshot:
@@ -1330,6 +1337,8 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         )
         if capture_snapshot:
             options["capture_snapshot"] = True
+            if not include_rps_bundle:
+                options["include_rps_bundle"] = False
         return _resolve_workspace_facade(self).collect_stock_context(**options)
 
     def prime_stock_context_snapshots(

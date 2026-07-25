@@ -13,6 +13,7 @@ from app.services.stock_context_model_service import (
 )
 from app.services.stock_context_query_service import (
     GENERAL_STOCK_CONTEXT_SOURCE_KEYS,
+    RADAR_SOURCE_KEYS,
     StockContextQueryService,
 )
 from core.logger import get_logger
@@ -75,14 +76,21 @@ def _capture_facade_stock_context(
     facade,
     *,
     include_rps_bundle: bool = True,
+    sources=None,
 ) -> StockContextSnapshot:
-    return (
-        capture_stock_context_snapshot(facade._stock_context_service)
-        if include_rps_bundle
-        else capture_stock_context_snapshot(
-            facade._stock_context_service,
-            include_rps_bundle=False,
+    if sources is None:
+        return (
+            capture_stock_context_snapshot(facade._stock_context_service)
+            if include_rps_bundle
+            else capture_stock_context_snapshot(
+                facade._stock_context_service,
+                include_rps_bundle=False,
+            )
         )
+    return capture_stock_context_snapshot(
+        facade._stock_context_service,
+        include_rps_bundle=include_rps_bundle,
+        sources=sources,
     )
 
 
@@ -358,10 +366,14 @@ class WorkspaceFacade:
         target_policy = StockContextReadPolicy.build(target_codes=target_codes)
         if target_codes is not None and not target_policy.target_codes:
             return collect_watchlist_radar_snapshot(StockContextSnapshot(), target_codes=target_codes)
-        snapshot = self.capture_stock_context_snapshot()
+        snapshot = self.capture_stock_context_snapshot(
+            sources=RADAR_SOURCE_KEYS,
+        )
         if "lhb" not in snapshot.loading_sources:
             self._stock_context_service.refresh_async_snapshots(include_fund=False, include_lhb=True)
-            snapshot = self.capture_stock_context_snapshot()
+            snapshot = self.capture_stock_context_snapshot(
+                sources=RADAR_SOURCE_KEYS,
+            )
         source_cache_fallback = (
             bool(include_cache_fallback)
             if include_source_cache_fallback is None
@@ -421,7 +433,14 @@ class WorkspaceFacade:
         sources=None,
     ) -> dict[str, list[StockSignal]] | StockContextSnapshot:
         if capture_snapshot:
-            return self.capture_stock_context_snapshot(include_rps_bundle=include_rps_bundle)
+            if sources is None:
+                return self.capture_stock_context_snapshot(
+                    include_rps_bundle=include_rps_bundle,
+                )
+            return self.capture_stock_context_snapshot(
+                include_rps_bundle=include_rps_bundle,
+                sources=sources,
+            )
         query, policy = self._stock_context_query(
             include_cache_fallback=include_cache_fallback,
             include_source_cache_fallback=include_source_cache_fallback,
