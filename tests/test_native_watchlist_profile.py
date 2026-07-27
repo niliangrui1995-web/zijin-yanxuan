@@ -1,5 +1,6 @@
 from scripts import native_watchlist_profile
 from scripts.native_watchlist_profile import (
+    _build_synthetic_quote_payload,
     _event_dispatcher_summary,
     _native_platform_error,
     _parse_args,
@@ -47,7 +48,21 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.settle_ms == 3500
     assert args.load_timeout_ms == 8000
     assert args.heartbeat_ms == 25
+    assert args.quote_cycles == 0
+    assert args.quote_cycle_ms == 1000
+    assert args.quote_target_count == 6
+    assert args.legacy_quote_repaint is False
     assert args.no_cprofile is False
+
+
+def test_native_watchlist_profile_builds_sparse_changed_quote_payload():
+    rows = [{"代码": f"0000{index:02d}", "现价": str(10 + index)} for index in range(41)]
+
+    payload = _build_synthetic_quote_payload(rows, cycle=1, target_count=6)
+
+    assert len(payload) == 6
+    assert list(payload) == ["000000", "000008", "000016", "000024", "000032", "000040"]
+    assert all(quote["close"] > quote["pre_close"] for quote in payload.values())
 
 
 def test_native_watchlist_profile_cleans_isolated_database_on_exit(tmp_path, monkeypatch):

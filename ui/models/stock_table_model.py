@@ -168,6 +168,7 @@ class StockTableModel(QAbstractTableModel):
         self._plain_background_headers = set()
         self._muted_text_headers = set()
         self._sparse_update_coalescing = False
+        self._sparse_quote_update_coalescing: bool | None = None
         self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
 
         fonts = _build_table_model_fonts()
@@ -203,6 +204,9 @@ class StockTableModel(QAbstractTableModel):
 
     def set_sparse_update_coalescing(self, enabled: bool) -> None:
         self._sparse_update_coalescing = bool(enabled)
+
+    def set_sparse_quote_update_coalescing(self, enabled: bool | None) -> None:
+        self._sparse_quote_update_coalescing = None if enabled is None else bool(enabled)
 
     def _uses_muted_text(self, header: str) -> bool:
         return header in self._muted_text_headers
@@ -654,7 +658,11 @@ class StockTableModel(QAbstractTableModel):
                 start_col,
                 end_col,
                 self._flash_roles(include_flash=flash_recorded),
-                coalesce=self._sparse_update_coalescing,
+                coalesce=(
+                    self._sparse_update_coalescing
+                    if self._sparse_quote_update_coalescing is None
+                    else self._sparse_quote_update_coalescing
+                ),
             )
         changed_row_count = len(changed_row_set)
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0

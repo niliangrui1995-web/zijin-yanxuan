@@ -987,11 +987,14 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         ]
         self.model = StockTableModel(headers)
         self.model.set_sparse_update_coalescing(True)
+        # 仅行情保留真实连续区间，避免首末行大矩形失效；VCP/context 批量更新仍按原策略合并。
+        self.model.set_sparse_quote_update_coalescing(False)
         self.model.set_muted_text_headers(["RPS强度", "细分板块", "摘要", "备注"])
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
         self.proxy_model.setSourceModel(self.model)
         self.table_sp.setModel(self.proxy_model)
         self.table_sp.set_coalesced_flash_repaint_enabled(True)
+        self.table_sp.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)

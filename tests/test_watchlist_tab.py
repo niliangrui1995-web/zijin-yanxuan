@@ -48,6 +48,65 @@ def _run_background_inline(calls=None):
     return _run
 
 
+def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    rows = [
+        {
+            "代码": f"0000{row:02d}",
+            "名称": f"股票{row}",
+            "现价": f"{10 + row:.2f}",
+            "涨幅%": 0.0,
+            "市值": "--",
+            "_zongguben": 1_000_000_000,
+        }
+        for row in range(41)
+    ]
+    try:
+        assert tab.model._sparse_update_coalescing is True
+        assert tab.model._sparse_quote_update_coalescing is False
+        assert tab.table_sp._targeted_flash_repaint is True
+        assert tab.table_sp._paint_metric_scope == "watchlist"
+        tab.model.update_data(rows)
+        price_column = tab.model.headers.index("现价")
+        code_column = tab.model.headers.index("代码")
+        tab.proxy_model.sort(price_column, Qt.SortOrder.DescendingOrder)
+        tab.proxy_model.setFilterText("股票")
+        spy = QSignalSpy(tab.model.dataChanged)
+
+        changed_rows = (0, 8, 16, 24, 32, 40)
+        quotes = {
+            rows[row]["代码"]: {
+                "close": 100.0 if row == 0 else 11 + row,
+                "last_close": 10 + row,
+            }
+            for row in changed_rows
+        }
+        changed = tab._run_coalesced_model_update(
+            lambda: tab.model.update_quotes(quotes)
+        )
+
+        assert changed == len(changed_rows)
+        assert len(spy) == len(changed_rows)
+        assert [(args[0].row(), args[1].row()) for args in spy] == [(row, row) for row in changed_rows]
+        assert tab.proxy_model.data(tab.proxy_model.index(0, code_column), Qt.ItemDataRole.DisplayRole) == "000000"
+
+        vcp_spy = QSignalSpy(tab.model.dataChanged)
+        vcp_rows = [dict(row) for row in tab.model.row_data]
+        for row in changed_rows:
+            vcp_rows[row]["RPS强度"] = "95"
+        tab.model.update_data(vcp_rows, hydrate_latest_quotes=False)
+        assert len(vcp_spy) == 1
+        assert (vcp_spy[0][0].row(), vcp_spy[0][1].row()) == (0, 40)
+
+        tab.proxy_model.setFilterText("股票40")
+        assert tab.proxy_model.rowCount() == 1
+        assert tab.proxy_model.data(tab.proxy_model.index(0, code_column), Qt.ItemDataRole.DisplayRole) == "000040"
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_watchlist_startup_can_skip_indicator_refresh(monkeypatch):
     calc_calls = []
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)

@@ -9,6 +9,8 @@ from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
     QItemSelectionModel,
+    QModelIndex,
+    QPersistentModelIndex,
     QPointF,
     QPropertyAnimation,
     QRectF,
@@ -29,6 +31,7 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
     QPolygonF,
+    QRegion,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -135,6 +138,11 @@ class VCPTableView(QTableView):
         self._bound_refresh_model = None
         self._flash_repaint_until = 0.0
         self._coalesced_flash_repaint = False
+        self._targeted_flash_repaint = False
+        self._paint_metric_scope = ""
+        self._pending_paint_metric: dict[str, object] | None = None
+        self._flash_repaint_scheduled_at = 0.0
+        self._flash_dirty_indexes: set[QPersistentModelIndex] = set()
         self._closing = False
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
@@ -434,6 +442,9 @@ class VCPTableView(QTableView):
                 timer.stop()
         self._pending_refresh_state_restore = None
         self._pending_scrollbar_restore = None
+        self._pending_paint_metric = None
+        self._flash_repaint_scheduled_at = 0.0
+        self._flash_dirty_indexes.clear()
         self._disconnect_refresh_model()
         hide_floating_tooltip()
         with suppress(AttributeError, TypeError, RuntimeError):
@@ -458,6 +469,19 @@ class VCPTableView(QTableView):
                 return
         if not self._model_has_active_flash_records():
             return
+        if self._coalesced_flash_repaint and not self.isVisible():
+            self._pending_paint_metric = None
+            self._flash_repaint_scheduled_at = 0.0
+            self._flash_dirty_indexes.clear()
+            return
+        if len(_args) >= 2:
+            quote_changed = self._data_change_includes_quote_columns(_args[0], _args[1])
+            reason = "quote_data_changed" if quote_changed else "model_data_changed"
+            changed_rows = abs(_args[1].row() - _args[0].row()) + 1
+            metadata = {"changed_rows": changed_rows}
+            if self._targeted_flash_repaint:
+                metadata["dirty_cells"] = self._remember_flash_dirty_indexes(_args[0], _args[1])
+            self._mark_pending_paint_metric(reason, **metadata)
         self.schedule_flash_repaint_until(time.time() + FLASH_DURATION_SECONDS)
 
     def _model_has_active_flash_records(self) -> bool:
@@ -479,10 +503,73 @@ class VCPTableView(QTableView):
         interval_ms = max(1, int(FLASH_DURATION_SECONDS * 1000)) if self._coalesced_flash_repaint else 60
         self._flash_repaint_timer.setInterval(interval_ms)
 
+    def set_targeted_flash_repaint_enabled(self, enabled: bool, *, metric_scope: str = "") -> None:
+        self._targeted_flash_repaint = bool(enabled)
+        self._paint_metric_scope = str(metric_scope or "").strip()
+        self._pending_paint_metric = None
+        self._flash_repaint_scheduled_at = 0.0
+        self._flash_dirty_indexes.clear()
+
+    def _data_change_includes_quote_columns(self, top_left, bottom_right) -> bool:
+        model = self.model()
+        if model is None or not top_left.isValid() or not bottom_right.isValid():
+            return False
+        quote_headers = {"现价", "市价", "涨幅%", "涨幅", "市值", "买点"}
+        col_start, col_end = sorted((top_left.column(), bottom_right.column()))
+        return any(
+            str(model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or "")
+            in quote_headers
+            for column in range(col_start, col_end + 1)
+        )
+
+    def _remember_flash_dirty_indexes(self, top_left, bottom_right) -> int:
+        model = self.model()
+        if model is None or not top_left.isValid() or not bottom_right.isValid():
+            return len(self._flash_dirty_indexes)
+
+        row_start, row_end = sorted((top_left.row(), bottom_right.row()))
+        col_start, col_end = sorted((top_left.column(), bottom_right.column()))
+        flash_role = int(Qt.ItemDataRole.UserRole) + 1
+        for row in range(row_start, row_end + 1):
+            for column in range(col_start, col_end + 1):
+                index = model.index(row, column)
+                if not index.isValid() or not index.data(flash_role):
+                    continue
+                self._flash_dirty_indexes.add(QPersistentModelIndex(index))
+        return len(self._flash_dirty_indexes)
+
+    def _flash_repaint_region(self) -> tuple[QRegion, int, int]:
+        viewport = self.viewport()
+        if viewport is None:
+            return QRegion(), len(self._flash_dirty_indexes), 0
+        viewport_rect = viewport.rect()
+        region = QRegion()
+        visible_dirty_cells = 0
+        for persistent_index in self._flash_dirty_indexes:
+            if not persistent_index.isValid():
+                continue
+            rect = self.visualRect(QModelIndex(persistent_index)).intersected(viewport_rect)
+            if rect.isEmpty():
+                continue
+            visible_dirty_cells += 1
+            region = region.united(QRegion(rect))
+        return region, len(self._flash_dirty_indexes), visible_dirty_cells
+
+    def _mark_pending_paint_metric(self, reason: str, **metadata) -> None:
+        if not self._paint_metric_scope:
+            return
+        self._pending_paint_metric = {
+            "reason": str(reason or "other"),
+            "scheduled_at": time.perf_counter(),
+            **metadata,
+        }
+
     def schedule_flash_repaint_until(self, active_until: float) -> None:
         if self._coalesced_flash_repaint and not self.isVisible():
             return
         self._flash_repaint_until = max(self._flash_repaint_until, float(active_until))
+        if self._targeted_flash_repaint:
+            self._flash_repaint_scheduled_at = time.perf_counter()
         if self._coalesced_flash_repaint:
             remaining_ms = max(1, int((self._flash_repaint_until - time.time()) * 1000))
             self._flash_repaint_timer.start(remaining_ms)
@@ -493,17 +580,132 @@ class VCPTableView(QTableView):
         if self._closing:
             self._flash_repaint_timer.stop()
             return
+        viewport = self.viewport()
+        if viewport is None:
+            self._flash_repaint_timer.stop()
+            return
         if self._coalesced_flash_repaint:
             self._flash_repaint_timer.stop()
+            deadline = self._flash_repaint_until
             self._flash_repaint_until = 0.0
-            self.viewport().update()
+            if not self._targeted_flash_repaint:
+                if self._paint_metric_scope:
+                    self._mark_pending_paint_metric("flash_expiry")
+                viewport.update()
+                self._flash_dirty_indexes.clear()
+                return
+
+            callback_started_at = time.perf_counter()
+            callback_wall_time = time.time()
+            region, dirty_cells, visible_dirty_cells = self._flash_repaint_region()
+            scheduled_at = self._flash_repaint_scheduled_at
+            self._flash_repaint_scheduled_at = 0.0
+            if self._paint_metric_scope:
+                from core.observability import record_metric
+
+                viewport_rect = viewport.rect()
+                viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
+                bounds = region.boundingRect()
+                bounding_area = max(0, bounds.width() * bounds.height())
+                tags = {
+                    "dirty_bounding_area_ratio": f"{min(1.0, bounding_area / viewport_area):.4f}",
+                    "dirty_region_rects": str(region.rectCount()),
+                    "dirty_cells": str(dirty_cells),
+                    "visible_dirty_cells": str(visible_dirty_cells),
+                    "tab": self._paint_metric_scope,
+                }
+                callback_elapsed_ms = (time.perf_counter() - callback_started_at) * 1000.0
+                if scheduled_at > 0.0:
+                    record_metric(
+                        f"{self._paint_metric_scope}_flash_repaint_schedule_to_callback_ms",
+                        (callback_started_at - scheduled_at) * 1000.0,
+                        unit="ms",
+                        tags=tags,
+                    )
+                if deadline > 0.0:
+                    record_metric(
+                        f"{self._paint_metric_scope}_flash_repaint_timer_offset_ms",
+                        (callback_wall_time - deadline) * 1000.0,
+                        unit="ms",
+                        tags=tags,
+                    )
+                record_metric(
+                    f"{self._paint_metric_scope}_flash_repaint_callback_ms",
+                    callback_elapsed_ms,
+                    unit="ms",
+                    tags=tags,
+                )
+            if not region.isEmpty():
+                self._mark_pending_paint_metric(
+                    "flash_expiry",
+                    dirty_cells=dirty_cells,
+                    visible_dirty_cells=visible_dirty_cells,
+                    dirty_region_rects=region.rectCount(),
+                )
+                viewport.update(region)
+            else:
+                self._pending_paint_metric = None
+            self._flash_dirty_indexes.clear()
             return
         if time.time() >= self._flash_repaint_until:
             self._flash_repaint_timer.stop()
             self._flash_repaint_until = 0.0
-            self.viewport().update()
+            viewport.update()
             return
-        self.viewport().update()
+        viewport.update()
+
+    def paintEvent(self, event) -> None:
+        scope = self._paint_metric_scope
+        if not scope:
+            super().paintEvent(event)
+            return
+        viewport = self.viewport()
+        if viewport is None:
+            super().paintEvent(event)
+            return
+        metric = self._pending_paint_metric
+        reason = str((metric or {}).get("reason", "other"))
+        dirty_rect = event.region().boundingRect()
+        viewport_rect = viewport.rect()
+        viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
+        dirty_area = max(0, dirty_rect.width() * dirty_rect.height())
+        tags = {
+            "dirty_bounding_area_ratio": f"{min(1.0, dirty_area / viewport_area):.4f}",
+            "dirty_region_rects": str(event.region().rectCount()),
+            "reason": reason,
+            "tab": scope,
+        }
+        for key in ("changed_rows", "dirty_cells", "visible_dirty_cells"):
+            if metric is not None and key in metric:
+                tags[key] = str(metric[key])
+
+        started_at = time.perf_counter()
+        from infra.diagnostics.ui_stall_probe import ui_stall_span
+
+        with ui_stall_span(
+            "VCPTableView.paintEvent",
+            tab=scope,
+            signal=reason,
+            dirty_bounding_area_ratio=tags["dirty_bounding_area_ratio"],
+        ):
+            super().paintEvent(event)
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+
+        if metric is not None or elapsed_ms >= 25.0:
+            from core.observability import record_metric
+
+            record_metric(f"{scope}_table_paint_ms", elapsed_ms, unit="ms", tags=tags)
+            scheduled_value = (metric or {}).get("scheduled_at", 0.0)
+            scheduled_at = float(scheduled_value) if isinstance(scheduled_value, (int, float)) else 0.0
+            if scheduled_at > 0.0:
+                record_metric(
+                    f"{scope}_table_paint_delay_ms",
+                    (started_at - scheduled_at) * 1000.0,
+                    unit="ms",
+                    tags=tags,
+                )
+        if metric is self._pending_paint_metric:
+            self._pending_paint_metric = None
 
     def showEvent(self, event):
         if self._closing:
@@ -517,6 +719,9 @@ class VCPTableView(QTableView):
         if self._coalesced_flash_repaint:
             self._flash_repaint_timer.stop()
             self._flash_repaint_until = 0.0
+            self._flash_repaint_scheduled_at = 0.0
+            self._pending_paint_metric = None
+            self._flash_dirty_indexes.clear()
         super().hideEvent(event)
 
     def set_ambient_repaint_enabled(self, enabled: bool) -> None:

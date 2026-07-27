@@ -140,9 +140,58 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--settle-ms", type=int, default=3500)
     parser.add_argument("--load-timeout-ms", type=int, default=8000)
     parser.add_argument("--heartbeat-ms", type=int, default=25)
+    parser.add_argument(
+        "--quote-cycles",
+        type=int,
+        default=0,
+        help="After Watchlist settles, publish this many synthetic quote cycles through sig_rt_quotes.",
+    )
+    parser.add_argument("--quote-cycle-ms", type=int, default=1000)
+    parser.add_argument("--quote-target-count", type=int, default=6)
+    parser.add_argument(
+        "--legacy-quote-repaint",
+        action="store_true",
+        help="Re-enable the pre-fix Watchlist sparse coalescing and full-viewport flash repaint for comparison.",
+    )
     parser.add_argument("--top-functions", type=int, default=30)
     parser.add_argument("--no-cprofile", action="store_true")
     return parser.parse_args(argv)
+
+
+def _coerce_probe_price(value, default: float = 10.0) -> float:
+    try:
+        price = float(str(value or "").replace(",", ""))
+    except (TypeError, ValueError):
+        price = 0.0
+    return price if price > 0 else float(default)
+
+
+def _build_synthetic_quote_payload(rows, *, cycle: int, target_count: int = 6) -> dict[str, dict]:
+    coded_rows = [row for row in rows or () if isinstance(row, dict) and str(row.get("代码", "")).strip()]
+    count = min(len(coded_rows), max(1, int(target_count)))
+    if not count:
+        return {}
+    if count == 1:
+        selected = [coded_rows[0]]
+    else:
+        last = len(coded_rows) - 1
+        indexes = [round(position * last / (count - 1)) for position in range(count)]
+        selected = [coded_rows[index] for index in dict.fromkeys(indexes)]
+
+    payload: dict[str, dict] = {}
+    bump = 0.137 * (max(0, int(cycle)) + 1)
+    for row in selected:
+        code = str(row.get("代码", "")).strip()
+        base = _coerce_probe_price(row.get("现价") or row.get("市价") or row.get("_rt_close"))
+        close = round(base + bump, 3)
+        payload[code] = {
+            "code": code,
+            "open": base,
+            "pre_close": base,
+            "close": close,
+            "price": close,
+        }
+    return payload
 
 
 def _default_output_dir() -> Path:
@@ -348,6 +397,8 @@ class _NativeProfileController:
         self._heartbeat_by_phase: dict[str, list[float]] = defaultdict(list)
         self._phase = "startup_idle"
         self._done = False
+        self._quote_cycle_index = 0
+        self._quote_cycle_payload_sizes: list[int] = []
 
         self._heartbeat = qtimer_type()
         self._heartbeat.setTimerType(qt_timer_type.PreciseTimer)
@@ -425,13 +476,76 @@ class _NativeProfileController:
             "visible": bool(tab.isVisible()),
             "workspace_load_reason": str(getattr(tab, "_workspace_load_reason", "")),
         }
+        if bool(self.args.legacy_quote_repaint):
+            if model is not None:
+                model.set_sparse_update_coalescing(True)
+                model.set_sparse_quote_update_coalescing(True)
+            table = getattr(tab, "table_sp", None)
+            if table is not None:
+                table.set_targeted_flash_repaint_enabled(False, metric_scope="watchlist")
+            self.report["watchlist"]["quote_repaint_mode"] = "legacy_full_viewport"
+        else:
+            self.report["watchlist"]["quote_repaint_mode"] = "targeted_dirty_region"
         if self.cprofile_enabled:
             self._stop_active_profiler()
             self.settle_profiler.enable()
             self._active_profiler = self.settle_profiler
             self._active_profile_path = self.settle_profile_path
         self._set_phase("watchlist_settle")
-        self.QTimer.singleShot(max(0, int(self.args.settle_ms)), self._finish)
+        self.QTimer.singleShot(max(0, int(self.args.settle_ms)), self._after_watchlist_settle)
+
+    def _after_watchlist_settle(self) -> None:
+        if self._done:
+            return
+        if max(0, int(self.args.quote_cycles)) <= 0:
+            self._finish()
+            return
+        self._start_quote_cycle()
+
+    def _start_quote_cycle(self) -> None:
+        if self._done:
+            return
+        cycle_count = max(0, int(self.args.quote_cycles))
+        if self._quote_cycle_index >= cycle_count:
+            self._finish()
+            return
+
+        workspace = getattr(self.window, "_workspace", None)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        model = getattr(tab, "model", None)
+        rows = list(getattr(model, "row_data", None) or [])
+        self.report["watchlist"]["row_count"] = len(rows)
+        payload = _build_synthetic_quote_payload(
+            rows,
+            cycle=self._quote_cycle_index,
+            target_count=max(1, int(self.args.quote_target_count)),
+        )
+        if not payload:
+            self._fail("watchlist synthetic quote payload unavailable")
+            return
+
+        cycle = self._quote_cycle_index + 1
+        self._quote_cycle_index = cycle
+        self._quote_cycle_payload_sizes.append(len(payload))
+        self._set_phase(f"quote_cycle_{cycle}_initial_paint")
+
+        from domains.quotes.dispatcher import publish_rt_quotes
+
+        publish_rt_quotes(payload, source="native_watchlist_profile")
+        cycle_ms = max(900, int(self.args.quote_cycle_ms))
+        self.QTimer.singleShot(350, lambda cycle=cycle: self._set_quote_phase(cycle, "between_paints"))
+        self.QTimer.singleShot(450, lambda cycle=cycle: self._set_quote_phase(cycle, "flash_expiry"))
+        self.QTimer.singleShot(cycle_ms, lambda cycle=cycle: self._finish_quote_cycle(cycle))
+
+    def _set_quote_phase(self, cycle: int, suffix: str) -> None:
+        if self._done or cycle != self._quote_cycle_index:
+            return
+        self._set_phase(f"quote_cycle_{cycle}_{suffix}")
+
+    def _finish_quote_cycle(self, cycle: int) -> None:
+        if self._done or cycle != self._quote_cycle_index:
+            return
+        self._start_quote_cycle()
 
     def _on_heartbeat(self) -> None:
         now = time.perf_counter()
@@ -464,6 +578,10 @@ class _NativeProfileController:
 
         self.report["heartbeat_lateness"] = {
             phase: summarize_durations(values) for phase, values in sorted(self._heartbeat_by_phase.items())
+        }
+        self.report["quote_cycles"] = {
+            "completed": self._quote_cycle_index,
+            "payload_sizes": list(self._quote_cycle_payload_sizes),
         }
         self.report["background_tasks_at_finish"] = int(getattr(background_job_runner, "active_count", 0) or 0)
         stall_probe = get_ui_stall_probe()
@@ -574,6 +692,10 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "settle_ms": int(args.settle_ms),
             "load_timeout_ms": int(args.load_timeout_ms),
             "heartbeat_ms": int(args.heartbeat_ms),
+            "quote_cycles": int(args.quote_cycles),
+            "quote_cycle_ms": int(args.quote_cycle_ms),
+            "quote_target_count": int(args.quote_target_count),
+            "legacy_quote_repaint": bool(args.legacy_quote_repaint),
             "cprofile_enabled": enabled,
         },
         "timings": {},

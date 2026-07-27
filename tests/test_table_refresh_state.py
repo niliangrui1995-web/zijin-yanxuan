@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QEvent, QPoint, Qt
-from PyQt6.QtGui import QHelpEvent, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import QHelpEvent, QRegion, QStandardItem, QStandardItemModel
 
 import ui.components.table_controls as table_controls_module
 from ui.components import (
@@ -310,12 +310,15 @@ def test_vcp_table_view_coalesced_flash_repaint_skips_hidden_table(qt_applicatio
     source_model = StockTableModel(["代码", "名称", "现价"])
     table.setModel(source_model)
     table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
     try:
         source_model.update_data(_rows(1))
         hidden_rows = _rows(1)
         hidden_rows[0]["现价"] = "11.00"
         source_model.update_data(hidden_rows)
         assert table._flash_repaint_timer.isActive() is False
+        assert table._flash_dirty_indexes == set()
+        assert table._pending_paint_metric is None
 
         table.show()
         _process_events(qt_application)
@@ -327,6 +330,67 @@ def test_vcp_table_view_coalesced_flash_repaint_skips_hidden_table(qt_applicatio
         assert table._flash_repaint_timer.isActive() is True
         table.hide()
         _process_events(qt_application)
+        assert table._flash_repaint_timer.isActive() is False
+        hidden_again_rows = _rows(1)
+        hidden_again_rows[0]["现价"] = "13.00"
+        source_model.update_data(hidden_again_rows)
+        assert table._flash_dirty_indexes == set()
+        assert table._pending_paint_metric is None
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_targeted_flash_expiry_updates_only_dirty_region(qt_application, monkeypatch):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    proxy_model = RtSortFilterProxyModel(table)
+    proxy_model.setSourceModel(source_model)
+    table.setModel(proxy_model)
+    table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True)
+    rows = [
+        {
+            "代码": f"0000{row:02d}",
+            "名称": f"股票{row}",
+            "现价": f"{10 + row:.2f}",
+            "涨幅%": 0.0,
+            "市值": "--",
+            "_zongguben": 1_000_000_000,
+        }
+        for row in range(41)
+    ]
+    source_model.update_data(rows)
+    table.resize(900, 720)
+    table.show()
+    _process_events(qt_application)
+
+    try:
+        changed_rows = (0, 8, 16, 24, 32, 40)
+        source_model.update_quotes(
+            {
+                rows[row]["代码"]: {"close": 11 + row, "last_close": 10 + row}
+                for row in changed_rows
+            }
+        )
+        price_column = source_model.headers.index("现价")
+        proxy_model.sort(price_column, Qt.SortOrder.DescendingOrder)
+        proxy_model.setFilterText("股票40")
+        _process_events(qt_application)
+        region, dirty_cells, visible_dirty_cells = table._flash_repaint_region()
+
+        assert dirty_cells >= len(changed_rows)
+        assert visible_dirty_cells > 0
+        assert not region.isEmpty()
+        assert region != QRegion(table.viewport().rect())
+
+        updates = []
+        monkeypatch.setattr(table.viewport(), "update", lambda *args: updates.append(args))
+        table._tick_flash_repaint()
+
+        assert len(updates) == 1
+        assert len(updates[0]) == 1
+        assert isinstance(updates[0][0], QRegion)
+        assert updates[0][0] == region
         assert table._flash_repaint_timer.isActive() is False
     finally:
         table.deleteLater()
