@@ -6,6 +6,7 @@ from scripts.native_watchlist_profile import (
     _event_dispatcher_summary,
     _native_platform_error,
     _parse_args,
+    _quote_repaint_acceptance,
     _residual_repaint_acceptance,
     _summarize_residual_repaint_metrics,
     summarize_durations,
@@ -55,6 +56,7 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.quote_cycles == 0
     assert args.quote_cycle_ms == 1000
     assert args.quote_target_count == 6
+    assert args.question_dialog_ms == 0
     assert args.residual_repaint_cycles == 0
     assert args.legacy_quote_repaint is False
     assert args.no_cprofile is False
@@ -93,6 +95,8 @@ def test_native_watchlist_profile_summarizes_residual_repaint_structure():
     assert summary["model_updates"][0]["mode"] == "direct"
     assert summary["paint"]["full_viewport_count"] == 1
     assert summary["paint"]["max_dirty_bounding_area_ratio"] == 1.0
+    assert summary["paint"]["first"]["dirty_bounding_area_ratio"] == 0.125
+    assert summary["paint"]["after_first"]["full_viewport_count"] == 1
     assert summary["snapshot"]["capture_count"] == 0
     assert summary["snapshot"]["skipped_count"] == 1
 
@@ -131,13 +135,16 @@ def test_native_watchlist_profile_residual_acceptance_uses_structure_counts():
         },
         {
             "cycle": 1,
-            "action": "lhb_to_watchlist_snapshot_prepare",
-            "paint_region": {"count": 0, "full_viewport_count": 0},
-            "heartbeat_lateness": {"count": 4, "max_ms": 1.0},
-            "ui_stall_snapshot": {"installed": True, "total_count": 0},
+            "action": "lhb_to_watchlist",
+            "paint_region": {"count": 2, "full_viewport_count": 2},
+            "heartbeat_lateness": {"count": 4, "max_ms": 80.0},
+            "ui_stall_snapshot": {"installed": True, "total_count": 3, "critical_count": 0},
             "metrics": {
                 "model_updates": [],
-                "paint": {"full_viewport_count": 0},
+                "paint": {
+                    "full_viewport_count": 2,
+                    "first": {"reason": "native_profile_tab_return"},
+                },
                 "snapshot": {
                     "capture_count": 0,
                     "skipped_count": 1,
@@ -179,9 +186,71 @@ def test_native_watchlist_profile_residual_acceptance_rejects_missing_cycles_and
 
     assert acceptance["status"] == "fail"
     assert "cycle=1 action=watchlist_to_lhb result_count=0" in acceptance["violations"]
-    assert "cycle=1 action=lhb_to_watchlist_snapshot_prepare result_count=0" in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist result_count=0" in acceptance["violations"]
     assert "cycle=1 action=name_refresh heartbeat_stall" in acceptance["violations"]
     assert "cycle=1 action=name_refresh ui_stall_recorded" in acceptance["violations"]
+
+
+def test_native_watchlist_profile_residual_acceptance_rejects_visible_return_burst():
+    result = {
+        "cycle": 1,
+        "action": "lhb_to_watchlist",
+        "paint_region": {"count": 3, "full_viewport_count": 3},
+        "heartbeat_lateness": {"count": 4, "max_ms": 120.0},
+        "ui_stall_snapshot": {"installed": True, "total_count": 4, "critical_count": 1},
+        "metrics": {
+            "model_updates": [],
+            "paint": {
+                "full_viewport_count": 3,
+                "first": {"reason": "other"},
+            },
+            "snapshot": {
+                "capture_count": 0,
+                "skipped_count": 1,
+                "skipped_pairs": [{"source": "lhb", "target": "watchlist"}],
+            },
+        },
+    }
+
+    acceptance = _residual_repaint_acceptance([result])
+
+    assert acceptance["status"] == "fail"
+    assert "cycle=1 action=lhb_to_watchlist full_viewport_paint_budget" in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist full_viewport_region_budget" in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist first_paint_reason" in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist heartbeat_stall" in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist ui_critical_stall_recorded" in acceptance["violations"]
+
+
+def test_native_watchlist_profile_quote_acceptance_enforces_local_direct_repaint():
+    result = {
+        "cycle": 1,
+        "payload_size": 42,
+        "proxy_layout_changed_count": 0,
+        "paint_region": {"count": 2, "full_viewport_count": 0},
+        "heartbeat_lateness": {"count": 20, "max_ms": 4.0},
+        "ui_stall_snapshot": {"installed": True, "total_count": 0},
+        "metrics": {
+            "model_updates": [{"reason": "quote_snapshot", "mode": "direct"}],
+            "paint": {
+                "full_viewport_count": 0,
+                "reasons": ["quote_data_changed", "flash_expiry"],
+            },
+        },
+    }
+
+    assert _quote_repaint_acceptance([result], expected_cycles=1) == {
+        "status": "pass",
+        "violations": [],
+    }
+
+    result["proxy_layout_changed_count"] = 1
+    result["metrics"]["paint"]["full_viewport_count"] = 1
+    acceptance = _quote_repaint_acceptance([result], expected_cycles=2)
+    assert acceptance["status"] == "fail"
+    assert "cycle=1 proxy_layout_changed" in acceptance["violations"]
+    assert "cycle=1 full_viewport_paint" in acceptance["violations"]
+    assert "cycle=2 result_count=0" in acceptance["violations"]
 
 
 def test_native_watchlist_profile_cleans_isolated_database_on_exit(tmp_path, monkeypatch):

@@ -80,6 +80,8 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
         float(sample.tags.get("dirty_bounding_area_ratio", 0.0) or 0.0)
         for sample in paint_samples
     ]
+    after_first_paint_samples = paint_samples[1:]
+    after_first_paint_ratios = paint_ratios[1:]
     snapshot_samples = list(samples_by_name.get("tab_transition_snapshot_ms", ()))
     skipped_samples = list(samples_by_name.get("tab_transition_snapshot_skipped", ()))
     model_samples = list(samples_by_name.get("watchlist_model_update_ms", ()))
@@ -97,6 +99,21 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
             "durations": summarize_durations([sample.value for sample in paint_samples]),
             "full_viewport_count": sum(ratio >= 0.99 for ratio in paint_ratios),
             "max_dirty_bounding_area_ratio": round(max(paint_ratios, default=0.0), 4),
+            "reasons": [str(sample.tags.get("reason", "")) for sample in paint_samples],
+            "first": (
+                {
+                    "elapsed_ms": round(float(paint_samples[0].value), 3),
+                    "dirty_bounding_area_ratio": round(paint_ratios[0], 4),
+                    "reason": str(paint_samples[0].tags.get("reason", "")),
+                }
+                if paint_samples
+                else None
+            ),
+            "after_first": {
+                "durations": summarize_durations([sample.value for sample in after_first_paint_samples]),
+                "full_viewport_count": sum(ratio >= 0.99 for ratio in after_first_paint_ratios),
+                "max_dirty_bounding_area_ratio": round(max(after_first_paint_ratios, default=0.0), 4),
+            },
         },
         "snapshot": {
             "capture_count": len(snapshot_samples),
@@ -126,7 +143,7 @@ def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | 
         expected_actions = (
             "name_refresh",
             "watchlist_to_lhb",
-            "lhb_to_watchlist_snapshot_prepare",
+            "lhb_to_watchlist",
         )
         for cycle in range(1, expected_count + 1):
             for action in expected_actions:
@@ -144,20 +161,35 @@ def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | 
         paint = metrics.get("paint", {})
         paint_region = result.get("paint_region", {})
         snapshot = metrics.get("snapshot", {})
-        if int(paint.get("full_viewport_count", 0) or 0) != 0:
-            violations.append(f"cycle={cycle} action={action} full_viewport_paint")
-        if int(paint_region.get("full_viewport_count", 0) or 0) != 0:
-            violations.append(f"cycle={cycle} action={action} full_viewport_region")
+        visible_return = action == "lhb_to_watchlist"
+        if visible_return:
+            paint_full_count = int(paint.get("full_viewport_count", 0) or 0)
+            region_full_count = int(paint_region.get("full_viewport_count", 0) or 0)
+            if paint_full_count < 1 or paint_full_count > 2:
+                violations.append(f"cycle={cycle} action={action} full_viewport_paint_budget")
+            if region_full_count < 1 or region_full_count > 2:
+                violations.append(f"cycle={cycle} action={action} full_viewport_region_budget")
+            first_paint = paint.get("first") or {}
+            if first_paint.get("reason") != "native_profile_tab_return":
+                violations.append(f"cycle={cycle} action={action} first_paint_reason")
+        else:
+            if int(paint.get("full_viewport_count", 0) or 0) != 0:
+                violations.append(f"cycle={cycle} action={action} full_viewport_paint")
+            if int(paint_region.get("full_viewport_count", 0) or 0) != 0:
+                violations.append(f"cycle={cycle} action={action} full_viewport_region")
 
         heartbeat = result.get("heartbeat_lateness", {})
         if int(heartbeat.get("count", 0) or 0) < 1:
             violations.append(f"cycle={cycle} action={action} heartbeat_missing")
-        if float(heartbeat.get("max_ms", 0.0) or 0.0) >= 50.0:
+        heartbeat_limit_ms = 100.0 if visible_return else 50.0
+        if float(heartbeat.get("max_ms", 0.0) or 0.0) >= heartbeat_limit_ms:
             violations.append(f"cycle={cycle} action={action} heartbeat_stall")
         stall_snapshot = result.get("ui_stall_snapshot", {})
         if not bool(stall_snapshot.get("installed")):
             violations.append(f"cycle={cycle} action={action} stall_probe_missing")
-        elif int(stall_snapshot.get("total_count", 0) or 0) != 0:
+        elif visible_return and int(stall_snapshot.get("critical_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} action={action} ui_critical_stall_recorded")
+        elif not visible_return and int(stall_snapshot.get("total_count", 0) or 0) != 0:
             violations.append(f"cycle={cycle} action={action} ui_stall_recorded")
 
         if action == "name_refresh":
@@ -172,7 +204,7 @@ def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | 
                 violations.append(f"cycle={cycle} action={action} paint_metric_missing")
             if int(paint_region.get("count", 0) or 0) < 1:
                 violations.append(f"cycle={cycle} action={action} paint_region_missing")
-        elif action in {"watchlist_to_lhb", "lhb_to_watchlist_snapshot_prepare"}:
+        elif action in {"watchlist_to_lhb", "lhb_to_watchlist"}:
             if int(snapshot.get("capture_count", 0) or 0) != 0:
                 violations.append(f"cycle={cycle} action={action} snapshot_captured")
             if int(snapshot.get("skipped_count", 0) or 0) < 1:
@@ -191,6 +223,60 @@ def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | 
                 violations.append(f"cycle={cycle} action={action} snapshot_skip_pair_mismatch")
         else:
             violations.append(f"cycle={cycle} action={action} unexpected_action")
+    return {"status": "pass" if not violations else "fail", "violations": violations}
+
+
+def _quote_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
+    expected_count = None if expected_cycles is None else max(0, int(expected_cycles))
+    if not results:
+        if expected_count:
+            return {"status": "fail", "violations": ["quote_cycles_missing"]}
+        return {"status": "not_run", "violations": []}
+
+    violations = []
+    if expected_count is not None:
+        observed_cycles = [int(result.get("cycle", -1) or -1) for result in results]
+        for cycle in range(1, expected_count + 1):
+            if observed_cycles.count(cycle) != 1:
+                violations.append(f"cycle={cycle} result_count={observed_cycles.count(cycle)}")
+        if len(results) != expected_count:
+            violations.append(f"result_count={len(results)} expected={expected_count}")
+
+    for result in results:
+        cycle = result.get("cycle")
+        metrics = result.get("metrics", {})
+        paint = metrics.get("paint", {})
+        paint_region = result.get("paint_region", {})
+        model_updates = list(metrics.get("model_updates", ()))
+        if int(result.get("payload_size", 0) or 0) < 1:
+            violations.append(f"cycle={cycle} payload_missing")
+        if int(result.get("proxy_layout_changed_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} proxy_layout_changed")
+        if not model_updates:
+            violations.append(f"cycle={cycle} model_update_missing")
+        elif any(
+            sample.get("reason") != "quote_snapshot" or sample.get("mode") != "direct"
+            for sample in model_updates
+        ):
+            violations.append(f"cycle={cycle} non_direct_model_update")
+        if int(paint.get("full_viewport_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} full_viewport_paint")
+        if int(paint_region.get("full_viewport_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} full_viewport_region")
+        reasons = set(paint.get("reasons", ()))
+        for reason in ("quote_data_changed", "flash_expiry"):
+            if reason not in reasons:
+                violations.append(f"cycle={cycle} paint_reason_missing={reason}")
+        heartbeat = result.get("heartbeat_lateness", {})
+        if int(heartbeat.get("count", 0) or 0) < 1:
+            violations.append(f"cycle={cycle} heartbeat_missing")
+        if float(heartbeat.get("max_ms", 0.0) or 0.0) >= 50.0:
+            violations.append(f"cycle={cycle} heartbeat_stall")
+        stall_snapshot = result.get("ui_stall_snapshot", {})
+        if not bool(stall_snapshot.get("installed")):
+            violations.append(f"cycle={cycle} stall_probe_missing")
+        elif int(stall_snapshot.get("total_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} ui_stall_recorded")
     return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
@@ -274,6 +360,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--quote-cycle-ms", type=int, default=1000)
     parser.add_argument("--quote-target-count", type=int, default=6)
+    parser.add_argument(
+        "--question-dialog-ms",
+        type=int,
+        default=0,
+        help="Hold the production themed question dialog open for this many milliseconds and measure parent repaint.",
+    )
     parser.add_argument(
         "--residual-repaint-cycles",
         type=int,
@@ -478,7 +570,22 @@ class _FirstPaintProbe(QObject):
 
     def paint_region_summary(self, phase: str) -> dict:
         samples = list(self._paint_regions_by_phase.get(str(phase or "unknown"), ()))
+        return self._summarize_paint_regions(samples)
+
+    def paint_region_summary_prefix(self, prefix: str) -> dict:
+        normalized = str(prefix or "")
+        samples = [
+            sample
+            for phase, phase_samples in self._paint_regions_by_phase.items()
+            if phase.startswith(normalized)
+            for sample in phase_samples
+        ]
+        return self._summarize_paint_regions(samples)
+
+    @staticmethod
+    def _summarize_paint_regions(samples: list[dict]) -> dict:
         ratios = [float(sample.get("dirty_bounding_area_ratio", 0.0) or 0.0) for sample in samples]
+        after_first_ratios = ratios[1:]
         return {
             "count": len(samples),
             "full_viewport_count": sum(ratio >= 0.99 for ratio in ratios),
@@ -487,6 +594,19 @@ class _FirstPaintProbe(QObject):
                 (int(sample.get("region_rect_count", 0) or 0) for sample in samples),
                 default=0,
             ),
+            "first": (
+                {
+                    "dirty_bounding_area_ratio": round(ratios[0], 4),
+                    "region_rect_count": int(samples[0].get("region_rect_count", 0) or 0),
+                }
+                if samples
+                else None
+            ),
+            "after_first": {
+                "count": len(after_first_ratios),
+                "full_viewport_count": sum(ratio >= 0.99 for ratio in after_first_ratios),
+                "max_dirty_bounding_area_ratio": round(max(after_first_ratios, default=0.0), 4),
+            },
         }
 
     def mark_activation(self, started: float) -> None:
@@ -577,6 +697,10 @@ class _NativeProfileController:
         self._done = False
         self._quote_cycle_index = 0
         self._quote_cycle_payload_sizes: list[int] = []
+        self._quote_results: list[dict] = []
+        self._quote_phase: dict | None = None
+        self._question_dialog_probed = False
+        self._question_dialog_phase: dict | None = None
         self._residual_cycle_index = 0
         self._residual_results: list[dict] = []
         self._residual_phase: dict | None = None
@@ -663,6 +787,15 @@ class _NativeProfileController:
         table = getattr(tab, "table_sp", None)
         if table is not None:
             self.paint_probe.attach_watchlist_table(table)
+        proxy = getattr(tab, "proxy_model", None)
+        headers = list(getattr(model, "headers", None) or [])
+        if proxy is not None and headers and (
+            max(0, int(self.args.quote_cycles)) > 0
+            or max(0, int(self.args.residual_repaint_cycles)) > 0
+        ):
+            sort_header = "RPS强度" if "RPS强度" in headers else "代码"
+            proxy.sort(headers.index(sort_header))
+            self.report["watchlist"]["probe_sort_header"] = sort_header
         if bool(self.args.legacy_quote_repaint):
             if model is not None:
                 model.set_sparse_update_coalescing(True)
@@ -683,10 +816,72 @@ class _NativeProfileController:
     def _after_watchlist_settle(self) -> None:
         if self._done:
             return
+        if max(0, int(self.args.question_dialog_ms)) > 0 and not self._question_dialog_probed:
+            self._run_question_dialog_probe()
+            return
+        self._continue_after_watchlist_settle()
+
+    def _continue_after_watchlist_settle(self) -> None:
+        if self._done:
+            return
         if max(0, int(self.args.quote_cycles)) <= 0:
             self._prepare_residual_repaint()
             return
         self._start_quote_cycle()
+
+    def _run_question_dialog_probe(self) -> None:
+        workspace = getattr(self.window, "_workspace", None)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        table = getattr(tab, "table_sp", None)
+        if table is None:
+            self._fail("watchlist question-dialog probe unavailable")
+            return
+
+        from ui.components.message_box import ThemedQuestionDialog
+
+        self._question_dialog_probed = True
+        self._reset_stall_probe()
+        self._set_phase("question_dialog_open")
+        table._mark_pending_paint_metric("native_profile_question_dialog")
+        offsets = self._metric_offsets()
+        dialog = ThemedQuestionDialog(
+            self.window,
+            "运行时重绘探针",
+            "自动关闭的关注池确认框重绘探针。",
+            yes_text="继续",
+            no_text="取消",
+        )
+        self.QTimer.singleShot(max(1, int(self.args.question_dialog_ms)), dialog.accept)
+        started_at = time.perf_counter()
+        dialog.exec()
+        call_ms = (time.perf_counter() - started_at) * 1000.0
+        self._question_dialog_phase = {
+            "call_ms": round(call_ms, 3),
+            "offsets": offsets,
+        }
+        self._set_phase("question_dialog_close_settle")
+        self.QTimer.singleShot(250, self._finish_question_dialog_probe)
+
+    def _finish_question_dialog_probe(self) -> None:
+        phase = self._question_dialog_phase
+        if self._done or not phase:
+            return
+        heartbeat_values = [
+            value
+            for name, values in self._heartbeat_by_phase.items()
+            if name.startswith("question_dialog_")
+            for value in values
+        ]
+        self.report["question_dialog"] = {
+            "hold_ms": max(1, int(self.args.question_dialog_ms)),
+            "call_ms": phase["call_ms"],
+            "metrics": _summarize_residual_repaint_metrics(self._metrics_since(phase["offsets"])),
+            "paint_region": self.paint_probe.paint_region_summary_prefix("question_dialog_"),
+            "heartbeat_lateness": summarize_durations(heartbeat_values),
+            "ui_stall_snapshot": self._stall_snapshot(),
+        }
+        self._question_dialog_phase = None
+        self._continue_after_watchlist_settle()
 
     def _start_quote_cycle(self) -> None:
         if self._done:
@@ -713,11 +908,32 @@ class _NativeProfileController:
         cycle = self._quote_cycle_index + 1
         self._quote_cycle_index = cycle
         self._quote_cycle_payload_sizes.append(len(payload))
+        proxy = getattr(tab, "proxy_model", None)
+        layout_events = []
+
+        def layout_slot(*_args):
+            layout_events.append(time.perf_counter())
+
+        if proxy is not None:
+            proxy.layoutChanged.connect(layout_slot)
+        self._reset_stall_probe()
         self._set_phase(f"quote_cycle_{cycle}_initial_paint")
+        offsets = self._metric_offsets()
 
         from domains.quotes.dispatcher import publish_rt_quotes
 
+        started_at = time.perf_counter()
         publish_rt_quotes(payload, source="native_watchlist_profile")
+        call_ms = (time.perf_counter() - started_at) * 1000.0
+        self._quote_phase = {
+            "cycle": cycle,
+            "payload_size": len(payload),
+            "call_ms": round(call_ms, 3),
+            "layout_events": layout_events,
+            "layout_slot": layout_slot,
+            "offsets": offsets,
+            "proxy": proxy,
+        }
         cycle_ms = max(900, int(self.args.quote_cycle_ms))
         self.QTimer.singleShot(350, lambda cycle=cycle: self._set_quote_phase(cycle, "between_paints"))
         self.QTimer.singleShot(450, lambda cycle=cycle: self._set_quote_phase(cycle, "flash_expiry"))
@@ -731,6 +947,36 @@ class _NativeProfileController:
     def _finish_quote_cycle(self, cycle: int) -> None:
         if self._done or cycle != self._quote_cycle_index:
             return
+        phase = self._quote_phase
+        if not phase or phase.get("cycle") != cycle:
+            self._fail("watchlist quote-cycle probe state unavailable")
+            return
+        proxy = phase.get("proxy")
+        if proxy is not None:
+            try:
+                proxy.layoutChanged.disconnect(phase["layout_slot"])
+            except (RuntimeError, TypeError):
+                pass
+        phase_prefix = f"quote_cycle_{cycle}_"
+        heartbeat_values = [
+            value
+            for name, values in self._heartbeat_by_phase.items()
+            if name.startswith(phase_prefix)
+            for value in values
+        ]
+        self._quote_results.append(
+            {
+                "cycle": cycle,
+                "payload_size": phase["payload_size"],
+                "call_ms": phase["call_ms"],
+                "proxy_layout_changed_count": len(phase["layout_events"]),
+                "metrics": _summarize_residual_repaint_metrics(self._metrics_since(phase["offsets"])),
+                "paint_region": self.paint_probe.paint_region_summary_prefix(phase_prefix),
+                "heartbeat_lateness": summarize_durations(heartbeat_values),
+                "ui_stall_snapshot": self._stall_snapshot(),
+            }
+        )
+        self._quote_phase = None
         self._start_quote_cycle()
 
     @staticmethod
@@ -784,18 +1030,12 @@ class _NativeProfileController:
         shutdown = getattr(tab, "shutdown", None)
         if callable(shutdown):
             shutdown()
-        model = getattr(tab, "model", None)
-        proxy = getattr(tab, "proxy_model", None)
-        headers = list(getattr(model, "headers", None) or [])
-        if proxy is not None and headers:
-            sort_header = "RPS强度" if "RPS强度" in headers else "代码"
-            proxy.sort(headers.index(sort_header))
         residual_report = self.report.setdefault("residual_repaint", {})
         residual_report["background_runtime_isolated"] = True
         residual_report["probe_scope"] = {
             "name_refresh": "public_refresh_entrypoint",
             "watchlist_to_lhb": "outgoing_snapshot_only_current_changed_signals_blocked",
-            "lhb_to_watchlist": "incoming_snapshot_prepare_only_index_return_measured_separately",
+            "lhb_to_watchlist": "snapshot_skip_and_visible_index_return_current_changed_signals_blocked",
         }
         self._set_phase("residual_repaint_isolation_settle")
         self.QTimer.singleShot(800, self._start_residual_repaint_cycle)
@@ -950,41 +1190,48 @@ class _NativeProfileController:
             }
         )
 
-        self._start_residual_inbound_snapshot_probe(phase)
+        self._start_residual_inbound_tab_return(phase)
 
-    def _start_residual_inbound_snapshot_probe(self, outbound_phase: dict) -> None:
+    def _start_residual_inbound_tab_return(self, outbound_phase: dict) -> None:
         tabs = outbound_phase["tabs"]
         watchlist_index = outbound_phase["watchlist_index"]
+        workspace = getattr(self.window, "_workspace", None)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        table = getattr(tab, "table_sp", None)
+        if table is None:
+            self._fail("watchlist inbound tab-return probe unavailable")
+            return
         self._reset_stall_probe()
-        self._set_phase(f"residual_{outbound_phase['cycle']}_lhb_to_watchlist_snapshot_prepare")
+        self._set_phase(f"residual_{outbound_phase['cycle']}_lhb_to_watchlist")
+        table._mark_pending_paint_metric("native_profile_tab_return")
         offsets = self._metric_offsets()
         old_gap = int(getattr(tabs, "_min_transition_gap_ms", 0) or 0)
         old_suspended_until = float(getattr(tabs, "_transition_suspended_until", 0.0) or 0.0)
         old_last_transition_at = float(getattr(tabs, "_last_transition_at", 0.0) or 0.0)
+        previous_blocked = tabs.blockSignals(True)
         try:
             tabs.setMinimumTransitionGap(0)
             tabs._transition_suspended_until = 0.0
             tabs._last_transition_at = 0.0
             started_at = time.perf_counter()
-            tabs._prepare_transition(watchlist_index)
+            tabs.setCurrentIndex(watchlist_index)
             call_ms = (time.perf_counter() - started_at) * 1000.0
         finally:
             tabs._min_transition_gap_ms = old_gap
             tabs._transition_suspended_until = old_suspended_until
             tabs._last_transition_at = old_last_transition_at
+            tabs.blockSignals(previous_blocked)
         self._residual_phase = {
             "cycle": outbound_phase["cycle"],
-            "action": "lhb_to_watchlist_snapshot_prepare",
+            "action": "lhb_to_watchlist",
             "call_ms": round(call_ms, 3),
             "offsets": offsets,
-            "tabs": tabs,
-            "watchlist_index": watchlist_index,
         }
-        self.QTimer.singleShot(160, self._finish_residual_inbound_snapshot_probe)
+        self.QTimer.singleShot(250, self._finish_residual_inbound_tab_return)
 
-    def _finish_residual_inbound_snapshot_probe(self) -> None:
+    def _finish_residual_inbound_tab_return(self) -> None:
         phase = self._residual_phase
-        if self._done or not phase or phase.get("action") != "lhb_to_watchlist_snapshot_prepare":
+        if self._done or not phase or phase.get("action") != "lhb_to_watchlist":
             return
         self._residual_results.append(
             {
@@ -999,17 +1246,7 @@ class _NativeProfileController:
                 "ui_stall_snapshot": self._stall_snapshot(),
             }
         )
-
-        tabs = phase["tabs"]
-        previous_enabled = bool(getattr(tabs, "_transition_enabled", True))
-        previous_blocked = tabs.blockSignals(True)
-        try:
-            tabs.setTransitionEnabled(False)
-            tabs.setCurrentIndex(phase["watchlist_index"])
-        finally:
-            tabs.setTransitionEnabled(previous_enabled)
-            tabs.blockSignals(previous_blocked)
-        self._set_phase(f"residual_{phase['cycle']}_return_warmup")
+        self._set_phase(f"residual_{phase['cycle']}_cycle_settle")
         self._residual_phase = None
         self.QTimer.singleShot(160, self._start_residual_repaint_cycle)
 
@@ -1045,10 +1282,21 @@ class _NativeProfileController:
         self.report["heartbeat_lateness"] = {
             phase: summarize_durations(values) for phase, values in sorted(self._heartbeat_by_phase.items())
         }
+        quote_expected_cycles = max(0, int(self.args.quote_cycles))
+        quote_acceptance = _quote_repaint_acceptance(
+            self._quote_results,
+            expected_cycles=quote_expected_cycles,
+        )
+        quote_acceptance_enforced = quote_expected_cycles > 0 and not bool(self.args.legacy_quote_repaint)
         self.report["quote_cycles"] = {
             "completed": self._quote_cycle_index,
             "payload_sizes": list(self._quote_cycle_payload_sizes),
+            "acceptance": quote_acceptance,
+            "acceptance_enforced": quote_acceptance_enforced,
+            "results": list(self._quote_results),
         }
+        if quote_acceptance_enforced and quote_acceptance["status"] != "pass":
+            self.report["errors"].append("quote repaint acceptance failed")
         expected_cycles = max(0, int(self.args.residual_repaint_cycles))
         acceptance = _residual_repaint_acceptance(
             self._residual_results,
@@ -1175,6 +1423,7 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "quote_cycles": int(args.quote_cycles),
             "quote_cycle_ms": int(args.quote_cycle_ms),
             "quote_target_count": int(args.quote_target_count),
+            "question_dialog_ms": int(args.question_dialog_ms),
             "residual_repaint_cycles": int(args.residual_repaint_cycles),
             "legacy_quote_repaint": bool(args.legacy_quote_repaint),
             "cprofile_enabled": enabled,
