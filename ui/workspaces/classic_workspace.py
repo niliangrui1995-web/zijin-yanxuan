@@ -657,7 +657,19 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     SHELL_GROUP_REBUILD_LOAD_DELAY_MS = 120
     SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS = 250
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
-    SNAPSHOT_TRANSITION_SKIP_PAIRS = frozenset({("lhb", "asian_market")})
+    SNAPSHOT_TRANSITION_SKIP_PAIRS = frozenset(
+        {("lhb", "asian_market")}
+        | {
+            ("watchlist", definition.key)
+            for definition in TAB_DEFINITIONS
+            if definition.key != "watchlist"
+        }
+        | {
+            (definition.key, "watchlist")
+            for definition in TAB_DEFINITIONS
+            if definition.key != "watchlist"
+        }
+    )
     INTERACTIVE_LOAD_REASONS = INTERACTIVE_TAB_LOAD_REASONS
     PROBE_LOAD_REASONS = PROBE_TAB_LOAD_REASONS
     CONTROLLED_STARTUP_PROBE_DEFER_KEYS = frozenset(

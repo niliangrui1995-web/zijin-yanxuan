@@ -205,9 +205,16 @@ class VCPTableView(QTableView):
 
     def _apply_screen_width_limit(self):
         max_w = self._screen_width_limit()
-        self.horizontalHeader().setMaximumSectionSize(max_w)
-        self.setMaximumWidth(max_w)
-        self.updateGeometry()
+        changed = False
+        header = self.horizontalHeader()
+        if header.maximumSectionSize() != max_w:
+            header.setMaximumSectionSize(max_w)
+            changed = True
+        if self.maximumWidth() != max_w:
+            self.setMaximumWidth(max_w)
+            changed = True
+        if changed:
+            self.updateGeometry()
 
     def _on_sort_indicator_changed(self, column: int, _order):
         self._sorted_column = column
@@ -365,13 +372,16 @@ class VCPTableView(QTableView):
             header_state = snapshot.get("header_state")
             if header_state is not None:
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                    header.restoreState(header_state)
+                    if header.saveState() != header_state:
+                        header.restoreState(header_state)
 
             sort_column = int(snapshot.get("proxy_sort_column", snapshot.get("sort_column", -1)) or -1)
             sort_order = snapshot.get("proxy_sort_order", snapshot.get("sort_order", Qt.SortOrder.AscendingOrder))
             if sort_column >= 0:
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                    self.sortByColumn(sort_column, sort_order)
+                    current_sort_column, current_sort_order = _model_sort_state(self.model())
+                    if current_sort_column != sort_column or current_sort_order != sort_order:
+                        self.sortByColumn(sort_column, sort_order)
 
             selection_model = self.selectionModel()
             if selection_model is not None:

@@ -28,6 +28,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 NON_NATIVE_QT_PLATFORMS = frozenset({"offscreen", "minimal", "minimalegl", "vnc", "webgl"})
+RESIDUAL_REPAINT_METRICS = (
+    "watchlist_model_update_ms",
+    "watchlist_table_paint_ms",
+    "tab_transition_snapshot_ms",
+    "tab_transition_snapshot_skipped",
+)
 
 
 def _native_platform_error(*, requested: str, actual: str, system: str | None = None) -> str:
@@ -66,6 +72,126 @@ def summarize_durations(values: list[float]) -> dict:
         "over_50ms": sum(value >= 50.0 for value in clean),
         "over_100ms": sum(value >= 100.0 for value in clean),
     }
+
+
+def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dict:
+    paint_samples = list(samples_by_name.get("watchlist_table_paint_ms", ()))
+    paint_ratios = [
+        float(sample.tags.get("dirty_bounding_area_ratio", 0.0) or 0.0)
+        for sample in paint_samples
+    ]
+    snapshot_samples = list(samples_by_name.get("tab_transition_snapshot_ms", ()))
+    skipped_samples = list(samples_by_name.get("tab_transition_snapshot_skipped", ()))
+    model_samples = list(samples_by_name.get("watchlist_model_update_ms", ()))
+    return {
+        "model_updates": [
+            {
+                "elapsed_ms": round(float(sample.value), 3),
+                "changed_headers": sample.tags.get("changed_headers", ""),
+                "mode": sample.tags.get("mode", ""),
+                "reason": sample.tags.get("reason", ""),
+            }
+            for sample in model_samples
+        ],
+        "paint": {
+            "durations": summarize_durations([sample.value for sample in paint_samples]),
+            "full_viewport_count": sum(ratio >= 0.99 for ratio in paint_ratios),
+            "max_dirty_bounding_area_ratio": round(max(paint_ratios, default=0.0), 4),
+        },
+        "snapshot": {
+            "capture_count": len(snapshot_samples),
+            "durations": summarize_durations([sample.value for sample in snapshot_samples]),
+            "skipped_count": len(skipped_samples),
+            "skipped_pairs": [dict(sample.tags) for sample in skipped_samples],
+        },
+    }
+
+
+def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
+    if not results:
+        if expected_cycles is not None and int(expected_cycles) > 0:
+            return {"status": "fail", "violations": ["residual_actions_missing"]}
+        return {"status": "not_run", "violations": []}
+
+    violations = []
+    expected_count = None if expected_cycles is None else max(0, int(expected_cycles))
+    if expected_count is not None:
+        observed_counts: dict[tuple[int, str], int] = defaultdict(int)
+        for result in results:
+            try:
+                result_cycle = int(result.get("cycle"))
+            except (TypeError, ValueError):
+                result_cycle = -1
+            observed_counts[(result_cycle, str(result.get("action", "")))] += 1
+        expected_actions = (
+            "name_refresh",
+            "watchlist_to_lhb",
+            "lhb_to_watchlist_snapshot_prepare",
+        )
+        for cycle in range(1, expected_count + 1):
+            for action in expected_actions:
+                count = observed_counts.get((cycle, action), 0)
+                if count != 1:
+                    violations.append(f"cycle={cycle} action={action} result_count={count}")
+        expected_result_count = expected_count * len(expected_actions)
+        if len(results) != expected_result_count:
+            violations.append(f"result_count={len(results)} expected={expected_result_count}")
+
+    for result in results:
+        cycle = result.get("cycle")
+        action = str(result.get("action", ""))
+        metrics = result.get("metrics", {})
+        paint = metrics.get("paint", {})
+        paint_region = result.get("paint_region", {})
+        snapshot = metrics.get("snapshot", {})
+        if int(paint.get("full_viewport_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} action={action} full_viewport_paint")
+        if int(paint_region.get("full_viewport_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} action={action} full_viewport_region")
+
+        heartbeat = result.get("heartbeat_lateness", {})
+        if int(heartbeat.get("count", 0) or 0) < 1:
+            violations.append(f"cycle={cycle} action={action} heartbeat_missing")
+        if float(heartbeat.get("max_ms", 0.0) or 0.0) >= 50.0:
+            violations.append(f"cycle={cycle} action={action} heartbeat_stall")
+        stall_snapshot = result.get("ui_stall_snapshot", {})
+        if not bool(stall_snapshot.get("installed")):
+            violations.append(f"cycle={cycle} action={action} stall_probe_missing")
+        elif int(stall_snapshot.get("total_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} action={action} ui_stall_recorded")
+
+        if action == "name_refresh":
+            if not bool(result.get("changed")):
+                violations.append(f"cycle={cycle} action={action} update_missing")
+            if int(result.get("proxy_layout_changed_count", 0) or 0) != 0:
+                violations.append(f"cycle={cycle} action={action} proxy_layout_changed")
+            model_updates = list(metrics.get("model_updates", ()))
+            if not model_updates or any(sample.get("mode") != "direct" for sample in model_updates):
+                violations.append(f"cycle={cycle} action={action} non_direct_model_update")
+            if int(paint.get("durations", {}).get("count", 0) or 0) < 1:
+                violations.append(f"cycle={cycle} action={action} paint_metric_missing")
+            if int(paint_region.get("count", 0) or 0) < 1:
+                violations.append(f"cycle={cycle} action={action} paint_region_missing")
+        elif action in {"watchlist_to_lhb", "lhb_to_watchlist_snapshot_prepare"}:
+            if int(snapshot.get("capture_count", 0) or 0) != 0:
+                violations.append(f"cycle={cycle} action={action} snapshot_captured")
+            if int(snapshot.get("skipped_count", 0) or 0) < 1:
+                violations.append(f"cycle={cycle} action={action} snapshot_skip_missing")
+            expected_pair = (
+                ("watchlist", "lhb")
+                if action == "watchlist_to_lhb"
+                else ("lhb", "watchlist")
+            )
+            skipped_pairs = list(snapshot.get("skipped_pairs", ()))
+            if not any(
+                (str(pair.get("source", "")), str(pair.get("target", ""))) == expected_pair
+                for pair in skipped_pairs
+                if isinstance(pair, dict)
+            ):
+                violations.append(f"cycle={cycle} action={action} snapshot_skip_pair_mismatch")
+        else:
+            violations.append(f"cycle={cycle} action={action} unexpected_action")
+    return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
 def _prepare_profile_database(source: Path, target: Path) -> dict:
@@ -148,6 +274,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--quote-cycle-ms", type=int, default=1000)
     parser.add_argument("--quote-target-count", type=int, default=6)
+    parser.add_argument(
+        "--residual-repaint-cycles",
+        type=int,
+        default=0,
+        help="After quote cycles, probe name refresh and both Watchlist snapshot directions this many times.",
+    )
     parser.add_argument(
         "--legacy-quote-repaint",
         action="store_true",
@@ -321,16 +453,41 @@ class _FirstPaintProbe(QObject):
         self._qevent_type = qevent_type
         self._origin = origin
         self._activation_started = 0.0
+        self._phase = "startup_idle"
+        self._watchlist_viewport = None
+        self._paint_regions_by_phase: dict[str, list[dict]] = defaultdict(list)
         self.events: dict[str, float] = {}
         app.installEventFilter(self)
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt API naming
         event_type = event.type()
+        if watched is self._watchlist_viewport and event_type == self._qevent_type.Paint:
+            self._record_paint_region(watched, event)
         if watched is self._window:
             self._record_widget_event("window", event_type)
         elif watched.__class__.__name__ == "WatchlistTab":
             self._record_widget_event("watchlist", event_type)
         return False
+
+    def attach_watchlist_table(self, table) -> None:
+        viewport = getattr(table, "viewport", None)
+        self._watchlist_viewport = viewport() if callable(viewport) else None
+
+    def set_phase(self, phase: str) -> None:
+        self._phase = str(phase or "unknown")
+
+    def paint_region_summary(self, phase: str) -> dict:
+        samples = list(self._paint_regions_by_phase.get(str(phase or "unknown"), ()))
+        ratios = [float(sample.get("dirty_bounding_area_ratio", 0.0) or 0.0) for sample in samples]
+        return {
+            "count": len(samples),
+            "full_viewport_count": sum(ratio >= 0.99 for ratio in ratios),
+            "max_dirty_bounding_area_ratio": round(max(ratios, default=0.0), 4),
+            "max_region_rect_count": max(
+                (int(sample.get("region_rect_count", 0) or 0) for sample in samples),
+                default=0,
+            ),
+        }
 
     def mark_activation(self, started: float) -> None:
         self._activation_started = started
@@ -348,7 +505,28 @@ class _FirstPaintProbe(QObject):
             for key in ("watchlist_show_at_ms", "watchlist_first_paint_at_ms"):
                 if key in result:
                     result[key.replace("_at_ms", "_after_activation_ms")] = round(result[key] - activation_ms, 3)
+        result["watchlist_viewport_by_phase"] = {
+            phase: self.paint_region_summary(phase)
+            for phase in sorted(self._paint_regions_by_phase)
+        }
         return result
+
+    def _record_paint_region(self, watched, event) -> None:
+        try:
+            viewport_rect = watched.rect()
+            dirty_rect = event.region().boundingRect()
+            viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
+            dirty_area = max(0, dirty_rect.width() * dirty_rect.height())
+            ratio = min(1.0, dirty_area / viewport_area)
+            rect_count = int(event.region().rectCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        self._paint_regions_by_phase[self._phase].append(
+            {
+                "dirty_bounding_area_ratio": ratio,
+                "region_rect_count": rect_count,
+            }
+        )
 
     def _record_widget_event(self, prefix: str, event_type) -> None:
         if event_type == self._qevent_type.Show:
@@ -399,6 +577,10 @@ class _NativeProfileController:
         self._done = False
         self._quote_cycle_index = 0
         self._quote_cycle_payload_sizes: list[int] = []
+        self._residual_cycle_index = 0
+        self._residual_results: list[dict] = []
+        self._residual_phase: dict | None = None
+        self._residual_isolation_started = False
 
         self._heartbeat = qtimer_type()
         self._heartbeat.setTimerType(qt_timer_type.PreciseTimer)
@@ -420,6 +602,8 @@ class _NativeProfileController:
 
     def _set_phase(self, phase: str) -> None:
         self._phase = phase
+        self._heartbeat_last = time.perf_counter()
+        self.paint_probe.set_phase(phase)
         self.dispatcher_probe.set_phase(phase)
 
     def _activate_watchlist(self) -> None:
@@ -476,11 +660,13 @@ class _NativeProfileController:
             "visible": bool(tab.isVisible()),
             "workspace_load_reason": str(getattr(tab, "_workspace_load_reason", "")),
         }
+        table = getattr(tab, "table_sp", None)
+        if table is not None:
+            self.paint_probe.attach_watchlist_table(table)
         if bool(self.args.legacy_quote_repaint):
             if model is not None:
                 model.set_sparse_update_coalescing(True)
                 model.set_sparse_quote_update_coalescing(True)
-            table = getattr(tab, "table_sp", None)
             if table is not None:
                 table.set_targeted_flash_repaint_enabled(False, metric_scope="watchlist")
             self.report["watchlist"]["quote_repaint_mode"] = "legacy_full_viewport"
@@ -498,7 +684,7 @@ class _NativeProfileController:
         if self._done:
             return
         if max(0, int(self.args.quote_cycles)) <= 0:
-            self._finish()
+            self._prepare_residual_repaint()
             return
         self._start_quote_cycle()
 
@@ -507,7 +693,7 @@ class _NativeProfileController:
             return
         cycle_count = max(0, int(self.args.quote_cycles))
         if self._quote_cycle_index >= cycle_count:
-            self._finish()
+            self._prepare_residual_repaint()
             return
 
         workspace = getattr(self.window, "_workspace", None)
@@ -547,6 +733,286 @@ class _NativeProfileController:
             return
         self._start_quote_cycle()
 
+    @staticmethod
+    def _reset_stall_probe() -> None:
+        from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
+
+        stall_probe = get_ui_stall_probe()
+        if stall_probe is not None:
+            stall_probe.reset_stall_snapshot()
+
+    @staticmethod
+    def _stall_snapshot() -> dict:
+        from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
+
+        stall_probe = get_ui_stall_probe()
+        return stall_probe.stall_snapshot() if stall_probe is not None else {"installed": False}
+
+    @staticmethod
+    def _metric_offsets() -> dict[str, float]:
+        recorded_after = time.time()
+        return {name: recorded_after for name in RESIDUAL_REPAINT_METRICS}
+
+    @staticmethod
+    def _metrics_since(offsets: dict[str, float]) -> dict[str, list]:
+        from core.observability import metric_history
+
+        return {
+            name: [
+                sample
+                for sample in metric_history(name)
+                if float(sample.recorded_at) >= float(offsets.get(name, 0.0))
+            ]
+            for name in RESIDUAL_REPAINT_METRICS
+        }
+
+    def _prepare_residual_repaint(self) -> None:
+        if self._done:
+            return
+        if max(0, int(self.args.residual_repaint_cycles)) <= 0:
+            self._finish()
+            return
+        if self._residual_isolation_started:
+            return
+        self._residual_isolation_started = True
+
+        workspace = getattr(self.window, "_workspace", None)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        if tab is None:
+            self._fail("watchlist residual repaint isolation unavailable")
+            return
+        shutdown = getattr(tab, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
+        model = getattr(tab, "model", None)
+        proxy = getattr(tab, "proxy_model", None)
+        headers = list(getattr(model, "headers", None) or [])
+        if proxy is not None and headers:
+            sort_header = "RPS强度" if "RPS强度" in headers else "代码"
+            proxy.sort(headers.index(sort_header))
+        residual_report = self.report.setdefault("residual_repaint", {})
+        residual_report["background_runtime_isolated"] = True
+        residual_report["probe_scope"] = {
+            "name_refresh": "public_refresh_entrypoint",
+            "watchlist_to_lhb": "outgoing_snapshot_only_current_changed_signals_blocked",
+            "lhb_to_watchlist": "incoming_snapshot_prepare_only_index_return_measured_separately",
+        }
+        self._set_phase("residual_repaint_isolation_settle")
+        self.QTimer.singleShot(800, self._start_residual_repaint_cycle)
+
+    def _start_residual_repaint_cycle(self) -> None:
+        if self._done:
+            return
+        cycle_count = max(0, int(self.args.residual_repaint_cycles))
+        if self._residual_cycle_index >= cycle_count:
+            self._finish()
+            return
+
+        workspace = getattr(self.window, "_workspace", None)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        model = getattr(tab, "model", None)
+        proxy = getattr(tab, "proxy_model", None)
+        table = getattr(tab, "table_sp", None)
+        rows = list(getattr(model, "row_data", None) or [])
+        if tab is None or model is None or proxy is None or table is None or not rows:
+            self._fail("watchlist residual repaint probe unavailable")
+            return
+
+        cycle = self._residual_cycle_index + 1
+        self._residual_cycle_index = cycle
+
+        source_row = 0
+        try:
+            proxy_index = proxy.index(0, 0)
+            mapped = proxy.mapToSource(proxy_index)
+            if mapped.isValid():
+                source_row = mapped.row()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            source_row = 0
+        row = rows[source_row]
+        code = str(row.get("代码", "") or "").strip()
+        original_name = str(row.get("名称", "") or "").strip()
+        resolved_name = original_name if original_name and original_name != code else f"运行时探针{cycle}"
+        if not code:
+            self._fail("watchlist residual repaint probe code unavailable")
+            return
+
+        # Prime only the isolated in-memory profile model; the public refresh
+        # entrypoint below performs the measured change and emits its real signal.
+        row["名称"] = code
+        layout_events = []
+
+        def layout_slot(*_args):
+            layout_events.append(time.perf_counter())
+
+        proxy.layoutChanged.connect(layout_slot)
+        self._reset_stall_probe()
+        self._set_phase(f"residual_{cycle}_name_refresh")
+        table._mark_pending_paint_metric("native_profile_name_refresh")
+        offsets = self._metric_offsets()
+        started_at = time.perf_counter()
+        changed = bool(tab.refresh_watchlist_names({code: resolved_name}))
+        call_ms = (time.perf_counter() - started_at) * 1000.0
+        self._residual_phase = {
+            "cycle": cycle,
+            "action": "name_refresh",
+            "call_ms": round(call_ms, 3),
+            "changed": changed,
+            "layout_events": layout_events,
+            "layout_slot": layout_slot,
+            "offsets": offsets,
+            "proxy": proxy,
+        }
+        self.QTimer.singleShot(160, self._finish_residual_name_refresh)
+
+    def _finish_residual_name_refresh(self) -> None:
+        phase = self._residual_phase
+        if self._done or not phase or phase.get("action") != "name_refresh":
+            return
+        proxy = phase["proxy"]
+        try:
+            proxy.layoutChanged.disconnect(phase["layout_slot"])
+        except (RuntimeError, TypeError):
+            pass
+        result = {
+            "cycle": phase["cycle"],
+            "action": phase["action"],
+            "call_ms": phase["call_ms"],
+            "changed": phase["changed"],
+            "proxy_layout_changed_count": len(phase["layout_events"]),
+            "metrics": _summarize_residual_repaint_metrics(self._metrics_since(phase["offsets"])),
+            "paint_region": self.paint_probe.paint_region_summary(self._phase),
+            "heartbeat_lateness": summarize_durations(
+                list(self._heartbeat_by_phase.get(self._phase, ()))
+            ),
+            "ui_stall_snapshot": self._stall_snapshot(),
+        }
+        self._residual_results.append(result)
+        self._start_residual_tab_switch(phase["cycle"])
+
+    def _start_residual_tab_switch(self, cycle: int) -> None:
+        workspace = getattr(self.window, "_workspace", None)
+        tabs = getattr(workspace, "tabs", None)
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or []) if workspace is not None else []
+        watchlist_index = next((i for i, spec in enumerate(specs) if spec.get("key") == "watchlist"), -1)
+        target_index = next((i for i, spec in enumerate(specs) if spec.get("key") == "lhb"), -1)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        table = getattr(tab, "table_sp", None)
+        if tabs is None or table is None or watchlist_index < 0 or target_index < 0:
+            self._fail("watchlist tab-switch probe unavailable")
+            return
+
+        self._reset_stall_probe()
+        self._set_phase(f"residual_{cycle}_watchlist_to_lhb")
+        table._mark_pending_paint_metric("native_profile_tab_switch")
+        offsets = self._metric_offsets()
+        old_gap = int(getattr(tabs, "_min_transition_gap_ms", 0) or 0)
+        old_suspended_until = float(getattr(tabs, "_transition_suspended_until", 0.0) or 0.0)
+        old_last_transition_at = float(getattr(tabs, "_last_transition_at", 0.0) or 0.0)
+        previous_blocked = tabs.blockSignals(True)
+        try:
+            tabs.setMinimumTransitionGap(0)
+            tabs._transition_suspended_until = 0.0
+            tabs._last_transition_at = 0.0
+            started_at = time.perf_counter()
+            tabs.setCurrentIndex(target_index)
+            call_ms = (time.perf_counter() - started_at) * 1000.0
+        finally:
+            tabs._min_transition_gap_ms = old_gap
+            tabs._transition_suspended_until = old_suspended_until
+            tabs._last_transition_at = old_last_transition_at
+            tabs.blockSignals(previous_blocked)
+        self._residual_phase = {
+            "cycle": cycle,
+            "action": "watchlist_to_lhb",
+            "call_ms": round(call_ms, 3),
+            "offsets": offsets,
+            "tabs": tabs,
+            "watchlist_index": watchlist_index,
+        }
+        self.QTimer.singleShot(160, self._finish_residual_tab_switch)
+
+    def _finish_residual_tab_switch(self) -> None:
+        phase = self._residual_phase
+        if self._done or not phase or phase.get("action") != "watchlist_to_lhb":
+            return
+        self._residual_results.append(
+            {
+                "cycle": phase["cycle"],
+                "action": phase["action"],
+                "call_ms": phase["call_ms"],
+                "metrics": _summarize_residual_repaint_metrics(self._metrics_since(phase["offsets"])),
+                "paint_region": self.paint_probe.paint_region_summary(self._phase),
+                "heartbeat_lateness": summarize_durations(
+                    list(self._heartbeat_by_phase.get(self._phase, ()))
+                ),
+                "ui_stall_snapshot": self._stall_snapshot(),
+            }
+        )
+
+        self._start_residual_inbound_snapshot_probe(phase)
+
+    def _start_residual_inbound_snapshot_probe(self, outbound_phase: dict) -> None:
+        tabs = outbound_phase["tabs"]
+        watchlist_index = outbound_phase["watchlist_index"]
+        self._reset_stall_probe()
+        self._set_phase(f"residual_{outbound_phase['cycle']}_lhb_to_watchlist_snapshot_prepare")
+        offsets = self._metric_offsets()
+        old_gap = int(getattr(tabs, "_min_transition_gap_ms", 0) or 0)
+        old_suspended_until = float(getattr(tabs, "_transition_suspended_until", 0.0) or 0.0)
+        old_last_transition_at = float(getattr(tabs, "_last_transition_at", 0.0) or 0.0)
+        try:
+            tabs.setMinimumTransitionGap(0)
+            tabs._transition_suspended_until = 0.0
+            tabs._last_transition_at = 0.0
+            started_at = time.perf_counter()
+            tabs._prepare_transition(watchlist_index)
+            call_ms = (time.perf_counter() - started_at) * 1000.0
+        finally:
+            tabs._min_transition_gap_ms = old_gap
+            tabs._transition_suspended_until = old_suspended_until
+            tabs._last_transition_at = old_last_transition_at
+        self._residual_phase = {
+            "cycle": outbound_phase["cycle"],
+            "action": "lhb_to_watchlist_snapshot_prepare",
+            "call_ms": round(call_ms, 3),
+            "offsets": offsets,
+            "tabs": tabs,
+            "watchlist_index": watchlist_index,
+        }
+        self.QTimer.singleShot(160, self._finish_residual_inbound_snapshot_probe)
+
+    def _finish_residual_inbound_snapshot_probe(self) -> None:
+        phase = self._residual_phase
+        if self._done or not phase or phase.get("action") != "lhb_to_watchlist_snapshot_prepare":
+            return
+        self._residual_results.append(
+            {
+                "cycle": phase["cycle"],
+                "action": phase["action"],
+                "call_ms": phase["call_ms"],
+                "metrics": _summarize_residual_repaint_metrics(self._metrics_since(phase["offsets"])),
+                "paint_region": self.paint_probe.paint_region_summary(self._phase),
+                "heartbeat_lateness": summarize_durations(
+                    list(self._heartbeat_by_phase.get(self._phase, ()))
+                ),
+                "ui_stall_snapshot": self._stall_snapshot(),
+            }
+        )
+
+        tabs = phase["tabs"]
+        previous_enabled = bool(getattr(tabs, "_transition_enabled", True))
+        previous_blocked = tabs.blockSignals(True)
+        try:
+            tabs.setTransitionEnabled(False)
+            tabs.setCurrentIndex(phase["watchlist_index"])
+        finally:
+            tabs.setTransitionEnabled(previous_enabled)
+            tabs.blockSignals(previous_blocked)
+        self._set_phase(f"residual_{phase['cycle']}_return_warmup")
+        self._residual_phase = None
+        self.QTimer.singleShot(160, self._start_residual_repaint_cycle)
+
     def _on_heartbeat(self) -> None:
         now = time.perf_counter()
         if self._heartbeat_last <= 0:
@@ -583,6 +1049,20 @@ class _NativeProfileController:
             "completed": self._quote_cycle_index,
             "payload_sizes": list(self._quote_cycle_payload_sizes),
         }
+        expected_cycles = max(0, int(self.args.residual_repaint_cycles))
+        acceptance = _residual_repaint_acceptance(
+            self._residual_results,
+            expected_cycles=expected_cycles,
+        )
+        self.report.setdefault("residual_repaint", {}).update(
+            {
+                "acceptance": acceptance,
+                "completed_cycles": self._residual_cycle_index,
+                "results": list(self._residual_results),
+            }
+        )
+        if expected_cycles > 0 and acceptance["status"] != "pass":
+            self.report["errors"].append("residual repaint acceptance failed")
         self.report["background_tasks_at_finish"] = int(getattr(background_job_runner, "active_count", 0) or 0)
         stall_probe = get_ui_stall_probe()
         self.report["ui_stall_snapshot"] = stall_probe.stall_snapshot() if stall_probe is not None else {"installed": False}
@@ -695,6 +1175,7 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "quote_cycles": int(args.quote_cycles),
             "quote_cycle_ms": int(args.quote_cycle_ms),
             "quote_target_count": int(args.quote_target_count),
+            "residual_repaint_cycles": int(args.residual_repaint_cycles),
             "legacy_quote_repaint": bool(args.legacy_quote_repaint),
             "cprofile_enabled": enabled,
         },

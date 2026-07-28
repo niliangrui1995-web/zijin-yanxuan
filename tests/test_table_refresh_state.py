@@ -195,6 +195,114 @@ def test_vcp_table_view_skips_restore_snapshot_for_initial_empty_model(qt_applic
         table.deleteLater()
 
 
+def test_vcp_table_view_restores_header_only_when_snapshot_changed(qt_application, monkeypatch):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    proxy_model = RtSortFilterProxyModel(table)
+    proxy_model.setSourceModel(source_model)
+    table.setModel(proxy_model)
+    source_model.update_data(_rows(3))
+    table.resize(420, 260)
+    table.show()
+    _process_events(qt_application)
+
+    try:
+        header = table.horizontalHeader()
+        original_width = header.sectionSize(0)
+        snapshot = {
+            "v_scroll": 0,
+            "h_scroll": 0,
+            "current_row": -1,
+            "selected_rows": [],
+            "selected_codes": [],
+            "header_state": header.saveState(),
+            "proxy_sort_column": -1,
+        }
+        restore_calls = []
+        original_restore = header.restoreState
+
+        def _record_restore(state):
+            restore_calls.append(state)
+            return original_restore(state)
+
+        monkeypatch.setattr(header, "restoreState", _record_restore)
+
+        table._restore_refresh_state(dict(snapshot))
+        assert restore_calls == []
+
+        header.resizeSection(0, original_width + 37)
+        table._restore_refresh_state(dict(snapshot))
+        assert len(restore_calls) == 1
+        assert header.sectionSize(0) == original_width
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_skips_restore_sort_when_proxy_state_is_unchanged(qt_application, monkeypatch):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    proxy_model = RtSortFilterProxyModel(table)
+    proxy_model.setSourceModel(source_model)
+    table.setModel(proxy_model)
+    source_model.update_data(_rows(3))
+    proxy_model.sort(1, Qt.SortOrder.AscendingOrder)
+    table.resize(420, 260)
+    table.show()
+    _process_events(qt_application)
+
+    try:
+        snapshot = {
+            "v_scroll": 0,
+            "h_scroll": 0,
+            "current_row": -1,
+            "selected_rows": [],
+            "selected_codes": [],
+            "header_state": table.horizontalHeader().saveState(),
+            "proxy_sort_column": 1,
+            "proxy_sort_order": Qt.SortOrder.AscendingOrder,
+        }
+        sort_calls = []
+        original_sort = table.sortByColumn
+
+        def _record_sort(column, order):
+            sort_calls.append((column, order))
+            original_sort(column, order)
+
+        monkeypatch.setattr(table, "sortByColumn", _record_sort)
+
+        table._restore_refresh_state(dict(snapshot))
+        assert sort_calls == []
+
+        snapshot["proxy_sort_order"] = Qt.SortOrder.DescendingOrder
+        table._restore_refresh_state(dict(snapshot))
+        assert sort_calls == [(1, Qt.SortOrder.DescendingOrder)]
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_reuses_unchanged_screen_width_limit(monkeypatch):
+    table = VCPTableView()
+    header_calls = []
+    width_calls = []
+    geometry_calls = []
+    try:
+        monkeypatch.setattr(
+            table.horizontalHeader(),
+            "setMaximumSectionSize",
+            lambda value: header_calls.append(value),
+        )
+        monkeypatch.setattr(table, "setMaximumWidth", lambda value: width_calls.append(value))
+        monkeypatch.setattr(table, "updateGeometry", lambda: geometry_calls.append(True))
+
+        table._apply_screen_width_limit()
+
+        assert header_calls == []
+        assert width_calls == []
+        assert geometry_calls == []
+    finally:
+        table.deleteLater()
+
+
 def test_vcp_table_view_elides_long_cell_text():
     table = VCPTableView()
     try:

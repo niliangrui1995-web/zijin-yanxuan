@@ -1634,6 +1634,16 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert isinstance(workspace.tabs, SmoothTabWidget)
         assert workspace.tabs._transition_enabled is True
         assert ("lhb", "asian_market") in workspace.tabs._snapshot_transition_skip_pairs
+        assert {
+            ("watchlist", key)
+            for key in tab_keys
+            if key != "watchlist"
+        }.issubset(workspace.tabs._snapshot_transition_skip_pairs)
+        assert {
+            (key, "watchlist")
+            for key in tab_keys
+            if key != "watchlist"
+        }.issubset(workspace.tabs._snapshot_transition_skip_pairs)
     finally:
         workspace.shutdown()
         workspace.deleteLater()

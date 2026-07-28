@@ -390,7 +390,7 @@ def test_apply_and_persist_metrics_branches(monkeypatch):
         model=model,
         _last_vcp_payload_signature=(),
         _vcp_payload_signature=watch.WatchlistTab._vcp_payload_signature,
-        _run_coalesced_model_update=lambda callback: callback(),
+        _run_coalesced_model_update=lambda callback, **_kwargs: callback(),
         _format_watchlist_note=watch.WatchlistTab._format_watchlist_note,
         _schedule_watchlist_metrics_persist=lambda results: scheduled.append(results),
         _touch_watchlist_update=lambda: True,
@@ -747,14 +747,14 @@ def test_event_ready_delay_timer_active_guard_and_name_refresh(monkeypatch):
     tab.isVisible = lambda: (_ for _ in ()).throw(RuntimeError("gone"))
     assert not watch.WatchlistTab._is_active_workspace_tab_for_vcp(tab)
 
-    emitted = _Signal()
+    updated = []
     model = SimpleNamespace(
         row_data=[{"代码": "000001", "名称": "000001"}, {"代码": "000002", "名称": "Named"}],
-        layoutChanged=emitted,
+        set_cell_value=lambda row, header, value, **kwargs: updated.append((row, header, value, kwargs)),
     )
-    tab = SimpleNamespace(model=model)
+    tab = SimpleNamespace(model=model, _run_coalesced_model_update=lambda callback, **_kwargs: callback())
     assert watch.WatchlistTab.refresh_watchlist_names(tab, {"000001": "One"})
-    assert emitted.calls == [()]
+    assert updated == [(0, "名称", "One", {"record_flash": False})]
     assert not watch.WatchlistTab.refresh_watchlist_names(SimpleNamespace(model=None), {})
 
 

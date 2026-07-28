@@ -531,7 +531,15 @@ class StockTableModel(QAbstractTableModel):
         self.sig_rows_reordered.emit(codes)
         return False
 
-    def set_cell_value(self, row, col_name, new_val, emit_signal: bool = True):
+    def set_cell_value(
+        self,
+        row,
+        col_name,
+        new_val,
+        emit_signal: bool = True,
+        *,
+        record_flash: bool = True,
+    ):
         flash_recorded = False
         if 0 <= row < len(self._data):
             old_val = self._data[row].get(col_name)
@@ -543,7 +551,8 @@ class StockTableModel(QAbstractTableModel):
                 col_idx = -1
             if col_idx >= 0:
                 self._sort_value_cache.pop((row, col_idx), None)
-                flash_recorded = self._record_cell_flash(row, col_idx, old_val, new_val)
+                if record_flash:
+                    flash_recorded = self._record_cell_flash(row, col_idx, old_val, new_val)
 
             if emit_signal and col_idx >= 0:
                 idx = self.index(row, col_idx)

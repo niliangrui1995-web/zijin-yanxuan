@@ -115,7 +115,7 @@ def test_finish_retry_and_pool_payload_branches(monkeypatch):
     cache_only_calls = []
     owner._background_preload_cache_only = True
     owner._get_lhb_trade_dates = lambda *, allow_refresh: cache_only_calls.append(allow_refresh) or []
-    assert lhb._load_lhb_pool_payload(owner, token) == {"status": "calendar_missing"}
+    assert lhb._load_lhb_pool_payload(owner, token) == {"status": "calendar_missing", "cache_only": True}
     assert cache_only_calls == [False]
 
     manager = _Manager()
@@ -128,6 +128,7 @@ def test_finish_retry_and_pool_payload_branches(monkeypatch):
     owner._build_pool_display_rows = lambda pool, context: [{"row": context["000001"]}]
     payload = lhb._load_lhb_pool_payload(owner, token)
     assert payload["status"] == "ok" and payload["row_data"] == [{"row": "AI"}]
+    assert payload["cache_only"] is False
 
 
 def test_wait_as_payload_fetch_missing_success_error_and_cancel(monkeypatch):
@@ -329,9 +330,13 @@ def test_load_pool_defer_guards_and_callbacks(monkeypatch):
     tab._pool_bootstrap_not_before = 0.0
     tab._pool_load_in_progress = True
     lhb.LhbTab._load_and_display_pool(tab)
+    assert tab._pending_pool_refresh is True
+    tab._pending_pool_refresh = False
     tab._pool_load_in_progress = False
     monkeypatch.setattr(lhb.task_manager, "is_active_task", lambda task_id: True)
     lhb.LhbTab._load_and_display_pool(tab)
+    assert tab._pending_pool_refresh is True
+    tab._pending_pool_refresh = False
 
     monkeypatch.setattr(lhb.task_manager, "is_active_task", lambda task_id: False)
     captured = {}
@@ -641,9 +646,9 @@ def test_sort_opening_quote_and_display_empty_branches(monkeypatch):
     tab._get_ai_chain_context_map = lambda: {}
     tab._describe_lhb_rows = lambda rows: SimpleNamespace(signature="same")
     tab._last_lhb_signature = "same"
-    tab._get_pool_manager = lambda: _Manager()
+    tab._cached_pool_day_count = lambda: 2
     tab._status_metric = lambda prefix, value, suffix="": f"{prefix}{value}{suffix}"
-    tab._latest_cached_trade_date = lambda: ""
+    tab._latest_loaded_cached_trade_date = lambda: ""
     tab._refresh_lhb_lineage = lambda rows: None
     lhb.LhbTab._display_pool(tab, [], row_data=None)
     assert tab.table_state.calls[-1][0] == "empty"

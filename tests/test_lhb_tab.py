@@ -148,6 +148,22 @@ def test_lhb_pool_window_is_30_trade_days():
     assert lhb_tab_module.POOL_WINDOW == 30
 
 
+def test_lhb_pool_manager_creation_metric_identifies_trigger(monkeypatch):
+    expected = object()
+    metrics = []
+    monkeypatch.setattr(lhb_tab_module, "LhbPoolManager", lambda: expected)
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+    )
+
+    assert lhb_tab_module._create_lhb_pool_manager("backfill") is expected
+    assert metrics[0][0] == "lhb_pool_manager_create_ms"
+    assert metrics[0][1] >= 0
+    assert metrics[0][2]["tags"] == {"status": "ok", "trigger": "backfill"}
+
+
 def test_lhb_build_backfill_progress_log_formats_statuses():
     ok_level, ok_msg = LhbTab._build_backfill_progress_log(1, 30, "20260401", {"status": "ok", "count": 68})
     empty_level, empty_msg = LhbTab._build_backfill_progress_log(2, 30, "20260402", {"status": "empty", "count": 0})
@@ -256,10 +272,18 @@ def test_lhb_show_event_consumes_pending_pool_refresh(monkeypatch):
     tab._pool_bootstrap_started = True
     tab._pending_pool_refresh = True
     tab._is_current_workspace_tab = lambda: True
+    tab.isVisible = lambda: True
     tab._load_and_display_pool = lambda **kwargs: loads.append(dict(kwargs))
     try:
         tab.showEvent(QShowEvent())
+        tab.showEvent(QShowEvent())
 
+        assert tab._pending_pool_refresh is True
+        assert tab._pool_update_refresh_timer.isActive() is True
+        assert loads == []
+
+        tab._pool_update_refresh_timer.stop()
+        tab._run_pending_pool_refresh()
         assert tab._pending_pool_refresh is False
         assert loads == [{"emit_event": False}]
     finally:
@@ -338,6 +362,129 @@ def test_lhb_workspace_activation_resumes_deferred_backfill(monkeypatch):
             ((["20260716"], ["20260715"], "20260716"), {"defer_when_inactive": True})
         ]
         assert tab._pending_backfill_request is None
+        assert tab._pending_backfill_defer_when_inactive is False
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_workspace_activation_defers_backfill_behind_pending_pool_refresh(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    resumed = []
+    tab._pool_bootstrap_started = True
+    tab._pending_pool_refresh = True
+    monkeypatch.setattr(tab, "_resume_pending_backfill", lambda: resumed.append(True) or True)
+    try:
+        tab.on_workspace_tab_activated()
+
+        assert resumed == []
+        assert tab._pending_pool_refresh is True
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_workspace_activation_queues_interactive_refresh_after_cache_only_preload(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    resumed = []
+    tab._pool_bootstrap_started = True
+    tab._pool_load_in_progress = True
+    tab._background_preload_cache_only = True
+    monkeypatch.setattr(tab, "_resume_pending_backfill", lambda: resumed.append(True) or True)
+    try:
+        tab.on_workspace_tab_activated()
+
+        assert tab._background_preload_cache_only is False
+        assert tab._pending_pool_refresh is True
+        assert resumed == []
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_reload_waits_for_active_backfill():
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._backfill_in_progress = True
+    try:
+        tab._load_and_display_pool()
+
+        assert tab._pending_pool_refresh is True
+        assert tab._pool_load_in_progress is False
+    finally:
+        tab._backfill_in_progress = False
+        tab.deleteLater()
+
+
+def test_lhb_rps_refresh_is_queued_while_pool_load_is_active():
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._pool_bootstrap_started = True
+    tab._pool_load_in_progress = True
+    try:
+        tab._on_cache_bootstrap_ready()
+
+        assert tab._rps_injected_flag is True
+        assert tab._pending_pool_refresh is True
+    finally:
+        tab._pool_load_in_progress = False
+        tab.deleteLater()
+
+
+def test_lhb_fresh_pool_gaps_replace_deferred_auto_backfill(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    started = []
+    tab._pending_backfill_request = (["20260701"], ["20260702"], "20260702")
+    tab._pending_backfill_defer_when_inactive = True
+    monkeypatch.setattr(tab, "_is_current_workspace_tab", lambda: True)
+    monkeypatch.setattr(tab, "_start_backfill", lambda *args, **kwargs: started.append((args, kwargs)))
+    try:
+        lhb_tab_module._handle_lhb_pool_gaps(
+            tab,
+            {
+                "missing": ["20260727"],
+                "pending_validation": ["20260726"],
+                "validation_ref_date": "20260727",
+            },
+            [{"code": "000001"}],
+            cache_only=False,
+        )
+
+        assert started == [
+            ((["20260727"], ["20260726"], "20260727"), {"defer_when_inactive": True})
+        ]
+        assert tab._pending_backfill_request is None
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_fresh_gap_free_pool_discards_deferred_auto_backfill():
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._pending_backfill_request = (["20260701"], [], "20260701")
+    tab._pending_backfill_defer_when_inactive = True
+    try:
+        lhb_tab_module._handle_lhb_pool_gaps(
+            tab,
+            {"missing": [], "pending_validation": [], "validation_ref_date": "20260727"},
+            [{"code": "000001"}],
+            cache_only=False,
+        )
+
+        assert tab._pending_backfill_request is None
+        assert tab._pending_backfill_defer_when_inactive is False
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_fresh_pool_preserves_manual_pending_backfill():
+    tab = LhbTab(object(), autoload_pool=False)
+    manual_request = (["20260701"], [], "20260701")
+    tab._pending_backfill_request = manual_request
+    tab._pending_backfill_defer_when_inactive = False
+    try:
+        lhb_tab_module._handle_lhb_pool_gaps(
+            tab,
+            {"missing": [], "pending_validation": [], "validation_ref_date": "20260727"},
+            [{"code": "000001"}],
+            cache_only=False,
+        )
+
+        assert tab._pending_backfill_request == manual_request
         assert tab._pending_backfill_defer_when_inactive is False
     finally:
         tab.deleteLater()
@@ -560,6 +707,34 @@ def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_loading_status_does_not_construct_pool_manager(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._pool_bootstrap_started = True
+    monkeypatch.setattr(
+        tab,
+        "_get_pool_manager",
+        lambda: (_ for _ in ()).throw(AssertionError("status must not load the pool cache")),
+    )
+    try:
+        tab._set_pool_status("正在加载龙虎榜池", freshness="后台计算")
+
+        assert tab.pool_manager is None
+        assert "正在加载龙虎榜池" in tab.lbl_status.text()
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_table_uses_targeted_coalesced_flash_repaint():
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        assert tab.table._coalesced_flash_repaint is True
+        assert tab.table._targeted_flash_repaint is True
+        assert tab.table._paint_metric_scope == "lhb"
+        assert tab.table._flash_repaint_timer.isSingleShot() is True
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_data_lineage_reports_deferred_without_pool_cache(monkeypatch):
     monkeypatch.setattr(
         lhb_tab_module,
@@ -677,11 +852,17 @@ def test_lhb_display_pool_emits_update_without_self_reload(monkeypatch):
 
 def test_lhb_display_pool_skips_duplicate_event_and_quote_refresh(monkeypatch):
     quote_calls = []
+    metrics = []
     monkeypatch.setattr(
         LhbTab,
         "refresh_table_quotes_and_market_caps",
         lambda self, *args, **kwargs: quote_calls.append(kwargs),
         raising=False,
+    )
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
     )
 
     tab = LhbTab(object(), autoload_pool=False)
@@ -697,6 +878,9 @@ def test_lhb_display_pool_skips_duplicate_event_and_quote_refresh(monkeypatch):
         assert len(spy) == 1
         assert len(quote_calls) == 1
         assert len(tab.model.row_data) == 1
+        apply_metrics = [item for item in metrics if item[0] == "lhb_pool_model_apply_ms"]
+        assert [item[2]["tags"]["rows_changed"] for item in apply_metrics] == ["true", "false"]
+        assert all(item[2]["tags"]["trigger"] == "direct" for item in apply_metrics)
     finally:
         tab.deleteLater()
 
@@ -1026,6 +1210,8 @@ def test_lhb_pool_bootstrap_skips_duplicate_active_task(monkeypatch):
 
         assert task_ids
         assert tab._pool_load_in_progress is False
+        assert tab._pending_pool_refresh is True
+        assert tab._pool_retry_timer.isActive() is True
         assert tab.table_state._stack.currentWidget() is tab.table_state.table
     finally:
         tab.deleteLater()
@@ -1048,6 +1234,38 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
         assert len(tasks) == 1
         assert "lhb_pool_bootstrap" in str(tasks[0][3])
         assert tab._pool_load_in_progress is True
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_bootstrap_captures_cache_only_at_submission(monkeypatch):
+    submissions = []
+    captured = []
+
+    class FakeLifecycle:
+        def run_background(self, name, fn, **kwargs):
+            submissions.append((name, fn, kwargs))
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda _task_id: False)
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "_load_lhb_pool_payload",
+        lambda _owner, _token, *, cache_only=None: captured.append(cache_only) or {},
+    )
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    tab._background_preload_cache_only = True
+    try:
+        tab._load_and_display_pool()
+        tab._background_preload_cache_only = False
+        submissions[0][1](object())
+
+        assert captured == [True]
     finally:
         tab.deleteLater()
 

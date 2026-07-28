@@ -11,6 +11,7 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel, QTabWidget, QWidget
 
 from core.logger import get_logger
+from core.observability import record_metric
 from ui.theme_tokens import build_ui_tokens
 
 log = get_logger(__name__)
@@ -150,6 +151,20 @@ class SmoothTabWidget(QTabWidget):
         snapshot_started_at = time.perf_counter()
         pixmap = old_widget.grab()
         self._last_snapshot_ms = (time.perf_counter() - snapshot_started_at) * 1000.0
+        target_widget = self.widget(target_index)
+        record_metric(
+            "tab_transition_snapshot_ms",
+            self._last_snapshot_ms,
+            unit="ms",
+            tags={
+                "pixels": str(pixel_count),
+                "source": str(getattr(old_widget, "workspace_key", "") or old_widget.__class__.__name__),
+                "target": str(
+                    getattr(target_widget, "workspace_key", "")
+                    or (target_widget.__class__.__name__ if target_widget is not None else "unknown")
+                ),
+            },
+        )
         if self._last_snapshot_ms >= self._slow_snapshot_threshold_ms:
             log.debug(
                 "tab transition snapshot %.1fms widget=%s size=%sx%s pixels=%s",
@@ -199,6 +214,12 @@ class SmoothTabWidget(QTabWidget):
                         "tab transition snapshot skipped source=%s target=%s",
                         source_id,
                         target_id,
+                    )
+                    record_metric(
+                        "tab_transition_snapshot_skipped",
+                        1,
+                        unit="count",
+                        tags={"source": source_id, "target": target_id},
                     )
                     return True
         return False

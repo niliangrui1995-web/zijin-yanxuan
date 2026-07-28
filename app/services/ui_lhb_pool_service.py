@@ -16,12 +16,14 @@ Application facade for the LHB rolling pool.
 
 import copy
 import threading
+import time
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from app.services.ui_industry_chain_service import load_cached_ai_industry_chain_stock_codes
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from core.logger import get_logger
+from core.observability import record_metric
 from domains.industry_chain.pool_service import normalize_ai_chain_code
 from domains.lhb.pool_service import (
     POOL_WINDOW,
@@ -64,10 +66,30 @@ class LhbPoolManager:
     # 持久化
     # ================================================================
     def _load(self) -> None:
+        started_at = time.perf_counter()
+        status = "error"
+        try:
+            status = self._load_state()
+        finally:
+            cached_days = len(getattr(self, "_data", {}) or {})
+            if status == "ok" and not cached_days:
+                status = "empty"
+            record_metric(
+                "lhb_pool_cache_load_ms",
+                (time.perf_counter() - started_at) * 1000.0,
+                unit="ms",
+                tags={
+                    "cached_days": str(cached_days),
+                    "status": status,
+                    "thread": "main" if threading.current_thread() is threading.main_thread() else "worker",
+                },
+            )
+
+    def _load_state(self) -> str:
         try:
             raw, cache_path = LhbPoolRepository.load_state(self._cache_path, self._legacy_pool_cache_path)
             if not raw:
-                return
+                return "empty"
             if cache_path != self._cache_path:
                 log.info("[龙虎榜池] 检测到旧 20 日缓存，将作为 30 日窗口种子加载")
             self._data = raw.get("daily_data", {})
@@ -81,9 +103,11 @@ class LhbPoolManager:
                 self.save()
                 log.info(f"[龙虎榜池] 已升级 {migrated_count} 条旧版外资席位摘要缓存")
             log.info(f"[龙虎榜池] 缓存加载成功，包含 {len(self._data)} 个交易日数据")
+            return "ok"
         except (LhbRepositoryError, TypeError, ValueError) as e:
             log.warning(f"[龙虎榜池] 缓存加载失败，将重建: {e}")
             self._data = {}
+            return "error"
 
     def _remember_persisted_state(self) -> None:
         self._persisted_data = copy.deepcopy(self._data)
@@ -506,6 +530,32 @@ class LhbPoolManager:
 
         返回：按 买点触发优先 → 买点组内涨幅%降序 → 非买点按最近上榜日降序 排列的列表
         """
+        started_at = time.perf_counter()
+        result: list[dict] = []
+        status = "ok"
+        try:
+            result = self._compute_pool_rows(data_provider=data_provider, engine=engine)
+            return result
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            if status == "ok" and not result:
+                status = "empty"
+            record_metric(
+                "lhb_pool_compute_ms",
+                (time.perf_counter() - started_at) * 1000.0,
+                unit="ms",
+                tags={
+                    "cached_days": str(len(getattr(self, "_data", {}) or {})),
+                    "price_history": str(data_provider is not None).lower(),
+                    "result_rows": str(len(result)),
+                    "status": status,
+                    "thread": "main" if threading.current_thread() is threading.main_thread() else "worker",
+                },
+            )
+
+    def _compute_pool_rows(self, data_provider: Any = None, engine: Any = None) -> list[dict]:
         with self._state_lock:
             data_snapshot = dict(self._data)
         if not data_snapshot:

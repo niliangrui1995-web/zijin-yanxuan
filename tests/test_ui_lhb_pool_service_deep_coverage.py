@@ -58,6 +58,50 @@ def test_load_current_cache_remembers_state(monkeypatch):
     assert manager._clear_requested is False
 
 
+def test_cache_load_and_compute_emit_runtime_metrics(monkeypatch):
+    manager = _manager()
+    metrics = []
+    raw = {"daily_data": {"20260101": [{"code": "000001"}]}, "day_meta": {}, "last_auto_fetch_date": "x"}
+    monkeypatch.setattr(module.LhbPoolRepository, "load_state", lambda *_args: (raw, manager._cache_path))
+    monkeypatch.setattr(manager, "_upgrade_legacy_foreign_display_cache", lambda: 0)
+    monkeypatch.setattr(
+        module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+    )
+
+    manager._load()
+    monkeypatch.setattr(
+        manager,
+        "_compute_pool_rows",
+        lambda data_provider=None, engine=None: [{"code": "000001"}],
+    )
+    assert manager.compute_pool(data_provider=object()) == [{"code": "000001"}]
+
+    cache_metric = next(item for item in metrics if item[0] == "lhb_pool_cache_load_ms")
+    compute_metric = next(item for item in metrics if item[0] == "lhb_pool_compute_ms")
+    assert cache_metric[1] >= 0
+    assert cache_metric[2]["tags"] == {
+        "cached_days": "1",
+        "status": "ok",
+        "thread": "main",
+    }
+    assert compute_metric[1] >= 0
+    assert compute_metric[2]["tags"]["price_history"] == "true"
+    assert compute_metric[2]["tags"]["result_rows"] == "1"
+    assert compute_metric[2]["tags"]["status"] == "ok"
+
+    metrics.clear()
+    monkeypatch.setattr(
+        module.LhbPoolRepository,
+        "load_state",
+        lambda *_args: (_ for _ in ()).throw(module.LhbRepositoryError("broken")),
+    )
+    manager._load()
+    assert metrics[-1][0] == "lhb_pool_cache_load_ms"
+    assert metrics[-1][2]["tags"]["status"] == "error"
+
+
 def test_save_success_and_repository_error(monkeypatch):
     manager = _manager()
     manager._data = {"20260101": [{"code": "000001"}]}

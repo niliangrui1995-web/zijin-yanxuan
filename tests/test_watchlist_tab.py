@@ -3,13 +3,14 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QColor, QHideEvent, QShowEvent
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 
 from app.services.stock_context_model_service import StockContextSnapshot
 from core.event_bus import event_bus
+from core.observability import clear_metric_history, metric_history
 from domains.stock_context.signal_builders import RADAR_SOURCE_KEYS
 from ui.tabs import watchlist_tab as watchlist_module
 from ui.theme import theme_manager
@@ -21,6 +22,21 @@ class _DummyProvider:
         self.code2name = {"600519": "贵州茅台"}
 
     def is_online(self):
+        return False
+
+
+class _PaintRegionProbe(QObject):
+    def __init__(self):
+        super().__init__()
+        self.dirty_ratios = []
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt API naming
+        if event.type() == QEvent.Type.Paint:
+            viewport_rect = watched.rect()
+            dirty_rect = event.region().boundingRect()
+            viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
+            dirty_area = max(0, dirty_rect.width() * dirty_rect.height())
+            self.dirty_ratios.append(min(1.0, dirty_area / viewport_area))
         return False
 
 
@@ -103,6 +119,257 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
         assert tab.proxy_model.rowCount() == 1
         assert tab.proxy_model.data(tab.proxy_model.index(0, code_column), Qt.ItemDataRole.DisplayRole) == "000040"
     finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_quote_refresh_skips_proxy_layout_when_sort_key_is_unchanged(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    clear_metric_history()
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        tab.model.update_data(
+            [
+                {"代码": "000001", "名称": "甲", "现价": "10.00", "涨幅%": 0.0, "市值": "--", "RPS强度": "90"},
+                {"代码": "000002", "名称": "乙", "现价": "20.00", "涨幅%": 0.0, "市值": "--", "RPS强度": "80"},
+            ]
+        )
+        rps_column = tab.model.headers.index("RPS强度")
+        code_column = tab.model.headers.index("代码")
+        tab.proxy_model.sort(rps_column, Qt.SortOrder.DescendingOrder)
+        layout_spy = QSignalSpy(tab.proxy_model.layoutChanged)
+
+        result = tab._apply_quote_snapshot(
+            {"000002": {"close": 21.0, "last_close": 20.0}}
+        )
+
+        assert result["changed_rows"] == 1
+        assert len(layout_spy) == 0
+        assert tab.proxy_model.data(tab.proxy_model.index(0, code_column), Qt.ItemDataRole.DisplayRole) == "000001"
+        sample = metric_history("watchlist_model_update_ms")[-1]
+        assert sample.tags["mode"] == "direct"
+        assert sample.tags["reason"] == "quote_snapshot"
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_non_sort_quote_refresh_keeps_runtime_dirty_region_local(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    probe = _PaintRegionProbe()
+    try:
+        rows = [
+            {
+                "代码": f"{600000 + index:06d}",
+                "名称": f"样本{index}",
+                "现价": f"{10 + index:.2f}",
+                "涨幅%": 0.0,
+                "市值": "--",
+                "RPS强度": str(99 - index),
+            }
+            for index in range(41)
+        ]
+        tab.model.update_data(rows)
+        rps_column = tab.model.headers.index("RPS强度")
+        tab.proxy_model.sort(rps_column, Qt.SortOrder.DescendingOrder)
+        tab.resize(900, 720)
+        tab.show()
+        for _ in range(4):
+            app.processEvents()
+        tab.table_sp.viewport().installEventFilter(probe)
+
+        tab._apply_quote_snapshot(
+            {rows[0]["代码"]: {"close": 31.0, "last_close": 10.0}}
+        )
+        for _ in range(4):
+            app.processEvents()
+
+        assert probe.dirty_ratios
+        assert max(probe.dirty_ratios) < 0.99
+    finally:
+        tab.table_sp.viewport().removeEventFilter(probe)
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_quote_refresh_reorders_once_when_price_sort_key_changes(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    clear_metric_history()
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        tab.model.update_data(
+            [
+                {"代码": "000001", "名称": "甲", "现价": "10.00", "涨幅%": 0.0, "市值": "--"},
+                {"代码": "000002", "名称": "乙", "现价": "20.00", "涨幅%": 0.0, "市值": "--"},
+            ]
+        )
+        price_column = tab.model.headers.index("现价")
+        code_column = tab.model.headers.index("代码")
+        tab.proxy_model.sort(price_column, Qt.SortOrder.DescendingOrder)
+        layout_spy = QSignalSpy(tab.proxy_model.layoutChanged)
+
+        result = tab._apply_quote_snapshot(
+            {"000001": {"close": 30.0, "last_close": 10.0}}
+        )
+
+        assert result["changed_rows"] == 1
+        assert len(layout_spy) <= 1
+        assert tab.proxy_model.data(tab.proxy_model.index(0, code_column), Qt.ItemDataRole.DisplayRole) == "000001"
+        sample = metric_history("watchlist_model_update_ms")[-1]
+        assert sample.tags["mode"] == "coalesced"
+        assert sample.tags["reason"] == "quote_snapshot"
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_name_refresh_emits_cells_without_unrelated_layout(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    clear_metric_history()
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        tab.model.update_data(
+            [
+                {"代码": "000001", "名称": "000001", "现价": "10.00"},
+                {"代码": "000002", "名称": "", "现价": "20.00"},
+            ]
+        )
+        code_column = tab.model.headers.index("代码")
+        name_column = tab.model.headers.index("名称")
+        tab.proxy_model.sort(code_column, Qt.SortOrder.AscendingOrder)
+        data_spy = QSignalSpy(tab.model.dataChanged)
+        reset_spy = QSignalSpy(tab.model.modelReset)
+        layout_spy = QSignalSpy(tab.proxy_model.layoutChanged)
+
+        assert tab.refresh_watchlist_names({"000001": "甲", "000002": "乙"}) is True
+
+        assert len(reset_spy) == 0
+        assert len(layout_spy) == 0
+        assert [(change[0].row(), change[0].column()) for change in data_spy] == [
+            (0, name_column),
+            (1, name_column),
+        ]
+        flash_role = int(Qt.ItemDataRole.UserRole) + 1
+        assert all(flash_role not in {int(getattr(role, "value", role)) for role in change[2]} for change in data_spy)
+        assert [row["名称"] for row in tab.model.row_data] == ["甲", "乙"]
+        sample = metric_history("watchlist_model_update_ms")[-1]
+        assert sample.tags == {
+            "changed_headers": "名称",
+            "mode": "direct",
+            "reason": "name_refresh",
+        }
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+@pytest.mark.parametrize("filter_kind", ["global", "exact"])
+def test_watchlist_name_refresh_reapplies_affected_filter(monkeypatch, filter_kind):
+    _patch_watchlist_constructor(monkeypatch)
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    code_header = "\u4ee3\u7801"
+    name_header = "\u540d\u79f0"
+    try:
+        tab.model.update_data([{code_header: "000001", name_header: "000001"}])
+        if filter_kind == "global":
+            tab.proxy_model.setFilterText("\u7532")
+        else:
+            tab.proxy_model.setColumnFilter(name_header, "\u7532")
+        assert tab.proxy_model.rowCount() == 0
+
+        assert tab.refresh_watchlist_names({"000001": "\u7532"}) is True
+
+        assert tab.proxy_model.rowCount() == 1
+        name_column = tab.model.headers.index(name_header)
+        assert tab.proxy_model.data(
+            tab.proxy_model.index(0, name_column),
+            Qt.ItemDataRole.DisplayRole,
+        ) == "\u7532"
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_vcp_refresh_skips_layout_when_active_sort_value_is_unchanged(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    probe = _PaintRegionProbe()
+    clear_metric_history()
+    monkeypatch.setattr(watchlist_vm, "derive_source_tags", lambda _row, existing_tags=None: list(existing_tags or []))
+    monkeypatch.setattr(watchlist_vm, "format_source_tags", lambda tags: "/".join(tags))
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    tab._schedule_watchlist_metrics_persist = lambda _results: None
+    try:
+        rows = [
+            {
+                "代码": code,
+                "名称": name,
+                "来源": "",
+                "来源标签": [],
+                "现价": "--",
+                "涨幅%": "--",
+                "市值": "--",
+                "RPS强度": rps,
+                "细分板块": "",
+                "摘要": "旧摘要",
+                "备注": "",
+                "业绩异动": "",
+                "业绩环比%": "",
+                "大宗交易": "",
+                "大宗交易金额(万)": "",
+                "龙虎榜": "",
+                "龙虎榜日期": "",
+                "龙虎榜净额(万)": "",
+            }
+            for code, name, rps in (("000001", "甲", "90"), ("000002", "乙", "80"))
+        ]
+        tab.model.update_data(rows)
+        rps_column = tab.model.headers.index("RPS强度")
+        code_column = tab.model.headers.index("代码")
+        tab.proxy_model.sort(rps_column, Qt.SortOrder.DescendingOrder)
+        reset_spy = QSignalSpy(tab.model.modelReset)
+        layout_spy = QSignalSpy(tab.proxy_model.layoutChanged)
+        tab._touch_watchlist_update("22:58")
+        tab._update_status_summary()
+        tab.resize(900, 720)
+        tab.show()
+        for _ in range(4):
+            app.processEvents()
+        tab._now_hhmm = lambda: "22:59"
+        tab.table_sp.viewport().installEventFilter(probe)
+
+        tab._apply_vcp_indicators_ui(
+            {
+                row["代码"]: {
+                    "rps": row["RPS强度"],
+                    "subsector": "",
+                    "remark": f"新摘要{index}",
+                    "block_trade": "",
+                    "block_trade_amount_wan": "",
+                    "earnings": "",
+                    "earnings_qoq_pct": "",
+                    "lhb": "",
+                }
+                for index, row in enumerate(rows)
+            }
+        )
+        for _ in range(4):
+            app.processEvents()
+
+        assert len(reset_spy) == 0
+        assert len(layout_spy) == 0
+        assert probe.dirty_ratios
+        assert max(probe.dirty_ratios) < 0.99
+        assert tab.proxy_model.data(tab.proxy_model.index(0, code_column), Qt.ItemDataRole.DisplayRole) == "000001"
+        assert [row["摘要"] for row in tab.model.row_data] == ["新摘要0", "新摘要1"]
+        sample = metric_history("watchlist_model_update_ms")[-1]
+        assert sample.tags["mode"] == "direct"
+        assert sample.tags["reason"] == "vcp_indicators"
+        assert sample.tags["changed_headers"] == "摘要"
+    finally:
+        tab.table_sp.viewport().removeEventFilter(probe)
         tab.shutdown()
         tab.deleteLater()
 

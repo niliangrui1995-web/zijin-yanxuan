@@ -421,16 +421,105 @@ def _proxy_has_active_sort_or_filter(proxy) -> bool:
     return active_sort or active_filter
 
 
-def _run_coalesced_model_update(owner, callback):
+def _proxy_filter_depends_on_changed_headers(proxy, changed_headers) -> bool:
+    if proxy is None:
+        return False
+
+    global_filter_active = bool(getattr(proxy, "_filter_text", ""))
+    exact_filters = getattr(proxy, "_exact_column_filters", {})
+    exact_filter_active = bool(exact_filters)
+    if changed_headers is None:
+        return global_filter_active or exact_filter_active
+
+    normalized_headers = {
+        str(header or "").strip()
+        for header in changed_headers
+        if str(header or "").strip()
+    }
+    if not normalized_headers:
+        return False
+
+    # RtSortFilterProxyModel's global search can inspect every visible column.
+    if global_filter_active:
+        return True
+    if isinstance(exact_filters, dict):
+        return bool(normalized_headers.intersection(str(header) for header in exact_filters))
+    return exact_filter_active
+
+
+def _proxy_update_requires_coalescing(proxy, changed_headers) -> bool:
+    if not _proxy_has_active_sort_or_filter(proxy):
+        return False
+    # Keep dynamic filtering enabled when an updated field can change row
+    # membership. Re-enabling dynamicSortFilter does not invalidate a filter.
+    if _proxy_filter_depends_on_changed_headers(proxy, changed_headers):
+        return False
+    if changed_headers is None:
+        return True
+
+    normalized_headers = {
+        str(header or "").strip()
+        for header in changed_headers
+        if str(header or "").strip()
+    }
+    if not normalized_headers:
+        return False
+
+    sort_column = getattr(proxy, "sortColumn", None)
+    if not callable(sort_column):
+        return True
+    try:
+        column = int(sort_column())
+    except (RuntimeError, TypeError, ValueError):
+        return True
+    if column < 0:
+        return False
+
+    source_model = getattr(proxy, "sourceModel", None)
+    if not callable(source_model):
+        return True
+    try:
+        source = source_model()
+        sort_header = source.headerData(
+            column,
+            Qt.Orientation.Horizontal,
+            Qt.ItemDataRole.DisplayRole,
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return True
+    return str(sort_header or "").strip() in normalized_headers
+
+
+def _run_coalesced_model_update(owner, callback, *, changed_headers=None, reason: str = "model_update"):
     proxy = getattr(owner, "proxy_model", None)
-    dynamic_sorting = _proxy_has_active_sort_or_filter(proxy)
-    if dynamic_sorting:
+    normalized_headers = (
+        None
+        if changed_headers is None
+        else {
+            str(header or "").strip()
+            for header in changed_headers
+            if str(header or "").strip()
+        }
+    )
+    coalesced = _proxy_update_requires_coalescing(proxy, normalized_headers)
+    started_at = time.perf_counter()
+    if coalesced:
         proxy.setDynamicSortFilter(False)
     try:
         return callback()
     finally:
-        if dynamic_sorting:
+        if coalesced:
             proxy.setDynamicSortFilter(True)
+        record_metric(
+            "watchlist_model_update_ms",
+            (time.perf_counter() - started_at) * 1000.0,
+            unit="ms",
+            tags={
+                "changed_headers": "*" if normalized_headers is None else ",".join(sorted(normalized_headers)),
+                "mode": "coalesced" if coalesced else "direct",
+                "reason": str(reason or "model_update"),
+            },
+        )
 
 
 def _run_vcp_refresh(codes_with_rows, context_snapshot, fallback_radar_data, cancellation_token):
@@ -1383,7 +1472,11 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         quotes: Mapping[str, Mapping[str, object]] | None,
     ):
         apply_snapshot = super()._apply_quote_snapshot
-        return self._run_coalesced_model_update(lambda: apply_snapshot(quotes))
+        return self._run_coalesced_model_update(
+            lambda: apply_snapshot(quotes),
+            changed_headers={"现价", "市价", "涨幅%", "涨幅", "市值", "买点"},
+            reason="quote_snapshot",
+        )
 
     def _on_watchlist_changed(self, action: str, _code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
@@ -1478,8 +1571,18 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
             rows_changed = updated_rows != current_rows
             if rows_changed:
+                changed_headers = {
+                    header
+                    for header in (getattr(self.model, "headers", None) or ())
+                    if any(
+                        current_row.get(header) != updated_row.get(header)
+                        for current_row, updated_row in zip(current_rows, updated_rows, strict=True)
+                    )
+                }
                 self._run_coalesced_model_update(
-                    lambda: self.model.update_data(updated_rows, hydrate_latest_quotes=False)
+                    lambda: self.model.update_data(updated_rows, hydrate_latest_quotes=False),
+                    changed_headers=changed_headers,
+                    reason="vcp_indicators",
                 )
 
         if payload_signature:
@@ -1822,19 +1925,28 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         if not self.model:
             return False
 
-        changed = False
-        for row in getattr(self.model, "row_data", []) or []:
+        updates = []
+        for row_index, row in enumerate(getattr(self.model, "row_data", []) or []):
             code = str(row.get("代码", "")).strip()
             name = str(row.get("名称", "")).strip()
             if code and (not name or name == code):
                 resolved = str(code2name.get(code, code)).strip()
                 if resolved and resolved != name:
-                    row["名称"] = resolved
-                    changed = True
+                    updates.append((row_index, resolved))
 
-        if changed:
-            self.model.layoutChanged.emit()
-        return changed
+        if not updates:
+            return False
+
+        def _apply_name_updates() -> None:
+            for row_index, resolved in updates:
+                self.model.set_cell_value(row_index, "名称", resolved, record_flash=False)
+
+        self._run_coalesced_model_update(
+            _apply_name_updates,
+            changed_headers={"名称"},
+            reason="name_refresh",
+        )
+        return True
 
     def _do_vcp_calc(self):
         """实际计算"""

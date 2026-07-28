@@ -4,6 +4,7 @@ import time
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from core.observability import clear_metric_history, metric_history
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.models.table_models import StockTableModel
 
@@ -100,29 +101,38 @@ def test_smooth_tab_widget_configured_transition_pair_does_not_grab(monkeypatch)
     app = QApplication.instance() or QApplication([])
     tabs = SmoothTabWidget()
     grabbed = []
+    clear_metric_history()
 
     class GrabWidget(QWidget):
         def grab(self):
-            grabbed.append("grab")
+            grabbed.append(self.workspace_key)
             return super().grab()
 
     try:
         source = GrabWidget()
-        source.workspace_key = "lhb"
-        target = QWidget()
-        target.workspace_key = "asian_market"
-        tabs.addTab(source, "LHB")
-        tabs.addTab(target, "Asian")
+        source.workspace_key = "watchlist"
+        target = GrabWidget()
+        target.workspace_key = "lhb"
+        tabs.addTab(source, "Watchlist")
+        tabs.addTab(target, "LHB")
         tabs.resize(240, 160)
-        tabs.setSnapshotTransitionSkipPairs({("lhb", "asian_market")})
+        tabs.setSnapshotTransitionSkipPairs({("watchlist", "lhb"), ("lhb", "watchlist")})
         tabs.show()
         app.processEvents()
 
         tabs.setCurrentIndex(1)
+        app.processEvents()
+        tabs.setCurrentIndex(0)
 
-        assert tabs.currentIndex() == 1
+        assert tabs.currentIndex() == 0
         assert grabbed == []
         assert tabs._pending_transition is None
+        skipped = metric_history("tab_transition_snapshot_skipped")
+        assert [sample.tags for sample in skipped] == [
+            {"source": "watchlist", "target": "lhb"},
+            {"source": "lhb", "target": "watchlist"},
+        ]
+        assert metric_history("tab_transition_snapshot_ms") == []
     finally:
         tabs.close()
         tabs.deleteLater()
