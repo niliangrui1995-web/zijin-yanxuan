@@ -1187,6 +1187,42 @@
       "original_timezone": "Asia/Shanghai",
       "call_time_source_url": "https://www.mediatek.com/investor-relations/ir-events",
       "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Eaton",
+      "ticker": "ETN",
+      "sector": "数据中心电力与配电",
+      "report_date": "2026-07-31",
+      "fiscal_period": "Jun/2026",
+      "time_label": "official_call",
+      "beijing_time": "2026-07-31 23:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://www.eaton.com/us/en-us/company/news-insights/news-releases/2026/eaton-to-announce-second-quarter-2026-earnings-on-july-31--2026.html",
+      "market": "US",
+      "original_call_time_text": "Friday, July 31, 2026 at 11 a.m. Eastern time",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://www.eaton.com/us/en-us/company/news-insights/news-releases/2026/eaton-to-announce-second-quarter-2026-earnings-on-july-31--2026.html",
+      "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "nVent",
+      "ticker": "NVT",
+      "sector": "数据中心电力与配电",
+      "report_date": "2026-07-31",
+      "fiscal_period": "Jun/2026",
+      "time_label": "official_call",
+      "beijing_time": "2026-07-31 21:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://investors.nvent.com/press-releases/press-release-details/2026/nVent-Electric-plc-to-Report-Second-Quarter-2026-Financial-Results-on-July-31/default.aspx",
+      "market": "US",
+      "original_call_time_text": "Friday, July 31, 2026 at 9:00 a.m. ET",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://investors.nvent.com/press-releases/press-release-details/2026/nVent-Electric-plc-to-Report-Second-Quarter-2026-Financial-Results-on-July-31/default.aspx",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }
