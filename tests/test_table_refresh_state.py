@@ -480,6 +480,10 @@ def test_vcp_table_view_targeted_flash_expiry_updates_only_dirty_region(qt_appli
                 for row in changed_rows
             }
         )
+        # The test invokes the expiry callback explicitly below.  Stop the
+        # real 500 ms timer so a slow offscreen paint cannot consume the dirty
+        # indexes before the region assertions run.
+        table._flash_repaint_timer.stop()
         price_column = source_model.headers.index("现价")
         proxy_model.sort(price_column, Qt.SortOrder.DescendingOrder)
         proxy_model.setFilterText("股票40")

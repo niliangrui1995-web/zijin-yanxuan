@@ -108,7 +108,7 @@ def test_save_success_and_repository_error(monkeypatch):
     manager._day_meta = {"20260101": {"record_count": 1}}
     payload = {"daily_data": manager._data, "day_meta": manager._day_meta, "last_auto_fetch_date": "today"}
     monkeypatch.setattr(module.LhbPoolRepository, "save_merged", lambda *_args, **_kwargs: payload)
-    manager.save()
+    assert manager.save() is True
     assert manager.last_auto_fetch_date == "today"
     assert manager._persisted_data == manager._data
 
@@ -117,7 +117,7 @@ def test_save_success_and_repository_error(monkeypatch):
         "save_merged",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(module.LhbRepositoryError("disk")),
     )
-    manager.save()
+    assert manager.save() is False
 
 
 def test_migrate_old_cache_variants(monkeypatch):

@@ -262,8 +262,8 @@ class VCPTableView(QTableView):
         for signal_name, slot in (
             ("modelAboutToBeReset", self._capture_refresh_state),
             ("layoutAboutToBeChanged", self._capture_refresh_state),
-            ("modelReset", self._schedule_refresh_state_restore),
-            ("layoutChanged", self._schedule_refresh_state_restore),
+            ("modelReset", self._on_model_reset),
+            ("layoutChanged", self._on_model_layout_changed),
             ("dataChanged", self._on_model_data_changed),
         ):
             signal = getattr(model, signal_name, None)
@@ -279,8 +279,8 @@ class VCPTableView(QTableView):
         for signal_name, slot in (
             ("modelAboutToBeReset", self._capture_refresh_state),
             ("layoutAboutToBeChanged", self._capture_refresh_state),
-            ("modelReset", self._schedule_refresh_state_restore),
-            ("layoutChanged", self._schedule_refresh_state_restore),
+            ("modelReset", self._on_model_reset),
+            ("layoutChanged", self._on_model_layout_changed),
             ("dataChanged", self._on_model_data_changed),
         ):
             signal = getattr(model, signal_name, None)
@@ -353,6 +353,21 @@ class VCPTableView(QTableView):
             return
         self._pending_refresh_state_restore = dict(snapshot)
         self._refresh_state_restore_timer.start(0)
+
+    def _model_row_count(self) -> int:
+        model = self.model()
+        try:
+            return max(0, int(model.rowCount())) if model is not None else 0
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return 0
+
+    def _on_model_reset(self, *_args) -> None:
+        self._mark_pending_paint_metric("model_reset", model_rows=self._model_row_count())
+        self._schedule_refresh_state_restore(*_args)
+
+    def _on_model_layout_changed(self, *_args) -> None:
+        self._mark_pending_paint_metric("model_layout_changed", model_rows=self._model_row_count())
+        self._schedule_refresh_state_restore(*_args)
 
     def _restore_pending_refresh_state(self) -> None:
         snapshot = self._pending_refresh_state_restore
@@ -488,7 +503,20 @@ class VCPTableView(QTableView):
             quote_changed = self._data_change_includes_quote_columns(_args[0], _args[1])
             reason = "quote_data_changed" if quote_changed else "model_data_changed"
             changed_rows = abs(_args[1].row() - _args[0].row()) + 1
-            metadata = {"changed_rows": changed_rows}
+            changed_columns = abs(_args[1].column() - _args[0].column()) + 1
+            changed_indexes = changed_rows * changed_columns
+            update_threshold = 0
+            threshold_getter = getattr(self, "updateThreshold", None)
+            if callable(threshold_getter):
+                with suppress(RuntimeError, TypeError, ValueError):
+                    update_threshold = max(0, int(threshold_getter()))
+            metadata = {
+                "changed_rows": changed_rows,
+                "changed_columns": changed_columns,
+                "changed_indexes": changed_indexes,
+                "update_threshold": update_threshold,
+                "threshold_exceeded": str(changed_indexes > update_threshold).lower(),
+            }
             if self._targeted_flash_repaint:
                 metadata["dirty_cells"] = self._remember_flash_dirty_indexes(_args[0], _args[1])
             self._mark_pending_paint_metric(reason, **metadata)
@@ -685,7 +713,16 @@ class VCPTableView(QTableView):
             "reason": reason,
             "tab": scope,
         }
-        for key in ("changed_rows", "dirty_cells", "visible_dirty_cells"):
+        for key in (
+            "changed_rows",
+            "changed_columns",
+            "changed_indexes",
+            "update_threshold",
+            "threshold_exceeded",
+            "model_rows",
+            "dirty_cells",
+            "visible_dirty_cells",
+        ):
             if metric is not None and key in metric:
                 tags[key] = str(metric[key])
 

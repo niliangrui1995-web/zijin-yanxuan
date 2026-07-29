@@ -140,7 +140,7 @@ class LhbPoolManager:
     def _repair_day_meta(self) -> None:
         self._day_meta = repair_day_meta(self._data, self._day_meta)
 
-    def save(self) -> None:
+    def save(self) -> bool:
         """合并当前实例的日期级变更后原子落盘。"""
         try:
             with self._state_lock:
@@ -158,8 +158,10 @@ class LhbPoolManager:
                 self._day_meta = payload["day_meta"]
                 self._last_auto_fetch_date = str(payload["last_auto_fetch_date"] or "")
                 self._remember_persisted_state()
+            return True
         except (LhbRepositoryError, TypeError, ValueError) as e:
             log.error(f"[龙虎榜池] 缓存保存失败: {e}")
+            return False
 
     def _migrate_old_cache(self) -> None:
         """把旧的单日 lhb_cache.json 数据迁移到新池中，然后删除旧文件"""

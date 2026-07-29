@@ -672,11 +672,14 @@ def test_start_backfill_validation_callback_error_and_zero(monkeypatch):
     lhb.LhbTab._start_backfill(tab, [], ["d"], "ref")
     assert captured["on_success"] is not None and not tab.btn_refresh.enabled
     captured["on_success"]({"fetched": {}, "validated": {"d": {"count": 1}}, "pool": [], "row_data": []})
-    assert tab.btn_refresh.enabled and any(call[0] == "display_done" for call in tab.calls)
+    assert tab.btn_refresh.enabled and not any(call[0] == "display_done" for call in tab.calls)
+    assert any(call[0] == "status" and call[1][0] == "缓存校验完成" for call in tab.calls)
 
     tab._backfill_in_progress = False
+    tab._pending_pool_refresh = True
     lhb.LhbTab._start_backfill(tab, [], [], "ref")
     assert not tab._backfill_in_progress and tab.btn_refresh.enabled
+    assert tab._pending_pool_refresh is True
 
     tab._backfill_in_progress = False
     lhb.LhbTab._start_backfill(tab, ["d"], [], "ref")

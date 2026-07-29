@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+import threading
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt, QTimer
@@ -508,6 +509,7 @@ def test_lhb_auto_backfill_is_cancelled_and_deferred_after_tab_switch(monkeypatc
     tab._backfill_in_progress = True
     tab._active_backfill_request = (["20260716"], ["20260715"], "20260716")
     tab._active_backfill_defer_when_inactive = True
+    tab._active_backfill_had_pending_pool_refresh = True
     monkeypatch.setattr(tab, "_is_current_workspace_tab", lambda: False)
     try:
         assert tab._defer_auto_backfill_if_inactive() is True
@@ -517,6 +519,8 @@ def test_lhb_auto_backfill_is_cancelled_and_deferred_after_tab_switch(monkeypatc
         assert tab._active_backfill_request is None
         assert tab._pending_backfill_request == (["20260716"], ["20260715"], "20260716")
         assert tab._pending_backfill_defer_when_inactive is True
+        assert tab._pending_pool_refresh is True
+        assert tab._active_backfill_had_pending_pool_refresh is False
         assert tab.btn_refresh.isEnabled() is True
         assert tab._status_next_step == "再次进入时继续后台校验"
     finally:
@@ -731,7 +735,153 @@ def test_lhb_table_uses_targeted_coalesced_flash_repaint():
         assert tab.table._targeted_flash_repaint is True
         assert tab.table._paint_metric_scope == "lhb"
         assert tab.table._flash_repaint_timer.isSingleShot() is True
+        # Qt 6.9+ defaults this threshold to 200.  A normal LHB quote batch
+        # spans about 70 rows x 4 columns, so the default promotes the cheap
+        # dataChanged delivery to a full-viewport repaint.
+        assert tab.table.updateThreshold() > 70 * 4
     finally:
+        tab.deleteLater()
+
+
+def test_lhb_hidden_cache_only_preload_stages_rows_without_model_invalidation(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    model_reset = QSignalSpy(tab.model.modelReset)
+    layout_changed = QSignalSpy(tab.model.layoutChanged)
+    data_changed = QSignalSpy(tab.model.dataChanged)
+    stack_changed = QSignalSpy(tab.table_state._stack.currentChanged)
+    pool_updated = QSignalSpy(lhb_tab_module.event_bus.sig_lhb_pool_updated)
+    published_rows = []
+
+    def capture_published_rows():
+        published_rows.append(tab.get_watchlist_radar_rows())
+
+    lhb_tab_module.event_bus.sig_lhb_pool_updated.connect(capture_published_rows)
+    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda: None)
+    monkeypatch.setattr(tab, "_prime_visible_local_quote_snapshot", lambda: None)
+    monkeypatch.setattr(tab, "_should_start_pool_on_show", lambda: False)
+    try:
+        lhb_tab_module._complete_lhb_pool_load(
+            tab,
+            {
+                "status": "ok",
+                "cache_only": True,
+                "pool_manager": SimpleNamespace(get_cached_dates=lambda: ["20260728"]),
+                "pool": [{"代码": "000001"}],
+                "row_data": [{"代码": "000001", "名称": "平安银行"}],
+                "missing": [],
+                "pending_validation": [],
+            },
+            emit_event=True,
+        )
+
+        assert tab.model.rowCount() == 0
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+        assert len(stack_changed) == 0
+        assert tab._pending_lhb_display is not None
+        assert tab.get_watchlist_radar_rows() == [{"代码": "000001", "名称": "平安银行"}]
+        assert len(pool_updated) == 1
+        assert published_rows == [[{"代码": "000001", "名称": "平安银行"}]]
+        assert tab._background_preload_done is True
+
+        lhb_tab_module._finish_lhb_backfill_error(tab, "抓取异常", "远端超时")
+        assert len(stack_changed) == 0
+        assert tab._pending_lhb_display is not None
+
+        tab.showEvent(QShowEvent())
+        assert tab.model.rowCount() == 0
+        assert tab._pending_lhb_display is not None
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+        assert len(stack_changed) == 0
+
+        monkeypatch.setattr(tab, "_should_start_pool_on_show", lambda: True)
+        tab.showEvent(QShowEvent())
+        first_delivery_counts = (
+            len(model_reset),
+            len(layout_changed),
+            len(data_changed),
+            len(stack_changed),
+        )
+
+        assert tab.model.rowCount() == 1
+        assert tab._pending_lhb_display is None
+        assert len(pool_updated) == 1
+
+        tab.showEvent(QShowEvent())
+
+        assert (
+            len(model_reset),
+            len(layout_changed),
+            len(data_changed),
+            len(stack_changed),
+        ) == first_delivery_counts
+        assert len(pool_updated) == 1
+    finally:
+        lhb_tab_module.event_bus.sig_lhb_pool_updated.disconnect(capture_published_rows)
+        tab.deleteLater()
+
+
+def test_lhb_hidden_empty_stage_publishes_empty_rows_instead_of_stale_model(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "000001", "名称": "旧榜单"}], hydrate_latest_quotes=False)
+    published_rows = []
+
+    def capture_published_rows():
+        published_rows.append(tab.get_watchlist_radar_rows())
+
+    lhb_tab_module.event_bus.sig_lhb_pool_updated.connect(capture_published_rows)
+    monkeypatch.setattr(tab, "_should_start_pool_on_show", lambda: False)
+    try:
+        applied = lhb_tab_module._deliver_or_stage_lhb_pool(
+            tab,
+            [],
+            row_data=[],
+            emit_event=True,
+            refresh_quotes=False,
+            trigger="test_empty_stage",
+        )
+
+        assert applied is False
+        assert tab.model.row_data[0]["代码"] == "000001"
+        assert tab.model.row_data[0]["名称"] == "旧榜单"
+        assert isinstance(tab._pending_lhb_display, dict)
+        assert tab.get_watchlist_radar_rows() == []
+        assert published_rows == [[]]
+    finally:
+        lhb_tab_module.event_bus.sig_lhb_pool_updated.disconnect(capture_published_rows)
+        tab.deleteLater()
+
+
+def test_lhb_cancel_keeps_already_published_staged_snapshot(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "000001", "名称": "旧榜单"}], hydrate_latest_quotes=False)
+    published_rows = []
+
+    def capture_published_rows():
+        published_rows.append(tab.get_watchlist_radar_rows())
+
+    lhb_tab_module.event_bus.sig_lhb_pool_updated.connect(capture_published_rows)
+    monkeypatch.setattr(tab, "_should_start_pool_on_show", lambda: False)
+    try:
+        lhb_tab_module._deliver_or_stage_lhb_pool(
+            tab,
+            [{"代码": "000002"}],
+            row_data=[{"代码": "000002", "名称": "新榜单"}],
+            emit_event=True,
+            refresh_quotes=False,
+            trigger="test_cancel",
+        )
+
+        receipt = tab.cancel_background_preload(reason="step_timeout")
+
+        assert receipt.is_settled() is True
+        assert tab.get_watchlist_radar_rows() == [{"代码": "000002", "名称": "新榜单"}]
+        assert published_rows == [[{"代码": "000002", "名称": "新榜单"}]]
+    finally:
+        lhb_tab_module.event_bus.sig_lhb_pool_updated.disconnect(capture_published_rows)
         tab.deleteLater()
 
 
@@ -1238,6 +1388,141 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_warm_pool_reload_keeps_visible_table_during_success_or_error(monkeypatch):
+    callbacks = {}
+
+    class FakeLifecycle:
+        def run_background(self, _name, _fn, **kwargs):
+            callbacks.update(kwargs)
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda _task_id: False)
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    tab.model.update_data([{"代码": "000001", "名称": "平安银行"}], hydrate_latest_quotes=False)
+    tab._refresh_lhb_lineage(list(tab.model.row_data))
+    tab.table_state.show_table()
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
+    monkeypatch.setattr(tab, "_is_current_workspace_tab", lambda: True)
+    tab._pending_pool_refresh = True
+    scheduled_refreshes = []
+    monkeypatch.setattr(tab, "_schedule_pending_pool_refresh", lambda: scheduled_refreshes.append(True))
+    stack_changes = QSignalSpy(tab.table_state._stack.currentChanged)
+    model_reset = QSignalSpy(tab.model.modelReset)
+    layout_changed = QSignalSpy(tab.model.layoutChanged)
+    data_changed = QSignalSpy(tab.model.dataChanged)
+    try:
+        tab._schedule_pool_retry()
+        tab._pool_update_refresh_timer.start(5_000)
+        assert tab._pool_retry_timer.isActive() is True
+        assert tab._pool_update_refresh_timer.isActive() is True
+        tab._load_and_display_pool()
+
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+        assert len(stack_changes) == 0
+        assert tab._pool_retry_timer.isActive() is False
+        assert tab._pool_update_refresh_timer.isActive() is False
+
+        callbacks["on_success"](
+            {
+                "status": "ok",
+                "cache_only": False,
+                "pool_manager": SimpleNamespace(get_cached_dates=lambda: ["20260728"]),
+                "pool": [{"代码": "000001", "名称": "平安银行"}],
+                "row_data": [{"代码": "000001", "名称": "平安银行"}],
+                "missing": [],
+                "pending_validation": [],
+            }
+        )
+
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+        assert len(stack_changes) == 0
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+        assert scheduled_refreshes == []
+        assert tab._pending_pool_refresh is False
+
+        tab._load_and_display_pool()
+
+        callbacks["on_success"](
+            {
+                "status": "ok",
+                "cache_only": False,
+                "pool_manager": SimpleNamespace(get_cached_dates=lambda: []),
+                "pool": [],
+                "row_data": [],
+                "missing": [],
+                "pending_validation": [],
+            }
+        )
+
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+        assert len(stack_changes) == 0
+        assert tab.model.rowCount() == 1
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+
+        tab._load_and_display_pool()
+
+        callbacks["on_error"]("远端异常")
+
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+        assert len(stack_changes) == 0
+        assert tab.model.rowCount() == 1
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_money_bar_scale_is_cached_and_invalidated(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    rows = [
+        {"代码": f"{row:06d}", "上榜净买额(万)": float(row + 1)}
+        for row in range(70)
+    ]
+    tab.model.update_data(rows, hydrate_latest_quotes=False)
+    calls = 0
+    original = tab.model._money_value_for_visual
+
+    def tracked(header, row):
+        nonlocal calls
+        calls += 1
+        return original(header, row)
+
+    monkeypatch.setattr(tab.model, "_money_value_for_visual", tracked)
+    try:
+        payloads = [tab.model._money_bar_payload("上榜净买额(万)", row) for row in tab.model.row_data]
+
+        assert calls == len(rows) * 2
+        assert {payload["max_abs"] for payload in payloads if payload} == {70.0}
+
+        before_invalidation = calls
+        tab.model.set_cell_value(0, "上榜净买额(万)", 999.0, emit_signal=False)
+        payload = tab.model._money_bar_payload("上榜净买额(万)", tab.model.row_data[0])
+
+        assert calls - before_invalidation == len(rows) + 1
+        assert payload["max_abs"] == 999.0
+
+        updated_rows = [dict(row) for row in tab.model.row_data]
+        updated_rows[1]["上榜净买额(万)"] = 1_234.0
+        before_update = calls
+        tab.model.update_data(updated_rows, hydrate_latest_quotes=False)
+        payload = tab.model._money_bar_payload("上榜净买额(万)", tab.model.row_data[1])
+
+        assert calls - before_update == len(rows) + 1
+        assert payload["max_abs"] == 1_234.0
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_pool_bootstrap_captures_cache_only_at_submission(monkeypatch):
     submissions = []
     captured = []
@@ -1295,6 +1580,303 @@ def test_lhb_pool_tasks_use_owner_lifecycle_deadlines(monkeypatch):
         assert submissions[1][2]["timeout_sec"] == lhb_tab_module.LHB_POOL_BACKFILL_TIMEOUT_SECONDS
     finally:
         tab.deleteLater()
+
+
+def test_lhb_backfill_worker_progress_does_not_access_qwidget(monkeypatch):
+    submission = {}
+
+    class FakeLifecycle:
+        def run_background(self, name, fn, **kwargs):
+            submission.update({"name": name, "fn": fn, "kwargs": kwargs})
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    def fake_build(_owner, _missing, _validation, _ref_date, log_emit, _token):
+        log_emit("warn", "[龙虎榜池] worker progress")
+        return {}
+
+    monkeypatch.setattr(lhb_tab_module, "_build_lhb_backfill_payload", fake_build)
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda _task_id: False)
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    worker_qwidget_accesses = []
+    gui_thread_id = threading.get_ident()
+    original_window = tab.window
+
+    def tracked_window():
+        thread_id = threading.get_ident()
+        if thread_id != gui_thread_id:
+            worker_qwidget_accesses.append(thread_id)
+        return original_window()
+
+    monkeypatch.setattr(tab, "window", tracked_window)
+    try:
+        tab._schedule_pool_retry()
+        assert tab._pool_retry_timer.isActive() is True
+        tab._start_backfill(["20260724"])
+        assert tab._pool_retry_timer.isActive() is False
+        worker = threading.Thread(
+            target=lambda: submission["fn"](SimpleNamespace(raise_if_cancelled=lambda: None)),
+            name="lhb-test-worker",
+        )
+        worker.start()
+        worker.join(timeout=2.0)
+
+        assert worker.is_alive() is False
+        assert worker_qwidget_accesses == []
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_backfill_error_restores_preexisting_pool_refresh_without_scheduling(monkeypatch):
+    callbacks = {}
+
+    class FakeLifecycle:
+        def run_background(self, _name, _fn, **kwargs):
+            callbacks.update(kwargs)
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda _task_id: False)
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    tab._pool_bootstrap_started = True
+    tab._pending_pool_refresh = True
+    scheduled_refreshes = []
+    monkeypatch.setattr(tab, "_schedule_pending_pool_refresh", lambda: scheduled_refreshes.append(True))
+    try:
+        tab._schedule_pool_retry()
+        tab._pool_update_refresh_timer.start(5_000)
+        tab._start_backfill(["20260724"])
+
+        assert tab._pending_pool_refresh is False
+        assert tab._active_backfill_had_pending_pool_refresh is True
+        assert tab._pool_retry_timer.isActive() is False
+        assert tab._pool_update_refresh_timer.isActive() is False
+
+        callbacks["on_error"]("远端超时")
+
+        assert tab._pending_pool_refresh is True
+        assert tab._active_backfill_had_pending_pool_refresh is False
+        assert scheduled_refreshes == []
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_backfill_records_fetch_and_validation_wall_and_thread_cpu(monkeypatch):
+    metrics = []
+    token = SimpleNamespace(raise_if_cancelled=lambda: None, wait=lambda _seconds: False)
+    owner = SimpleNamespace(_build_backfill_progress_log=LhbTab._build_backfill_progress_log)
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+    )
+    monkeypatch.setattr(
+        lhb_worker_module,
+        "fetch_lhb_pool_for_date",
+        lambda *_args, **_kwargs: {"records": [], "count": 0, "status": "error"},
+    )
+
+    fetched, step = lhb_tab_module._fetch_missing_lhb_dates(
+        owner,
+        ["20260724"],
+        2,
+        lambda *_args: None,
+        token,
+    )
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "_validate_lhb_date",
+        lambda *_args: (None, {"count": 0, "status": "error"}, "warn", "probe failed"),
+    )
+    _, validated = lhb_tab_module._validate_lhb_dates(
+        owner,
+        object(),
+        ["20260727"],
+        "20260729",
+        step,
+        2,
+        lambda *_args: None,
+        token,
+    )
+
+    assert fetched == {}
+    assert validated == {"20260727": {"count": 0, "status": "error"}}
+    metric_by_name = {name: (value, kwargs) for name, value, kwargs in metrics}
+    assert set(metric_by_name) == {
+        "lhb_backfill_fetch_date_ms",
+        "lhb_backfill_fetch_date_thread_cpu_ms",
+        "lhb_backfill_validate_date_ms",
+        "lhb_backfill_validate_date_thread_cpu_ms",
+    }
+    for value, kwargs in metric_by_name.values():
+        assert value >= 0
+        assert kwargs["unit"] == "ms"
+        assert kwargs["tags"]["status"] == "error"
+        assert kwargs["tags"]["thread_id"]
+
+
+def test_lhb_backfill_all_error_stops_before_cache_and_pool_postprocessing(monkeypatch):
+    calls = []
+    metrics = []
+
+    class PoolManager:
+        def add_day(self, *_args, **_kwargs):
+            calls.append("add_day")
+
+        def mark_day_probe(self, *_args, **_kwargs):
+            calls.append("mark_day_probe")
+
+        def save(self):
+            calls.append("save")
+
+        def compute_pool(self, **_kwargs):
+            calls.append("compute_pool")
+            return []
+
+    owner = SimpleNamespace(
+        data_provider=object(),
+        _get_engine=lambda: calls.append("get_engine"),
+        _load_ai_chain_context_map=lambda: calls.append("load_ai_context") or {},
+        _build_pool_display_rows=lambda *_args: calls.append("build_rows") or [],
+    )
+    token = SimpleNamespace(raise_if_cancelled=lambda: None)
+    monkeypatch.setattr(lhb_tab_module, "_create_lhb_pool_manager", lambda _trigger: PoolManager())
+    monkeypatch.setattr(lhb_tab_module, "_fetch_missing_lhb_dates", lambda *_args: ({}, 1))
+    monkeypatch.setattr(lhb_tab_module, "_validate_lhb_dates", lambda *_args: ({}, {}))
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+    )
+
+    result = lhb_tab_module._build_lhb_backfill_payload(
+        owner,
+        ["20260724"],
+        [],
+        "20260729",
+        lambda *_args: None,
+        token,
+    )
+
+    assert result["fetched"] == {}
+    assert result["validated"] == {}
+    assert result["status"] == "no_valid_results"
+    assert result["pool_changed"] is False
+    assert result["persist_status"] == "not_attempted"
+    assert calls == []
+    assert [item[0] for item in metrics] == [
+        "lhb_backfill_finalize_ms",
+        "lhb_backfill_finalize_thread_cpu_ms",
+    ]
+    assert all(item[1] >= 0 for item in metrics)
+    assert all(item[2]["tags"]["action"] == "skipped_no_valid_results" for item in metrics)
+    assert all(item[2]["tags"]["persist_status"] == "not_attempted" for item in metrics)
+    assert all(item[2]["tags"]["thread_id"] for item in metrics)
+
+
+def test_lhb_backfill_validation_error_saves_probe_without_rebuilding_pool(monkeypatch):
+    calls = []
+
+    class PoolManager:
+        def add_day(self, *_args, **_kwargs):
+            calls.append("add_day")
+
+        def mark_day_probe(self, *_args, **_kwargs):
+            calls.append("mark_day_probe")
+
+        def save(self):
+            calls.append("save")
+            return True
+
+        def compute_pool(self, **_kwargs):
+            calls.append("compute_pool")
+            return []
+
+    owner = SimpleNamespace(
+        data_provider=object(),
+        _get_engine=lambda: calls.append("get_engine"),
+        _load_ai_chain_context_map=lambda: calls.append("load_ai_context") or {},
+        _build_pool_display_rows=lambda *_args: calls.append("build_rows") or [],
+    )
+    token = SimpleNamespace(raise_if_cancelled=lambda: None)
+    monkeypatch.setattr(lhb_tab_module, "_create_lhb_pool_manager", lambda _trigger: PoolManager())
+    monkeypatch.setattr(lhb_tab_module, "_fetch_missing_lhb_dates", lambda *_args: ({}, 0))
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "_validate_lhb_dates",
+        lambda *_args: ({}, {"20260724": {"count": 61, "status": "error"}}),
+    )
+
+    result = lhb_tab_module._build_lhb_backfill_payload(
+        owner,
+        [],
+        ["20260724"],
+        "20260729",
+        lambda *_args: None,
+        token,
+    )
+
+    assert result["pool_changed"] is False
+    assert result["persist_status"] == "ok"
+    assert calls == ["mark_day_probe", "save"]
+
+
+def test_lhb_backfill_empty_fetch_still_updates_cached_day(monkeypatch):
+    calls = []
+
+    class PoolManager:
+        def add_day(self, date_str, records, *, meta=None):
+            calls.append(("add_day", date_str, records, meta))
+
+        def mark_day_probe(self, *_args, **_kwargs):
+            calls.append(("mark_day_probe",))
+
+        def save(self):
+            calls.append(("save",))
+            return True
+
+        def compute_pool(self, **_kwargs):
+            calls.append(("compute_pool",))
+            return []
+
+    owner = SimpleNamespace(
+        data_provider=object(),
+        _get_engine=lambda: object(),
+        _load_ai_chain_context_map=lambda: {},
+        _build_pool_display_rows=lambda *_args: [],
+    )
+    token = SimpleNamespace(raise_if_cancelled=lambda: None)
+    monkeypatch.setattr(lhb_tab_module, "_create_lhb_pool_manager", lambda _trigger: PoolManager())
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "_fetch_missing_lhb_dates",
+        lambda *_args: ({"20260724": {"records": [], "meta": None}}, 1),
+    )
+    monkeypatch.setattr(lhb_tab_module, "_validate_lhb_dates", lambda *_args: ({}, {}))
+
+    result = lhb_tab_module._build_lhb_backfill_payload(
+        owner,
+        ["20260724"],
+        [],
+        "20260729",
+        lambda *_args: None,
+        token,
+    )
+
+    assert result["pool_changed"] is True
+    assert calls == [
+        ("add_day", "20260724", [], None),
+        ("save",),
+        ("compute_pool",),
+    ]
 
 
 def test_lhb_backfill_retries_when_global_task_is_active(monkeypatch):
@@ -1370,6 +1952,107 @@ def test_lhb_backfill_failures_replace_stale_loading_overlay():
         callbacks["on_error"]("远端异常")
 
         assert tab.table_state._stack.currentWidget() is tab.table_state.table
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_validation_only_completion_preserves_warm_table_without_invalidation(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "000001", "名称": "平安银行"}], hydrate_latest_quotes=False)
+    tab._refresh_lhb_lineage(list(tab.model.row_data))
+    tab.table_state.show_table()
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
+    monkeypatch.setattr(tab, "_is_current_workspace_tab", lambda: True)
+    tab._pending_pool_refresh = False
+    tab._active_backfill_had_pending_pool_refresh = True
+    scheduled_refreshes = []
+    monkeypatch.setattr(tab, "_schedule_pending_pool_refresh", lambda: scheduled_refreshes.append(True))
+    pool_manager = object()
+    stack_changes = QSignalSpy(tab.table_state._stack.currentChanged)
+    model_reset = QSignalSpy(tab.model.modelReset)
+    layout_changed = QSignalSpy(tab.model.layoutChanged)
+    data_changed = QSignalSpy(tab.model.dataChanged)
+    try:
+        lhb_tab_module._complete_lhb_backfill_success(
+            tab,
+            {
+                "status": "validation_only",
+                "fetched": {},
+                "validated": {"20260724": {"count": 61, "status": "error"}},
+                "pool_manager": pool_manager,
+                "pool_changed": False,
+            },
+        )
+
+        assert tab.pool_manager is pool_manager
+        assert "校验未更新" in tab.lbl_status.text()
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+        assert tab.model.rowCount() == 1
+        assert len(stack_changes) == 0
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+        assert scheduled_refreshes == []
+        assert tab._pending_pool_refresh is True
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_validation_only_status_distinguishes_partial_empty_and_persist_failure():
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "000001"}], hydrate_latest_quotes=False)
+    tab.table_state.show_table()
+    try:
+        cases = (
+            (
+                {"a": {"status": "ok"}, "b": {"status": "error"}},
+                "ok",
+                "部分校验失败",
+            ),
+            ({"a": {"status": "empty"}}, "ok", "源头暂空"),
+            ({"a": {"status": "ok"}}, "error", "校验状态未保存"),
+        )
+        for validated, persist_status, expected_status in cases:
+            lhb_tab_module._complete_lhb_backfill_success(
+                tab,
+                {
+                    "status": "validation_only",
+                    "fetched": {},
+                    "validated": validated,
+                    "pool_changed": False,
+                    "persist_status": persist_status,
+                },
+            )
+            assert expected_status in tab.lbl_status.text()
+            assert "缓存已核验" not in tab.lbl_status.text()
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_all_error_completion_preserves_warm_table_without_invalidation(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "000001", "名称": "平安银行"}], hydrate_latest_quotes=False)
+    tab._refresh_lhb_lineage(list(tab.model.row_data))
+    tab.table_state.show_table()
+    tab._pending_pool_refresh = False
+    tab._active_backfill_had_pending_pool_refresh = True
+    scheduled_refreshes = []
+    monkeypatch.setattr(tab, "_schedule_pending_pool_refresh", lambda: scheduled_refreshes.append(True))
+    stack_changes = QSignalSpy(tab.table_state._stack.currentChanged)
+    model_reset = QSignalSpy(tab.model.modelReset)
+    layout_changed = QSignalSpy(tab.model.layoutChanged)
+    data_changed = QSignalSpy(tab.model.dataChanged)
+    try:
+        lhb_tab_module._complete_lhb_backfill_success(tab, {})
+
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+        assert tab.model.rowCount() == 1
+        assert len(stack_changes) == 0
+        assert len(model_reset) == 0
+        assert len(layout_changed) == 0
+        assert len(data_changed) == 0
+        assert scheduled_refreshes == []
+        assert tab._pending_pool_refresh is True
     finally:
         tab.deleteLater()
 

@@ -164,6 +164,7 @@ class StockTableModel(QAbstractTableModel):
         self._data = data or []
         self._flash_records = {}
         self._sort_value_cache = {}
+        self._money_bar_max_abs_cache: dict[str, float] = {}
         self._plain_style_headers = set()
         self._plain_background_headers = set()
         self._muted_text_headers = set()
@@ -249,12 +250,12 @@ class StockTableModel(QAbstractTableModel):
             return _parse_numeric_value(row.get("外资净买(万)", row.get(header)))
         return _parse_numeric_value(row.get(header))
 
-    def _money_bar_payload(self, header: str, row: dict) -> dict | None:
-        if header not in {"上榜净买额(万)", "机构净买(万)", "外资净买入"}:
-            return None
-        value = self._money_value_for_visual(header, row)
-        if value is None or abs(value) < 0.0001:
-            return None
+    def _clear_money_bar_max_abs_cache(self) -> None:
+        self._money_bar_max_abs_cache.clear()
+
+    def _money_bar_max_abs(self, header: str) -> float:
+        if header in self._money_bar_max_abs_cache:
+            return self._money_bar_max_abs_cache[header]
         max_abs = 0.0
         for item in self._data:
             if not isinstance(item, dict):
@@ -262,6 +263,16 @@ class StockTableModel(QAbstractTableModel):
             item_value = self._money_value_for_visual(header, item)
             if item_value is not None:
                 max_abs = max(max_abs, abs(float(item_value)))
+        self._money_bar_max_abs_cache[header] = max_abs
+        return max_abs
+
+    def _money_bar_payload(self, header: str, row: dict) -> dict | None:
+        if header not in {"上榜净买额(万)", "机构净买(万)", "外资净买入"}:
+            return None
+        value = self._money_value_for_visual(header, row)
+        if value is None or abs(value) < 0.0001:
+            return None
+        max_abs = self._money_bar_max_abs(header)
         return {"kind": "money_bar", "value": float(value), "max_abs": max(max_abs, abs(float(value)), 1.0)}
 
     def _visual_payload(self, header: str, raw_value, row: dict):
@@ -435,6 +446,7 @@ class StockTableModel(QAbstractTableModel):
 
     def update_data(self, new_data, *, hydrate_latest_quotes: bool = True):
         _prune_flash_records(self._flash_records)
+        self._clear_money_bar_max_abs_cache()
         rows = list(new_data or [])
         if self._can_update_incrementally(rows):
             self._emit_incremental_rows(rows)
@@ -544,6 +556,13 @@ class StockTableModel(QAbstractTableModel):
         if 0 <= row < len(self._data):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
+            if old_val != new_val and col_name in {
+                "上榜净买额(万)",
+                "机构净买(万)",
+                "外资净买(万)",
+                "外资净买入",
+            }:
+                self._clear_money_bar_max_abs_cache()
 
             try:
                 col_idx = self._headers.index(col_name)
