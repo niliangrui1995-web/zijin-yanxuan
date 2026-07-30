@@ -62,10 +62,12 @@ class WorkspaceNavigationService:
             if tab_index not in candidate_indices:
                 candidate_indices.append(tab_index)
 
+        get_loaded_tab = getattr(self._workspace, "get_loaded_tab", None)
         for tab_index in candidate_indices:
-            tab = tab_widget.widget(tab_index)
+            key = self._key_for_index(tab_index)
+            tab = get_loaded_tab(key) if key and callable(get_loaded_tab) else None
+            tab = tab or tab_widget.widget(tab_index)
             if tab_index == preferred_tab_index:
-                key = self._key_for_index(tab_index)
                 get_tab = getattr(self._workspace, "get_tab", None)
                 if key and callable(get_tab):
                     tab = get_tab(key) or tab

@@ -1259,8 +1259,18 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         iter_tables = getattr(workspace, "iter_tables", None)
         return list(iter_tables() or []) if callable(iter_tables) else []
 
-    def install_workspace_table_copy_hooks(self):
-        install_table_copy_hooks(self.iter_workspace_tables())
+    def install_workspace_table_copy_hooks(self, *, tables=None):
+        if tables is not None:
+            candidates = list(tables or [])
+        else:
+            candidates = []
+            for table in self.iter_workspace_tables():
+                try:
+                    if table.window() is self:
+                        candidates.append(table)
+                except (AttributeError, RuntimeError, TypeError):
+                    continue
+        install_table_copy_hooks(candidates)
 
     def _save_ui_state(self):
         """Persist window geometry with version tag."""

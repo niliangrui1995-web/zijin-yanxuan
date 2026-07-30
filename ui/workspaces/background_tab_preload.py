@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from app.services.ui_diagnostics_service import ui_stall_span
 from core.logger import get_logger
@@ -54,12 +54,49 @@ def _normalized_priority_request(workspace, key: object, reason: object) -> tupl
     return key_text, reason_text
 
 
+def _resume_startup_lazy_handoff(coordinator, key: object, reason: object) -> tuple[str, str] | None:
+    workspace = coordinator.workspace
+    key_text = str(key or "").strip()
+    reason_text = normalize_tab_load_reason(reason)
+    handoff_keys = list(coordinator._startup_lazy_handoff_keys)
+    if (
+        not key_text
+        or not is_interactive_tab_load_reason(reason_text)
+        or key_text not in handoff_keys
+        or getattr(workspace, "_shutting_down", False)
+        or not workspace._background_prewarm_enabled
+        or not workspace._background_prewarm_finished
+    ):
+        return None
+
+    workspace._background_prewarm_queue = [
+        candidate for candidate in handoff_keys if not _preload_key_ready(workspace, candidate)
+    ]
+    if key_text not in workspace._background_prewarm_queue:
+        return None
+    workspace._background_prewarm_finished = False
+    workspace._background_prewarm_finished_at = 0.0
+    coordinator._completion_scope = "interactive_resume"
+    coordinator._startup_lazy_handoff_keys.clear()
+    coordinator._interactive_handoff_targets.add(key_text)
+    return key_text, reason_text
+
+
 def _preload_key_ready(workspace, key: str) -> bool:
     spec = workspace._spec_for_key_or_index(key)
     if spec is None or not spec.get("loaded"):
         return False
     widget = spec.get("widget")
     return bool(widget is not None and getattr(widget, "_workspace_background_preload_ready", False))
+
+
+def _unready_startup_keys(workspace, *, exclude: set[str] | None = None) -> list[str]:
+    excluded = exclude or set()
+    return [
+        key
+        for key in workspace.STARTUP_TAB_LOAD_ORDER
+        if key not in excluded and not _preload_key_ready(workspace, key)
+    ]
 
 
 def _ordered_unready_dependency_closure(workspace, key: str) -> tuple[str, ...]:
@@ -273,6 +310,10 @@ def _record_step_terminal(workspace, key: str, widget, status: str, detail: str)
     workspace._background_prewarm_completion_order.append(key)
     if status == "ready" and widget is not None:
         setattr(widget, "_workspace_background_preload_ready", True)
+        workspace._background_prewarm_failures.pop(key, None)
+        workspace._background_prewarm_timeouts = [
+            candidate for candidate in workspace._background_prewarm_timeouts if candidate != key
+        ]
         return
     workspace._background_prewarm_failures[key] = str(detail or status)
     if status == "timeout" and key not in workspace._background_prewarm_timeouts:
@@ -314,15 +355,102 @@ def _finish_all_preloads(coordinator) -> None:
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             log.warning(f"[Workspace] refresh quote universe after preload failed: {exc}")
     log.info(
-        "[Workspace] background tab preload finished completed=%s failures=%s",
+        "[Workspace] background tab preload finished scope=%s completed=%s "
+        "startup_lazy_handoff=%s failures=%s",
+        coordinator._completion_scope,
         len(workspace._background_prewarm_completion_order),
+        len(coordinator._startup_lazy_handoff_keys),
         sorted(workspace._background_prewarm_failures),
     )
+
+
+def _handoff_after_visible_watchlist_terminal(
+    coordinator,
+    completed_key: str,
+    terminal_status: str,
+) -> bool:
+    """Finish startup preload without constructing hidden pages behind Watchlist."""
+    workspace = coordinator.workspace
+    if completed_key != "watchlist" or not workspace._background_prewarm_queue:
+        return False
+    if coordinator._priority_reasons:
+        return False
+    spec = workspace._spec_for_key_or_index("watchlist")
+    visible_page = (spec or {}).get("page_widget") or (spec or {}).get("widget")
+    if visible_page is None or workspace.tabs.currentWidget() is not visible_page:
+        return False
+    try:
+        visible = bool(visible_page.isVisible())
+    except (AttributeError, RuntimeError, TypeError):
+        visible = False
+    if not visible:
+        return False
+
+    coordinator._startup_lazy_handoff_keys = list(workspace._background_prewarm_queue)
+    coordinator._completion_scope = (
+        "visible_watchlist_ready"
+        if terminal_status == "ready"
+        else "visible_watchlist_terminal"
+    )
+    workspace._background_prewarm_queue.clear()
+    coordinator.timer.stop()
+    _finish_all_preloads(coordinator)
+    return True
+
+
+def _handoff_after_interactive_target_terminal(
+    coordinator,
+    completed_key: str,
+    terminal_status: str,
+) -> bool:
+    if completed_key not in coordinator._interactive_handoff_targets:
+        return False
+    coordinator._interactive_handoff_targets.discard(completed_key)
+    if coordinator._interactive_handoff_targets or coordinator._priority_reasons:
+        return False
+
+    workspace = coordinator.workspace
+    remaining = _unready_startup_keys(workspace, exclude={"watchlist"})
+    coordinator._startup_lazy_handoff_keys = remaining
+    workspace._background_prewarm_queue.clear()
+    coordinator.timer.stop()
+    coordinator._completion_scope = (
+        "all_planned"
+        if not remaining
+        else (
+            "interactive_target_ready"
+            if terminal_status == "ready"
+            else "interactive_target_terminal"
+        )
+    )
+    _finish_all_preloads(coordinator)
+    return True
+
+
+def _finish_visible_watchlist_resume_handoff(coordinator) -> None:
+    """Return every still-unready page to lazy loading after Watchlist is revisited."""
+    workspace = coordinator.workspace
+    coordinator._watchlist_resume_pause_requested = False
+    coordinator._priority_reasons.clear()
+    coordinator._prestart_priority_order.clear()
+    coordinator._priority_closures.clear()
+    coordinator._priority_boosted_keys.clear()
+    coordinator._interactive_handoff_targets.clear()
+    coordinator._startup_lazy_handoff_keys = _unready_startup_keys(
+        workspace,
+        exclude={"watchlist"},
+    )
+    workspace._background_prewarm_queue.clear()
+    coordinator.timer.stop()
+    coordinator._completion_scope = "visible_watchlist_resumed"
+    _finish_all_preloads(coordinator)
 
 
 def cancel_background_tab_preload(coordinator) -> None:
     coordinator.timer.stop()
     coordinator._priority_reasons.clear()
+    coordinator._interactive_handoff_targets.clear()
+    coordinator._watchlist_resume_pause_requested = False
     receipt = coordinator._cancel_receipt
     if receipt is None and coordinator.workspace._background_prewarm_active_widget is not None:
         receipt = coordinator._cancel_active_widget(reason="owner_shutdown")
@@ -335,6 +463,8 @@ def cancel_background_tab_preload(coordinator) -> None:
 
 class BackgroundTabPreloadCoordinator(QObject):
     """Serially construct and hydrate workspace tabs after first paint."""
+
+    stepStarted = pyqtSignal(str)
 
     def __init__(self, workspace, *, enabled: bool) -> None:
         super().__init__(workspace)
@@ -359,6 +489,10 @@ class BackgroundTabPreloadCoordinator(QObject):
         self._active_step_count = 0
         self._max_concurrent_steps = 0
         self._shutdown_cancel_receipts: list[object] = []
+        self._completion_scope = "all_planned"
+        self._startup_lazy_handoff_keys: list[str] = []
+        self._interactive_handoff_targets: set[str] = set()
+        self._watchlist_resume_pause_requested = False
         workspace._background_prewarm_timer = self.timer
 
     def start(self) -> None:
@@ -367,6 +501,10 @@ class BackgroundTabPreloadCoordinator(QObject):
             return
         workspace._background_prewarm_started = True
         workspace._background_prewarm_queue = _configured_preload_queue(workspace)
+        self._completion_scope = "all_planned"
+        self._startup_lazy_handoff_keys.clear()
+        self._interactive_handoff_targets.clear()
+        self._watchlist_resume_pause_requested = False
         _apply_prestart_priority_closures(self)
         _schedule_preload(self, _initial_preload_delay_ms(self))
 
@@ -393,6 +531,11 @@ class BackgroundTabPreloadCoordinator(QObject):
             "enabled": bool(workspace._background_prewarm_enabled),
             "started": bool(workspace._background_prewarm_started),
             "finished": bool(workspace._background_prewarm_finished),
+            "completion_scope": self._completion_scope,
+            "startup_lazy_handoff_keys": list(self._startup_lazy_handoff_keys),
+            "startup_lazy_handoff_count": len(self._startup_lazy_handoff_keys),
+            "interactive_handoff_targets": sorted(self._interactive_handoff_targets),
+            "watchlist_resume_pause_requested": self._watchlist_resume_pause_requested,
             "planned_order": planned_order,
             "planned_count": len(planned_order),
             "start_order": list(workspace._background_prewarm_start_order),
@@ -430,11 +573,24 @@ class BackgroundTabPreloadCoordinator(QObject):
     def prioritize(self, key: str, reason: object) -> bool:
         """Move an interactive request to the next serial preload slot."""
         workspace = self.workspace
-        request = _normalized_priority_request(workspace, key, reason)
+        request = _resume_startup_lazy_handoff(self, key, reason)
+        if request is None:
+            request = _normalized_priority_request(workspace, key, reason)
         if request is None:
             return False
 
         key_text, reason_text = request
+        self._watchlist_resume_pause_requested = False
+        if self._completion_scope == "interactive_resume":
+            active_key = str(workspace._background_prewarm_active_key or "")
+            self._priority_reasons.clear()
+            self._priority_closures.clear()
+            self._priority_boosted_keys.clear()
+            self._interactive_handoff_targets = {key_text}
+            workspace._background_prewarm_queue = _unready_startup_keys(
+                workspace,
+                exclude={active_key} if active_key else None,
+            )
         active_key = str(workspace._background_prewarm_active_key or "")
         self._priority_reasons[key_text] = reason_text
         if key_text not in self._promoted_order:
@@ -464,6 +620,61 @@ class BackgroundTabPreloadCoordinator(QObject):
             and key_text in self._priority_reasons
             and key_text == str(self.workspace._background_prewarm_active_key or "")
         )
+
+    def discard_priority_reason(self, reason: object) -> list[str]:
+        """Remove superseded startup priorities without touching real user requests."""
+        reason_text = normalize_tab_load_reason(reason)
+        discarded = [
+            key
+            for key, pending_reason in self._priority_reasons.items()
+            if pending_reason == reason_text
+        ]
+        if not discarded:
+            return []
+        for key in discarded:
+            self._priority_reasons.pop(key, None)
+            self._priority_closures.pop(key, None)
+        discarded_set = set(discarded)
+        self._prestart_priority_order = [
+            key for key in self._prestart_priority_order if key not in discarded_set
+        ]
+        pending_keys = set(self.workspace._background_prewarm_queue)
+        self.workspace._background_prewarm_queue = [
+            key
+            for key in self.workspace.STARTUP_TAB_LOAD_ORDER
+            if key in pending_keys
+        ]
+        self._priority_boosted_keys = {
+            dependency
+            for closure in self._priority_closures.values()
+            for dependency in closure
+        }
+        for closure in self._priority_closures.values():
+            _move_priority_closure_to_front(self.workspace, closure)
+        return discarded
+
+    def pause_interactive_handoff_for_watchlist(self, reason: object) -> bool:
+        """Stop superseded hidden preload work when Watchlist becomes visible again."""
+        if not is_interactive_tab_load_reason(reason):
+            return False
+        workspace = self.workspace
+        if workspace._background_prewarm_finished or not _preload_key_ready(
+            workspace,
+            "watchlist",
+        ):
+            return False
+
+        self._priority_reasons.clear()
+        self._prestart_priority_order.clear()
+        self._priority_closures.clear()
+        self._priority_boosted_keys.clear()
+        self._interactive_handoff_targets.clear()
+        if workspace._background_prewarm_active_key:
+            self._watchlist_resume_pause_requested = True
+            return True
+
+        _finish_visible_watchlist_resume_handoff(self)
+        return True
 
     def _poll_active_step(self) -> None:
         workspace = self.workspace
@@ -530,14 +741,22 @@ class BackgroundTabPreloadCoordinator(QObject):
             key,
             missing_dependencies,
         )
+        if _handoff_after_interactive_target_terminal(
+            self,
+            key,
+            "dependency_failed",
+        ):
+            return
         _schedule_preload(self, _next_step_delay_ms(self))
 
     def _activate_step(self, key: str, spec: Mapping) -> None:
         workspace = self.workspace
+        self._dependency_failures.pop(key, None)
         workspace._background_prewarm_start_order.append(key)
         workspace._background_prewarm_active_key = key
         workspace._background_prewarm_active_widget = None
         workspace._background_prewarm_active_started_at = time.perf_counter()
+        self.stepStarted.emit(key)
         self._active_step_count += 1
         self._max_concurrent_steps = max(self._max_concurrent_steps, self._active_step_count)
         widget = spec.get("widget") if spec.get("loaded") else workspace.ensure_tab_loaded(
@@ -578,13 +797,23 @@ class BackgroundTabPreloadCoordinator(QObject):
         return bool(snapshot_complete())
 
     def _complete_active_step(self) -> None:
-        self._finish_step("ready")
+        self._finish_active_step_and_continue("ready")
+
+    def _finish_active_step_and_continue(self, status: str, detail: str = "") -> None:
+        completed_key = str(self.workspace._background_prewarm_active_key or "")
+        self._finish_step(status, detail)
+        if self._watchlist_resume_pause_requested:
+            _finish_visible_watchlist_resume_handoff(self)
+            return
+        if _handoff_after_interactive_target_terminal(self, completed_key, status):
+            return
+        if _handoff_after_visible_watchlist_terminal(self, completed_key, status):
+            return
         _schedule_preload(self, _next_step_delay_ms(self))
 
     def _fail_active_step(self, detail: str) -> None:
         if self.workspace._background_prewarm_active_widget is None:
-            self._finish_step("failed", detail)
-            _schedule_preload(self, _next_step_delay_ms(self))
+            self._finish_active_step_and_continue("failed", detail)
             return
         self._begin_step_cancellation("failed", detail, reason="step_failed")
 
@@ -634,8 +863,7 @@ class BackgroundTabPreloadCoordinator(QObject):
         self._cancellation_blocked = False
         status = self._cancel_terminal_status
         detail = self._cancel_terminal_detail
-        self._finish_step(status, detail)
-        _schedule_preload(self, _next_step_delay_ms(self))
+        self._finish_active_step_and_continue(status, detail)
 
     def _block_on_cancellation_timeout(self) -> None:
         workspace = self.workspace
@@ -668,6 +896,17 @@ class BackgroundTabPreloadCoordinator(QObject):
         if not key:
             return
         _record_step_terminal(workspace, key, widget, status, detail)
+        spec = workspace._spec_for_key_or_index(key)
+        mount = getattr(workspace, "_mount_preloaded_tab", None)
+        target_index = workspace._tab_index_for_key(key)
+        if (
+            spec is not None
+            and callable(mount)
+            and target_index >= 0
+            and workspace.tabs.currentIndex() == target_index
+        ):
+            widget = mount(key)
+            workspace._background_prewarm_active_widget = widget
         _promote_priority_widget(self, key, widget, priority_reason)
         workspace._background_prewarm_active_key = ""
         workspace._background_prewarm_active_widget = None

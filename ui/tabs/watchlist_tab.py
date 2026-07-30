@@ -800,6 +800,12 @@ class _WatchlistBackgroundPreloadMixin:
         preload = self._background_preload
         return _watchlist_preload_state_is_ready(preload) and _watchlist_vcp_queue_is_idle(self)
 
+    def prepare_workspace_preload_reveal(self) -> None:
+        table = getattr(self, "table_sp", None)
+        prepare = getattr(table, "prepare_background_preload_reveal", None)
+        if callable(prepare):
+            prepare()
+
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
             self._vcp_task_generation += 1
@@ -1084,6 +1090,10 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.setModel(self.proxy_model)
         self.table_sp.set_coalesced_flash_repaint_enabled(True)
         self.table_sp.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+        # QTableView paints every requested viewport pixel.  Declaring that
+        # contract prevents Qt's backing store from scheduling redundant full
+        # clears after the staged Watchlist is revealed.
+        self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)

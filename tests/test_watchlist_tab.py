@@ -83,6 +83,9 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
         assert tab.model._sparse_quote_update_coalescing is False
         assert tab.table_sp._targeted_flash_repaint is True
         assert tab.table_sp._paint_metric_scope == "watchlist"
+        assert tab.table_sp.viewport().testAttribute(
+            Qt.WidgetAttribute.WA_OpaquePaintEvent
+        ) is True
         tab.model.update_data(rows)
         price_column = tab.model.headers.index("现价")
         code_column = tab.model.headers.index("代码")

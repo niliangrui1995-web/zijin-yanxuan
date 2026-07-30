@@ -928,11 +928,15 @@ def test_workspace_tables_copy_hooks_and_save_state(monkeypatch):
     assert config.last_active_tab_key == "scan"
     assert main.MainWindowQT.iter_workspace_tables(SimpleNamespace(_workspace=None)) == []
     assert main.MainWindowQT.iter_workspace_tables(SimpleNamespace(_workspace=object())) == []
-    workspace = SimpleNamespace(iter_tables=lambda: [1, 2])
+    mounted_table = SimpleNamespace(window=lambda: window)
+    staged_table = SimpleNamespace(window=lambda: object())
+    workspace = SimpleNamespace(iter_tables=lambda: [mounted_table, staged_table])
     window._workspace = workspace
     window.iter_workspace_tables = lambda: main.MainWindowQT.iter_workspace_tables(window)
     main.MainWindowQT.install_workspace_table_copy_hooks(window)
-    assert hooks == [[1, 2]]
+    assert hooks == [[mounted_table]]
+    main.MainWindowQT.install_workspace_table_copy_hooks(window, tables=[staged_table])
+    assert hooks == [[mounted_table], [staged_table]]
 
     values = []
     settings = SimpleNamespace(

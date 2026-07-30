@@ -795,6 +795,19 @@ def test_table_copy_hook_handles_return_single_cell_and_multiple_rows(monkeypatc
     table.close()
 
 
+def test_table_copy_hook_does_not_reapply_selection_state_to_installed_table():
+    calls = []
+    table = SimpleNamespace(
+        _copy_hook_installed=True,
+        setSelectionBehavior=lambda value: calls.append(("behavior", value)),
+        setSelectionMode=lambda value: calls.append(("mode", value)),
+    )
+
+    main_window_tables.install_table_copy_hooks([table])
+
+    assert calls == []
+
+
 def test_table_copy_handler_empty_selection_and_fallback(qt_application):
     table, _model = _table_with_values()
     originals = []
@@ -885,6 +898,28 @@ def test_workspace_navigation_selects_current_preferred_lazy_and_remaining_tabs(
     assert service.select_code_row("000001", preferred_tab_index=99) is True
     assert remaining.codes == ["000001"]
     assert tabs.changes[-1] == 3
+
+
+def test_workspace_navigation_selects_staged_tab_without_preferred_lazy_load():
+    current = _SelectableTab(code_result=False)
+    placeholder = object()
+    staged = _SelectableTab(code_result=True)
+    tabs = _Tabs([current, placeholder], current=0)
+    lazy_loads = []
+    workspace = SimpleNamespace(
+        _tab_specs=[{"key": "current"}, {"key": "staged"}],
+        tabs=tabs,
+        get_loaded_tab=lambda key: staged if key == "staged" else None,
+        get_tab=lambda key: lazy_loads.append(key),
+    )
+
+    service = WorkspaceNavigationService(workspace)
+
+    assert service.select_code_row("600519") is True
+    assert current.codes == ["600519"]
+    assert staged.codes == ["600519"]
+    assert tabs.changes == [1]
+    assert lazy_loads == []
 
 
 def test_workspace_navigation_rejects_empty_missing_and_unselectable_tabs():

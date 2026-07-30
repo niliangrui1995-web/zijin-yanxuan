@@ -61,10 +61,10 @@ def _build_copy_handler(current_table, original_handler):
 
 def install_table_copy_hooks(tables) -> None:
     for table in tables:
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         if getattr(table, "_copy_hook_installed", False):
             continue
 
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.keyPressEvent = _build_copy_handler(table, table.keyPressEvent)
         table._copy_hook_installed = True

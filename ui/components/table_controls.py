@@ -58,6 +58,35 @@ from .table_view_helpers import bounded_model_row, find_header_column
 
 log = logging.getLogger(__name__)
 
+_PAINT_REASON_PRIORITY = {
+    "other": 0,
+    "flash_expiry": 1,
+    "model_data_changed": 2,
+    "quote_data_changed": 3,
+    "preload_reveal": 4,
+    "model_layout_changed": 5,
+    "model_reset": 6,
+}
+_STRUCTURAL_PAINT_REASONS = frozenset(
+    {
+        "model_layout_changed",
+        "model_reset",
+        "preload_reveal",
+    }
+)
+
+
+def _paint_region_metrics(region: QRegion, viewport_rect) -> tuple[float, int, bool]:
+    """Return bounding span plus whether the region actually covers the viewport."""
+    viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
+    bounds = region.boundingRect()
+    bounding_area = max(0, bounds.width() * bounds.height())
+    viewport_region = QRegion(viewport_rect)
+    covers_viewport = bool(
+        not viewport_rect.isEmpty() and viewport_region.subtracted(region).isEmpty()
+    )
+    return min(1.0, bounding_area / viewport_area), int(region.rectCount()), covers_viewport
+
 
 def _model_has_rows(model) -> bool:
     try:
@@ -488,17 +517,12 @@ class VCPTableView(QTableView):
             return
         roles = _args[2] if len(_args) >= 3 else None
         flash_role = int(Qt.ItemDataRole.UserRole) + 1
+        includes_flash_role = True
         if roles:
             role_values = {int(getattr(role, "value", role)) for role in roles}
-            if flash_role not in role_values:
-                return
-        if not self._model_has_active_flash_records():
-            return
-        if self._coalesced_flash_repaint and not self.isVisible():
-            self._pending_paint_metric = None
-            self._flash_repaint_scheduled_at = 0.0
-            self._flash_dirty_indexes.clear()
-            return
+            includes_flash_role = flash_role in role_values
+        reason = "model_data_changed"
+        metadata = {}
         if len(_args) >= 2:
             quote_changed = self._data_change_includes_quote_columns(_args[0], _args[1])
             reason = "quote_data_changed" if quote_changed else "model_data_changed"
@@ -516,7 +540,19 @@ class VCPTableView(QTableView):
                 "changed_indexes": changed_indexes,
                 "update_threshold": update_threshold,
                 "threshold_exceeded": str(changed_indexes > update_threshold).lower(),
+                "includes_flash_role": str(includes_flash_role).lower(),
             }
+            self._mark_pending_paint_metric(reason, **metadata)
+        if not includes_flash_role:
+            return
+        if not self._model_has_active_flash_records():
+            return
+        if self._coalesced_flash_repaint and not self.isVisible():
+            self._pending_paint_metric = None
+            self._flash_repaint_scheduled_at = 0.0
+            self._flash_dirty_indexes.clear()
+            return
+        if len(_args) >= 2:
             if self._targeted_flash_repaint:
                 metadata["dirty_cells"] = self._remember_flash_dirty_indexes(_args[0], _args[1])
             self._mark_pending_paint_metric(reason, **metadata)
@@ -547,6 +583,11 @@ class VCPTableView(QTableView):
         self._pending_paint_metric = None
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes.clear()
+
+    def prepare_background_preload_reveal(self) -> None:
+        """Reset off-screen paint provenance before the first visible frame."""
+        self._pending_paint_metric = None
+        self._mark_pending_paint_metric("preload_reveal", model_rows=self._model_row_count())
 
     def _data_change_includes_quote_columns(self, top_left, bottom_right) -> bool:
         model = self.model()
@@ -596,11 +637,38 @@ class VCPTableView(QTableView):
     def _mark_pending_paint_metric(self, reason: str, **metadata) -> None:
         if not self._paint_metric_scope:
             return
-        self._pending_paint_metric = {
-            "reason": str(reason or "other"),
-            "scheduled_at": time.perf_counter(),
-            **metadata,
-        }
+        reason_text = str(reason or "other")
+        now = time.perf_counter()
+        previous = self._pending_paint_metric
+        previous_reasons = tuple((previous or {}).get("pending_reasons", ()))
+        if not previous_reasons and previous is not None:
+            previous_reasons = (str(previous.get("reason", "other")),)
+        pending_reasons = tuple(dict.fromkeys((*previous_reasons, reason_text)))
+        primary_reason = max(
+            pending_reasons,
+            key=lambda item: _PAINT_REASON_PRIORITY.get(item, 0),
+        )
+        merged = dict(previous or {})
+        merged.update(metadata)
+        merged.update(
+            {
+                "reason": primary_reason,
+                "pending_reasons": pending_reasons,
+                "scheduled_at": (previous or {}).get("scheduled_at", now),
+                "last_scheduled_at": now,
+            }
+        )
+        structural_reason = next(
+            (item for item in pending_reasons if item == primary_reason and item in _STRUCTURAL_PAINT_REASONS),
+            "",
+        )
+        if structural_reason:
+            merged["structural_reason"] = structural_reason
+        else:
+            merged.pop("structural_reason", None)
+        if "requested_full_viewport" in metadata:
+            merged["targeted_request_reason"] = reason_text
+        self._pending_paint_metric = merged
 
     def schedule_flash_repaint_until(self, active_until: float) -> None:
         if self._coalesced_flash_repaint and not self.isVisible():
@@ -638,16 +706,15 @@ class VCPTableView(QTableView):
             region, dirty_cells, visible_dirty_cells = self._flash_repaint_region()
             scheduled_at = self._flash_repaint_scheduled_at
             self._flash_repaint_scheduled_at = 0.0
+            viewport_rect = viewport.rect()
+            requested_ratio, requested_rects, requested_full = _paint_region_metrics(region, viewport_rect)
             if self._paint_metric_scope:
                 from core.observability import record_metric
 
-                viewport_rect = viewport.rect()
-                viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
-                bounds = region.boundingRect()
-                bounding_area = max(0, bounds.width() * bounds.height())
                 tags = {
-                    "dirty_bounding_area_ratio": f"{min(1.0, bounding_area / viewport_area):.4f}",
-                    "dirty_region_rects": str(region.rectCount()),
+                    "dirty_bounding_area_ratio": f"{requested_ratio:.4f}",
+                    "dirty_region_rects": str(requested_rects),
+                    "requested_full_viewport": str(requested_full).lower(),
                     "dirty_cells": str(dirty_cells),
                     "visible_dirty_cells": str(visible_dirty_cells),
                     "tab": self._paint_metric_scope,
@@ -678,7 +745,10 @@ class VCPTableView(QTableView):
                     "flash_expiry",
                     dirty_cells=dirty_cells,
                     visible_dirty_cells=visible_dirty_cells,
-                    dirty_region_rects=region.rectCount(),
+                    dirty_region_rects=requested_rects,
+                    requested_dirty_bounding_area_ratio=f"{requested_ratio:.4f}",
+                    requested_dirty_region_rects=requested_rects,
+                    requested_full_viewport=requested_full,
                 )
                 viewport.update(region)
             else:
@@ -703,13 +773,16 @@ class VCPTableView(QTableView):
             return
         metric = self._pending_paint_metric
         reason = str((metric or {}).get("reason", "other"))
-        dirty_rect = event.region().boundingRect()
         viewport_rect = viewport.rect()
-        viewport_area = max(1, viewport_rect.width() * viewport_rect.height())
-        dirty_area = max(0, dirty_rect.width() * dirty_rect.height())
+        delivered_ratio, delivered_rects, delivered_full = _paint_region_metrics(
+            event.region(), viewport_rect
+        )
         tags = {
-            "dirty_bounding_area_ratio": f"{min(1.0, dirty_area / viewport_area):.4f}",
-            "dirty_region_rects": str(event.region().rectCount()),
+            "dirty_bounding_area_ratio": f"{delivered_ratio:.4f}",
+            "delivered_dirty_bounding_area_ratio": f"{delivered_ratio:.4f}",
+            "delivered_full_viewport": str(delivered_full).lower(),
+            "dirty_region_rects": str(delivered_rects),
+            "paint_event_spontaneous": str(bool(event.spontaneous())).lower(),
             "reason": reason,
             "tab": scope,
         }
@@ -719,12 +792,52 @@ class VCPTableView(QTableView):
             "changed_indexes",
             "update_threshold",
             "threshold_exceeded",
+            "includes_flash_role",
             "model_rows",
             "dirty_cells",
             "visible_dirty_cells",
+            "requested_dirty_bounding_area_ratio",
+            "requested_dirty_region_rects",
+            "requested_full_viewport",
+            "targeted_request_reason",
+            "structural_reason",
         ):
             if metric is not None and key in metric:
-                tags[key] = str(metric[key])
+                value = metric[key]
+                tags[key] = str(value).lower() if isinstance(value, bool) else str(value)
+        if metric is not None:
+            pending_reasons = tuple(metric.get("pending_reasons", ()))
+            if pending_reasons:
+                tags["pending_reasons"] = ",".join(str(item) for item in pending_reasons)
+
+        requested_full_value = (metric or {}).get("requested_full_viewport")
+        requested_full = requested_full_value if isinstance(requested_full_value, bool) else None
+        structural_reason = str((metric or {}).get("structural_reason", ""))
+        if structural_reason:
+            tags["delivery_kind"] = "structural_full_viewport" if delivered_full else "structural_partial_region"
+            if requested_full is False:
+                tags["targeted_request_coalesced_with_structural"] = "true"
+        elif requested_full is False:
+            tags["delivery_kind"] = "full_after_targeted_request" if delivered_full else "requested_region"
+            tags["region_expanded"] = str(delivered_full).lower()
+        elif delivered_full:
+            tags["delivery_kind"] = "full_viewport"
+        else:
+            tags["delivery_kind"] = "partial_region"
+
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_workspace_load_reason"):
+                tags["workspace_load_reason"] = str(getattr(parent, "_workspace_load_reason", "") or "")
+                tags["background_preload_ready"] = str(
+                    bool(getattr(parent, "_workspace_background_preload_ready", False))
+                ).lower()
+                tags["preload_staged"] = str(bool(getattr(parent, "_workspace_preload_staged", False))).lower()
+            if hasattr(parent, "_background_prewarm_active_key"):
+                tags["background_prewarm_active_key_at_paint"] = str(
+                    getattr(parent, "_background_prewarm_active_key", "") or ""
+                )
+            parent = parent.parentWidget()
 
         started_at = time.perf_counter()
         from infra.diagnostics.ui_stall_probe import ui_stall_span
@@ -734,6 +847,7 @@ class VCPTableView(QTableView):
             tab=scope,
             signal=reason,
             dirty_bounding_area_ratio=tags["dirty_bounding_area_ratio"],
+            delivered_full_viewport=tags["delivered_full_viewport"],
         ):
             super().paintEvent(event)
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0

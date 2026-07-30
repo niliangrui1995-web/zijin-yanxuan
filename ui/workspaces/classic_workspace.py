@@ -61,15 +61,17 @@ def _resolve_tab_class(class_name: str, module_name: str):
 
 def _tab_factory_for_definition(workspace, definition: TabDefinition, watchlist_kwargs: dict):
     def _create(**runtime_kwargs):
+        runtime_kwargs = dict(runtime_kwargs)
+        construction_parent = runtime_kwargs.pop("_workspace_parent_override", workspace)
         profile = definition.constructor_profile
-        args = (workspace.data_provider, workspace)
+        args = (workspace.data_provider, construction_parent)
         kwargs = definition.constructor_default_kwargs()
         if profile is TabConstructorProfile.WATCHLIST:
             kwargs.update(watchlist_kwargs)
         elif profile is TabConstructorProfile.SCAN:
-            args = (workspace.data_provider, workspace.engine, workspace)
+            args = (workspace.data_provider, workspace.engine, construction_parent)
         elif profile is TabConstructorProfile.WORKSPACE_PARENT:
-            args = (workspace,)
+            args = (construction_parent,)
         elif profile not in {
             TabConstructorProfile.DATA_PROVIDER_PARENT,
             TabConstructorProfile.LHB,
@@ -324,9 +326,31 @@ def _cancel_pending_startup_restore_for_user(workspace, reason: str) -> None:
     reason_text = normalize_tab_load_reason(reason)
     if reason_text not in INTERACTIVE_TAB_LOAD_REASONS or reason_text == TabLoadReason.RESTORE_LAST_TAB.value:
         return
+    restore_timer = getattr(workspace, "_restore_last_tab_timer", None)
+    if restore_timer is not None:
+        restore_timer.stop()
+        if workspace._restore_last_tab_timer is restore_timer:
+            workspace._restore_last_tab_timer = None
+        restore_timer.deleteLater()
     callback = getattr(getattr(workspace, "host", None), "cancel_pending_workspace_activation", None)
     if callable(callback):
         callback(workspace)
+    coordinator = getattr(workspace, "_background_preload_coordinator", None)
+    discard_restore = getattr(coordinator, "discard_priority_reason", None)
+    if callable(discard_restore):
+        discard_restore(TabLoadReason.RESTORE_LAST_TAB.value)
+
+
+def _pause_interactive_handoff_for_visible_watchlist(
+    workspace,
+    key: str,
+    reason: object,
+) -> bool:
+    if key != "watchlist":
+        return False
+    coordinator = getattr(workspace, "_background_preload_coordinator", None)
+    pause = getattr(coordinator, "pause_interactive_handoff_for_watchlist", None)
+    return bool(callable(pause) and pause(reason))
 
 
 def _clear_runtime_pending_tab_loads(workspace) -> None:
@@ -402,6 +426,7 @@ def _initialize_workspace_runtime_state(workspace, *, controlled_startup_probe_g
     workspace._background_prewarm_active_key = ""
     workspace._background_prewarm_active_widget = None
     workspace._background_prewarm_active_started_at = 0.0
+    workspace._background_preload_staging_host = None
     workspace._background_prewarm_start_order = []
     workspace._background_prewarm_completion_order = []
     workspace._background_prewarm_failures = {}
@@ -553,7 +578,7 @@ def _configure_loaded_tab_widget(workspace, widget, key: str, load_reason: str) 
 def _replace_workspace_placeholder(workspace, spec: dict, key: str, index: int, widget) -> None:
     current_index = workspace.tabs.currentIndex()
     previous_blocked = workspace.tabs.blockSignals(True)
-    old_widget = spec.get("widget")
+    old_widget = spec.get("page_widget") or spec.get("widget")
     try:
         icon_tokens = workspace._workspace_icon_tokens
         workspace.tabs.insertTab(
@@ -576,19 +601,32 @@ def _replace_workspace_placeholder(workspace, spec: dict, key: str, index: int, 
     finally:
         workspace.tabs.blockSignals(previous_blocked)
 
+    spec["page_widget"] = widget
+    spec["mounted"] = True
     if old_widget is not None and old_widget is not widget:
         old_widget.deleteLater()
 
 
-def _register_loaded_workspace_tab(workspace, spec: dict, key: str, index: int, widget, load_reason: str) -> None:
+def _register_loaded_workspace_tab(
+    workspace,
+    spec: dict,
+    key: str,
+    index: int,
+    widget,
+    load_reason: str,
+    *,
+    mounted: bool = True,
+) -> None:
     spec["widget"] = widget
     spec["loaded"] = True
+    spec["mounted"] = bool(mounted)
     workspace._tabs_by_key[key] = widget
     setattr(workspace, spec["attr"], widget)
     workspace._mark_system_log_shell_nav(key, load_reason)
     workspace._lazy_loading_keys.discard(key)
     QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
-    workspace._schedule_workspace_table_copy_hooks()
+    if mounted:
+        workspace._schedule_workspace_table_copy_hooks()
     if load_reason == TabLoadReason.RESTORE_LAST_TAB.value:
         started_at = float(getattr(getattr(workspace, "host", None), "_launch_started_at", 0.0) or 0.0)
         if started_at > 0:
@@ -604,6 +642,78 @@ def _register_loaded_workspace_tab(workspace, spec: dict, key: str, index: int, 
             callback = getattr(workspace, "_on_initial_real_tab_activated", None)
             if callable(callback):
                 callback()
+
+
+def _should_stage_background_tab_mount(workspace, key: str, load_reason: str) -> bool:
+    return bool(
+        load_reason == TabLoadReason.BACKGROUND_PREWARM.value
+        and key == "watchlist"
+        and key == str(getattr(workspace, "_background_prewarm_active_key", "") or "")
+    )
+
+
+def _ensure_background_preload_staging_host(workspace):
+    host = getattr(workspace, "_background_preload_staging_host", None)
+    if host is None:
+        host = QWidget(workspace, Qt.WindowType.Tool)
+        host.setObjectName("backgroundPreloadStagingHost")
+        host.hide()
+        workspace._background_preload_staging_host = host
+    runtime_host = workspace.host or workspace.window()
+    host._workspace = workspace
+    for name in (
+        "central_quotes_svc",
+        "na_daily_service",
+        "asian_market_service",
+        "earnings_refresh_service",
+        "_is_closing",
+    ):
+        if runtime_host is not None and hasattr(runtime_host, name):
+            setattr(host, name, getattr(runtime_host, name))
+    return host
+
+
+def _stage_loaded_workspace_tab(workspace, widget) -> None:
+    host = _ensure_background_preload_staging_host(workspace)
+    widget.hide()
+    widget.setParent(host)
+
+
+def _install_staged_tab_copy_hooks(workspace, widget) -> bool:
+    iter_tables = getattr(widget, "iter_tables", None)
+    if not callable(iter_tables):
+        return True
+    try:
+        tables = list(iter_tables() or [])
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    if not tables:
+        return True
+    runtime_host = workspace.host or workspace.window()
+    install_hooks = getattr(runtime_host, "install_workspace_table_copy_hooks", None)
+    if not callable(install_hooks):
+        return False
+    try:
+        install_hooks(tables=tables)
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        log.warning(f"[Workspace] staged table copy hook install failed: {exc}")
+        return False
+    return True
+
+
+def _mount_loaded_workspace_tab(workspace, spec: dict, key: str, index: int):
+    widget = spec.get("widget")
+    if widget is None or spec.get("mounted", True) is not False:
+        return widget
+    copy_hooks_ready = _install_staged_tab_copy_hooks(workspace, widget)
+    prepare_reveal = getattr(widget, "prepare_workspace_preload_reveal", None)
+    if callable(prepare_reveal):
+        prepare_reveal()
+    _replace_workspace_placeholder(workspace, spec, key, index, widget)
+    if not copy_hooks_ready:
+        workspace._schedule_workspace_table_copy_hooks(delay_ms=0)
+    setattr(widget, "_workspace_preload_staged", False)
+    return widget
 
 
 def _skip_if_workspace_stopping(default=None):
@@ -724,7 +834,9 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
                 {
                     "factory": _tab_factory_for_definition(self, definition, watchlist_kwargs),
                     "widget": None,
+                    "page_widget": None,
                     "loaded": False,
+                    "mounted": False,
                 }
             )
             specs.append(spec)
@@ -745,7 +857,9 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             widget = self._create_placeholder_tab(spec)
             setattr(widget, "workspace_key", key)
             spec["widget"] = widget
+            spec["page_widget"] = widget
             spec["loaded"] = False
+            spec["mounted"] = False
             setattr(self, spec["attr"], None)
             self.tabs.addTab(
                 widget,
@@ -770,6 +884,8 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         reason_text = normalize_tab_load_reason(reason)
         first_visible_load = reason_text in self.INTERACTIVE_LOAD_REASONS
         runtime_kwargs = _runtime_kwargs_for_definition(definition, reason_text, first_visible_load, self)
+        if _should_stage_background_tab_mount(self, key, reason_text):
+            runtime_kwargs["_workspace_parent_override"] = _ensure_background_preload_staging_host(self)
         return factory(**runtime_kwargs)
 
     def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:
@@ -801,6 +917,15 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     def get_loaded_tab(self, key: str):
         return self._tabs_by_key.get(str(key or "").strip())
 
+    def _mount_preloaded_tab(self, key: str):
+        spec = self._spec_for_key_or_index(key)
+        if spec is None or not spec.get("loaded"):
+            return None
+        index = self._tab_index_for_key(key)
+        if index < 0:
+            return spec.get("widget")
+        return _mount_loaded_workspace_tab(self, spec, str(key or "").strip(), index)
+
     attach_runtime_services = _attach_workspace_runtime_services
 
     def should_defer_probe_tab_load(self, key: str, *, reason: str = "perf_memory_probe") -> bool:
@@ -831,7 +956,14 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             return False
         coordinator = getattr(self, "_background_preload_coordinator", None)
         defers_activation = getattr(coordinator, "defers_interactive_activation", None)
-        if not callable(defers_activation) or not defers_activation(key):
+        if not callable(defers_activation):
+            return False
+        if not defers_activation(key):
+            active_key = str(getattr(self, "_background_prewarm_active_key", "") or "")
+            prioritize = getattr(coordinator, "prioritize", None)
+            if key == active_key and callable(prioritize):
+                prioritize(key, reason)
+        if not defers_activation(key):
             return False
         prioritize = getattr(coordinator, "prioritize", None)
         if callable(prioritize):
@@ -851,6 +983,10 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         if spec.get("loaded"):
             self._mark_system_log_shell_nav(key, load_reason)
             widget = spec.get("widget")
+            if spec.get("mounted", True) is False and load_reason in self.INTERACTIVE_LOAD_REASONS:
+                index = self._tab_index_for_key(key)
+                if index >= 0:
+                    widget = _mount_loaded_workspace_tab(self, spec, key, index)
             ClassicWorkspace._promote_loaded_tab_to_interactive(widget, load_reason)
             return widget
 
@@ -873,8 +1009,21 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             return widget
 
         _configure_loaded_tab_widget(self, widget, key, load_reason)
-        _replace_workspace_placeholder(self, spec, key, index, widget)
-        _register_loaded_workspace_tab(self, spec, key, index, widget, load_reason)
+        if _should_stage_background_tab_mount(self, key, load_reason):
+            _stage_loaded_workspace_tab(self, widget)
+            setattr(widget, "_workspace_preload_staged", True)
+            _register_loaded_workspace_tab(
+                self,
+                spec,
+                key,
+                index,
+                widget,
+                load_reason,
+                mounted=False,
+            )
+        else:
+            _replace_workspace_placeholder(self, spec, key, index, widget)
+            _register_loaded_workspace_tab(self, spec, key, index, widget, load_reason)
         return widget
 
     @_skip_if_workspace_stopping()
@@ -885,12 +1034,15 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             if spec is None:
                 return
             reason = self._take_tab_activation_reason(index)
+            _cancel_pending_startup_restore_for_user(self, reason)
+            _pause_interactive_handoff_for_visible_watchlist(self, key, reason)
             self._mark_system_log_shell_nav(key, reason)
             if spec.get("loaded"):
                 widget = spec.get("widget")
                 if widget is not None:
                     if self._defer_interactive_activation_until_preload_ready(key, reason):
                         return
+                    widget = _mount_loaded_workspace_tab(self, spec, key, index)
                     ClassicWorkspace._promote_loaded_tab_to_interactive(widget, reason)
                     self._startup_last_allowed_index = index
                     self._notify_tab_activated(key, widget)
@@ -1030,18 +1182,20 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
 
         reason_text = normalize_tab_load_reason(reason) or TabLoadReason.USER.value
         _cancel_pending_startup_restore_for_user(self, reason_text)
+        spec = self._spec_for_key_or_index(target_index)
+        key = str((spec or {}).get("key") or "").strip()
         if self.tabs.currentIndex() == target_index:
-            spec = self._spec_for_key_or_index(target_index)
-            key = str((spec or {}).get("key") or "").strip()
             self._pending_tab_activation_reasons.pop(target_index, None)
             if spec is None or not key:
                 return True
+            _pause_interactive_handoff_for_visible_watchlist(self, key, reason_text)
             if spec.get("loaded"):
                 self._mark_system_log_shell_nav(key, reason_text)
                 widget = spec.get("widget")
                 if widget is not None:
                     if self._defer_interactive_activation_until_preload_ready(key, reason_text):
                         return True
+                    widget = _mount_loaded_workspace_tab(self, spec, key, target_index)
                     ClassicWorkspace._promote_loaded_tab_to_interactive(widget, reason_text)
                     self._startup_last_allowed_index = target_index
                     self._notify_tab_activated(key, widget)
@@ -1049,6 +1203,9 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             self._request_interactive_tab_load(spec, key, reason=reason_text, index=target_index)
             return True
 
+        if spec is not None and key and spec.get("loaded") and spec.get("mounted", True) is False:
+            if not self._defer_interactive_activation_until_preload_ready(key, reason_text):
+                _mount_loaded_workspace_tab(self, spec, key, target_index)
         self._pending_tab_activation_reasons[target_index] = reason_text
         self.tabs.setCurrentIndex(target_index)
         return True
@@ -1141,7 +1298,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         return status
 
     @_skip_if_workspace_stopping()
-    def _schedule_workspace_table_copy_hooks(self) -> None:
+    def _schedule_workspace_table_copy_hooks(self, *, delay_ms: int | None = None) -> None:
         host = self.host or self.window()
         install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
         if not callable(install_hooks) or self._copy_hook_refresh_queued:
@@ -1157,7 +1314,11 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[Workspace] table copy hook install failed: {exc}")
 
-        QTimer.singleShot(self.COPY_HOOK_REFRESH_DELAY_MS, _install_hooks)
+        delay = self.COPY_HOOK_REFRESH_DELAY_MS if delay_ms is None else max(0, int(delay_ms))
+        if delay == 0:
+            _install_hooks()
+            return
+        QTimer.singleShot(delay, _install_hooks)
 
     @_skip_if_workspace_stopping()
     def _notify_tab_activated(self, _key: str, widget) -> None:
@@ -1221,13 +1382,14 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         self._restore_last_tab_timer = timer
 
         def _restore() -> None:
-            if _workspace_is_stopping(self):
-                if self._restore_last_tab_timer is timer:
-                    self._restore_last_tab_timer = None
+            if self._restore_last_tab_timer is not timer:
                 timer.deleteLater()
                 return
-            if self._restore_last_tab_timer is timer:
+            if _workspace_is_stopping(self):
                 self._restore_last_tab_timer = None
+                timer.deleteLater()
+                return
+            self._restore_last_tab_timer = None
             self.restore_last_tab(key_or_index)
             timer.deleteLater()
 
@@ -1439,6 +1601,9 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         if getattr(self, "_shutting_down", False):
             return
         self._shutting_down = True
+        staging_host = getattr(self, "_background_preload_staging_host", None)
+        if staging_host is not None:
+            setattr(staging_host, "_is_closing", True)
         _clear_workspace_pending_state(self)
         disconnect_events = getattr(self, "_disconnect_workspace_events", None)
         if callable(disconnect_events):

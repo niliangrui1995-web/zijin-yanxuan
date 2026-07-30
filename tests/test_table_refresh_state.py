@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from PyQt6.QtCore import QEvent, QPoint, Qt
+from PyQt6.QtCore import QEvent, QPoint, QRect, Qt
 from PyQt6.QtGui import QHelpEvent, QRegion, QStandardItem, QStandardItemModel
 
 import ui.components.table_controls as table_controls_module
@@ -33,6 +33,7 @@ from ui.components.table_controls import (
 from ui.components.table_controls import (
     VCPTableView as ModuleVCPTableView,
 )
+from ui.components.table_controls import _paint_region_metrics
 from ui.components.table_controls import (
     format_multi_select_summary as module_format_multi_select_summary,
 )
@@ -455,7 +456,7 @@ def test_vcp_table_view_targeted_flash_expiry_updates_only_dirty_region(qt_appli
     proxy_model.setSourceModel(source_model)
     table.setModel(proxy_model)
     table.set_coalesced_flash_repaint_enabled(True)
-    table.set_targeted_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
     rows = [
         {
             "代码": f"0000{row:02d}",
@@ -503,7 +504,133 @@ def test_vcp_table_view_targeted_flash_expiry_updates_only_dirty_region(qt_appli
         assert len(updates[0]) == 1
         assert isinstance(updates[0][0], QRegion)
         assert updates[0][0] == region
+        assert float(table._pending_paint_metric["requested_dirty_bounding_area_ratio"]) < 1.0
+        assert table._pending_paint_metric["requested_dirty_region_rects"] == region.rectCount()
         assert table._flash_repaint_timer.isActive() is False
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_reports_full_region_after_targeted_request(qt_application, monkeypatch):
+    table = VCPTableView()
+    model = StockTableModel(["代码", "名称"])
+    table.setModel(model)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    model.update_data([{"代码": "600519", "名称": "贵州茅台"}])
+    table.resize(640, 360)
+    table.show()
+    _process_events(qt_application)
+
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        table._mark_pending_paint_metric(
+            "flash_expiry",
+            requested_dirty_bounding_area_ratio="0.1452",
+            requested_dirty_region_rects=3,
+            requested_full_viewport=False,
+        )
+        table.viewport().update(QRegion(QRect(0, 0, 20, 20)))
+        table.viewport().update()
+        _process_events(qt_application)
+
+        paint = next(item for item in recorded if item[0] == "watchlist_table_paint_ms")
+        tags = paint[2]["tags"]
+        assert tags["requested_dirty_bounding_area_ratio"] == "0.1452"
+        assert tags["delivered_dirty_bounding_area_ratio"] == "1.0000"
+        assert tags["delivered_full_viewport"] == "true"
+        assert tags["reason"] == "flash_expiry"
+        assert tags["targeted_request_reason"] == "flash_expiry"
+        assert tags["region_expanded"] == "true"
+        assert tags["delivery_kind"] == "full_after_targeted_request"
+    finally:
+        table.deleteLater()
+
+
+def test_paint_region_full_viewport_uses_coverage_not_bounding_span():
+    viewport_rect = QRect(0, 0, 100, 100)
+    sparse_corners = QRegion(QRect(0, 0, 8, 8)).united(QRegion(QRect(92, 92, 8, 8)))
+
+    ratio, rect_count, full_viewport = _paint_region_metrics(sparse_corners, viewport_rect)
+
+    assert ratio == 1.0
+    assert rect_count == 2
+    assert full_viewport is False
+
+
+def test_vcp_table_view_preserves_model_reset_when_flash_request_coalesces(
+    qt_application,
+    monkeypatch,
+):
+    table = VCPTableView()
+    model = StockTableModel(["代码", "现价"])
+    table.setModel(model)
+    table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    model.update_data([{"代码": "600519", "现价": "10.00"}])
+    table.resize(640, 360)
+    table.show()
+    _process_events(qt_application)
+
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        model.update_data(
+            [
+                {"代码": "600519", "现价": "10.00"},
+                {"代码": "000001", "现价": "8.00"},
+            ]
+        )
+        assert model.set_cell_value(0, "现价", "10.10") is True
+        table._flash_repaint_timer.stop()
+        table._tick_flash_repaint()
+        _process_events(qt_application)
+
+        paint = next(item for item in recorded if item[0] == "watchlist_table_paint_ms")
+        tags = paint[2]["tags"]
+        assert tags["reason"] == "model_reset"
+        assert tags["structural_reason"] == "model_reset"
+        assert tags["pending_reasons"].split(",") == [
+            "model_reset",
+            "quote_data_changed",
+            "flash_expiry",
+        ]
+        assert tags["targeted_request_reason"] == "flash_expiry"
+        assert tags["delivered_full_viewport"] == "true"
+        assert tags["delivery_kind"] == "structural_full_viewport"
+        assert tags["targeted_request_coalesced_with_structural"] == "true"
+        assert "region_expanded" not in tags
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_targeted_flash_without_metric_scope_keeps_region_update(qt_application, monkeypatch):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    table.setModel(source_model)
+    table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True)
+    source_model.update_data([{"代码": "600519", "名称": "贵州茅台", "现价": "1500.00"}])
+    table.resize(640, 360)
+    table.show()
+    _process_events(qt_application)
+    try:
+        source_model.update_quotes({"600519": {"close": 1510.0, "last_close": 1500.0}})
+        table._flash_repaint_timer.stop()
+        updates = []
+        monkeypatch.setattr(table.viewport(), "update", lambda *args: updates.append(args))
+
+        table._tick_flash_repaint()
+
+        assert len(updates) == 1
+        assert len(updates[0]) == 1
+        assert isinstance(updates[0][0], QRegion)
     finally:
         table.deleteLater()
 

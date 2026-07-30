@@ -21,7 +21,8 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtGui import QRegion
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -74,6 +75,14 @@ def summarize_durations(values: list[float]) -> dict:
     }
 
 
+def _sample_delivered_full_viewport(sample) -> bool:
+    tags = getattr(sample, "tags", {}) or {}
+    value = tags.get("delivered_full_viewport")
+    if value is not None:
+        return str(value).strip().lower() == "true"
+    return float(tags.get("dirty_bounding_area_ratio", 0.0) or 0.0) >= 0.99
+
+
 def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dict:
     paint_samples = list(samples_by_name.get("watchlist_table_paint_ms", ()))
     paint_ratios = [
@@ -82,6 +91,8 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
     ]
     after_first_paint_samples = paint_samples[1:]
     after_first_paint_ratios = paint_ratios[1:]
+    paint_full_flags = [_sample_delivered_full_viewport(sample) for sample in paint_samples]
+    after_first_paint_full_flags = paint_full_flags[1:]
     snapshot_samples = list(samples_by_name.get("tab_transition_snapshot_ms", ()))
     skipped_samples = list(samples_by_name.get("tab_transition_snapshot_skipped", ()))
     model_samples = list(samples_by_name.get("watchlist_model_update_ms", ()))
@@ -97,9 +108,42 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
         ],
         "paint": {
             "durations": summarize_durations([sample.value for sample in paint_samples]),
-            "full_viewport_count": sum(ratio >= 0.99 for ratio in paint_ratios),
+            "full_viewport_count": sum(paint_full_flags),
             "max_dirty_bounding_area_ratio": round(max(paint_ratios, default=0.0), 4),
             "reasons": [str(sample.tags.get("reason", "")) for sample in paint_samples],
+            "samples": [
+                {
+                    "elapsed_ms": round(float(sample.value), 3),
+                    "reason": str(sample.tags.get("reason", "")),
+                    "requested_dirty_bounding_area_ratio": sample.tags.get(
+                        "requested_dirty_bounding_area_ratio"
+                    ),
+                    "delivered_dirty_bounding_area_ratio": sample.tags.get(
+                        "delivered_dirty_bounding_area_ratio",
+                        sample.tags.get("dirty_bounding_area_ratio", ""),
+                    ),
+                    "targeted_request_reason": str(sample.tags.get("targeted_request_reason", "")),
+                    "region_expanded": str(sample.tags.get("region_expanded", "false")),
+                    "delivery_kind": str(sample.tags.get("delivery_kind", "")),
+                    "delivered_full_viewport": str(
+                        sample.tags.get("delivered_full_viewport", "")
+                    ),
+                    "pending_reasons": str(sample.tags.get("pending_reasons", "")),
+                    "structural_reason": str(sample.tags.get("structural_reason", "")),
+                    "targeted_request_coalesced_with_structural": str(
+                        sample.tags.get("targeted_request_coalesced_with_structural", "")
+                    ),
+                    "paint_event_spontaneous": str(
+                        sample.tags.get("paint_event_spontaneous", "")
+                    ),
+                    "background_prewarm_active_key_at_paint": str(
+                        sample.tags.get("background_prewarm_active_key_at_paint", "")
+                    ),
+                    "preload_staged": str(sample.tags.get("preload_staged", "")),
+                    "background_preload_ready": str(sample.tags.get("background_preload_ready", "")),
+                }
+                for sample in paint_samples
+            ],
             "first": (
                 {
                     "elapsed_ms": round(float(paint_samples[0].value), 3),
@@ -111,7 +155,7 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
             ),
             "after_first": {
                 "durations": summarize_durations([sample.value for sample in after_first_paint_samples]),
-                "full_viewport_count": sum(ratio >= 0.99 for ratio in after_first_paint_ratios),
+                "full_viewport_count": sum(after_first_paint_full_flags),
                 "max_dirty_bounding_area_ratio": round(max(after_first_paint_ratios, default=0.0), 4),
             },
         },
@@ -122,6 +166,69 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
             "skipped_pairs": [dict(sample.tags) for sample in skipped_samples],
         },
     }
+
+
+def _background_prewarm_acceptance(
+    status: dict,
+    paint_region: dict,
+    *,
+    tab_count: int | None = None,
+    mounted_keys: list[str] | None = None,
+    staged_keys: list[str] | None = None,
+    lazy_keys: list[str] | None = None,
+) -> dict:
+    violations: list[str] = []
+    planned_count = int(status.get("planned_count", 0) or 0)
+    planned_order = [str(key or "") for key in status.get("planned_order", ()) or ()]
+    start_order = [str(key or "") for key in status.get("start_order", ()) or ()]
+    completion_order = [str(key or "") for key in status.get("completion_order", ()) or ()]
+    handoff_keys = [
+        str(key or "") for key in status.get("startup_lazy_handoff_keys", ()) or ()
+    ]
+    expected_handoff = planned_order[1:] if planned_order[:1] == ["watchlist"] else []
+    if not bool(status.get("finished")):
+        violations.append("prewarm_not_finished")
+    if planned_count <= 0 or len(planned_order) != planned_count:
+        violations.append(f"planned={len(planned_order)}/{planned_count}")
+    if start_order != ["watchlist"]:
+        violations.append(f"start_order={start_order}")
+    if completion_order != ["watchlist"]:
+        violations.append(f"completion_order={completion_order}")
+    if handoff_keys != expected_handoff:
+        violations.append(
+            f"startup_lazy_handoff_keys={handoff_keys} expected={expected_handoff}"
+        )
+    if str(status.get("completion_scope") or "") != "visible_watchlist_ready":
+        violations.append(f"completion_scope={status.get('completion_scope')!r}")
+    if status.get("failures"):
+        violations.append(f"failures={sorted(status['failures'])}")
+    if tab_count is not None and int(tab_count) != planned_count:
+        violations.append(f"tab_count={int(tab_count)} expected={planned_count}")
+    if mounted_keys is not None and list(mounted_keys) != ["watchlist"]:
+        violations.append(f"mounted_keys={list(mounted_keys)}")
+    if staged_keys is not None and list(staged_keys):
+        violations.append(f"staged_keys={list(staged_keys)} expected=[]")
+    if lazy_keys is not None and list(lazy_keys) != handoff_keys:
+        violations.append(f"lazy_keys={list(lazy_keys)} expected={handoff_keys}")
+    full_viewport_count = int(paint_region.get("full_viewport_count", 0) or 0)
+    if full_viewport_count:
+        violations.append(f"watchlist_full_viewport_during_hidden_prewarm={full_viewport_count}")
+    return {"status": "pass" if not violations else "fail", "violations": violations}
+
+
+def _watchlist_reveal_acceptance(paint_region: dict) -> dict:
+    """Allow the necessary reveal paint, but reject any later full-viewport paint."""
+    violations: list[str] = []
+    paint_count = int(paint_region.get("count", 0) or 0)
+    if paint_count <= 0:
+        violations.append("watchlist_reveal_paint_missing")
+    elif not bool((paint_region.get("first") or {}).get("delivered_full_viewport")):
+        violations.append("watchlist_first_reveal_not_full_viewport")
+    after_first = paint_region.get("after_first", {}) or {}
+    full_after_first = int(after_first.get("full_viewport_count", 0) or 0)
+    if full_after_first:
+        violations.append(f"watchlist_full_viewport_after_reveal={full_after_first}")
+    return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
 def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
@@ -353,6 +460,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--load-timeout-ms", type=int, default=8000)
     parser.add_argument("--heartbeat-ms", type=int, default=25)
     parser.add_argument(
+        "--background-prewarm",
+        action="store_true",
+        help="Run the production 11-tab background prewarm and measure Watchlist repaints until it finishes.",
+    )
+    parser.add_argument("--prewarm-timeout-ms", type=int, default=60_000)
+    parser.add_argument(
         "--quote-cycles",
         type=int,
         default=0,
@@ -559,6 +672,10 @@ class _FirstPaintProbe(QObject):
             self._record_widget_event("window", event_type)
         elif watched.__class__.__name__ == "WatchlistTab":
             self._record_widget_event("watchlist", event_type)
+            if event_type == self._qevent_type.Show:
+                table = getattr(watched, "table_sp", None)
+                if table is not None:
+                    self.attach_watchlist_table(table)
         return False
 
     def attach_watchlist_table(self, table) -> None:
@@ -585,10 +702,14 @@ class _FirstPaintProbe(QObject):
     @staticmethod
     def _summarize_paint_regions(samples: list[dict]) -> dict:
         ratios = [float(sample.get("dirty_bounding_area_ratio", 0.0) or 0.0) for sample in samples]
+        full_flags = [bool(sample.get("delivered_full_viewport", False)) for sample in samples]
+        spontaneous_flags = [bool(sample.get("paint_event_spontaneous", False)) for sample in samples]
         after_first_ratios = ratios[1:]
+        after_first_full_flags = full_flags[1:]
         return {
             "count": len(samples),
-            "full_viewport_count": sum(ratio >= 0.99 for ratio in ratios),
+            "full_viewport_count": sum(full_flags),
+            "spontaneous_count": sum(spontaneous_flags),
             "max_dirty_bounding_area_ratio": round(max(ratios, default=0.0), 4),
             "max_region_rect_count": max(
                 (int(sample.get("region_rect_count", 0) or 0) for sample in samples),
@@ -598,15 +719,17 @@ class _FirstPaintProbe(QObject):
                 {
                     "dirty_bounding_area_ratio": round(ratios[0], 4),
                     "region_rect_count": int(samples[0].get("region_rect_count", 0) or 0),
+                    "delivered_full_viewport": full_flags[0],
                 }
                 if samples
                 else None
             ),
             "after_first": {
                 "count": len(after_first_ratios),
-                "full_viewport_count": sum(ratio >= 0.99 for ratio in after_first_ratios),
+                "full_viewport_count": sum(after_first_full_flags),
                 "max_dirty_bounding_area_ratio": round(max(after_first_ratios, default=0.0), 4),
             },
+            "samples": [dict(sample) for sample in samples],
         }
 
     def mark_activation(self, started: float) -> None:
@@ -639,12 +762,23 @@ class _FirstPaintProbe(QObject):
             dirty_area = max(0, dirty_rect.width() * dirty_rect.height())
             ratio = min(1.0, dirty_area / viewport_area)
             rect_count = int(event.region().rectCount())
+            delivered_full = bool(
+                not viewport_rect.isEmpty()
+                and QRegion(viewport_rect).subtracted(event.region()).isEmpty()
+            )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
         self._paint_regions_by_phase[self._phase].append(
             {
                 "dirty_bounding_area_ratio": ratio,
                 "region_rect_count": rect_count,
+                "delivered_full_viewport": delivered_full,
+                "paint_event_spontaneous": bool(event.spontaneous()),
+                "background_prewarm_active_key_at_paint": str(
+                    getattr(getattr(self._window, "_workspace", None), "_background_prewarm_active_key", "")
+                    or ""
+                ),
+                "recorded_at_ms": round((time.perf_counter() - self._origin) * 1000.0, 3),
             }
         )
 
@@ -705,6 +839,17 @@ class _NativeProfileController:
         self._residual_results: list[dict] = []
         self._residual_phase: dict | None = None
         self._residual_isolation_started = False
+        self._background_prewarm_started_at = 0.0
+        self._background_prewarm_offsets: dict[str, float] | None = None
+        self._background_prewarm_first_hidden_key = ""
+        self._watchlist_reveal_started_at = 0.0
+        self._watchlist_reveal_offsets: dict[str, float] | None = None
+
+        workspace = getattr(window, "_workspace", None)
+        coordinator = getattr(workspace, "_background_preload_coordinator", None)
+        step_started = getattr(coordinator, "stepStarted", None)
+        if step_started is not None:
+            step_started.connect(self._on_background_prewarm_step_started)
 
         self._heartbeat = qtimer_type()
         self._heartbeat.setTimerType(qt_timer_type.PreciseTimer)
@@ -721,7 +866,10 @@ class _NativeProfileController:
         self._heartbeat_last = time.perf_counter()
         self._heartbeat.start()
         self.QTimer.singleShot(max(0, int(self.args.warmup_ms)), self._activate_watchlist)
-        total_timeout = max(1000, int(self.args.warmup_ms) + int(self.args.load_timeout_ms))
+        load_timeout_ms = int(self.args.load_timeout_ms)
+        if bool(self.args.background_prewarm):
+            load_timeout_ms = max(load_timeout_ms, int(self.args.prewarm_timeout_ms))
+        total_timeout = max(1000, int(self.args.warmup_ms) + load_timeout_ms)
         self.QTimer.singleShot(total_timeout, self._abort_on_timeout)
 
     def _set_phase(self, phase: str) -> None:
@@ -756,6 +904,11 @@ class _NativeProfileController:
             self._fail("watchlist tab unavailable")
             return
 
+        if bool(self.args.background_prewarm):
+            self._watchlist_reveal_started_at = time.perf_counter()
+            self._watchlist_reveal_offsets = self._metric_offsets()
+            self._reset_stall_probe()
+            self._set_phase("watchlist_reveal")
         call_started = time.perf_counter()
         activated = bool(workspace.activate_tab(index, reason="user"))
         self.report["timings"]["watchlist_activate_call_ms"] = round(
@@ -770,6 +923,10 @@ class _NativeProfileController:
         workspace = getattr(self.window, "_workspace", None)
         tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
         if tab is None:
+            return
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
+        watchlist_spec = next((spec for spec in specs if spec.get("key") == "watchlist"), {})
+        if bool(self.args.background_prewarm) and not bool(watchlist_spec.get("mounted")):
             return
         self._load_poll.stop()
         loaded_ms = (time.perf_counter() - self._activation_started) * 1000.0
@@ -787,12 +944,41 @@ class _NativeProfileController:
         table = getattr(tab, "table_sp", None)
         if table is not None:
             self.paint_probe.attach_watchlist_table(table)
+            ambient_timer = getattr(table, "_ambient_repaint_timer", None)
+            flash_timer = getattr(table, "_flash_repaint_timer", None)
+            viewport = table.viewport()
+            self.report["watchlist"]["repaint_runtime"] = {
+                "watchlist_page_opaque_paint": bool(
+                    tab.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+                ),
+                "table_opaque_paint": bool(
+                    table.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+                ),
+                "viewport_opaque_paint": bool(
+                    viewport is not None
+                    and viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+                ),
+                "watchlist_page_size": [int(tab.width()), int(tab.height())],
+                "table_size": [int(table.width()), int(table.height())],
+                "viewport_size": (
+                    [int(viewport.width()), int(viewport.height())]
+                    if viewport is not None
+                    else None
+                ),
+                "copy_hook_installed": bool(getattr(table, "_copy_hook_installed", False)),
+                "ambient_pulse_property": bool(table.property("ambientPulse")),
+                "ambient_timer_active": bool(ambient_timer is not None and ambient_timer.isActive()),
+                "ambient_timer_interval_ms": (
+                    int(ambient_timer.interval()) if ambient_timer is not None else None
+                ),
+                "flash_timer_active": bool(flash_timer is not None and flash_timer.isActive()),
+                "flash_timer_interval_ms": int(flash_timer.interval()) if flash_timer is not None else None,
+                "coalesced_flash_repaint": bool(getattr(table, "_coalesced_flash_repaint", False)),
+                "targeted_flash_repaint": bool(getattr(table, "_targeted_flash_repaint", False)),
+            }
         proxy = getattr(tab, "proxy_model", None)
         headers = list(getattr(model, "headers", None) or [])
-        if proxy is not None and headers and (
-            max(0, int(self.args.quote_cycles)) > 0
-            or max(0, int(self.args.residual_repaint_cycles)) > 0
-        ):
+        if proxy is not None and headers and max(0, int(self.args.residual_repaint_cycles)) > 0:
             sort_header = "RPS强度" if "RPS强度" in headers else "代码"
             proxy.sort(headers.index(sort_header))
             self.report["watchlist"]["probe_sort_header"] = sort_header
@@ -810,10 +996,159 @@ class _NativeProfileController:
             self.settle_profiler.enable()
             self._active_profiler = self.settle_profiler
             self._active_profile_path = self.settle_profile_path
-        self._set_phase("watchlist_settle")
+        if not bool(self.args.background_prewarm):
+            self._set_phase("watchlist_settle")
         self.QTimer.singleShot(max(0, int(self.args.settle_ms)), self._after_watchlist_settle)
 
+    def _on_background_prewarm_step_started(self, key: str) -> None:
+        key_text = str(key or "").strip()
+        if (
+            self._done
+            or not bool(self.args.background_prewarm)
+            or key_text == "watchlist"
+            or self._background_prewarm_started_at > 0.0
+        ):
+            return
+
+        started_at = time.perf_counter()
+        self._record_watchlist_reveal(started_at)
+        self._background_prewarm_first_hidden_key = key_text
+        self._background_prewarm_started_at = started_at
+        self._background_prewarm_offsets = self._metric_offsets()
+        self._reset_stall_probe()
+        self._set_phase("background_prewarm")
+
+    def _record_watchlist_reveal(self, completed_at: float) -> None:
+        if "watchlist_reveal" in self.report:
+            return
+        reveal_offsets = self._watchlist_reveal_offsets or self._metric_offsets()
+        reveal_started_at = self._watchlist_reveal_started_at or completed_at
+        reveal_paint_region = self.paint_probe.paint_region_summary("watchlist_reveal")
+        reveal_acceptance = _watchlist_reveal_acceptance(reveal_paint_region)
+        self.report["watchlist_reveal"] = {
+            "elapsed_ms": round((completed_at - reveal_started_at) * 1000.0, 3),
+            "paint_region": reveal_paint_region,
+            "metrics": _summarize_residual_repaint_metrics(self._metrics_since(reveal_offsets)),
+            "heartbeat_lateness": summarize_durations(
+                list(self._heartbeat_by_phase.get("watchlist_reveal", ()))
+            ),
+            "ui_stall_snapshot": self._stall_snapshot(),
+            "acceptance_scope": "first_reveal_plus_zero_later_full_viewport_paints",
+            "acceptance": reveal_acceptance,
+        }
+        if reveal_acceptance["status"] != "pass":
+            self.report["errors"].append("watchlist reveal repaint acceptance failed")
+
     def _after_watchlist_settle(self) -> None:
+        if self._done:
+            return
+        if bool(self.args.background_prewarm):
+            self._poll_background_prewarm_finished()
+            return
+        self._continue_after_background_prewarm()
+
+    def _poll_background_prewarm_finished(self) -> None:
+        if self._done:
+            return
+        workspace = getattr(self.window, "_workspace", None)
+        status = workspace.background_preload_status() if workspace is not None else {}
+        if self._background_prewarm_started_at <= 0.0 and bool(status.get("finished")):
+            terminal_at = time.perf_counter()
+            self._record_watchlist_reveal(terminal_at)
+            self._background_prewarm_started_at = terminal_at
+            self._background_prewarm_offsets = self._metric_offsets()
+            self._reset_stall_probe()
+            self._set_phase("background_prewarm")
+        if self._background_prewarm_started_at <= 0.0:
+            wait_started_at = self._watchlist_reveal_started_at or self._activation_started
+            elapsed_ms = (time.perf_counter() - wait_started_at) * 1000.0
+            if elapsed_ms >= max(1, int(self.args.prewarm_timeout_ms)):
+                self.report["background_prewarm"] = {
+                    "elapsed_ms": round(elapsed_ms, 3),
+                    "status": status,
+                    "acceptance": {"status": "fail", "violations": ["hidden_prewarm_not_started"]},
+                }
+                self._fail("background prewarm did not start hidden tabs")
+                return
+            self.QTimer.singleShot(50, self._poll_background_prewarm_finished)
+            return
+        elapsed_ms = (time.perf_counter() - self._background_prewarm_started_at) * 1000.0
+        if not bool(status.get("finished")):
+            if elapsed_ms >= max(1, int(self.args.prewarm_timeout_ms)):
+                self.report["background_prewarm"] = {
+                    "elapsed_ms": round(elapsed_ms, 3),
+                    "status": status,
+                    "acceptance": {"status": "fail", "violations": ["prewarm_timeout"]},
+                }
+                self._fail("background prewarm timeout")
+                return
+            self.QTimer.singleShot(50, self._poll_background_prewarm_finished)
+            return
+
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
+        tab_count = int(getattr(getattr(workspace, "tabs", None), "count", lambda: 0)())
+        specs_by_key = {str(spec.get("key") or ""): spec for spec in specs}
+        planned_order = [str(key or "") for key in status.get("planned_order", ()) or ()]
+        mounted_keys = [
+            key
+            for key in planned_order
+            if specs_by_key.get(key, {}).get("loaded")
+            and specs_by_key.get(key, {}).get("mounted", True)
+        ]
+        staged_keys = [
+            key
+            for key in planned_order
+            if specs_by_key.get(key, {}).get("loaded")
+            and not specs_by_key.get(key, {}).get("mounted", True)
+        ]
+        lazy_keys = [key for key in planned_order if not specs_by_key.get(key, {}).get("loaded")]
+        paint_region = self.paint_probe.paint_region_summary("background_prewarm")
+        offsets = self._background_prewarm_offsets or self._metric_offsets()
+        acceptance = _background_prewarm_acceptance(
+            status,
+            paint_region,
+            tab_count=tab_count,
+            mounted_keys=mounted_keys,
+            staged_keys=staged_keys,
+            lazy_keys=lazy_keys,
+        )
+        heartbeat_lateness = summarize_durations(
+            list(self._heartbeat_by_phase.get("background_prewarm", ()))
+        )
+        stall_snapshot = self._stall_snapshot()
+        event_loop_observation = {
+            "status": (
+                "stalls_observed"
+                if int(stall_snapshot.get("total_count", 0) or 0) > 0
+                or float(heartbeat_lateness.get("max_ms", 0.0) or 0.0) >= 50.0
+                else "clear"
+            ),
+            "part_of_repaint_acceptance": False,
+            "heartbeat_lateness": heartbeat_lateness,
+            "ui_stall_snapshot": stall_snapshot,
+        }
+        self.report["background_prewarm"] = {
+            "elapsed_ms": round(elapsed_ms, 3),
+            "first_hidden_key": self._background_prewarm_first_hidden_key,
+            "tab_count": tab_count,
+            "mounted_keys": mounted_keys,
+            "staged_keys": staged_keys,
+            "lazy_keys": lazy_keys,
+            "completion_scope": str(status.get("completion_scope") or ""),
+            "status": status,
+            "paint_region": paint_region,
+            "metrics": _summarize_residual_repaint_metrics(self._metrics_since(offsets)),
+            "heartbeat_lateness": heartbeat_lateness,
+            "ui_stall_snapshot": stall_snapshot,
+            "event_loop_observation": event_loop_observation,
+            "acceptance_scope": "watchlist_repaint_and_11_tab_startup_lazy_handoff",
+            "acceptance": acceptance,
+        }
+        if acceptance["status"] != "pass":
+            self.report["errors"].append("background prewarm repaint acceptance failed")
+        self._continue_after_background_prewarm()
+
+    def _continue_after_background_prewarm(self) -> None:
         if self._done:
             return
         if max(0, int(self.args.question_dialog_ms)) > 0 and not self._question_dialog_probed:
@@ -1413,13 +1748,15 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "startup_orchestrator_suppressed": True,
             "auto_refresh_suppressed": True,
             "central_quotes_suppressed": True,
-            "background_prewarm_suppressed": True,
+            "background_prewarm_suppressed": not bool(args.background_prewarm),
         },
         "configuration": {
             "warmup_ms": int(args.warmup_ms),
             "settle_ms": int(args.settle_ms),
             "load_timeout_ms": int(args.load_timeout_ms),
             "heartbeat_ms": int(args.heartbeat_ms),
+            "background_prewarm": bool(args.background_prewarm),
+            "prewarm_timeout_ms": int(args.prewarm_timeout_ms),
             "quote_cycles": int(args.quote_cycles),
             "quote_cycle_ms": int(args.quote_cycle_ms),
             "quote_target_count": int(args.quote_target_count),
@@ -1450,7 +1787,7 @@ def _build_profiled_main_window(app, qevent_type, args, report, paths, origin):
     window = main_window_module.MainWindowQT(
         startup_enabled=True,
         auto_refresh_enabled=False,
-        background_prewarm=False,
+        background_prewarm=bool(args.background_prewarm),
         kline_prewarm_enabled=False,
         central_quotes_enabled=False,
         restore_last_tab_enabled=False,
@@ -1459,6 +1796,11 @@ def _build_profiled_main_window(app, qevent_type, args, report, paths, origin):
     # The Watchlist factory retains its production startup flags while the
     # later post-paint startup orchestrator remains suppressed for isolation.
     window._startup_enabled = False
+    if bool(args.background_prewarm):
+        workspace = getattr(window, "_workspace", None)
+        mark_cache_ready = getattr(workspace, "_on_startup_cache_bootstrap_ready", None)
+        if callable(mark_cache_ready):
+            mark_cache_ready()
     report["timings"]["window_construct_ms"] = round((time.perf_counter() - construct_started) * 1000.0, 3)
     paint_probe = _FirstPaintProbe(app, window, qevent_type, origin=origin)
     show_started = time.perf_counter()
