@@ -120,7 +120,7 @@ class StockContextQueryService:
 
     def _source_rows(self, source: str, policy: StockContextReadPolicy) -> list[dict]:
         widget_rows = self._snapshot.rows_for(source)
-        if widget_rows:
+        if widget_rows or self._snapshot.source_row_counts.get(source, 0) > 0:
             return self._filter_rows(widget_rows, policy.target_codes)
         return self._filter_rows(self._fallback_rows(source, policy), policy.target_codes)
 

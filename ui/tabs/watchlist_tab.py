@@ -75,20 +75,16 @@ def capture_workspace_stock_context(
     *,
     include_rps_bundle: bool = True,
     sources=None,
+    target_codes=None,
 ):
     from ui.workspaces.stock_context_widget_adapter import capture_workspace_stock_context as capture_context
 
-    if sources is None:
-        return (
-            capture_context(workspace)
-            if include_rps_bundle
-            else capture_context(workspace, include_rps_bundle=False)
-        )
-    return capture_context(
-        workspace,
-        include_rps_bundle=include_rps_bundle,
-        sources=sources,
-    )
+    options = {"include_rps_bundle": include_rps_bundle}
+    if sources is not None:
+        options["sources"] = sources
+    if target_codes is not None:
+        options["target_codes"] = target_codes
+    return capture_context(workspace, **options)
 
 
 def _task_cancelled(cancellation_token) -> bool:
@@ -1090,10 +1086,9 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.setModel(self.proxy_model)
         self.table_sp.set_coalesced_flash_repaint_enabled(True)
         self.table_sp.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
-        # QTableView paints every requested viewport pixel.  Declaring that
-        # contract prevents Qt's backing store from scheduling redundant full
-        # clears after the staged Watchlist is revealed.
-        self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        # QTableView paints viewport pixels, but allowing background clears on dirty
+        # regions prevents ghosting and text duplication during mouse hover.
+        self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)

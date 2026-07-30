@@ -51,6 +51,11 @@ class _LineageTab(_RowsTab):
         return {"status": self._status}
 
 
+class _ForbiddenDeepcopy:
+    def __deepcopy__(self, _memo):
+        raise AssertionError("non-target row was deep-copied")
+
+
 def test_widget_snapshot_source_keys_follow_general_contract_in_default_order():
     assert SOURCE_KEYS == tuple(
         source_key for source_key in DEFAULT_SOURCE_ORDER if source_key in GENERAL_STOCK_CONTEXT_SOURCE_KEYS
@@ -103,8 +108,8 @@ def test_workspace_snapshot_helper_forwards_rps_capture_policy():
 def test_workspace_snapshot_helper_forwards_source_scope():
     calls = []
     workspace = SimpleNamespace(
-        capture_stock_context_snapshot=lambda *, include_rps_bundle, sources: calls.append(
-            (include_rps_bundle, frozenset(sources))
+        capture_stock_context_snapshot=lambda *, include_rps_bundle, sources, target_codes: calls.append(
+            (include_rps_bundle, frozenset(sources), tuple(target_codes))
         )
         or StockContextSnapshot()
     )
@@ -113,10 +118,11 @@ def test_workspace_snapshot_helper_forwards_source_scope():
         workspace,
         include_rps_bundle=False,
         sources=RADAR_SOURCE_KEYS,
+        target_codes=("000001",),
     )
 
     assert isinstance(snapshot, StockContextSnapshot)
-    assert calls == [(False, frozenset(RADAR_SOURCE_KEYS))]
+    assert calls == [(False, frozenset(RADAR_SOURCE_KEYS), ("000001",))]
 
 
 def test_workspace_snapshot_helper_preserves_legacy_default_reader_contract():
@@ -477,6 +483,60 @@ def test_scoped_snapshot_keeps_loaded_source_over_cache_precedence(monkeypatch):
     )
 
     assert StockContextQueryService(snapshot).query_by_code(policy) == {}
+
+
+def test_target_scoped_snapshot_prefilters_before_deepcopy_and_keeps_loaded_precedence(monkeypatch):
+    target_workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: (
+            _RowsTab(
+                [
+                    {"代码": "000001", "payload": _ForbiddenDeepcopy()},
+                    {"代码": "000002", "细分板块": "界面板块"},
+                ]
+            )
+            if key == "ai_industry_chain"
+            else None
+        ),
+        tab_specs=lambda: [{"key": "ai_industry_chain", "title": "AI产业链"}],
+    )
+
+    snapshot = StockContextWidgetSnapshotAdapter(target_workspace).capture(
+        include_rps_bundle=False,
+        sources={"ai_industry_chain"},
+        target_codes={"000002"},
+    )
+
+    assert [row["代码"] for row in snapshot.rows_for("ai_industry_chain")] == ["000002"]
+    assert snapshot.source_row_counts == {"ai_industry_chain": 2}
+
+    monkeypatch.setattr(
+        "app.services.stock_context_query_service.load_ai_chain_cache_rows",
+        lambda: [{"代码": "000002", "细分板块": "缓存板块"}],
+    )
+    non_target_workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: (
+            _RowsTab([{"代码": "000001", "细分板块": "界面板块"}])
+            if key == "ai_industry_chain"
+            else None
+        ),
+        tab_specs=lambda: [{"key": "ai_industry_chain", "title": "AI产业链"}],
+    )
+    non_target_snapshot = StockContextWidgetSnapshotAdapter(non_target_workspace).capture(
+        include_rps_bundle=False,
+        sources={"ai_industry_chain"},
+        target_codes={"000002"},
+    )
+    policy = StockContextReadPolicy.build(
+        include_source_cache_fallback=True,
+        target_codes={"000002"},
+        sources={"ai_industry_chain"},
+    )
+
+    assert non_target_snapshot.rows_for("ai_industry_chain") == []
+    assert non_target_snapshot.source_row_counts == {"ai_industry_chain": 1}
+    assert StockContextQueryService(non_target_snapshot).query_by_code(policy) == {}
 
 
 def test_loaded_source_replaces_whole_cache_and_empty_source_uses_cache(monkeypatch):

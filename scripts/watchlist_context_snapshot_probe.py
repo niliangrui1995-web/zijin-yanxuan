@@ -21,7 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 DEFAULT_SOURCE_COUNTS = {
     "scan": 4000,
-    "ai_industry_chain": 374,
+    "ai_industry_chain": 361,
     "na_daily": 48,
     "foreign_block": 37,
     "earnings": 57,
@@ -115,7 +115,13 @@ def _summary(values: list[float]) -> dict:
     }
 
 
-def _measure(adapter, target_codes: tuple[str, ...], *, sources=None) -> tuple[float, float, object, int]:
+def _measure(
+    adapter,
+    target_codes: tuple[str, ...],
+    *,
+    sources=None,
+    filter_capture_to_targets: bool = False,
+) -> tuple[float, float, object, int, int]:
     from app.services.stock_context_query_service import StockContextQueryService
 
     gc.collect()
@@ -123,6 +129,7 @@ def _measure(adapter, target_codes: tuple[str, ...], *, sources=None) -> tuple[f
     snapshot = adapter.capture(
         include_rps_bundle=False,
         sources=sources,
+        target_codes=target_codes if filter_capture_to_targets else None,
     )
     capture_ms = (time.perf_counter() - capture_started_at) * 1000.0
 
@@ -134,7 +141,8 @@ def _measure(adapter, target_codes: tuple[str, ...], *, sources=None) -> tuple[f
     )
     query_ms = (time.perf_counter() - query_started_at) * 1000.0
     captured_rows = sum(len(rows) for rows in snapshot.source_rows.values())
-    return capture_ms, query_ms, result, captured_rows
+    candidate_source_rows = sum(snapshot.source_row_counts.values())
+    return capture_ms, query_ms, result, captured_rows, candidate_source_rows
 
 
 def run_probe(*, samples: int, target_count: int, payload_points: int) -> dict:
@@ -159,37 +167,64 @@ def run_probe(*, samples: int, target_count: int, payload_points: int) -> dict:
 
         _measure(adapter, target_codes)
         _measure(adapter, target_codes, sources=RADAR_SOURCE_KEYS)
+        _measure(
+            adapter,
+            target_codes,
+            sources=RADAR_SOURCE_KEYS,
+            filter_capture_to_targets=True,
+        )
 
         full_capture: list[float] = []
         full_query: list[float] = []
         scoped_capture: list[float] = []
         scoped_query: list[float] = []
+        target_filtered_capture: list[float] = []
+        target_filtered_query: list[float] = []
         full_rows = 0
         scoped_rows = 0
+        target_filtered_rows = 0
+        target_filtered_candidate_rows = 0
         equivalent = True
         for sample_index in range(samples):
             if sample_index % 2:
                 scoped = _measure(adapter, target_codes, sources=RADAR_SOURCE_KEYS)
+                target_filtered = _measure(
+                    adapter,
+                    target_codes,
+                    sources=RADAR_SOURCE_KEYS,
+                    filter_capture_to_targets=True,
+                )
                 full = _measure(adapter, target_codes)
             else:
                 full = _measure(adapter, target_codes)
+                target_filtered = _measure(
+                    adapter,
+                    target_codes,
+                    sources=RADAR_SOURCE_KEYS,
+                    filter_capture_to_targets=True,
+                )
                 scoped = _measure(adapter, target_codes, sources=RADAR_SOURCE_KEYS)
             full_capture.append(full[0])
             full_query.append(full[1])
             scoped_capture.append(scoped[0])
             scoped_query.append(scoped[1])
+            target_filtered_capture.append(target_filtered[0])
+            target_filtered_query.append(target_filtered[1])
             full_rows = full[3]
             scoped_rows = scoped[3]
-            equivalent = equivalent and full[2] == scoped[2]
+            target_filtered_rows = target_filtered[3]
+            target_filtered_candidate_rows = target_filtered[4]
+            equivalent = equivalent and full[2] == scoped[2] == target_filtered[2]
 
         del application
         full_summary = _summary(full_capture)
         scoped_summary = _summary(scoped_capture)
-        full_median = full_summary["median_ms"]
+        target_filtered_summary = _summary(target_filtered_capture)
         scoped_median = scoped_summary["median_ms"]
+        target_filtered_median = target_filtered_summary["median_ms"]
         reduction_pct = (
-            (full_median - scoped_median) / full_median * 100.0
-            if full_median
+            (scoped_median - target_filtered_median) / scoped_median * 100.0
+            if scoped_median
             else 0.0
         )
         result = {
@@ -207,8 +242,15 @@ def run_probe(*, samples: int, target_count: int, payload_points: int) -> dict:
             },
             "watchlist_radar_scope": {
                 "captured_rows": scoped_rows,
+                "candidate_source_rows": scoped[4],
                 "capture": scoped_summary,
                 "worker_query": _summary(scoped_query),
+            },
+            "target_filtered_scope": {
+                "captured_rows": target_filtered_rows,
+                "candidate_source_rows": target_filtered_candidate_rows,
+                "capture": target_filtered_summary,
+                "worker_query": _summary(target_filtered_query),
             },
             "capture_median_reduction_pct": round(reduction_pct, 1),
             "radar_result_equivalent": equivalent,
@@ -223,7 +265,7 @@ def run_probe(*, samples: int, target_count: int, payload_points: int) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=int, default=10)
-    parser.add_argument("--target-count", type=int, default=41)
+    parser.add_argument("--target-count", type=int, default=42)
     parser.add_argument("--payload-points", type=int, default=4)
     args = parser.parse_args()
     if args.samples < 1 or args.target_count < 1 or args.payload_points < 0:

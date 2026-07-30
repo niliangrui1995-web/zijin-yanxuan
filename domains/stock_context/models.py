@@ -195,9 +195,22 @@ class StockContextSnapshot:
     foreign_keywords: tuple[str, ...] = ()
     tab_titles: Mapping[str, str] = field(default_factory=dict)
     rps_bundle: Any = None
+    source_row_counts: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "source_rows", _freeze_source_rows(self.source_rows))
+        frozen_source_rows = _freeze_source_rows(self.source_rows)
+        source_row_counts: dict[str, int] = {}
+        for raw_source, raw_count in (self.source_row_counts or {}).items():
+            source = str(raw_source or "").strip()
+            if not source:
+                continue
+            try:
+                source_row_counts[source] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                continue
+        for source, rows in frozen_source_rows.items():
+            source_row_counts.setdefault(source, len(rows))
+        object.__setattr__(self, "source_rows", frozen_source_rows)
         object.__setattr__(self, "cached_source_rows", _freeze_source_rows(self.cached_source_rows))
         object.__setattr__(self, "available_sources", frozenset(self.available_sources))
         object.__setattr__(self, "loading_sources", frozenset(self.loading_sources))
@@ -206,6 +219,7 @@ class StockContextSnapshot:
         object.__setattr__(self, "foreign_keywords", tuple(self.foreign_keywords))
         object.__setattr__(self, "tab_titles", _freeze_plain(dict(self.tab_titles)))
         object.__setattr__(self, "rps_bundle", _freeze_plain(self.rps_bundle))
+        object.__setattr__(self, "source_row_counts", MappingProxyType(source_row_counts))
 
     def rows_for(self, source: str) -> list[dict[str, Any]]:
         return [_thaw_plain(row) for row in self.source_rows.get(str(source or ""), ())]

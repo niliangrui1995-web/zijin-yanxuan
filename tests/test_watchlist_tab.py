@@ -85,7 +85,7 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
         assert tab.table_sp._paint_metric_scope == "watchlist"
         assert tab.table_sp.viewport().testAttribute(
             Qt.WidgetAttribute.WA_OpaquePaintEvent
-        ) is True
+        ) is False
         tab.model.update_data(rows)
         price_column = tab.model.headers.index("现价")
         code_column = tab.model.headers.index("代码")
@@ -1131,9 +1131,20 @@ def test_watchlist_vcp_calc_queries_plain_snapshot_inside_background_task(monkey
     capture_calls = []
     rps_load_calls = []
 
-    def _capture_workspace_stock_context(_workspace, *, include_rps_bundle, sources):
-        capture_calls.append((include_rps_bundle, frozenset(sources)))
-        return StockContextSnapshot()
+    def _capture_workspace_stock_context(
+        _workspace,
+        *,
+        include_rps_bundle,
+        sources,
+        target_codes,
+    ):
+        capture_calls.append(
+            (include_rps_bundle, frozenset(sources), tuple(target_codes))
+        )
+        return StockContextSnapshot(
+            source_rows={"earnings": ({"代码": "600519"},)},
+            source_row_counts={"earnings": 571},
+        )
 
     monkeypatch.setattr(watchlist_module, "capture_workspace_stock_context", _capture_workspace_stock_context)
     monkeypatch.setattr(
@@ -1141,13 +1152,31 @@ def test_watchlist_vcp_calc_queries_plain_snapshot_inside_background_task(monkey
         "load_active_rps_payload",
         lambda: rps_load_calls.append("rps") or {},
     )
+    metric_calls = []
+    monkeypatch.setattr(
+        watchlist_module,
+        "record_metric",
+        lambda name, value, **kwargs: metric_calls.append((name, value, kwargs)),
+    )
     try:
         tab.model.update_data([{"\u4ee3\u7801": "600519"}])
 
         tab._do_vcp_calc()
 
         assert gather_calls == []
-        assert capture_calls == [(False, frozenset(RADAR_SOURCE_KEYS))]
+        assert capture_calls == [(False, frozenset(RADAR_SOURCE_KEYS), ("600519",))]
+        capture_metric = next(
+            call for call in metric_calls if call[0] == "watchlist_context_snapshot_capture_ms"
+        )
+        assert capture_metric[2]["tags"] == {
+            "cached_rows": 0,
+            "candidate_source_rows": 571,
+            "captured_source_rows": 1,
+            "selected_sources": ",".join(sorted(RADAR_SOURCE_KEYS)),
+            "source_rows": 571,
+            "target_count": 1,
+            "target_filter": True,
+        }
         assert rps_load_calls == []
         assert queued[0]["kwargs"]["task_id"] == "watchlist_vcp_refresh"
         closure = dict(

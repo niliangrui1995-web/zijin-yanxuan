@@ -189,6 +189,8 @@ def can_use_native_cell_paint(ctx: _StockCellRenderContext) -> bool:
 
 
 def _draw_cell_base(ctx: _StockCellRenderContext):
+    base_color = ctx.opt.palette.color(QPalette.ColorRole.Base)
+    ctx.painter.fillRect(ctx.option.rect, base_color)
     opt_bg = QStyleOptionViewItem(ctx.opt)
     opt_bg.text = ""
     opt_bg.state &= ~QStyle.StateFlag.State_HasFocus
@@ -216,6 +218,7 @@ def _resolve_text_style(ctx: _StockCellRenderContext):
     alignment = int(ctx.opt.displayAlignment)
     if not alignment:
         alignment = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    alignment |= int(Qt.TextFlag.TextSingleLine)
     return text_color, alignment
 
 
@@ -230,9 +233,9 @@ def _draw_plain_text(
     target = rect or _content_rect(ctx)
     text_color, alignment = _resolve_text_style(ctx)
     if alignment_override is not None:
-        alignment = int(alignment_override)
+        alignment = int(alignment_override) | int(Qt.TextFlag.TextSingleLine)
 
-    value_text = str(value or "")
+    value_text = str(value or "").replace("\r\n", " ").replace("\n", " ").strip()
     ctx.painter.setPen(QPen(text_color))
     fm = ctx.painter.fontMetrics()
     if fade and fm.horizontalAdvance(value_text) > max(0, target.width() - 2):

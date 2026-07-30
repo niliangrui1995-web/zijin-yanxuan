@@ -31,6 +31,7 @@ SOURCE_KEYS = tuple(
 class _CapturedSource:
     key: str
     rows: tuple[dict, ...]
+    source_row_count: int
     loading: bool
     direct: bool
     signals: tuple[StockSignal, ...]
@@ -56,19 +57,32 @@ def _normalized_scope(values: Sequence[str] | set[str] | frozenset[str] | None) 
     return frozenset(str(value or "").strip() for value in values if str(value or "").strip())
 
 
-def _copy_rows(rows) -> list[dict]:
-    return [_plain_copy(dict(row)) for row in (rows or []) if isinstance(row, Mapping)]
+def _copy_rows(
+    rows,
+    target_codes: frozenset[str] | None = None,
+) -> tuple[list[dict], int]:
+    candidate_rows = [row for row in (rows or []) if isinstance(row, Mapping)]
+    selected_rows = (
+        candidate_rows
+        if target_codes is None
+        else [
+            row
+            for row in candidate_rows
+            if str(row.get("代码") or "").strip() in target_codes
+        ]
+    )
+    return ([_plain_copy(dict(row)) for row in selected_rows], len(candidate_rows))
 
 
-def _scan_rows(tab) -> list[dict]:
+def _scan_rows(tab, target_codes: frozenset[str] | None = None) -> tuple[list[dict], int]:
     reader = getattr(tab, "get_scan_results", None)
-    return _copy_rows(reader()) if callable(reader) else []
+    return _copy_rows(reader(), target_codes) if callable(reader) else ([], 0)
 
 
-def _public_rows(tab) -> list[dict]:
+def _public_rows(tab, target_codes: frozenset[str] | None = None) -> tuple[list[dict], int]:
     radar_reader = getattr(tab, "get_watchlist_radar_rows", None)
     reader = radar_reader if callable(radar_reader) else getattr(tab, "get_row_data", None)
-    return _copy_rows(reader()) if callable(reader) else []
+    return _copy_rows(reader(), target_codes) if callable(reader) else ([], 0)
 
 
 def _foreign_keywords(key: str, tab) -> tuple[str, ...]:
@@ -77,7 +91,11 @@ def _foreign_keywords(key: str, tab) -> tuple[str, ...]:
     return tuple(str(item) for item in (tab.get_foreign_keywords() or []) if str(item))
 
 
-def _direct_signals(key: str, tab) -> tuple[StockSignal, ...]:
+def _direct_signals(
+    key: str,
+    tab,
+    target_codes: frozenset[str] | None = None,
+) -> tuple[StockSignal, ...]:
     if not isinstance(tab, StockSignalSourceCapability):
         return ()
     signals: list[StockSignal] = []
@@ -86,6 +104,8 @@ def _direct_signals(key: str, tab) -> tuple[StockSignal, ...]:
         if signal is None:
             continue
         source_signal = signal if signal.source_tab else replace(signal, source_tab=key)
+        if target_codes is not None and source_signal.normalized_code() not in target_codes:
+            continue
         signals.append(replace(source_signal, payload=_plain_copy(dict(source_signal.payload or {}))))
     return tuple(signals)
 
@@ -94,14 +114,17 @@ def _captured_source(
     key: str,
     tab,
     rows: list[dict],
+    source_row_count: int,
     loading: bool,
+    target_codes: frozenset[str] | None = None,
 ) -> _CapturedSource | None:
     if tab is None:
         return None
-    signals = _direct_signals(key, tab)
+    signals = _direct_signals(key, tab, target_codes)
     return _CapturedSource(
         key=key,
         rows=tuple(rows),
+        source_row_count=source_row_count,
         loading=loading,
         direct=isinstance(tab, StockSignalSourceCapability),
         signals=signals,
@@ -116,9 +139,10 @@ def _spec_key(spec: Mapping[str, Any]) -> str:
 def _cached_rows_snapshot(
     cached_source_rows,
     selected_sources: frozenset[str] | None = None,
+    target_codes: frozenset[str] | None = None,
 ) -> dict[str, tuple[dict, ...]]:
     return {
-        str(key): tuple(_copy_rows(rows))
+        str(key): tuple(_copy_rows(rows, target_codes)[0])
         for key, rows in (cached_source_rows or {}).items()
         if selected_sources is None or str(key) in selected_sources
     }
@@ -153,6 +177,10 @@ def _source_rows_map(sources: list[_CapturedSource]) -> dict[str, tuple[dict, ..
     return {source.key: source.rows for source in sources}
 
 
+def _source_row_count_map(sources: list[_CapturedSource]) -> dict[str, int]:
+    return {source.key: source.source_row_count for source in sources}
+
+
 def _loading_source_keys(sources: list[_CapturedSource]) -> frozenset[str]:
     return frozenset(source.key for source in sources if source.loading)
 
@@ -176,12 +204,14 @@ def _build_snapshot(
     rps_bundle,
     *,
     selected_sources: frozenset[str] | None = None,
+    target_codes: frozenset[str] | None = None,
 ) -> StockContextSnapshot:
     return StockContextSnapshot(
         source_rows=_source_rows_map(sources),
         cached_source_rows=_cached_rows_snapshot(
             cached_source_rows,
             selected_sources,
+            target_codes,
         ),
         available_sources=_available_source_keys(specs, sources, selected_sources),
         loading_sources=_loading_source_keys(sources),
@@ -190,6 +220,7 @@ def _build_snapshot(
         foreign_keywords=_first_foreign_keywords(sources),
         tab_titles=_tab_title_map(specs),
         rps_bundle=rps_bundle,
+        source_row_counts=_source_row_count_map(sources),
     )
 
 
@@ -250,6 +281,7 @@ class StockContextWidgetSnapshotAdapter:
         cached_source_rows: Mapping[str, list[dict] | tuple[dict, ...]] | None = None,
         include_rps_bundle: bool = True,
         sources: Sequence[str] | set[str] | frozenset[str] | None = None,
+        target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
     ) -> StockContextSnapshot:
         self._assert_gui_thread()
         specs = self._tab_specs()
@@ -268,12 +300,10 @@ class StockContextWidgetSnapshotAdapter:
             if source is not None:
                 captured_sources.append(source)
         for spec in specs:
-            key = _spec_key(spec)
-            if (
-                not key
-                or key in SOURCE_KEYS
-                or (selected_sources is not None and key not in selected_sources)
-            ):
+            key = str(spec.get("key") or "").strip()
+            if not key or key in SOURCE_KEYS:
+                continue
+            if selected_sources is not None and key not in selected_sources:
                 continue
             tab = self._loaded_tab(key)
             source = _captured_source(
@@ -299,6 +329,7 @@ def capture_workspace_stock_context(
     *,
     include_rps_bundle: bool = True,
     sources: Sequence[str] | set[str] | frozenset[str] | None = None,
+    target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
 ) -> StockContextSnapshot | None:
     """Use the workspace compatibility facade without exposing its internals."""
 
@@ -309,6 +340,8 @@ def capture_workspace_stock_context(
             options["include_rps_bundle"] = False
         if sources is not None:
             options["sources"] = sources
+        if target_codes is not None:
+            options["target_codes"] = target_codes
         snapshot = explicit_reader(**options)
         return snapshot if isinstance(snapshot, StockContextSnapshot) else None
     context_reader = getattr(workspace, "collect_stock_context", None)
@@ -319,6 +352,8 @@ def capture_workspace_stock_context(
         options["include_rps_bundle"] = False
     if sources is not None:
         options["sources"] = sources
+    if target_codes is not None:
+        options["target_codes"] = target_codes
     try:
         snapshot = context_reader(**options)
     except TypeError:

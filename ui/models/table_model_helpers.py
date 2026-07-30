@@ -549,9 +549,11 @@ def _summarize_long_text(header: str, raw_val):
     text = str(raw_val or "").strip()
     if not text:
         return text
+    if "\n" in text or "\r" in text:
+        return " | ".join(part.strip() for part in text.splitlines() if part.strip()) or text
     if str(header) not in _DYNAMIC_ELIDE_HEADERS:
         return text
-    return " | ".join(part.strip() for part in text.splitlines() if part.strip()) or text
+    return text
 
 
 def _status_badge_color(text: str, header: str | None = None):
