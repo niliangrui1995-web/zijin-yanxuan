@@ -183,7 +183,8 @@ class StockContextSnapshot:
     ``source_rows`` only contains rows copied from loaded widgets.  Cached
     background snapshots (currently fund holdings and LHB) live separately so
     the query layer can preserve the rule that a non-empty loaded source wins
-    over its whole cache source.
+    over its whole cache source.  Row-count mappings retain pre-filter counts
+    so a scoped miss remains distinguishable from an originally empty source.
     """
 
     source_rows: Mapping[str, tuple[dict[str, Any], ...]] = field(default_factory=dict)
@@ -196,9 +197,11 @@ class StockContextSnapshot:
     tab_titles: Mapping[str, str] = field(default_factory=dict)
     rps_bundle: Any = None
     source_row_counts: Mapping[str, int] = field(default_factory=dict)
+    cached_source_row_counts: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         frozen_source_rows = _freeze_source_rows(self.source_rows)
+        frozen_cached_source_rows = _freeze_source_rows(self.cached_source_rows)
         source_row_counts: dict[str, int] = {}
         for raw_source, raw_count in (self.source_row_counts or {}).items():
             source = str(raw_source or "").strip()
@@ -209,9 +212,23 @@ class StockContextSnapshot:
             except (TypeError, ValueError):
                 continue
         for source, rows in frozen_source_rows.items():
-            source_row_counts.setdefault(source, len(rows))
+            source_row_counts[source] = max(source_row_counts.get(source, 0), len(rows))
+        cached_source_row_counts: dict[str, int] = {}
+        for raw_source, raw_count in (self.cached_source_row_counts or {}).items():
+            source = str(raw_source or "").strip()
+            if not source:
+                continue
+            try:
+                cached_source_row_counts[source] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                continue
+        for source, rows in frozen_cached_source_rows.items():
+            cached_source_row_counts[source] = max(
+                cached_source_row_counts.get(source, 0),
+                len(rows),
+            )
         object.__setattr__(self, "source_rows", frozen_source_rows)
-        object.__setattr__(self, "cached_source_rows", _freeze_source_rows(self.cached_source_rows))
+        object.__setattr__(self, "cached_source_rows", frozen_cached_source_rows)
         object.__setattr__(self, "available_sources", frozenset(self.available_sources))
         object.__setattr__(self, "loading_sources", frozenset(self.loading_sources))
         object.__setattr__(self, "direct_source_keys", frozenset(self.direct_source_keys))
@@ -220,6 +237,11 @@ class StockContextSnapshot:
         object.__setattr__(self, "tab_titles", _freeze_plain(dict(self.tab_titles)))
         object.__setattr__(self, "rps_bundle", _freeze_plain(self.rps_bundle))
         object.__setattr__(self, "source_row_counts", MappingProxyType(source_row_counts))
+        object.__setattr__(
+            self,
+            "cached_source_row_counts",
+            MappingProxyType(cached_source_row_counts),
+        )
 
     def rows_for(self, source: str) -> list[dict[str, Any]]:
         return [_thaw_plain(row) for row in self.source_rows.get(str(source or ""), ())]

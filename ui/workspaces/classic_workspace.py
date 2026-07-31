@@ -364,9 +364,10 @@ def _capture_workspace_stock_context(
     *,
     include_rps_bundle: bool = True,
     sources=None,
+    target_codes=None,
 ) -> StockContextSnapshot:
     facade = _resolve_workspace_facade(workspace)
-    if sources is None:
+    if sources is None and target_codes is None:
         return (
             facade.capture_stock_context_snapshot()
             if include_rps_bundle
@@ -375,6 +376,7 @@ def _capture_workspace_stock_context(
     return facade.capture_stock_context_snapshot(
         include_rps_bundle=include_rps_bundle,
         sources=sources,
+        target_codes=target_codes,
     )
 
 

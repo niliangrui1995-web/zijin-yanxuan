@@ -188,9 +188,15 @@ def can_use_native_cell_paint(ctx: _StockCellRenderContext) -> bool:
     )
 
 
+def _cell_background_role(ctx: _StockCellRenderContext) -> QPalette.ColorRole:
+    if ctx.opt.features & QStyleOptionViewItem.ViewItemFeature.Alternate:
+        return QPalette.ColorRole.AlternateBase
+    return QPalette.ColorRole.Base
+
+
 def _draw_cell_base(ctx: _StockCellRenderContext):
-    base_color = ctx.opt.palette.color(QPalette.ColorRole.Base)
-    ctx.painter.fillRect(ctx.option.rect, base_color)
+    base_brush = ctx.opt.palette.brush(_cell_background_role(ctx))
+    ctx.painter.fillRect(ctx.option.rect, base_brush)
     opt_bg = QStyleOptionViewItem(ctx.opt)
     opt_bg.text = ""
     opt_bg.state &= ~QStyle.StateFlag.State_HasFocus
@@ -310,7 +316,7 @@ def _clear_default_selected_left_marker(ctx: _StockCellRenderContext):
     fill_key = "selected_hover_bg" if ctx.is_hovered else "selected_bg"
     fill_color = _qcolor_from_token(ctx.table_tokens[fill_key])
     if fill_color.alpha() < 255:
-        base_color = ctx.option.palette.color(QPalette.ColorRole.Base)
+        base_color = ctx.opt.palette.color(_cell_background_role(ctx))
         alpha = fill_color.alphaF()
         fill_color = QColor(
             round(fill_color.red() * alpha + base_color.red() * (1 - alpha)),

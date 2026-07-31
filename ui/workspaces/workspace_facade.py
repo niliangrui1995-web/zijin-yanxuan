@@ -77,8 +77,9 @@ def _capture_facade_stock_context(
     *,
     include_rps_bundle: bool = True,
     sources=None,
+    target_codes=None,
 ) -> StockContextSnapshot:
-    if sources is None:
+    if sources is None and target_codes is None:
         return (
             capture_stock_context_snapshot(facade._stock_context_service)
             if include_rps_bundle
@@ -91,6 +92,7 @@ def _capture_facade_stock_context(
         facade._stock_context_service,
         include_rps_bundle=include_rps_bundle,
         sources=sources,
+        target_codes=target_codes,
     )
 
 
@@ -368,11 +370,13 @@ class WorkspaceFacade:
             return collect_watchlist_radar_snapshot(StockContextSnapshot(), target_codes=target_codes)
         snapshot = self.capture_stock_context_snapshot(
             sources=RADAR_SOURCE_KEYS,
+            target_codes=target_codes,
         )
         if "lhb" not in snapshot.loading_sources:
             self._stock_context_service.refresh_async_snapshots(include_fund=False, include_lhb=True)
             snapshot = self.capture_stock_context_snapshot(
                 sources=RADAR_SOURCE_KEYS,
+                target_codes=target_codes,
             )
         source_cache_fallback = (
             bool(include_cache_fallback)
@@ -433,13 +437,14 @@ class WorkspaceFacade:
         sources=None,
     ) -> dict[str, list[StockSignal]] | StockContextSnapshot:
         if capture_snapshot:
-            if sources is None:
+            if sources is None and target_codes is None:
                 return self.capture_stock_context_snapshot(
                     include_rps_bundle=include_rps_bundle,
                 )
             return self.capture_stock_context_snapshot(
                 include_rps_bundle=include_rps_bundle,
                 sources=sources,
+                target_codes=target_codes,
             )
         query, policy = self._stock_context_query(
             include_cache_fallback=include_cache_fallback,

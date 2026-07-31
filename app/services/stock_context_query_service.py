@@ -56,7 +56,7 @@ class StockContextQueryService:
 
     def _fund_rows(self, policy: StockContextReadPolicy) -> list[dict]:
         cached_rows = self._snapshot.cached_rows_for("fund_holdings")
-        if cached_rows:
+        if cached_rows or self._snapshot.cached_source_row_counts.get("fund_holdings", 0) > 0:
             return self._filter_rows(cached_rows, policy.target_codes)
         if "fund_holdings" in self._snapshot.loading_sources:
             return []
@@ -79,7 +79,11 @@ class StockContextQueryService:
 
     def _lhb_rows(self, policy: StockContextReadPolicy) -> list[dict]:
         cached_rows = self._snapshot.cached_rows_for("lhb")
-        if cached_rows or "lhb" in self._snapshot.loading_sources:
+        if (
+            cached_rows
+            or self._snapshot.cached_source_row_counts.get("lhb", 0) > 0
+            or "lhb" in self._snapshot.loading_sources
+        ):
             return cached_rows
         if not policy.allow_lhb_cache_compute:
             return []

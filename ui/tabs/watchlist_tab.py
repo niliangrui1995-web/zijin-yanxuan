@@ -79,7 +79,9 @@ def capture_workspace_stock_context(
 ):
     from ui.workspaces.stock_context_widget_adapter import capture_workspace_stock_context as capture_context
 
-    options = {"include_rps_bundle": include_rps_bundle}
+    options = {}
+    if not include_rps_bundle:
+        options["include_rps_bundle"] = False
     if sources is not None:
         options["sources"] = sources
     if target_codes is not None:
@@ -558,10 +560,16 @@ def _build_vcp_refresh_job(owner, codes_with_rows):
             getattr(window, "_workspace", None),
             include_rps_bundle=False,
             sources=RADAR_SOURCE_KEYS,
+            target_codes=target_codes,
         )
     capture_elapsed_ms = (time.perf_counter() - capture_started_at) * 1000.0
-    source_rows = (
+    captured_source_rows = (
         sum(len(rows) for rows in context_snapshot.source_rows.values())
+        if context_snapshot is not None
+        else 0
+    )
+    candidate_source_rows = (
+        sum(context_snapshot.source_row_counts.values())
         if context_snapshot is not None
         else 0
     )
@@ -576,9 +584,12 @@ def _build_vcp_refresh_job(owner, codes_with_rows):
         unit="ms",
         tags={
             "cached_rows": cached_rows,
+            "candidate_source_rows": candidate_source_rows,
+            "captured_source_rows": captured_source_rows,
             "selected_sources": ",".join(sorted(RADAR_SOURCE_KEYS)),
-            "source_rows": source_rows,
+            "source_rows": candidate_source_rows,
             "target_count": len(target_codes),
+            "target_filter": True,
         },
         level="info",
     )

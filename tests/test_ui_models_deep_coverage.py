@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 from PyQt6.QtCore import QMimeData, QModelIndex, QRect, Qt
-from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QStandardItemModel
+from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QStandardItemModel
 from PyQt6.QtTest import QAbstractItemModelTester
 from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem, QWidget
 
@@ -230,7 +230,9 @@ def test_tooltip_summary_status_and_row_accent_helpers():
     assert helpers._tooltip_for_cell("外资净买入", "raw", row) == "custom"
     assert helpers._tooltip_for_cell("名称", " A ", row) == "A"
     assert helpers._build_cell_tooltip_cached("") is None
-    assert helpers._summarize_long_text("备注", "A\nB") == "A\nB"
+    assert helpers._summarize_long_text("备注", "A\nB") == "A | B"
+    assert helpers._summarize_long_text("备注", " A \r\n \r\n B ") == "A | B"
+    assert helpers._tooltip_for_cell("备注", "A\n\nB", row) == "A\n\nB"
     assert helpers._summarize_long_text("交易详情", "A\n\nB") == "A | B"
     assert helpers._summarize_long_text("交易详情", "") == ""
     assert helpers._status_badge_color("--", "状态") is None
@@ -1059,6 +1061,67 @@ def test_renderer_native_fast_path_only_accepts_plain_cells():
 
     with _paint_context(text="flash", flash_data={"time": time.time(), "diff": 1}, current=False) as (ctx, _image):
         assert renderers.can_use_native_cell_paint(ctx) is False
+
+
+@pytest.mark.parametrize(
+    ("features", "expected_role"),
+    [
+        (QStyleOptionViewItem.ViewItemFeature.None_, QPalette.ColorRole.Base),
+        (
+            QStyleOptionViewItem.ViewItemFeature.HasDisplay,
+            QPalette.ColorRole.Base,
+        ),
+        (
+            QStyleOptionViewItem.ViewItemFeature.HasDisplay
+            | QStyleOptionViewItem.ViewItemFeature.Alternate,
+            QPalette.ColorRole.AlternateBase,
+        ),
+    ],
+)
+def test_renderer_cell_background_role_respects_alternating_rows(features, expected_role):
+    with _paint_context(current=False) as (ctx, _image):
+        ctx.opt.features = features
+
+        assert renderers._cell_background_role(ctx) == expected_role
+
+
+def test_renderer_alternate_cell_base_uses_alternate_palette_pixel():
+    class _NoopStyle:
+        @staticmethod
+        def drawControl(*_args, **_kwargs):
+            return None
+
+    with _paint_context(current=False) as (ctx, image):
+        palette = QPalette(ctx.opt.palette)
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#102030"))
+        ctx.opt.palette = palette
+        ctx.opt.features |= QStyleOptionViewItem.ViewItemFeature.Alternate
+        ctx.style = _NoopStyle()
+
+        renderers._draw_cell_base(ctx)
+
+        assert image.pixelColor(ctx.option.rect.center()).name() == "#102030"
+
+
+def test_renderer_selected_marker_composites_over_alternate_palette_pixel():
+    with _paint_context(
+        current=False,
+        state=QStyle.StateFlag.State_Selected,
+    ) as (ctx, image):
+        palette = QPalette(ctx.opt.palette)
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#000000"))
+        ctx.opt.palette = palette
+        ctx.option.palette = palette
+        ctx.opt.features |= QStyleOptionViewItem.ViewItemFeature.Alternate
+        ctx.table_tokens = dict(ctx.table_tokens)
+        ctx.table_tokens["selected_bg"] = "rgba(255, 0, 0, 0.5)"
+
+        renderers._clear_default_selected_left_marker(ctx)
+
+        pixel = image.pixelColor(ctx.option.rect.left() + 1, ctx.option.rect.center().y())
+        assert (pixel.red(), pixel.green(), pixel.blue()) == (128, 0, 0)
 
 
 @pytest.mark.parametrize(

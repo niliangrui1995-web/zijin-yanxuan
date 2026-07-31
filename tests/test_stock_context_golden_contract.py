@@ -56,6 +56,36 @@ class _ForbiddenDeepcopy:
         raise AssertionError("non-target row was deep-copied")
 
 
+class _ForbiddenIteration:
+    def __len__(self):
+        return 1
+
+    def __iter__(self):
+        raise AssertionError("empty target iterated cached rows")
+
+
+def _cached_stock_context_service(source: str, rows):
+    from ui.workspaces.stock_context_service import StockContextService
+
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda _key: None,
+        tab_specs=lambda: [{"key": source, "title": source}],
+    )
+    service = StockContextService(workspace)
+    if source == "fund_holdings":
+        service._fund_rows_loaded = True
+        service._fund_rows_snapshot = rows
+    elif source == "lhb":
+        signature = ("lhb", 1, 1)
+        service._lhb_rows_signature = signature
+        service._lhb_rows_snapshot = rows
+        service._lhb_pool_cache_signature = lambda: signature
+    else:
+        raise AssertionError(f"unsupported cached source: {source}")
+    return service
+
+
 def test_widget_snapshot_source_keys_follow_general_contract_in_default_order():
     assert SOURCE_KEYS == tuple(
         source_key for source_key in DEFAULT_SOURCE_ORDER if source_key in GENERAL_STOCK_CONTEXT_SOURCE_KEYS
@@ -106,6 +136,25 @@ def test_workspace_snapshot_helper_forwards_rps_capture_policy():
 
 
 def test_workspace_snapshot_helper_forwards_source_scope():
+    calls = []
+    workspace = SimpleNamespace(
+        capture_stock_context_snapshot=lambda *, include_rps_bundle, sources: calls.append(
+            (include_rps_bundle, frozenset(sources))
+        )
+        or StockContextSnapshot()
+    )
+
+    snapshot = capture_workspace_stock_context(
+        workspace,
+        include_rps_bundle=False,
+        sources=RADAR_SOURCE_KEYS,
+    )
+
+    assert isinstance(snapshot, StockContextSnapshot)
+    assert calls == [(False, frozenset(RADAR_SOURCE_KEYS))]
+
+
+def test_workspace_snapshot_helper_forwards_target_scope():
     calls = []
     workspace = SimpleNamespace(
         capture_stock_context_snapshot=lambda *, include_rps_bundle, sources, target_codes: calls.append(
@@ -200,6 +249,165 @@ def test_scoped_service_snapshot_skips_unrequested_cached_sources():
     assert snapshot.loading_sources == frozenset()
 
 
+@pytest.mark.parametrize("source", ["fund_holdings", "lhb"])
+def test_target_scoped_adapter_filters_cached_rows_before_deepcopy(source):
+    other_source = "lhb" if source == "fund_holdings" else "fund_holdings"
+    rows = [
+        {"代码": "000001", "payload": _ForbiddenDeepcopy()},
+        {"代码": "000002", "payload": {"items": [2]}},
+    ]
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda _key: None,
+        tab_specs=lambda: [{"key": source, "title": source}],
+    )
+
+    snapshot = StockContextWidgetSnapshotAdapter(workspace).capture(
+        cached_source_rows={source: rows, other_source: [{"代码": "000003"}]},
+        include_rps_bundle=False,
+        sources={source},
+        target_codes={"000002"},
+    )
+
+    assert [row["代码"] for row in snapshot.cached_rows_for(source)] == ["000002"]
+    assert snapshot.cached_source_row_counts == {source: 2}
+
+
+@pytest.mark.parametrize("source", ["fund_holdings", "lhb"])
+def test_target_scoped_service_filters_cached_rows_before_adapter(monkeypatch, source):
+    rows = [
+        {"代码": "000001", "payload": {"items": [1]}},
+        {"代码": "000002", "payload": {"items": [2]}},
+    ]
+    service = _cached_stock_context_service(source, rows)
+    captured = {}
+
+    def _capture(_adapter, **kwargs):
+        captured.update(kwargs)
+        return StockContextSnapshot()
+
+    monkeypatch.setattr(
+        "ui.workspaces.stock_context_service.StockContextWidgetSnapshotAdapter.capture",
+        _capture,
+    )
+
+    capture_stock_context_snapshot(
+        service,
+        include_rps_bundle=False,
+        sources={source},
+        target_codes={"000002"},
+    )
+
+    published_rows = captured["cached_source_rows"][source]
+    assert [row["代码"] for row in published_rows] == ["000002"]
+    assert published_rows[0] is not rows[1]
+    assert captured["cached_source_row_counts"][source] == 2
+    stored_rows = (
+        service._fund_rows_snapshot
+        if source == "fund_holdings"
+        else service._lhb_rows_snapshot
+    )
+    assert stored_rows is rows
+    assert rows[0]["代码"] == "000001"
+
+
+@pytest.mark.parametrize("source", ["fund_holdings", "lhb"])
+def test_empty_target_service_snapshot_preserves_cached_key_without_iterating_rows(source):
+    service = _cached_stock_context_service(source, _ForbiddenIteration())
+
+    snapshot = capture_stock_context_snapshot(
+        service,
+        include_rps_bundle=False,
+        sources={source},
+        target_codes=set(),
+    )
+
+    assert source in snapshot.cached_source_rows
+    assert snapshot.cached_source_rows[source] == ()
+    assert snapshot.cached_source_row_counts[source] == 1
+
+
+@pytest.mark.parametrize("source", ["fund_holdings", "lhb"])
+def test_target_miss_in_published_cache_does_not_fall_back_to_lower_store(monkeypatch, source):
+    service = _cached_stock_context_service(source, [{"代码": "000001"}])
+    snapshot = capture_stock_context_snapshot(
+        service,
+        include_rps_bundle=False,
+        sources={source},
+        target_codes={"000002"},
+    )
+    if source == "fund_holdings":
+        monkeypatch.setattr(
+            "app.services.stock_context_query_service.load_fund_holding_snapshot",
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("fund store fallback was called")),
+        )
+    else:
+        monkeypatch.setattr(
+            "app.services.stock_context_query_service.load_lhb_pool_rows",
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("LHB compute fallback was called")),
+        )
+
+    policy = StockContextReadPolicy.build(
+        allow_lhb_cache_compute=True,
+        target_codes={"000002"},
+        sources={source},
+    )
+
+    assert source in snapshot.cached_source_rows
+    assert snapshot.cached_source_rows[source] == ()
+    assert snapshot.cached_source_row_counts[source] == 1
+    assert StockContextQueryService(snapshot).query_by_code(policy) == {}
+
+
+def test_originally_empty_fund_cache_still_falls_back_to_store(monkeypatch):
+    calls = []
+    service = _cached_stock_context_service("fund_holdings", [])
+    snapshot = capture_stock_context_snapshot(
+        service,
+        include_rps_bundle=False,
+        sources={"fund_holdings"},
+        target_codes={"000002"},
+    )
+    monkeypatch.setattr(
+        "app.services.stock_context_query_service.load_fund_holding_snapshot",
+        lambda **kwargs: calls.append(kwargs) or ({}, []),
+    )
+    policy = StockContextReadPolicy.build(
+        target_codes={"000002"},
+        sources={"fund_holdings"},
+    )
+
+    assert snapshot.cached_source_rows["fund_holdings"] == ()
+    assert snapshot.cached_source_row_counts["fund_holdings"] == 0
+    assert StockContextQueryService(snapshot).query_by_code(policy) == {}
+    assert calls == [{"stock_codes": frozenset({"000002"})}]
+
+
+def test_originally_empty_lhb_cache_still_allows_compute(monkeypatch):
+    calls = []
+    service = _cached_stock_context_service("lhb", [])
+    snapshot = capture_stock_context_snapshot(
+        service,
+        include_rps_bundle=False,
+        sources={"lhb"},
+        target_codes={"000002"},
+    )
+    monkeypatch.setattr(
+        "app.services.stock_context_query_service.load_lhb_pool_rows",
+        lambda **kwargs: calls.append(kwargs) or [],
+    )
+    policy = StockContextReadPolicy.build(
+        allow_lhb_cache_compute=True,
+        target_codes={"000002"},
+        sources={"lhb"},
+    )
+
+    assert snapshot.cached_source_rows["lhb"] == ()
+    assert snapshot.cached_source_row_counts["lhb"] == 0
+    assert StockContextQueryService(snapshot).query_by_code(policy) == {}
+    assert calls == [{"engine": None}]
+
+
 def test_workspace_snapshot_omits_rps_across_classic_facade_service_chain():
     from ui.workspaces.classic_workspace import ClassicWorkspace
     from ui.workspaces.stock_context_service import StockContextService
@@ -232,6 +440,47 @@ def test_workspace_snapshot_omits_rps_across_classic_facade_service_chain():
     assert isinstance(snapshot, StockContextSnapshot)
     assert snapshot.rps_bundle is None
     assert calls == []
+
+
+def test_workspace_snapshot_forwards_target_scope_across_classic_facade_service_chain():
+    from ui.workspaces.classic_workspace import ClassicWorkspace
+    from ui.workspaces.stock_context_service import StockContextService
+    from ui.workspaces.workspace_facade import WorkspaceFacade
+
+    rows_tab = _RowsTab(
+        [
+            {"代码": "000001", "报告期": "2026Q1"},
+            {"代码": "000002", "报告期": "2026Q2"},
+        ]
+    )
+
+    class _Workspace:
+        capture_stock_context_snapshot = ClassicWorkspace.capture_stock_context_snapshot
+        engine = None
+
+        @staticmethod
+        def get_loaded_tab(key):
+            return rows_tab if key == "earnings" else None
+
+        @staticmethod
+        def tab_specs():
+            return [{"key": "earnings", "title": "业绩"}]
+
+    workspace = _Workspace()
+    facade = object.__new__(WorkspaceFacade)
+    facade._workspace = workspace
+    facade._stock_context_service = StockContextService(workspace)
+    workspace._workspace_facade = facade
+
+    snapshot = capture_workspace_stock_context(
+        workspace,
+        include_rps_bundle=False,
+        sources={"earnings"},
+        target_codes={"000002"},
+    )
+
+    assert [row["代码"] for row in snapshot.rows_for("earnings")] == ["000002"]
+    assert snapshot.source_row_counts == {"earnings": 2}
 
 
 def _golden_workspace():
@@ -590,3 +839,21 @@ def test_stock_context_snapshot_is_deeply_immutable_but_returns_worker_copies():
     rows = snapshot.rows_for("scan")
     rows[0]["nested"]["items"].append(2)
     assert snapshot.rows_for("scan")[0]["nested"]["items"] == [1]
+
+
+def test_cached_source_row_counts_are_immutable_normalized_and_backward_compatible():
+    default_snapshot = StockContextSnapshot()
+    snapshot = StockContextSnapshot(
+        cached_source_rows={"fund_holdings": ({"代码": "000001"},)},
+        cached_source_row_counts={
+            "fund_holdings": 0,
+            "lhb": "2",
+            "": 7,
+            "invalid": "not-a-count",
+        },
+    )
+
+    assert default_snapshot.cached_source_row_counts == {}
+    assert snapshot.cached_source_row_counts == {"fund_holdings": 1, "lhb": 2}
+    with pytest.raises(TypeError):
+        snapshot.cached_source_row_counts["lhb"] = 3

@@ -40,7 +40,18 @@ def _normalized_scope(
     return frozenset(str(value or "").strip() for value in values if str(value or "").strip())
 
 
-def _copy_cached_rows(rows) -> list[dict]:
+def _copy_cached_rows(
+    rows,
+    target_codes: frozenset[str] | None = None,
+) -> list[dict]:
+    if target_codes is not None:
+        if not target_codes:
+            return []
+        return [
+            dict(row)
+            for row in rows
+            if str(row.get("代码") or "").strip() in target_codes
+        ]
     return [dict(row) for row in rows]
 
 
@@ -272,19 +283,25 @@ def capture_stock_context_snapshot(
     *,
     include_rps_bundle: bool = True,
     sources: Sequence[str] | set[str] | frozenset[str] | None = None,
+    target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
 ) -> StockContextSnapshot:
     """Capture loaded-widget rows plus already-published async snapshots."""
 
     selected_sources = _normalized_scope(sources)
+    selected_target_codes = _normalized_scope(target_codes)
     include_fund = selected_sources is None or "fund_holdings" in selected_sources
     include_lhb = selected_sources is None or "lhb" in selected_sources
     cached_rows: dict[str, list[dict]] = {}
+    cached_row_counts: dict[str, int] = {}
     loading_sources: set[str] = set()
     if include_fund:
         with service._fund_rows_lock:
             if service._fund_rows_loaded:
+                raw_rows = service._fund_rows_snapshot
+                cached_row_counts["fund_holdings"] = len(raw_rows)
                 cached_rows["fund_holdings"] = _copy_cached_rows(
-                    service._fund_rows_snapshot,
+                    raw_rows,
+                    selected_target_codes,
                 )
             if service._fund_rows_loading:
                 loading_sources.add("fund_holdings")
@@ -293,27 +310,36 @@ def capture_stock_context_snapshot(
         signature = service._lhb_pool_cache_signature()
         with service._lhb_rows_lock:
             if signature is not None and signature == service._lhb_rows_signature:
+                raw_rows = service._lhb_rows_snapshot
+                cached_row_counts["lhb"] = len(raw_rows)
                 cached_rows["lhb"] = _copy_cached_rows(
-                    service._lhb_rows_snapshot,
+                    raw_rows,
+                    selected_target_codes,
                 )
             if service._lhb_rows_loading:
                 loading_sources.add("lhb")
 
     adapter = StockContextWidgetSnapshotAdapter(service._workspace)
-    if selected_sources is None:
+    if selected_sources is None and selected_target_codes is None:
         snapshot = (
-            adapter.capture(cached_source_rows=cached_rows)
+            adapter.capture(
+                cached_source_rows=cached_rows,
+                cached_source_row_counts=cached_row_counts,
+            )
             if include_rps_bundle
             else adapter.capture(
                 cached_source_rows=cached_rows,
+                cached_source_row_counts=cached_row_counts,
                 include_rps_bundle=False,
             )
         )
     else:
         snapshot = adapter.capture(
             cached_source_rows=cached_rows,
+            cached_source_row_counts=cached_row_counts,
             include_rps_bundle=include_rps_bundle,
             sources=selected_sources,
+            target_codes=selected_target_codes,
         )
     return replace(snapshot, loading_sources=snapshot.loading_sources | frozenset(loading_sources))
 
