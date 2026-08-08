@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+from http.client import RemoteDisconnected
 
 import pandas as pd
 import pytest
@@ -95,3 +96,52 @@ def test_safe_ak_fetch_uses_recent_ths_cache_as_fallback(monkeypatch):
     result = engine_module.safe_ak_fetch(engine_module.ak.stock_financial_benefit_ths, symbol="300197")
 
     assert result.to_dict("records") == cached_df.to_dict("records")
+
+
+@pytest.mark.parametrize(
+    ("symbol", "exception_type", "error_message"),
+    [
+        ("300738", TimeoutError, "Read timed out"),
+        ("600641", RemoteDisconnected, "Remote end closed connection without response"),
+    ],
+)
+def test_compute_single_quarter_qoq_surfaces_terminal_ths_connection_failure(
+    monkeypatch,
+    symbol,
+    exception_type,
+    error_message,
+):
+    original_cache = dict(engine_module._THS_FINANCIAL_BENEFIT_CACHE)
+    calls = []
+
+    def _timeout_fetch(*args, **kwargs):
+        calls.append(str(kwargs.get("symbol") or ""))
+        raise exception_type(error_message)
+
+    try:
+        _clear_ths_cache()
+        monkeypatch.setattr(engine_module, "_fetch_stock_financial_benefit_ths", _timeout_fetch)
+        monkeypatch.setattr(engine_module.time, "sleep", lambda _: None)
+
+        engine = engine_module.EarningsEngine.__new__(engine_module.EarningsEngine)
+        result = engine.compute_single_quarter_qoq(
+            symbol,
+            1_000_000,
+            "2025-12-31",
+            must_wait_ths=True,
+        )
+    finally:
+        _clear_ths_cache()
+        engine_module._THS_FINANCIAL_BENEFIT_CACHE.update(original_cache)
+
+    assert calls == [symbol, symbol, symbol]
+    assert result == {
+        "error": "THS_SOURCE_GAP",
+        "source_gap": {
+            "source": "同花顺历史底稿",
+            "symbol": symbol,
+            "retryable": True,
+            "last_success_basis": engine_module._THS_NO_LAST_SUCCESS_BASIS,
+            "error": error_message,
+        },
+    }
