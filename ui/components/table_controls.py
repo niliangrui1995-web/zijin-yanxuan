@@ -8,6 +8,7 @@ from contextlib import suppress
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
+    QItemSelection,
     QItemSelectionModel,
     QModelIndex,
     QPersistentModelIndex,
@@ -157,6 +158,10 @@ class VCPTableView(QTableView):
     紫金研选统一表格组件 (VCPTableView)
     """
 
+    SHELL_NAV_REPAINT_GUARD_ARM_MS = 750
+    SHELL_NAV_REPAINT_GUARD_ACTIVE_MS = 750
+    SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS = 2
+
     def __init__(self, parent=None, default_row_height: int = None):
         super().__init__(parent)
         self._base_row_height = None
@@ -172,6 +177,8 @@ class VCPTableView(QTableView):
         self._pending_paint_metric: dict[str, object] | None = None
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes: set[QPersistentModelIndex] = set()
+        self._shell_nav_repaint_guard: dict[str, object] | None = None
+        self._shell_nav_guard_selection_model = None
         self._closing = False
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
@@ -213,6 +220,13 @@ class VCPTableView(QTableView):
         header.setSectionsClickable(True)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
+        for guarded_header in (header, self.verticalHeader()):
+            with suppress(TypeError, RuntimeError):
+                guarded_header.sectionResized.connect(self._on_shell_nav_header_geometry_changed)
+                guarded_header.sectionMoved.connect(self._on_shell_nav_header_geometry_changed)
+        for scrollbar in (self.horizontalScrollBar(), self.verticalScrollBar()):
+            with suppress(TypeError, RuntimeError):
+                scrollbar.valueChanged.connect(self._on_shell_nav_scroll_changed)
         self._apply_screen_width_limit()
 
         if default_row_height is None:
@@ -246,8 +260,15 @@ class VCPTableView(QTableView):
             self.updateGeometry()
 
     def _on_sort_indicator_changed(self, column: int, _order):
+        self._invalidate_shell_nav_repaint_guard("sort_changed")
         self._sorted_column = column
         self.viewport().update()
+
+    def _on_shell_nav_header_geometry_changed(self, *_args) -> None:
+        self._invalidate_shell_nav_repaint_guard("header_geometry")
+
+    def _on_shell_nav_scroll_changed(self, *_args) -> None:
+        self._invalidate_shell_nav_repaint_guard("scroll_changed")
 
     def sorted_column(self) -> int:
         return self._sorted_column
@@ -261,6 +282,7 @@ class VCPTableView(QTableView):
         return QSize(min(hint.width(), self._screen_width_limit()), hint.height())
 
     def apply_density(self, mode: str | None = None):
+        self._invalidate_shell_nav_repaint_guard("density_changed")
         tokens = build_ui_tokens(density=mode)
         base_height = self._base_row_height or self.verticalHeader().defaultSectionSize()
         comfort_height = max(base_height, tokens["table"]["row_height_base"])
@@ -274,15 +296,46 @@ class VCPTableView(QTableView):
     def _on_theme_changed(self, _theme_name: str):
         if self._closing:
             return
+        self._invalidate_shell_nav_repaint_guard("theme_changed")
         self._apply_screen_width_limit()
         self.style().unpolish(self)
         self.style().polish(self)
         self.viewport().update()
 
     def setModel(self, model):
+        self._invalidate_shell_nav_repaint_guard("model_changed")
+        self._disconnect_shell_nav_guard_selection_model()
         self._disconnect_refresh_model()
         super().setModel(model)
         self._connect_refresh_model(model)
+        self._connect_shell_nav_guard_selection_model()
+
+    def _connect_shell_nav_guard_selection_model(self) -> None:
+        selection_model = self.selectionModel()
+        if selection_model is None:
+            return
+        self._shell_nav_guard_selection_model = selection_model
+        for signal_name in ("selectionChanged", "currentChanged"):
+            signal = getattr(selection_model, signal_name, None)
+            if signal is None:
+                continue
+            with suppress(TypeError, RuntimeError):
+                signal.connect(self._on_shell_nav_guard_selection_changed)
+
+    def _disconnect_shell_nav_guard_selection_model(self) -> None:
+        selection_model = self._shell_nav_guard_selection_model
+        if selection_model is None:
+            return
+        for signal_name in ("selectionChanged", "currentChanged"):
+            signal = getattr(selection_model, signal_name, None)
+            if signal is None:
+                continue
+            with suppress(TypeError, RuntimeError):
+                signal.disconnect(self._on_shell_nav_guard_selection_changed)
+        self._shell_nav_guard_selection_model = None
+
+    def _on_shell_nav_guard_selection_changed(self, *_args) -> None:
+        self._invalidate_shell_nav_repaint_guard("selection_changed")
 
     def _connect_refresh_model(self, model) -> None:
         if model is None:
@@ -391,10 +444,12 @@ class VCPTableView(QTableView):
             return 0
 
     def _on_model_reset(self, *_args) -> None:
+        self._invalidate_shell_nav_repaint_guard("model_reset")
         self._mark_pending_paint_metric("model_reset", model_rows=self._model_row_count())
         self._schedule_refresh_state_restore(*_args)
 
     def _on_model_layout_changed(self, *_args) -> None:
+        self._invalidate_shell_nav_repaint_guard("model_layout_changed")
         self._mark_pending_paint_metric("model_layout_changed", model_rows=self._model_row_count())
         self._schedule_refresh_state_restore(*_args)
 
@@ -499,6 +554,8 @@ class VCPTableView(QTableView):
         self._pending_paint_metric = None
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes.clear()
+        self._clear_shell_nav_repaint_guard()
+        self._disconnect_shell_nav_guard_selection_model()
         self._disconnect_refresh_model()
         hide_floating_tooltip()
         with suppress(AttributeError, TypeError, RuntimeError):
@@ -515,6 +572,9 @@ class VCPTableView(QTableView):
     def _on_model_data_changed(self, *_args) -> None:
         if self._closing:
             return
+        top_left = _args[0] if len(_args) >= 1 else None
+        bottom_right = _args[1] if len(_args) >= 2 else None
+        self._remember_shell_nav_repaint_dirty_region(top_left, bottom_right)
         roles = _args[2] if len(_args) >= 3 else None
         flash_role = int(Qt.ItemDataRole.UserRole) + 1
         includes_flash_role = True
@@ -583,6 +643,219 @@ class VCPTableView(QTableView):
         self._pending_paint_metric = None
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes.clear()
+
+    def prepare_shell_nav_repaint_guard(self) -> None:
+        """Arm a short, Watchlist-only guard for redundant shell-nav full paints."""
+        if self._closing or self._paint_metric_scope != "watchlist":
+            return
+        now = time.monotonic()
+        self._shell_nav_repaint_guard = {
+            "armed_until": now + self.SHELL_NAV_REPAINT_GUARD_ARM_MS / 1000.0,
+            "active_until": 0.0,
+            "active_started_at": 0.0,
+            "first_full_seen": False,
+            "viewport_size": None,
+            "content_epoch": 0,
+            "rendered_content_epoch": 0,
+            "structural_epoch": 0,
+            "rendered_structural_epoch": 0,
+            "visible_dirty_region": QRegion(),
+            "partial_update_pending": False,
+            "suppressed": 0,
+        }
+
+    def _activate_shell_nav_repaint_guard(self) -> None:
+        guard = self._shell_nav_repaint_guard
+        if guard is None:
+            return
+        now = time.monotonic()
+        if now > float(guard.get("armed_until", 0.0) or 0.0):
+            self._clear_shell_nav_repaint_guard()
+            return
+        guard["active_started_at"] = now
+        guard["active_until"] = now + self.SHELL_NAV_REPAINT_GUARD_ACTIVE_MS / 1000.0
+
+    def _clear_shell_nav_repaint_guard(self) -> None:
+        self._shell_nav_repaint_guard = None
+
+    def _active_shell_nav_repaint_guard(self) -> dict[str, object] | None:
+        guard = self._shell_nav_repaint_guard
+        if guard is None:
+            return None
+        now = time.monotonic()
+        active_until = float(guard.get("active_until", 0.0) or 0.0)
+        armed_until = float(guard.get("armed_until", 0.0) or 0.0)
+        if (active_until <= 0.0 and now > armed_until) or (active_until > 0.0 and now > active_until):
+            self._clear_shell_nav_repaint_guard()
+            return None
+        viewport = self.viewport()
+        if active_until <= 0.0 or viewport is None or not self.isVisible() or not viewport.isVisible():
+            return None
+        return guard
+
+    def _record_shell_nav_repaint_guard(
+        self,
+        guard: dict[str, object],
+        decision: str,
+        *,
+        region: QRegion | None = None,
+        fallback_reason: str = "",
+    ) -> None:
+        scope = self._paint_metric_scope
+        if not scope:
+            return
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        viewport_rect = viewport.rect()
+        dirty_region = region if region is not None else QRegion()
+        ratio, rects, _full = _paint_region_metrics(dirty_region, viewport_rect)
+        started_at = float(guard.get("active_started_at", 0.0) or 0.0)
+        try:
+            from core.observability import record_metric
+
+            tags = {
+                "decision": decision,
+                "workspace_load_reason": "shell_nav",
+                "age_ms": f"{max(0.0, (time.monotonic() - started_at) * 1000.0):.3f}",
+                "remaining": str(
+                    max(0, self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS - int(guard.get("suppressed", 0) or 0))
+                ),
+                "dirty_bounding_area_ratio": f"{ratio:.4f}",
+                "dirty_region_rects": str(rects),
+            }
+            if fallback_reason:
+                tags["fallback_reason"] = fallback_reason
+            record_metric(f"{scope}_shell_nav_repaint_guard", 1, unit="count", tags=tags)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug("skip shell-nav repaint guard metric: %s", exc)
+
+    def _invalidate_shell_nav_repaint_guard(self, reason: str) -> None:
+        guard = self._active_shell_nav_repaint_guard()
+        if guard is None:
+            return
+        guard["structural_epoch"] = int(guard.get("structural_epoch", 0) or 0) + 1
+        if bool(guard.get("first_full_seen", False)):
+            self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason=reason)
+            self._clear_shell_nav_repaint_guard()
+
+    def _remember_shell_nav_repaint_dirty_region(self, top_left, bottom_right) -> None:
+        guard = self._active_shell_nav_repaint_guard()
+        if guard is None:
+            return
+        guard["content_epoch"] = int(guard.get("content_epoch", 0) or 0) + 1
+        viewport = self.viewport()
+        if (
+            viewport is None
+            or not getattr(top_left, "isValid", lambda: False)()
+            or not getattr(bottom_right, "isValid", lambda: False)()
+        ):
+            guard["visible_dirty_region"] = QRegion(viewport.rect()) if viewport is not None else QRegion()
+            return
+        try:
+            region = self.visualRegionForSelection(QItemSelection(top_left, bottom_right)).intersected(
+                QRegion(viewport.rect())
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            guard["visible_dirty_region"] = QRegion(viewport.rect())
+            return
+        existing = guard.get("visible_dirty_region")
+        guard["visible_dirty_region"] = (existing if isinstance(existing, QRegion) else QRegion()).united(region)
+
+    def _acknowledge_shell_nav_partial_paint(self, event) -> None:
+        guard = self._active_shell_nav_repaint_guard()
+        if guard is None or not bool(guard.get("first_full_seen", False)):
+            return
+        dirty_region = guard.get("visible_dirty_region")
+        if not isinstance(dirty_region, QRegion) or dirty_region.isEmpty():
+            return
+        try:
+            remaining = dirty_region.subtracted(event.region())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if remaining.isEmpty():
+            guard["visible_dirty_region"] = QRegion()
+            guard["partial_update_pending"] = False
+            guard["rendered_content_epoch"] = int(guard.get("content_epoch", 0) or 0)
+
+    def _maybe_defer_shell_nav_full_paint(self, event) -> bool:
+        """Fail open unless this is a bounded, redundant post-reveal full paint."""
+        guard = self._active_shell_nav_repaint_guard()
+        if guard is None:
+            return False
+        try:
+            viewport = self.viewport()
+            if viewport is None:
+                self._clear_shell_nav_repaint_guard()
+                return False
+            viewport_rect = viewport.rect()
+            viewport_size = (viewport_rect.width(), viewport_rect.height())
+            _ratio, _rects, full_viewport = _paint_region_metrics(event.region(), viewport_rect)
+            if not full_viewport:
+                self._acknowledge_shell_nav_partial_paint(event)
+                return False
+            if not bool(guard.get("first_full_seen", False)):
+                guard["first_full_seen"] = True
+                guard["viewport_size"] = viewport_size
+                guard["rendered_content_epoch"] = int(guard.get("content_epoch", 0) or 0)
+                guard["rendered_structural_epoch"] = int(guard.get("structural_epoch", 0) or 0)
+                guard["visible_dirty_region"] = QRegion()
+                guard["partial_update_pending"] = False
+                self._record_shell_nav_repaint_guard(guard, "first_full_allowed")
+                return False
+            if guard.get("viewport_size") != viewport_size:
+                self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="viewport_geometry")
+                self._clear_shell_nav_repaint_guard()
+                return False
+            pending_metric = self._pending_paint_metric or {}
+            if str(pending_metric.get("structural_reason", "") or ""):
+                self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="structural_metric")
+                self._clear_shell_nav_repaint_guard()
+                return False
+            if int(guard.get("structural_epoch", 0) or 0) != int(
+                guard.get("rendered_structural_epoch", 0) or 0
+            ):
+                self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="structural_change")
+                self._clear_shell_nav_repaint_guard()
+                return False
+            if int(guard.get("suppressed", 0) or 0) >= self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS:
+                self._clear_shell_nav_repaint_guard()
+                return False
+
+            dirty_region = guard.get("visible_dirty_region")
+            dirty_region = dirty_region if isinstance(dirty_region, QRegion) else QRegion()
+            content_changed = int(guard.get("content_epoch", 0) or 0) != int(
+                guard.get("rendered_content_epoch", 0) or 0
+            )
+            if content_changed:
+                if bool(guard.get("partial_update_pending", False)):
+                    self._record_shell_nav_repaint_guard(
+                        guard,
+                        "allow_full_fallback",
+                        fallback_reason="targeted_region_expanded",
+                    )
+                    self._clear_shell_nav_repaint_guard()
+                    return False
+                _dirty_ratio, _dirty_rects, dirty_is_full = _paint_region_metrics(dirty_region, viewport_rect)
+                if dirty_region.isEmpty() or dirty_is_full or not viewport.updatesEnabled():
+                    fallback_reason = "dirty_region" if dirty_region.isEmpty() or dirty_is_full else "updates_disabled"
+                    self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason=fallback_reason)
+                    self._clear_shell_nav_repaint_guard()
+                    return False
+                viewport.update(dirty_region)
+                guard["partial_update_pending"] = True
+                decision = "partial_fallback"
+                guard["suppressed"] = int(guard.get("suppressed", 0) or 0) + 1
+                self._record_shell_nav_repaint_guard(guard, decision, region=dirty_region)
+                return True
+
+            guard["suppressed"] = int(guard.get("suppressed", 0) or 0) + 1
+            self._record_shell_nav_repaint_guard(guard, "suppress_redundant_full")
+            return True
+        except Exception as exc:  # noqa: BLE001 - Paint handling must fail open on an unexpected Qt wrapper error.
+            self._clear_shell_nav_repaint_guard()
+            log.debug("allow shell-nav paint after guard error: %s", exc)
+            return False
 
     def prepare_background_preload_reveal(self) -> None:
         """Reset off-screen paint provenance before the first visible frame."""
@@ -671,7 +944,8 @@ class VCPTableView(QTableView):
         self._pending_paint_metric = merged
 
     def schedule_flash_repaint_until(self, active_until: float) -> None:
-        if self._coalesced_flash_repaint and not self.isVisible():
+        if not self.isVisible():
+            self._clear_flash_repaint_state()
             return
         self._flash_repaint_until = max(self._flash_repaint_until, float(active_until))
         if self._targeted_flash_repaint:
@@ -685,6 +959,9 @@ class VCPTableView(QTableView):
     def _tick_flash_repaint(self) -> None:
         if self._closing:
             self._flash_repaint_timer.stop()
+            return
+        if not self.isVisible():
+            self._clear_flash_repaint_state()
             return
         viewport = self.viewport()
         if viewport is None:
@@ -873,17 +1150,21 @@ class VCPTableView(QTableView):
             return
         self._apply_screen_width_limit()
         self._sync_ambient_repaint_timer()
+        self._activate_shell_nav_repaint_guard()
         super().showEvent(event)
 
     def hideEvent(self, event):
         self._ambient_repaint_timer.stop()
-        if self._coalesced_flash_repaint:
-            self._flash_repaint_timer.stop()
-            self._flash_repaint_until = 0.0
-            self._flash_repaint_scheduled_at = 0.0
-            self._pending_paint_metric = None
-            self._flash_dirty_indexes.clear()
+        self._clear_flash_repaint_state()
+        self._clear_shell_nav_repaint_guard()
         super().hideEvent(event)
+
+    def _clear_flash_repaint_state(self) -> None:
+        self._flash_repaint_timer.stop()
+        self._flash_repaint_until = 0.0
+        self._flash_repaint_scheduled_at = 0.0
+        self._pending_paint_metric = None
+        self._flash_dirty_indexes.clear()
 
     def set_ambient_repaint_enabled(self, enabled: bool) -> None:
         self.setProperty("ambientPulse", bool(enabled))
@@ -918,6 +1199,24 @@ class VCPTableView(QTableView):
         return _is_elided_table_cell(self, index)
 
     def viewportEvent(self, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Paint:
+            if self._maybe_defer_shell_nav_full_paint(event):
+                return True
+        elif event_type in {
+            QEvent.Type.Resize,
+            QEvent.Type.StyleChange,
+            QEvent.Type.FontChange,
+            QEvent.Type.PaletteChange,
+        }:
+            self._invalidate_shell_nav_repaint_guard("viewport_change")
+        elif event_type in {
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonDblClick,
+            QEvent.Type.Wheel,
+            QEvent.Type.KeyPress,
+        }:
+            self._invalidate_shell_nav_repaint_guard("viewport_input")
         try:
             if self._closing:
                 if event.type() == QEvent.Type.ToolTip:

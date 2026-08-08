@@ -219,15 +219,25 @@ class DataStore:
 
     # ========== 业绩异动专用方法 ==========
 
-    def save_earnings_state(self, last_sync_date: str, seen: list, records: list) -> None:
+    def save_earnings_state(
+        self,
+        last_sync_date: str,
+        seen: list,
+        records: list,
+        *,
+        last_scan_result: dict | None = None,
+    ) -> None:
         """持久化业绩异动引擎的全部状态"""
+        payload = {
+            "last_sync_date": last_sync_date,
+            "seen": seen,
+            "records": records,
+        }
+        if isinstance(last_scan_result, dict):
+            payload["last_scan_result"] = dict(last_scan_result)
         self.save_json(
             "earnings_state",
-            {
-                "last_sync_date": last_sync_date,
-                "seen": seen,
-                "records": records,
-            },
+            payload,
         )
 
     def load_earnings_state(self) -> dict:

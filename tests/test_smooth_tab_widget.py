@@ -23,7 +23,6 @@ def test_smooth_tab_widget_keeps_qtabwidget_contract_when_hidden():
     finally:
         tabs.deleteLater()
 
-
 def test_smooth_tab_widget_skips_expensive_snapshots_when_visible():
     app = QApplication.instance() or QApplication([])
     tabs = SmoothTabWidget()

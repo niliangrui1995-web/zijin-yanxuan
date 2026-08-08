@@ -1208,6 +1208,18 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         if spec is not None and key and spec.get("loaded") and spec.get("mounted", True) is False:
             if not self._defer_interactive_activation_until_preload_ready(key, reason_text):
                 _mount_loaded_workspace_tab(self, spec, key, target_index)
+        if (
+            key == "watchlist"
+            and reason_text == TabLoadReason.SHELL_NAV.value
+            and spec is not None
+            and spec.get("loaded")
+        ):
+            prepare_guard = getattr(spec.get("widget"), "prepare_shell_nav_repaint_guard", None)
+            if callable(prepare_guard):
+                try:
+                    prepare_guard()
+                except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    log.debug("skip Watchlist shell-nav repaint guard: %s", exc)
         self._pending_tab_activation_reasons[target_index] = reason_text
         self.tabs.setCurrentIndex(target_index)
         return True

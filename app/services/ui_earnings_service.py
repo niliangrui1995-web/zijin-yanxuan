@@ -91,6 +91,7 @@ def _load_startup_cache(service, cancellation_token=None):
 
 def _load_startup_gap(service, cancellation_token=None):
     engine = service.engine
+    service._last_gap_fill_scan_result = {}
     missing_dates = service._build_startup_scan_dates(
         engine.last_sync_date,
         has_cached_records=bool(engine.local_records),
@@ -111,6 +112,51 @@ def _emit_startup_payloads(service, cached_payload, cached_rows_mode, combined) 
         service._emit_success(combined, "gap_fill")
 
 
+def _degraded_scan_result(engine) -> dict[str, object]:
+    scan_result = getattr(engine, "last_scan_result", {}) or {}
+    if not isinstance(scan_result, Mapping) or str(scan_result.get("status") or "").strip() != "degraded":
+        return {}
+    return dict(scan_result)
+
+
+def _merge_degraded_scan_results(scan_results: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    errors: list[str] = []
+    source_gaps: list[dict[str, object]] = []
+    for scan_result in scan_results:
+        error = str(scan_result.get("error") or "").strip()
+        if error and error not in errors:
+            errors.append(error)
+        raw_source_gaps = scan_result.get("source_gaps")
+        if isinstance(raw_source_gaps, (list, tuple)):
+            for source_gap in raw_source_gaps:
+                if isinstance(source_gap, Mapping):
+                    normalized_gap = dict(source_gap)
+                    if normalized_gap not in source_gaps:
+                        source_gaps.append(normalized_gap)
+    if not errors and not source_gaps:
+        return {}
+    merged: dict[str, object] = {
+        "status": "degraded",
+        "error": "; ".join(errors) or "earnings scan degraded",
+        "retryable": True,
+    }
+    if source_gaps:
+        merged["source_gaps"] = source_gaps
+    return merged
+
+
+def _attach_scan_degradation(result: dict[str, object], scan_result: Mapping[str, object]) -> dict[str, object]:
+    if not scan_result:
+        return result
+    result["status"] = "degraded"
+    result["error"] = str(scan_result.get("error") or "earnings scan degraded").strip()
+    result["retryable"] = bool(scan_result.get("retryable", True))
+    raw_source_gaps = scan_result.get("source_gaps")
+    if isinstance(raw_source_gaps, (list, tuple)):
+        result["source_gaps"] = [dict(item) for item in raw_source_gaps if isinstance(item, Mapping)]
+    return result
+
+
 def _run_startup_gap_fill(service, cancellation_token=None) -> dict:
     service._raise_if_cancelled(cancellation_token)
     cached_payload, cached_records, cached_rows_mode = _load_startup_cache(service, cancellation_token)
@@ -118,18 +164,24 @@ def _run_startup_gap_fill(service, cancellation_token=None) -> dict:
     missing_dates, combined, gap_records = _load_startup_gap(service, cancellation_token)
     service._raise_if_cancelled(cancellation_token)
     _emit_startup_payloads(service, cached_payload, cached_rows_mode, combined)
-    return {
+    result = {
         "job_key": "earnings_startup_gap_fill",
         "records": int(cached_records + gap_records),
         "cached_records": int(cached_records),
         "gap_records": int(gap_records),
         "missing_dates": list(missing_dates or []),
     }
+    scan_result = service._last_gap_fill_scan_result
+    if scan_result:
+        service._emit_scan_degraded(scan_result, "startup_gap_fill")
+        _attach_scan_degradation(result, scan_result)
+    return result
 
 
 class EarningsRefreshService(QObject):
     sig_new_surprises_found = pyqtSignal(object, str)
     sig_fetch_failed = pyqtSignal(str, str)
+    sig_scan_degraded = pyqtSignal(object, str)
     MANUAL_GAP_TIMEOUT_SECONDS = 10 * 60.0
     STARTUP_GAP_TIMEOUT_SECONDS = 10 * 60.0
     WARM_CACHE_TIMEOUT_SECONDS = 60.0
@@ -156,6 +208,7 @@ class EarningsRefreshService(QObject):
         self._cache_load_generation = 0
         self._task_lifecycle = TaskLifecycleGroup(self._job_runner)
         self._shutdown = False
+        self._last_gap_fill_scan_result: dict[str, object] = {}
         self.active_workers: set[_ActiveEarningsJob] = set()
 
     @property
@@ -197,6 +250,18 @@ class EarningsRefreshService(QObject):
             return
         self._emit_failure(mode, error)
 
+    def _emit_scan_degraded(self, scan_result: Mapping[str, object], mode: str) -> None:
+        self.sig_scan_degraded.emit(dict(scan_result), str(mode or "routine"))
+
+    def _emit_cached_scan_degradation(self) -> None:
+        try:
+            scan_result = _degraded_scan_result(self.engine)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[业绩调度] 读取已缓存扫描状态失败: {exc}")
+            return
+        if scan_result:
+            self._emit_scan_degraded(scan_result, "warm_cache")
+
     def run_startup_gap_fill(self, *, cancellation_token=None) -> dict:
         try:
             return self._with_active(
@@ -209,6 +274,7 @@ class EarningsRefreshService(QObject):
 
     def _run_gap_fill_frames(self, date_list: list[str], *, cancellation_token=None) -> pd.DataFrame:
         frames = []
+        scan_results: list[Mapping[str, object]] = []
         for target_date in date_list or []:
             self._raise_if_cancelled(cancellation_token)
             if cancellation_token is None:
@@ -219,9 +285,13 @@ class EarningsRefreshService(QObject):
                     cancellation_token,
                     target_publish_date=target_date,
                 )
+            scan_result = _degraded_scan_result(self.engine)
+            if scan_result:
+                scan_results.append(scan_result)
             if df is not None and not df.empty:
                 frames.append(df)
         self._raise_if_cancelled(cancellation_token)
+        self._last_gap_fill_scan_result = _merge_degraded_scan_results(scan_results)
         if frames:
             return _pandas_module().concat(frames, ignore_index=True)
         return _empty_frame()
@@ -234,11 +304,16 @@ class EarningsRefreshService(QObject):
             )
             self._raise_if_cancelled(cancellation_token)
             self._emit_success(df, mode)
-            return {
+            result = {
                 "job_key": "earnings_gap_fill",
                 "records": int(len(df)),
                 "dates": list(date_list or []),
             }
+            scan_result = self._last_gap_fill_scan_result
+            if scan_result:
+                self._emit_scan_degraded(scan_result, mode)
+                _attach_scan_degradation(result, scan_result)
+            return result
 
         try:
             return self._with_active(mode, _run)
@@ -268,6 +343,11 @@ class EarningsRefreshService(QObject):
             if status == "degraded":
                 result["status"] = "degraded"
                 result["error"] = str(scan_result.get("error") or "earnings scan degraded").strip()
+                result["retryable"] = bool(scan_result.get("retryable", True))
+                source_gaps = scan_result.get("source_gaps")
+                if isinstance(source_gaps, (list, tuple)):
+                    result["source_gaps"] = [dict(item) for item in source_gaps if isinstance(item, Mapping)]
+                self._emit_scan_degraded(scan_result, "routine")
             return result
 
         try:
@@ -333,6 +413,7 @@ class EarningsRefreshService(QObject):
             if self._shutdown or generation != self._cache_load_generation:
                 return
             self.sig_new_surprises_found.emit(list(rows or []), "warm_cache")
+            self._emit_cached_scan_degradation()
 
         def _on_error(error_message: str) -> None:
             self._emit_failure("warm_cache", error_message)

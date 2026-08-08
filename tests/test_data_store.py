@@ -113,12 +113,25 @@ class TestDataStore:
                 last_sync_date="2026-04-06",
                 seen=["fp1", "fp2"],
                 records=[{"代码": "000001", "名称": "平安银行"}],
+                last_scan_result={
+                    "status": "degraded",
+                    "retryable": True,
+                    "source_gaps": [
+                        {
+                            "source": "同花顺历史底稿",
+                            "symbol": "300738",
+                            "last_success_basis": "N/A（本轮未取得同花顺历史底稿，未使用替代来源）",
+                        }
+                    ],
+                },
             )
             result = store.load_earnings_state()
             assert result["last_sync_date"] == "2026-04-06"
             assert len(result["seen"]) == 2
             assert len(result["records"]) == 1
             assert result["records"][0]["代码"] == "000001"
+            assert result["last_scan_result"]["status"] == "degraded"
+            assert result["last_scan_result"]["source_gaps"][0]["symbol"] == "300738"
         finally:
             store.close()
             os.remove(db_path)

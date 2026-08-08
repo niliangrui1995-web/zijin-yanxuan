@@ -38,17 +38,29 @@ def _degraded_error(engine: EarningsEngine) -> str:
     return str(scan_result.get("error") or "earnings scan degraded").strip()
 
 
+def _source_gaps(engine: EarningsEngine) -> list[dict[str, object]]:
+    scan_result = getattr(engine, "last_scan_result", {}) or {}
+    raw_gaps = scan_result.get("source_gaps") if isinstance(scan_result, dict) else None
+    if not isinstance(raw_gaps, (list, tuple)):
+        return []
+    return [dict(item) for item in raw_gaps if isinstance(item, dict)]
+
+
 def run_startup_gap_fill(engine: EarningsEngine) -> dict[str, object]:
     cached = len(engine.get_cached_record_rows())
     missing_dates = _startup_scan_dates(engine)
     gap = 0
     errors: list[str] = []
+    source_gaps: list[dict[str, object]] = []
     for target_date in missing_dates:
         frame = engine.fetch_daily_surprises(target_publish_date=target_date)
         gap += len(frame) if frame is not None else 0
         error = _degraded_error(engine)
         if error and error not in errors:
             errors.append(error)
+        for source_gap in _source_gaps(engine):
+            if source_gap not in source_gaps:
+                source_gaps.append(source_gap)
 
     summary: dict[str, object] = {
         "status": "degraded" if errors else "success",
@@ -60,6 +72,9 @@ def run_startup_gap_fill(engine: EarningsEngine) -> dict[str, object]:
     }
     if errors:
         summary["error"] = "; ".join(errors)
+        summary["retryable"] = True
+        if source_gaps:
+            summary["source_gaps"] = source_gaps
     return summary
 
 
@@ -74,6 +89,10 @@ def run_routine(engine: EarningsEngine, routine_time: str = "") -> dict[str, obj
     }
     if error:
         summary["error"] = error
+        summary["retryable"] = bool((getattr(engine, "last_scan_result", {}) or {}).get("retryable", True))
+        source_gaps = _source_gaps(engine)
+        if source_gaps:
+            summary["source_gaps"] = source_gaps
     return summary
 
 

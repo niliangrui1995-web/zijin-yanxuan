@@ -55,7 +55,20 @@ def test_routine_summary_preserves_degraded_state():
     engine = _FakeEngine()
 
     def _degraded_fetch(target_publish_date=None):
-        engine.last_scan_result = {"status": "degraded", "error": "provider timeout"}
+        engine.last_scan_result = {
+            "status": "degraded",
+            "error": "同花顺历史底稿数据源缺口：300738 奥飞数据；可重试；最后成功依据：300738=N/A",
+            "retryable": True,
+            "source_gaps": [
+                {
+                    "source": "同花顺历史底稿",
+                    "symbol": "300738",
+                    "stock_name": "奥飞数据",
+                    "retryable": True,
+                    "last_success_basis": "N/A",
+                }
+            ],
+        }
         return []
 
     engine.fetch_daily_surprises = _degraded_fetch
@@ -67,7 +80,17 @@ def test_routine_summary_preserves_degraded_state():
         "job_key": "earnings_routine",
         "records": 0,
         "routine_time": "2026-07-10T08:30:00+08:00",
-        "error": "provider timeout",
+        "error": "同花顺历史底稿数据源缺口：300738 奥飞数据；可重试；最后成功依据：300738=N/A",
+        "retryable": True,
+        "source_gaps": [
+            {
+                "source": "同花顺历史底稿",
+                "symbol": "300738",
+                "stock_name": "奥飞数据",
+                "retryable": True,
+                "last_success_basis": "N/A",
+            }
+        ],
     }
 
 

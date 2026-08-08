@@ -2,13 +2,50 @@
 from __future__ import annotations
 
 import os
+import queue
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from core.logger import get_logger
 
 log = get_logger(__name__)
+
+
+def _collect_daemon_task_results(tasks, *, max_workers: int, thread_name_prefix: str):
+    """Run independent upstream calls without executor shutdown waiting at process exit."""
+
+    if not tasks:
+        return []
+
+    pending_tasks = queue.Queue()
+    completed_tasks = queue.Queue()
+    for task_key, task in tasks:
+        pending_tasks.put((task_key, task))
+
+    def _worker() -> None:
+        while True:
+            try:
+                task_key, task = pending_tasks.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                completed_tasks.put((task_key, task(), None))
+            except BaseException as exc:  # noqa: BLE001 - return worker failures to the caller thread.
+                completed_tasks.put((task_key, None, exc))
+            finally:
+                pending_tasks.task_done()
+
+    worker_count = min(max(1, int(max_workers or 1)), len(tasks))
+    for index in range(worker_count):
+        threading.Thread(
+            target=_worker,
+            name=f"{thread_name_prefix}-{index + 1}",
+            daemon=True,
+        ).start()
+
+    return [completed_tasks.get() for _ in tasks]
 
 
 def _ensure_ascii_ca_bundle() -> None:

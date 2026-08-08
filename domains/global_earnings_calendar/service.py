@@ -4,12 +4,16 @@ from __future__ import annotations
 import datetime as dt
 import importlib
 import os
+import queue
 import sys
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Mapping, Protocol
 
 from core.logger import get_logger
+from core.observability import record_metric
 from domains.global_earnings_calendar.constants import (
     CACHE_KEY,
     DEFAULT_LOOKAHEAD_DAYS,
@@ -144,6 +148,40 @@ def _provider_result(provider_name: str, provider, rows) -> tuple[list[EarningsC
     if not str(degradation_detail.get("provider", "") or "").strip():
         degradation_detail["provider"] = provider_name
     return provider_events, degradation_detail
+
+
+def _provider_timeout_detail(provider_name: str, timeout_sec: float) -> dict[str, object]:
+    error_text = f"provider deadline exceeded after {timeout_sec:g}s"
+    log.warning(f"[global earnings calendar] {provider_name} refresh timed out: {error_text}")
+    return {
+        "provider": provider_name,
+        "reason": "provider_timeout",
+        "sample_error": error_text,
+        "all_failed": True,
+        "retryable": True,
+    }
+
+
+def _record_provider_fetch_metric(
+    provider_name: str,
+    elapsed_sec: float,
+    *,
+    status: str,
+) -> None:
+    tags = {"provider": provider_name, "status": status}
+    record_metric(
+        "global_earnings_calendar_provider_fetch_ms",
+        max(0.0, elapsed_sec) * 1000.0,
+        unit="ms",
+        tags=tags,
+    )
+    if status == "timeout":
+        record_metric(
+            "global_earnings_calendar_provider_timeout_count",
+            1,
+            unit="count",
+            tags={"provider": provider_name},
+        )
 
 
 def _ensure_industry_module_path() -> None:
@@ -551,12 +589,99 @@ class GlobalEarningsCalendarService:
 
         return []
 
+    @staticmethod
+    def _normalize_provider_timeout_sec(value: float | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            timeout_sec = float(value)
+        except (TypeError, ValueError):
+            return None
+        return timeout_sec if 0.0 < timeout_sec < 3600.0 else None
+
+    def _collect_provider_fetch_results(
+        self,
+        provider_calls: tuple[tuple[str, object], ...],
+        *,
+        today: dt.date,
+        lookahead_days: int,
+        provider_timeout_sec: float | None,
+    ) -> list[tuple[str, object, list[EarningsCalendarEvent], BaseException | None, float, bool]]:
+        if provider_timeout_sec is None:
+            results = []
+            for provider_name, provider in provider_calls:
+                started_at = time.monotonic()
+                try:
+                    rows = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
+                    error = None
+                except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers.
+                    rows = []
+                    error = exc
+                results.append((provider_name, provider, rows, error, time.monotonic() - started_at, False))
+            return results
+
+        completed = queue.Queue()
+        started_at = time.monotonic()
+
+        def _fetch(index: int, provider) -> None:
+            call_started_at = time.monotonic()
+            try:
+                rows = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
+                error = None
+            except BaseException as exc:  # noqa: BLE001 - restore non-Exception failures in the caller thread.
+                rows = []
+                error = exc
+            completed.put((index, rows, error, time.monotonic() - call_started_at))
+
+        for index, (_provider_name, provider) in enumerate(provider_calls):
+            threading.Thread(
+                target=_fetch,
+                args=(index, provider),
+                name=f"global-earnings-provider-{index + 1}",
+                daemon=True,
+            ).start()
+
+        result_by_index: dict[int, tuple[list[EarningsCalendarEvent], BaseException | None, float]] = {}
+        pending = set(range(len(provider_calls)))
+        deadline = started_at + provider_timeout_sec
+        while pending:
+            remaining_sec = deadline - time.monotonic()
+            if remaining_sec <= 0:
+                break
+            try:
+                index, rows, error, elapsed_sec = completed.get(timeout=remaining_sec)
+            except queue.Empty:
+                break
+            if index in pending:
+                result_by_index[index] = (rows, error, elapsed_sec)
+                pending.remove(index)
+
+        while True:
+            try:
+                index, rows, error, elapsed_sec = completed.get_nowait()
+            except queue.Empty:
+                break
+            if index in pending:
+                result_by_index[index] = (rows, error, elapsed_sec)
+                pending.remove(index)
+
+        results = []
+        elapsed_sec = time.monotonic() - started_at
+        for index, (provider_name, provider) in enumerate(provider_calls):
+            if index in result_by_index:
+                rows, error, provider_elapsed_sec = result_by_index[index]
+                results.append((provider_name, provider, rows, error, provider_elapsed_sec, False))
+            else:
+                results.append((provider_name, provider, [], None, elapsed_sec, True))
+        return results
+
     def refresh_events(
         self,
         *,
         today: dt.date | None = None,
         lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
         cancellation_token: CancellationTokenLike | None = None,
+        provider_timeout_sec: float | None = None,
     ) -> list[EarningsCalendarEvent]:
         _raise_if_cancelled(cancellation_token)
         today = today or dt.date.today()
@@ -582,19 +707,38 @@ class GlobalEarningsCalendarService:
             ("Yahoo Finance", self.yfinance_provider),
         )
         provider_attempted_count = len(provider_calls)
-        for provider_name, provider in provider_calls:
+        provider_timeout_sec = self._normalize_provider_timeout_sec(provider_timeout_sec)
+        provider_results = self._collect_provider_fetch_results(
+            provider_calls,
+            today=today,
+            lookahead_days=lookahead_days,
+            provider_timeout_sec=provider_timeout_sec,
+        )
+        for provider_name, provider, rows, error, elapsed_sec, timed_out in provider_results:
             _raise_if_cancelled(cancellation_token)
-            try:
-                rows = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
-            except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers and record each outcome.
-                provider_degradations.append(_provider_failure_detail(provider_name, exc))
+            if timed_out:
+                provider_degradations.append(_provider_timeout_detail(provider_name, provider_timeout_sec or 0.0))
                 provider_total_failure_count += 1
+                _record_provider_fetch_metric(provider_name, elapsed_sec, status="timeout")
                 continue
-            _raise_if_cancelled(cancellation_token)
+            if error is not None:
+                if not isinstance(error, Exception):
+                    raise error
+                provider_degradations.append(_provider_failure_detail(provider_name, error))
+                provider_total_failure_count += 1
+                if provider_timeout_sec is not None:
+                    _record_provider_fetch_metric(provider_name, elapsed_sec, status="failure")
+                continue
             provider_events, degradation_detail = _provider_result(provider_name, provider, rows)
             if degradation_detail is not None:
                 provider_degradations.append(degradation_detail)
                 provider_total_failure_count += int(self._provider_degradation_is_total(degradation_detail))
+            if provider_timeout_sec is not None:
+                _record_provider_fetch_metric(
+                    provider_name,
+                    elapsed_sec,
+                    status="degraded" if degradation_detail is not None else "success",
+                )
             network_events.extend(provider_events)
 
         _raise_if_cancelled(cancellation_token)

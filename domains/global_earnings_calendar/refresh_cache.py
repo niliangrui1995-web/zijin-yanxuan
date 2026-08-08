@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from core.logger import get_logger
+from domains.global_earnings_calendar.constants import BACKGROUND_REFRESH_PROVIDER_DEADLINE_SEC
 from domains.global_earnings_calendar.http_utils import redact_sensitive_data, redact_sensitive_text
 from domains.global_earnings_calendar.service import GlobalEarningsCalendarService
 
@@ -60,7 +61,7 @@ def main() -> int:
     return_code = 0
     try:
         service = GlobalEarningsCalendarService()
-        events = service.refresh_events()
+        events = service.refresh_events(provider_timeout_sec=BACKGROUND_REFRESH_PROVIDER_DEADLINE_SEC)
         cache_status = service.load_cache_status()
         summary: dict[str, object] = {"status": "success", "events": _event_count(events)}
         _attach_degraded_cache_status(summary, cache_status)

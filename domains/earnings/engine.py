@@ -4,7 +4,7 @@ import importlib
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -96,6 +96,7 @@ _POOL_CACHE = {}
 _THS_FINANCIAL_BENEFIT_CACHE = {}
 _THS_FINANCIAL_BENEFIT_CACHE_TTL_SEC = 30 * 60
 _THS_FINANCIAL_BENEFIT_FALLBACK_TTL_SEC = 6 * 60 * 60
+_THS_NO_LAST_SUCCESS_BASIS = "N/A（本轮未取得同花顺历史底稿，未使用替代来源）"
 _THS_REQUEST_TIMEOUT = (5, 15)
 _THS_MAX_RESPONSE_CHARS = 2_000_000
 _THS_MAX_FLASHDATA_CHARS = 2_000_000
@@ -389,6 +390,28 @@ def _set_cached_ths_financial_benefit(symbol: str, indicator: str, df: pd.DataFr
     return cached_df.copy()
 
 
+def _build_ths_source_gap(symbol: str, error: object, *, last_success_basis: str) -> dict[str, object]:
+    return {
+        "source": "同花顺历史底稿",
+        "symbol": str(symbol or "").strip().zfill(6),
+        "retryable": True,
+        "last_success_basis": str(last_success_basis or _THS_NO_LAST_SUCCESS_BASIS).strip(),
+        "error": str(error or "unknown_error").strip() or "unknown_error",
+    }
+
+
+def _ths_source_gap_from_frame(frame) -> dict[str, object] | None:
+    attrs = getattr(frame, "attrs", {})
+    raw_gap = attrs.get("earnings_source_gap") if isinstance(attrs, Mapping) else None
+    return dict(raw_gap) if isinstance(raw_gap, Mapping) else None
+
+
+def _with_ths_source_gap(result: dict, source_gap: dict[str, object] | None) -> dict:
+    if source_gap:
+        result["source_gap"] = dict(source_gap)
+    return result
+
+
 def _format_ths_payload_error(symbol: str, response_text: str, detail: str, status_code: int | None = None) -> str:
     parts = [f"symbol={str(symbol).zfill(6)}"]
     if status_code is not None:
@@ -616,6 +639,11 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
                         logger.warning(
                             f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 连续失败，回退使用 {int(age_sec)}s 前缓存: {e}"
                         )
+                        stale_df.attrs["earnings_source_gap"] = _build_ths_source_gap(
+                            kwargs.get("symbol") or param_str,
+                            e,
+                            last_success_basis=f"同花顺历史底稿内存缓存（{max(0, int(age_sec))}秒前成功）",
+                        )
                         return stale_df
                 logger.error(f"[业绩引擎] ❌ {func_cn} ({param_str}) 重试 {retries} 次后仍失败: {e}")
                 raise e
@@ -755,43 +783,65 @@ def _submit_candidate_futures(engine, executor, candidates, cancellation_token=N
     return futures
 
 
-def _log_candidate_progress(cand, processed_count: int, total_pending: int) -> None:
+def _log_candidate_progress(cand, processed_count: int, total_pending: int, *, source_gap: dict[str, object] | None = None) -> None:
     code = cand["股票代码"]
+    source_gap_suffix = ""
+    if source_gap is not None:
+        source_gap_suffix = "（同花顺历史底稿数据源缺口，可重试）"
     if (total_pending >= 50 and processed_count % 20 == 0) or (10 < total_pending < 50 and processed_count % 10 == 0):
-        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
+        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}{source_gap_suffix}")
     elif 0 < total_pending <= 10:
-        logger.info(f"[业绩引擎] 验证 {processed_count}/{total_pending}: {code} {cand.get('股票名称', '')}")
+        logger.info(f"[业绩引擎] 验证 {processed_count}/{total_pending}: {code} {cand.get('股票名称', '')}{source_gap_suffix}")
+
+
+def _candidate_source_gap(candidate: dict, result: dict) -> dict[str, object] | None:
+    raw_gap = result.get("source_gap")
+    if not isinstance(raw_gap, Mapping):
+        return None
+    symbol = str(candidate.get("股票代码") or raw_gap.get("symbol") or "").strip().zfill(6)
+    return {
+        "source": str(raw_gap.get("source") or "同花顺历史底稿").strip(),
+        "symbol": symbol,
+        "stock_name": str(candidate.get("股票名称") or "").strip(),
+        "report_date": str(candidate.get("报告期") or "").strip(),
+        "data_type": str(candidate.get("数据类型") or "").strip(),
+        "retryable": bool(raw_gap.get("retryable")),
+        "last_success_basis": str(raw_gap.get("last_success_basis") or _THS_NO_LAST_SUCCESS_BASIS).strip(),
+        "error": str(raw_gap.get("error") or result.get("error") or "unknown_error").strip(),
+    }
 
 
 def _validated_candidate(engine, future, failed_candidate, processed_count, total_pending, cancellation_token=None):
     try:
         cand, fingerprint, result = future.result()
         _raise_if_cancelled(cancellation_token)
-        _log_candidate_progress(cand, processed_count, total_pending)
+        source_gap = _candidate_source_gap(cand, result)
+        _log_candidate_progress(cand, processed_count, total_pending, source_gap=source_gap)
         if result.get("error") is not None or not engine._surprise_result_passes_threshold(result):
-            return None
+            return None, source_gap
         cand.update(result)
         cand["揭晓日"] = str(cand.get("公告日期") or cand.get("源公告日期") or "").strip()
         cand["发现时间"] = MarketCalendar.now("CN").isoformat(timespec="seconds")
-        return cand, fingerprint
+        return (cand, fingerprint), source_gap
     except _EARNINGS_COMPUTE_ERRORS as exc:
         _raise_if_cancelled(cancellation_token)
         logger.debug(f"[业绩引擎] {failed_candidate.get('股票代码', '?')} 并发计算异常: {exc}")
-        return None
+        return None, None
 
 
 def _process_pending_candidates_pipeline(engine, candidates, cancellation_token=None):
     if not candidates:
-        return [], False
+        return [], False, []
     import concurrent.futures
 
     valid_records = []
     fingerprints = []
+    source_gaps = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_map = _submit_candidate_futures(engine, executor, candidates, cancellation_token)
         for processed_count, future in enumerate(concurrent.futures.as_completed(future_map), start=1):
             _raise_if_cancelled(cancellation_token)
-            validated = _validated_candidate(
+            validated, source_gap = _validated_candidate(
                 engine,
                 future,
                 future_map[future],
@@ -799,6 +849,8 @@ def _process_pending_candidates_pipeline(engine, candidates, cancellation_token=
                 len(candidates),
                 cancellation_token,
             )
+            if source_gap is not None:
+                source_gaps.append(source_gap)
             if validated is not None:
                 record, fingerprint = validated
                 valid_records.append(record)
@@ -806,7 +858,7 @@ def _process_pending_candidates_pipeline(engine, candidates, cancellation_token=
     _raise_if_cancelled(cancellation_token)
     engine.local_records.extend(valid_records)
     engine.seen_fingerprints.update(fingerprints)
-    return valid_records, bool(valid_records)
+    return valid_records, bool(valid_records), source_gaps
 
 
 def _prepare_daily_scan(engine, target_date, cancellation_token=None):
@@ -839,18 +891,42 @@ def _commit_daily_scan(engine, target_date, valid_records, new_found, critical, 
     sync_advanced = target_date > engine.last_sync_date and not critical
     if sync_advanced:
         engine.last_sync_date = target_date
-    if new_found or sync_advanced:
-        engine._save_cache()
+    # 每轮结束都落盘扫描状态：失败不能只留在内存中，否则重启后会被误判为正常完成。
+    engine._save_cache()
     return sync_advanced
 
 
-def _finish_daily_scan_state(engine, target_date, started_at, valid_records, critical, degradations) -> None:
+def _source_gap_error_summary(source_gaps: list[dict[str, object]]) -> str:
+    if not source_gaps:
+        return ""
+    ordered_gaps = sorted(source_gaps, key=lambda item: (str(item.get("symbol") or ""), str(item.get("report_date") or "")))
+    identities = "、".join(
+        " ".join(part for part in (str(item.get("symbol") or "").strip(), str(item.get("stock_name") or "").strip()) if part)
+        or "未知股票"
+        for item in ordered_gaps
+    )
+    bases = "；".join(
+        f"{str(item.get('symbol') or '未知股票').strip()}={str(item.get('last_success_basis') or _THS_NO_LAST_SUCCESS_BASIS).strip()}"
+        for item in ordered_gaps
+    )
+    return f"同花顺历史底稿数据源缺口：{identities}；可重试；最后成功依据：{bases}"
+
+
+def _finish_daily_scan_state(engine, target_date, started_at, valid_records, critical, degradations, source_gaps) -> None:
+    source_gaps = sorted(
+        (dict(item) for item in source_gaps if isinstance(item, Mapping)),
+        key=lambda item: (str(item.get("symbol") or ""), str(item.get("report_date") or "")),
+    )
     if degradations:
-        error_text = "; ".join(
+        error_parts = [
             f"{item.get('pool')}({item.get('report_date')}): {item.get('error')}" for item in degradations
-        )
+        ]
     else:
-        error_text = "provider_fetch_failed" if critical else ""
+        error_parts = []
+    source_gap_summary = _source_gap_error_summary(source_gaps)
+    if source_gap_summary:
+        error_parts.append(source_gap_summary)
+    error_text = "; ".join(error_parts) or ("provider_fetch_failed" if critical else "")
     engine.last_scan_result = {
         "status": "degraded" if critical else "success",
         "target_publish_date": target_date,
@@ -858,6 +934,9 @@ def _finish_daily_scan_state(engine, target_date, started_at, valid_records, cri
         "finished_at": MarketCalendar.now("CN").isoformat(timespec="seconds"),
         "records": int(len(valid_records)),
         "degradations": degradations,
+        "source_gaps": source_gaps,
+        "source_gap_count": int(len(source_gaps)),
+        "retryable": bool(critical),
         "error": error_text,
     }
 
@@ -869,12 +948,13 @@ def _fetch_daily_surprises_pipeline(engine, target_publish_date=None, cancellati
     engine.last_scan_result = {"status": "running", "target_publish_date": target_date, "started_at": started_at}
     logger.info(f"[业绩引擎] 扫描目标日期: {target_date}")
     pending, critical, degradations = _prepare_daily_scan(engine, target_date, cancellation_token)
-    valid_records, new_found = engine._process_pending_surprise_candidates(
+    valid_records, new_found, source_gaps = engine._process_pending_surprise_candidates(
         pending,
         cancellation_token=cancellation_token,
     )
+    critical = critical or bool(source_gaps)
+    _finish_daily_scan_state(engine, target_date, started_at, valid_records, critical, degradations, source_gaps)
     _commit_daily_scan(engine, target_date, valid_records, new_found, critical, cancellation_token)
-    _finish_daily_scan_state(engine, target_date, started_at, valid_records, critical, degradations)
     if valid_records:
         return pd.DataFrame(valid_records).sort_values(
             by=["揭晓日", "环比增速_百分比"],
@@ -1025,6 +1105,7 @@ class EarningsEngine:
                     data.get("last_sync_date", ""),
                     data.get("seen", []),
                     data.get("records", []),
+                    last_scan_result=data.get("last_scan_result", {}),
                 )
                 # 旧文件重命名为 .migrated 保留 30 天后由 DataStore 自动清理
                 try:
@@ -1039,6 +1120,8 @@ class EarningsEngine:
         if data:
             self.last_sync_date = data.get("last_sync_date", self.last_sync_date)
             self.seen_fingerprints = set(data.get("seen", []))
+            raw_last_scan_result = data.get("last_scan_result")
+            self.last_scan_result = dict(raw_last_scan_result) if isinstance(raw_last_scan_result, Mapping) else {}
             all_records = data.get("records", [])
 
             # 清理过期数据保障性能（只保留距离今天内 N 天的数据）
@@ -1085,6 +1168,7 @@ class EarningsEngine:
                 self.last_sync_date,
                 list(self.seen_fingerprints),
                 self.local_records,
+                last_scan_result=getattr(self, "last_scan_result", {}),
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"[业绩引擎] SQLite 持久化失败: {e}")
@@ -1423,7 +1507,7 @@ class EarningsEngine:
         pending_candidates: list[dict],
         *,
         cancellation_token=None,
-    ) -> tuple[list[dict], bool]:
+    ) -> tuple[list[dict], bool, list[dict[str, object]]]:
         return _process_pending_candidates_pipeline(
             self,
             pending_candidates,
@@ -1449,30 +1533,47 @@ class EarningsEngine:
         _raise_if_cancelled(cancellation_token)
         try:
             df_fin = safe_ak_fetch(ak.stock_financial_benefit_ths, symbol=target_code)
+        except _EARNINGS_COMPUTE_ERRORS as e:
+            _raise_if_cancelled(cancellation_token)
+            logger.error(f"[业绩预告] 获取失败: {e}")
+            return {
+                "error": "THS_SOURCE_GAP",
+                "source_gap": _build_ths_source_gap(
+                    target_code,
+                    e,
+                    last_success_basis=_THS_NO_LAST_SUCCESS_BASIS,
+                ),
+            }
+
+        source_gap = _ths_source_gap_from_frame(df_fin)
+        if source_gap:
+            # 旧底稿仅用于说明最后成功依据，不能作为本轮计算输入，否则会把待重试候选写入 seen。
+            return {"error": "THS_SOURCE_GAP", "source_gap": source_gap}
+        try:
             _raise_if_cancelled(cancellation_token)
             if df_fin.empty:
-                return {"error": "无历史"}
+                return _with_ths_source_gap({"error": "无历史"}, source_gap)
             df_fin["报告期"] = pd.to_datetime(df_fin["报告期"])
             df_fin = df_fin.sort_values(by="报告期", ascending=False)
             # --- 核心拦截：如果强制要求纯粹的扣非财报，抛弃之前传进来的虚假预估值，直接从底层提 ---
             if must_wait_ths:
                 cols = [c for c in df_fin.columns if "扣除" in c]
                 if not cols:
-                    return {"error": "无找点字段"}
+                    return _with_ths_source_gap({"error": "无找点字段"}, source_gap)
                 match_current = df_fin[df_fin["报告期"] == pd.to_datetime(report_date)]
                 if match_current.empty:
-                    return {"error": "THS_PENDING"}
+                    return _with_ths_source_gap({"error": "THS_PENDING"}, source_gap)
                 real_val = match_current.iloc[0][cols[0]]
                 if pd.isna(real_val):
-                    return {"error": "THS_PENDING"}
+                    return _with_ths_source_gap({"error": "THS_PENDING"}, source_gap)
 
                 target_est_cum_profit = _parse_amount(real_val)
                 if pd.isna(target_est_cum_profit):
-                    return {"error": "THS_PENDING"}
+                    return _with_ths_source_gap({"error": "THS_PENDING"}, source_gap)
                 is_koufei = True
             cols = _select_profit_columns(df_fin.columns, is_koufei)
             if not cols:
-                return {"error": "无利润字段"}
+                return _with_ths_source_gap({"error": "无利润字段"}, source_gap)
             kf_col = cols[0]
             df_fin["累计扣非_元"] = df_fin[kf_col].apply(_parse_amount)
             r_datetime = pd.to_datetime(report_date)
@@ -1509,16 +1610,16 @@ class EarningsEngine:
                 get_cum_profit_with_quick,
             )
             if metrics_error is not None:
-                return {"error": metrics_error}
+                return _with_ths_source_gap({"error": metrics_error}, source_gap)
             current_single = metrics.current_single
             last_single = metrics.last_single
             yoy_base_single = metrics.yoy_base_single
             last_single_basis = metrics.last_single_basis
 
             if pd.isna(current_single) or pd.isna(last_single):
-                return {"error": "空值"}
+                return _with_ths_source_gap({"error": "空值"}, source_gap)
             if last_single == 0:
-                return {"error": "基数0"}
+                return _with_ths_source_gap({"error": "基数0"}, source_gap)
 
             qoq = (current_single - last_single) / abs(last_single) * 100
 
@@ -1537,7 +1638,7 @@ class EarningsEngine:
             }
             if last_single_basis != "财报":
                 result["上季基数口径"] = last_single_basis
-            return result
+            return _with_ths_source_gap(result, source_gap)
         except _EARNINGS_COMPUTE_ERRORS as e:
             _raise_if_cancelled(cancellation_token)
             logger.error(f"[业绩预告] 获取失败: {e}")

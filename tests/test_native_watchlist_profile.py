@@ -1,4 +1,7 @@
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from scripts import native_watchlist_profile
 from scripts.native_watchlist_profile import (
@@ -11,6 +14,9 @@ from scripts.native_watchlist_profile import (
     _parse_args,
     _quote_repaint_acceptance,
     _residual_repaint_acceptance,
+    _shell_nav_repaint_acceptance,
+    _summarize_shell_nav_guard_metrics,
+    _summarize_shell_nav_paint_metrics,
     _summarize_residual_repaint_metrics,
     _watchlist_reveal_acceptance,
     summarize_durations,
@@ -62,10 +68,28 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.quote_cycles == 0
     assert args.quote_cycle_ms == 1000
     assert args.quote_target_count == 6
+    assert args.shell_nav_cycles == 0
+    assert args.shell_nav_settle_ms == 1200
+    assert args.shell_nav_only is False
     assert args.question_dialog_ms == 0
     assert args.residual_repaint_cycles == 0
     assert args.legacy_quote_repaint is False
     assert args.no_cprofile is False
+
+
+def test_native_watchlist_profile_cli_accepts_shell_nav_sampling_options():
+    args = _parse_args(
+        ["--shell-nav-cycles", "2", "--shell-nav-settle-ms", "1600", "--shell-nav-only"]
+    )
+
+    assert args.shell_nav_cycles == 2
+    assert args.shell_nav_settle_ms == 1600
+    assert args.shell_nav_only is True
+
+
+def test_native_watchlist_profile_shell_nav_only_requires_a_shell_nav_cycle():
+    with pytest.raises(SystemExit):
+        _parse_args(["--shell-nav-only"])
 
 
 def test_native_watchlist_profile_builds_sparse_changed_quote_payload():
@@ -294,6 +318,212 @@ def test_native_watchlist_profile_reveal_acceptance_allows_only_first_full_paint
     }
 
 
+def test_native_watchlist_profile_shell_nav_acceptance_allows_only_initial_full_viewport():
+    paint_metrics = _summarize_shell_nav_paint_metrics(
+        [
+            SimpleNamespace(
+                value=18.0,
+                tags={
+                    "reason": "other",
+                    "delivered_full_viewport": "true",
+                    "delivery_kind": "full_viewport",
+                    "workspace_load_reason": "shell_nav",
+                },
+            ),
+            SimpleNamespace(
+                value=7.0,
+                tags={
+                    "reason": "model_data_changed",
+                    "delivered_full_viewport": "false",
+                    "delivery_kind": "partial_region",
+                },
+            ),
+        ]
+    )
+    result = {
+        "cycle": 1,
+        "paint_region": {
+            "count": 2,
+            "full_viewport_count": 1,
+            "after_first": {"full_viewport_count": 0},
+        },
+        "paint_metrics": paint_metrics,
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
+    }
+
+    assert paint_metrics["other_full_viewport_count"] == 1
+    assert paint_metrics["other_full_viewport_after_first_count"] == 0
+    assert paint_metrics["samples"][0]["workspace_load_reason"] == "shell_nav"
+    assert _shell_nav_repaint_acceptance([result], expected_cycles=1) == {
+        "status": "pass",
+        "violations": [],
+    }
+
+
+def test_native_watchlist_profile_shell_nav_guard_metrics_are_phase_local_and_diagnostic():
+    summary = _summarize_shell_nav_guard_metrics(
+        [
+            SimpleNamespace(
+                value=1,
+                tags={
+                    "decision": "first_full_allowed",
+                    "workspace_load_reason": "shell_nav",
+                    "age_ms": "3.100",
+                    "remaining": "2",
+                    "dirty_bounding_area_ratio": "1.0000",
+                    "dirty_region_rects": "1",
+                },
+            ),
+            SimpleNamespace(
+                value=1,
+                tags={
+                    "decision": "suppress_redundant_full",
+                    "workspace_load_reason": "shell_nav",
+                    "age_ms": "18.200",
+                    "remaining": "1",
+                    "dirty_bounding_area_ratio": "1.0000",
+                    "dirty_region_rects": "1",
+                },
+            ),
+            SimpleNamespace(
+                value=1,
+                tags={
+                    "decision": "allow_full_fallback",
+                    "workspace_load_reason": "shell_nav",
+                    "fallback_reason": "viewport_geometry",
+                },
+            ),
+        ]
+    )
+
+    assert summary["count"] == 3
+    assert summary["decision_counts"] == {
+        "allow_full_fallback": 1,
+        "first_full_allowed": 1,
+        "suppress_redundant_full": 1,
+    }
+    assert summary["fallback_reason_counts"] == {"viewport_geometry": 1}
+    assert summary["samples"][1] == {
+        "decision": "suppress_redundant_full",
+        "workspace_load_reason": "shell_nav",
+        "age_ms": "18.200",
+        "remaining": "1",
+        "dirty_bounding_area_ratio": "1.0000",
+        "dirty_region_rects": "1",
+        "fallback_reason": "",
+    }
+
+
+def test_native_watchlist_profile_shell_nav_acceptance_uses_actual_paint_not_incoming_event_filter():
+    result = {
+        "cycle": 1,
+        # QApplication's event filter sees the two paints the VCP viewport
+        # guard consumes. Keep this as evidence, but it is not an actual
+        # VCPTableView.paintEvent budget.
+        "paint_region": {
+            "count": 3,
+            "full_viewport_count": 3,
+            "after_first": {"full_viewport_count": 2},
+        },
+        "paint_metrics": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "full_viewport_after_first_count": 0,
+            "other_full_viewport_count": 1,
+            "other_full_viewport_after_first_count": 0,
+        },
+        "repaint_guard": {
+            "decision_counts": {
+                "first_full_allowed": 1,
+                "suppress_redundant_full": 2,
+            }
+        },
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
+    }
+
+    assert _shell_nav_repaint_acceptance([result], expected_cycles=1) == {
+        "status": "pass",
+        "violations": [],
+    }
+
+
+def test_native_watchlist_profile_shell_nav_acceptance_rejects_repeat_other_full_paints():
+    result = {
+        "cycle": 1,
+        "paint_region": {
+            "count": 3,
+            "full_viewport_count": 3,
+            "after_first": {"full_viewport_count": 2},
+        },
+        "paint_metrics": {
+            "count": 3,
+            "full_viewport_count": 3,
+            "full_viewport_after_first_count": 2,
+            "other_full_viewport_count": 2,
+            "other_full_viewport_after_first_count": 1,
+        },
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 1},
+    }
+
+    acceptance = _shell_nav_repaint_acceptance([result], expected_cycles=2)
+
+    assert acceptance["status"] == "fail"
+    assert "cycle=1 actual_full_viewport_metric_budget" in acceptance["violations"]
+    assert "cycle=1 actual_full_viewport_after_first" in acceptance["violations"]
+    assert "cycle=1 other_full_viewport_metric_budget" in acceptance["violations"]
+    assert "cycle=1 other_full_viewport_after_first" in acceptance["violations"]
+    assert "cycle=1 event_loop_critical_stall" in acceptance["violations"]
+    assert "cycle=2 result_count=0" in acceptance["violations"]
+
+
+def test_native_watchlist_profile_shell_nav_acceptance_rejects_late_other_full_metric():
+    result = {
+        "cycle": 1,
+        "paint_region": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "after_first": {"full_viewport_count": 0},
+        },
+        "paint_metrics": {
+            "count": 2,
+            "full_viewport_count": 2,
+            "full_viewport_after_first_count": 1,
+            "other_full_viewport_count": 1,
+            "other_full_viewport_after_first_count": 1,
+        },
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
+    }
+
+    acceptance = _shell_nav_repaint_acceptance([result], expected_cycles=1)
+
+    assert acceptance["status"] == "fail"
+    assert acceptance["violations"] == [
+        "cycle=1 actual_full_viewport_metric_budget",
+        "cycle=1 actual_full_viewport_after_first",
+        "cycle=1 other_full_viewport_after_first",
+    ]
+
+
+def test_native_watchlist_profile_shell_nav_acceptance_preserves_tab_topology():
+    result = {
+        "cycle": 1,
+        "tab_count": 10,
+        "expected_tab_count": 11,
+        "paint_region": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "after_first": {"full_viewport_count": 0},
+        },
+        "paint_metrics": {"other_full_viewport_count": 1},
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
+    }
+
+    acceptance = _shell_nav_repaint_acceptance([result], expected_cycles=1)
+
+    assert acceptance["status"] == "fail"
+    assert "cycle=1 tab_count=10 expected=11" in acceptance["violations"]
+
+
 def test_native_watchlist_profile_region_summary_does_not_treat_sparse_span_as_full():
     summary = _FirstPaintProbe._summarize_paint_regions(
         [
@@ -310,6 +540,163 @@ def test_native_watchlist_profile_region_summary_does_not_treat_sparse_span_as_f
     assert summary["full_viewport_count"] == 0
     assert summary["spontaneous_count"] == 1
     assert summary["samples"][0]["region_rect_count"] == 2
+
+
+def test_native_watchlist_profile_metric_offsets_use_history_lengths(monkeypatch):
+    from core import observability
+
+    history = {
+        "watchlist_table_paint_ms": [SimpleNamespace(value=11.0)],
+        "watchlist_shell_nav_repaint_guard": [SimpleNamespace(value=1.0)],
+        "ui_event_loop_stall_ms": [SimpleNamespace(value=417.0)],
+    }
+    monkeypatch.setattr(observability, "metric_history", lambda name: list(history[str(name)]))
+
+    offsets = _NativeProfileController._metric_offsets(tuple(history))
+    history["watchlist_table_paint_ms"].append(SimpleNamespace(value=19.0))
+    history["watchlist_shell_nav_repaint_guard"].append(SimpleNamespace(value=1.0))
+    history["ui_event_loop_stall_ms"].append(SimpleNamespace(value=23.0))
+
+    observed = _NativeProfileController._metrics_since(offsets)
+
+    assert offsets == {
+        "watchlist_table_paint_ms": 1,
+        "watchlist_shell_nav_repaint_guard": 1,
+        "ui_event_loop_stall_ms": 1,
+    }
+    assert [sample.value for sample in observed["watchlist_table_paint_ms"]] == [19.0]
+    assert [sample.value for sample in observed["watchlist_shell_nav_repaint_guard"]] == [1.0]
+    assert [sample.value for sample in observed["ui_event_loop_stall_ms"]] == [23.0]
+
+
+def test_native_watchlist_profile_shell_nav_finish_reports_actual_and_guard_phase_metrics():
+    table_metric = SimpleNamespace(
+        value=18.0,
+        tags={
+            "reason": "other",
+            "delivered_full_viewport": "true",
+            "workspace_load_reason": "shell_nav",
+        },
+    )
+    guard_metric = SimpleNamespace(
+        value=1,
+        tags={
+            "decision": "suppress_redundant_full",
+            "workspace_load_reason": "shell_nav",
+            "remaining": "1",
+        },
+    )
+    tabs = SimpleNamespace(currentIndex=lambda: 0, count=lambda: 11)
+    workspace = SimpleNamespace(
+        tabs=tabs,
+        tab_specs=lambda: [{"key": "watchlist"}, *({"key": "other"} for _ in range(10))],
+    )
+    controller = object.__new__(_NativeProfileController)
+    controller._done = False
+    controller.window = SimpleNamespace(_workspace=workspace)
+    controller._shell_nav_phase = {
+        "workspace": workspace,
+        "cycle": 1,
+        "watchlist_index": 0,
+        "outbound_group": "market",
+        "watchlist_group": "watchlist",
+        "return_started_at": 0.0,
+        "metric_offsets": {"phase": 2},
+    }
+    controller._shell_nav_results = []
+    controller._shell_nav_cycle_index = 0
+    controller._heartbeat_by_phase = {}
+    controller.paint_probe = SimpleNamespace(
+        paint_region_summary=lambda _phase: {
+            "count": 3,
+            "full_viewport_count": 3,
+            "after_first": {"full_viewport_count": 2},
+        }
+    )
+    offsets_seen = []
+    controller._metrics_since = lambda offsets: offsets_seen.append(offsets) or {
+        "watchlist_table_paint_ms": [table_metric],
+        "watchlist_shell_nav_repaint_guard": [guard_metric],
+        "ui_event_loop_stall_ms": [SimpleNamespace(value=417.0)],
+    }
+    controller._stall_snapshot = lambda: {"installed": True, "event_loop_critical_count": 0}
+    controller._capture_shell_nav_visual_artifacts = lambda *_args: {
+        "main_window": {"saved": True, "path": "main.png"},
+        "watchlist_viewport": {"saved": True, "path": "viewport.png"},
+    }
+    continuation_calls = []
+    controller._continue_after_background_prewarm = lambda: continuation_calls.append(True)
+    timer_calls = []
+    controller.QTimer = SimpleNamespace(singleShot=lambda *_args: timer_calls.append(_args))
+
+    _NativeProfileController._finish_shell_nav_cycle(controller)
+
+    assert offsets_seen == [{"phase": 2}]
+    assert controller._shell_nav_cycle_index == 1
+    assert controller._shell_nav_phase is None
+    assert continuation_calls == []
+    assert len(timer_calls) == 1
+    result = controller._shell_nav_results[0]
+    assert result["paint_region"]["full_viewport_count"] == 3
+    assert result["paint_metrics"]["full_viewport_count"] == 1
+    assert result["paint_metrics"]["full_viewport_after_first_count"] == 0
+    assert result["repaint_guard"]["decision_counts"] == {"suppress_redundant_full": 1}
+    assert result["event_loop_stalls"]["max_ms"] == 417.0
+    assert result["visual_artifacts"]["watchlist_viewport"]["saved"] is True
+
+
+@pytest.mark.parametrize("shell_nav_only", [False, True])
+def test_native_watchlist_profile_shell_nav_only_scopes_reveal_enforcement(shell_nav_only):
+    controller = object.__new__(_NativeProfileController)
+    controller.args = SimpleNamespace(shell_nav_only=shell_nav_only)
+    controller.report = {"errors": []}
+    controller._watchlist_reveal_offsets = {}
+    controller._watchlist_reveal_started_at = 1.0
+    controller.paint_probe = SimpleNamespace(
+        paint_region_summary=lambda _phase: {"count": 0, "after_first": {}}
+    )
+    controller._metrics_since = lambda _offsets: {}
+    controller._heartbeat_by_phase = {}
+    controller._stall_snapshot = lambda: {"installed": True, "total_count": 0}
+
+    _NativeProfileController._record_watchlist_reveal(controller, 1.2)
+
+    reveal = controller.report["watchlist_reveal"]
+    assert reveal["acceptance"]["status"] == "fail"
+    assert reveal["acceptance_enforced"] is (not shell_nav_only)
+    assert controller.report["errors"] == (
+        [] if shell_nav_only else ["watchlist reveal repaint acceptance failed"]
+    )
+
+
+def test_native_watchlist_profile_captures_shell_nav_visual_artifacts(tmp_path):
+    class _Pixmap:
+        def isNull(self):
+            return False
+
+        def save(self, path, _format):
+            Path(path).write_bytes(b"fake-png")
+            return True
+
+    class _Widget:
+        def grab(self):
+            return _Pixmap()
+
+    controller = object.__new__(_NativeProfileController)
+    controller.window = _Widget()
+    controller.activation_profile_path = tmp_path / "watchlist_activation.prof"
+    table = SimpleNamespace(viewport=lambda: _Widget())
+
+    artifacts = controller._capture_shell_nav_visual_artifacts(2, table)
+
+    assert artifacts["main_window"] == {
+        "path": str(tmp_path / "shell_nav_cycle_2_main_window.png"),
+        "saved": True,
+    }
+    assert artifacts["watchlist_viewport"] == {
+        "path": str(tmp_path / "shell_nav_cycle_2_watchlist_viewport.png"),
+        "saved": True,
+    }
 
 
 def test_native_watchlist_profile_residual_acceptance_uses_structure_counts():

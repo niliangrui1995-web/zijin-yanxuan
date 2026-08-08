@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from concurrent import futures
 from typing import Mapping
 
 from core.logger import get_logger
@@ -14,7 +13,7 @@ from domains.global_earnings_calendar.models import (
     EarningsCalendarEvent,
     OligarchCompany,
 )
-from domains.global_earnings_calendar.providers._utils import _ensure_ascii_ca_bundle
+from domains.global_earnings_calendar.providers._utils import _collect_daemon_task_results, _ensure_ascii_ca_bundle
 from domains.global_earnings_calendar.rules import date_from_any as _date_from_any
 
 log = get_logger(__name__)
@@ -47,17 +46,21 @@ class YFinanceEarningsCalendarProvider:
 
         ticker_factory = self.ticker_factory or self._load_yfinance_ticker_factory()
         events: list[EarningsCalendarEvent] = []
-        with futures.ThreadPoolExecutor(max_workers=min(self.max_workers, len(companies))) as executor:
-            future_map = {
-                executor.submit(self._fetch_one, ticker_factory, company, today, lookahead_days): company
-                for company in companies
-            }
-            for future in futures.as_completed(future_map):
-                company = future_map[future]
-                try:
-                    events.extend(future.result())
-                except (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
-                    log.debug(f"[global earnings calendar] yfinance skip {company.ticker}: {exc}")
+        tasks = [
+            (company, lambda company=company: self._fetch_one(ticker_factory, company, today, lookahead_days))
+            for company in companies
+        ]
+        for company, rows, error in _collect_daemon_task_results(
+            tasks,
+            max_workers=min(self.max_workers, len(companies)),
+            thread_name_prefix="global-earnings-yfinance-ticker",
+        ):
+            if error is None:
+                events.extend(rows or [])
+                continue
+            if not isinstance(error, (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError)):
+                raise error
+            log.debug(f"[global earnings calendar] yfinance skip {company.ticker}: {error}")
         return sorted_events(events)
 
     @staticmethod

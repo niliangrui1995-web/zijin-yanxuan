@@ -273,6 +273,48 @@ def test_display_window_fetch_failure_and_empty_data_status(monkeypatch):
         tab.deleteLater()
 
 
+def test_earnings_tab_displays_structured_source_gap_from_auto_refresh(qt_application):
+    tab = EarningsTab()
+    try:
+        tab.row_data = [{"代码": "000001", "名称": "已有记录"}]
+        module.event_bus.sig_auto_refresh_status_changed.emit(
+            {
+                "job_key": "earnings_routine",
+                "status": "degraded",
+                "error": "同花顺历史底稿数据源缺口：300738 奥飞数据、600641 先导基电；可重试；最后成功依据：300738=N/A；600641=N/A",
+                "retryable": True,
+                "source_gaps": [
+                    {
+                        "source": "同花顺历史底稿",
+                        "symbol": "300738",
+                        "stock_name": "奥飞数据",
+                        "retryable": True,
+                        "last_success_basis": "N/A（本轮未取得同花顺历史底稿，未使用替代来源）",
+                    },
+                    {
+                        "source": "同花顺历史底稿",
+                        "symbol": "600641",
+                        "stock_name": "先导基电",
+                        "retryable": True,
+                        "last_success_basis": "同花顺历史底稿内存缓存（100秒前成功）",
+                    },
+                ],
+            }
+        )
+        qt_application.processEvents()
+
+        status_text = tab.lbl_status.text()
+        assert "业绩数据源缺口" in status_text
+        assert "300738 奥飞数据" in status_text
+        assert "600641 先导基电" in status_text
+        assert "可重试" in status_text
+        assert "最后成功依据" in status_text
+        assert tab.row_data == [{"代码": "000001", "名称": "已有记录"}]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_new_data_money_formats_dedupes_and_skips_older(monkeypatch):
     tab = EarningsTab()
     spy = QSignalSpy(event_bus.sig_earnings_updated)

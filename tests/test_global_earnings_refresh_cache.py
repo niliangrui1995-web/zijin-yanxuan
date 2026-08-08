@@ -2,11 +2,15 @@
 import json
 
 from domains.global_earnings_calendar import refresh_cache
+from domains.global_earnings_calendar.constants import BACKGROUND_REFRESH_PROVIDER_DEADLINE_SEC
 
 
 def test_refresh_cache_main_prints_success_summary(monkeypatch, capsys):
+    refresh_kwargs = {}
+
     class FakeService:
-        def refresh_events(self):
+        def refresh_events(self, **_kwargs):
+            refresh_kwargs.update(_kwargs)
             return [{"symbol": "NVDA"}, {"symbol": "TSM"}]
 
         def load_cache_status(self):
@@ -18,11 +22,12 @@ def test_refresh_cache_main_prints_success_summary(monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
 
     assert payload == {"status": "success", "events": 2}
+    assert refresh_kwargs == {"provider_timeout_sec": BACKGROUND_REFRESH_PROVIDER_DEADLINE_SEC}
 
 
 def test_refresh_cache_main_prints_degraded_summary(monkeypatch, capsys):
     class FakeService:
-        def refresh_events(self):
+        def refresh_events(self, **_kwargs):
             return [{"symbol": "NVDA"}, {"symbol": "TSM"}]
 
         def load_cache_status(self):
@@ -49,7 +54,7 @@ def test_refresh_cache_main_prints_degraded_summary(monkeypatch, capsys):
 
 def test_refresh_cache_main_returns_failure_for_all_provider_failure(monkeypatch, capsys):
     class FakeService:
-        def refresh_events(self):
+        def refresh_events(self, **_kwargs):
             return [{"symbol": "NVDA"}]
 
         def load_cache_status(self):
@@ -82,7 +87,7 @@ def test_refresh_cache_main_marks_exception_as_retryable_degraded(monkeypatch, c
     marked = []
 
     class FakeService:
-        def refresh_events(self):
+        def refresh_events(self, **_kwargs):
             raise RuntimeError("sqlite busy\nretry later")
 
         def mark_refresh_failed(self, exc):
@@ -119,7 +124,7 @@ def test_refresh_cache_cli_redacts_secrets_from_logs_and_json(monkeypatch, capfd
     dart_secret = "DART_CLI_SECRET_456"
 
     class FakeService:
-        def refresh_events(self):
+        def refresh_events(self, **_kwargs):
             raise RuntimeError(f"failed https://example.test?apikey={alpha_secret}")
 
         def mark_refresh_failed(self, _exc):

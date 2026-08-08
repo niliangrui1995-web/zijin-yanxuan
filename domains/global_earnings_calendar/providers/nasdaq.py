@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from concurrent import futures
 from typing import Mapping
 
 import requests
@@ -11,6 +10,7 @@ from core.logger import get_logger
 from domains.global_earnings_calendar.constants import DEFAULT_LOOKAHEAD_DAYS
 from domains.global_earnings_calendar.event_ops import sorted_events
 from domains.global_earnings_calendar.models import EarningsCalendarEvent, OligarchCompany
+from domains.global_earnings_calendar.providers._utils import _collect_daemon_task_results
 from infra.http_safety import requests_get_https
 
 log = get_logger(__name__)
@@ -55,15 +55,19 @@ class NasdaqEarningsCalendarProvider:
         days = [today + dt.timedelta(days=offset) for offset in range(max(0, int(lookahead_days)) + 1)]
         events: list[EarningsCalendarEvent] = []
         failed_days: dict[str, str] = {}
-        with futures.ThreadPoolExecutor(max_workers=min(self.max_workers, len(days))) as executor:
-            future_map = {executor.submit(self._fetch_day, day, universe, us_symbols): day for day in days}
-            for future in futures.as_completed(future_map):
-                day = future_map[future]
-                try:
-                    events.extend(future.result())
-                except (requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    failed_days[day.isoformat()] = str(exc)
-                    log.debug(f"[global earnings calendar] Nasdaq skip {day}: {exc}")
+        tasks = [(day, lambda day=day: self._fetch_day(day, universe, us_symbols)) for day in days]
+        for day, rows, error in _collect_daemon_task_results(
+            tasks,
+            max_workers=min(self.max_workers, len(days)),
+            thread_name_prefix="global-earnings-nasdaq-day",
+        ):
+            if error is None:
+                events.extend(rows or [])
+                continue
+            if not isinstance(error, (requests.RequestException, OSError, RuntimeError, TypeError, ValueError)):
+                raise error
+            failed_days[day.isoformat()] = str(error)
+            log.debug(f"[global earnings calendar] Nasdaq skip {day}: {error}")
         sorted_result = sorted_events(events)
         if failed_days:
             requested_days = [day.isoformat() for day in days]

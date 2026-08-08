@@ -187,6 +187,33 @@ def test_classic_workspace_activate_tab_all_invalid_and_current_paths():
     assert notified == [("b", widget)]
 
 
+def test_classic_workspace_arms_loaded_watchlist_guard_before_shell_nav_switch():
+    tabs = _Tabs(count=2, current=0)
+    calls = []
+
+    class WatchlistWidget:
+        def prepare_shell_nav_repaint_guard(self):
+            calls.append(tabs.currentIndex())
+
+    spec = {"key": "watchlist", "loaded": True, "widget": WatchlistWidget()}
+    fake = SimpleNamespace(
+        tabs=tabs,
+        _pending_tab_activation_reasons={},
+        _startup_last_allowed_index=-1,
+        _spec_for_key_or_index=lambda _index: spec,
+        _defer_interactive_activation_until_preload_ready=lambda *_args: False,
+    )
+
+    assert workspace_module.ClassicWorkspace.activate_tab(fake, 1, reason="shell_nav")
+    assert calls == [0]
+    assert tabs.currentIndex() == 1
+
+    tabs._current = 0
+    calls.clear()
+    assert workspace_module.ClassicWorkspace.activate_tab(fake, 1, reason="user")
+    assert calls == []
+
+
 def test_classic_workspace_event_wiring_prewarm_prime_and_copy_hook_errors(monkeypatch):
     import app.services.ui_event_service as event_module
 

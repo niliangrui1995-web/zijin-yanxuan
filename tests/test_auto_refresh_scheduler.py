@@ -72,6 +72,7 @@ class _TaskService:
         self.calls = []
         self.fail = False
         self.asian_cache_result = {"records": 0, "status": "skipped", "message": "cache fresh"}
+        self.earnings_routine_result = {"records": 1}
 
     def run_lhb_daily(self, trade_date):
         self.calls.append(("lhb_daily", trade_date))
@@ -113,7 +114,7 @@ class _TaskService:
 
     def run_earnings_routine(self, trade_date, *, routine_time):
         self.calls.append(("earnings_routine", trade_date, routine_time))
-        return {"records": 1}
+        return dict(self.earnings_routine_result)
 
 
 def _reset_scheduler_settings():
@@ -739,6 +740,59 @@ def test_auto_refresh_scheduler_runs_latest_earnings_routine_once(monkeypatch):
     assert [call[0] for call in tasks.calls].count("earnings_routine") == 1
 
 
+def test_auto_refresh_scheduler_preserves_earnings_source_gaps_on_retry(monkeypatch):
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 8, 30)]
+    tasks = _TaskService()
+    tasks.earnings_routine_result = {
+        "status": "degraded",
+        "error": "同花顺历史底稿数据源缺口：300738 奥飞数据、600641 先导基电；可重试；最后成功依据：300738=N/A；600641=N/A",
+        "retryable": True,
+        "source_gaps": [
+            {
+                "source": "同花顺历史底稿",
+                "symbol": "300738",
+                "stock_name": "奥飞数据",
+                "retryable": True,
+                "last_success_basis": "N/A",
+            },
+            {
+                "source": "同花顺历史底稿",
+                "symbol": "600641",
+                "stock_name": "先导基电",
+                "retryable": True,
+                "last_success_basis": "N/A",
+            },
+        ],
+    }
+    status_spy = QSignalSpy(event_bus.sig_auto_refresh_status_changed)
+    scheduler = _scheduler(now, task_service=tasks, extended_jobs=True)
+    scheduler.DAILY_JOBS = ()
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": False),
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_trade_day",
+        classmethod(lambda cls, day, market="CN": True),
+    )
+
+    scheduler.tick()
+    now[0] = datetime.datetime(2026, 4, 20, 8, 36)
+    scheduler.tick()
+
+    assert [call[0] for call in tasks.calls].count("earnings_routine") == 2
+    degraded_payloads = [
+        args[0]
+        for args in status_spy
+        if args[0]["job_key"] == "earnings_routine" and args[0]["status"] == "degraded"
+    ]
+    assert len(degraded_payloads) == 2
+    assert degraded_payloads[0]["retryable"] is True
+    assert [gap["symbol"] for gap in degraded_payloads[0]["source_gaps"]] == ["300738", "600641"]
+    assert degraded_payloads[0]["source_gaps"][0]["last_success_basis"] == "N/A"
+
+
 def test_auto_refresh_task_service_runs_fund_holdings_sync(monkeypatch):
     calls = []
     monkeypatch.setattr(
@@ -793,6 +847,28 @@ def test_earnings_refresh_subprocess_uses_hidden_module_runner(monkeypatch):
     assert calls[0][1] == ["routine", "--routine-time", "08:30"]
     assert calls[0][2]["no_window"] is True
     assert calls[0][2]["check"] is True
+
+
+def test_earnings_refresh_subprocess_preserves_degraded_source_gaps(monkeypatch):
+    def fake_run(_module_name, _module_args=None, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '{"status":"degraded","job_key":"earnings_routine","records":0,'
+                '"error":"同花顺历史底稿数据源缺口：300738 奥飞数据；可重试；最后成功依据：300738=N/A",'
+                '"retryable":true,"source_gaps":[{"symbol":"300738","last_success_basis":"N/A"}]}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(earnings_process_service, "run_python_module", fake_run)
+
+    result = earnings_process_service.run_earnings_refresh("routine")
+
+    assert result["status"] == "degraded"
+    assert result["retryable"] is True
+    assert result["source_gaps"] == [{"symbol": "300738", "last_success_basis": "N/A"}]
 
 
 def test_earnings_refresh_process_clamps_timeout_to_owner_deadline(monkeypatch):

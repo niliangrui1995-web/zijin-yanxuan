@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -88,7 +88,19 @@ def _post_preload_stabilized(scheduler, schedule_now: datetime.datetime) -> bool
     return elapsed_seconds >= scheduler._post_preload_grace_seconds
 
 
-def _handle_retryable_result(scheduler, state_key, status_job_key, trade_date, started_at, status, error) -> None:
+def _retryable_status_details(result: object) -> dict[str, object]:
+    if not isinstance(result, Mapping):
+        return {}
+    details: dict[str, object] = {}
+    if "retryable" in result:
+        details["retryable"] = bool(result.get("retryable"))
+    source_gaps = result.get("source_gaps")
+    if isinstance(source_gaps, (list, tuple)):
+        details["source_gaps"] = [dict(item) for item in source_gaps if isinstance(item, Mapping)]
+    return details
+
+
+def _handle_retryable_result(scheduler, state_key, status_job_key, trade_date, started_at, status, error, result) -> None:
     result_error = error or status
     scheduler._set_error(state_key, result_error)
     scheduler._emit_status(
@@ -99,6 +111,7 @@ def _handle_retryable_result(scheduler, state_key, status_job_key, trade_date, s
         started_at=started_at.isoformat(timespec="seconds"),
         finished_at=scheduler._clock().isoformat(timespec="seconds"),
         error=result_error,
+        details=_retryable_status_details(result),
     )
 
 
@@ -126,6 +139,7 @@ def _handle_job_success(
             started_at,
             status,
             result_error or scheduler._success_message(status_job_key, result),
+            result,
         )
         return
     if mark_success_date and (skipped_is_success or status != "skipped"):
@@ -613,15 +627,21 @@ class AutoRefreshScheduler(QObject):
         started_at: str = "",
         finished_at: str = "",
         error: str = "",
+        details: Mapping[str, object] | None = None,
     ) -> None:
-        event_bus.sig_auto_refresh_status_changed.emit(
-            {
-                "job_key": str(job_key or "").strip(),
-                "status": str(status or "").strip(),
-                "trade_date": str(trade_date or "").strip(),
-                "message": str(message or "").strip(),
-                "started_at": str(started_at or "").strip(),
-                "finished_at": str(finished_at or "").strip(),
-                "error": str(error or "").strip(),
-            }
-        )
+        payload: dict[str, object] = {
+            "job_key": str(job_key or "").strip(),
+            "status": str(status or "").strip(),
+            "trade_date": str(trade_date or "").strip(),
+            "message": str(message or "").strip(),
+            "started_at": str(started_at or "").strip(),
+            "finished_at": str(finished_at or "").strip(),
+            "error": str(error or "").strip(),
+        }
+        if isinstance(details, Mapping):
+            if "retryable" in details:
+                payload["retryable"] = bool(details.get("retryable"))
+            source_gaps = details.get("source_gaps")
+            if isinstance(source_gaps, (list, tuple)):
+                payload["source_gaps"] = [dict(item) for item in source_gaps if isinstance(item, Mapping)]
+        event_bus.sig_auto_refresh_status_changed.emit(payload)

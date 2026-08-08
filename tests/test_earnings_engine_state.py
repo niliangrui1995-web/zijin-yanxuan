@@ -17,6 +17,7 @@ def _build_engine() -> EarningsEngine:
     engine.seen_fingerprints = set()
     engine.local_records = []
     engine.last_sync_date = "2026-04-15"
+    engine.last_scan_result = {}
     engine._quick_report_profit_cache = {}
     return engine
 
@@ -338,6 +339,13 @@ def test_safe_ak_fetch_reuses_pool_cache_and_ths_stale_cache(monkeypatch):
 
         fallback = engine_module.safe_ak_fetch(engine_module.ak.stock_financial_benefit_ths, symbol="7", indicator="按报告期")
         assert fallback.equals(stale_df)
+        assert fallback.attrs["earnings_source_gap"] == {
+            "source": "同花顺历史底稿",
+            "symbol": "000007",
+            "retryable": True,
+            "last_success_basis": "同花顺历史底稿内存缓存（100秒前成功）",
+            "error": "offline",
+        }
     finally:
         engine_module._POOL_CACHE.clear()
         engine_module._POOL_CACHE.update(original_pool_cache)
@@ -418,6 +426,43 @@ def test_earnings_engine_domain_default_has_no_persistence_provider(monkeypatch,
 
     assert engine.stock_universe_provider is None
     assert engine.stock_context_provider is None
+
+
+def test_earnings_engine_loads_persisted_scan_result(monkeypatch, tmp_path):
+    persisted_scan_result = {
+        "status": "degraded",
+        "retryable": True,
+        "source_gaps": [
+            {
+                "source": "同花顺历史底稿",
+                "symbol": "300738",
+                "last_success_basis": engine_module._THS_NO_LAST_SUCCESS_BASIS,
+            }
+        ],
+    }
+
+    class _Store:
+        @staticmethod
+        def load_earnings_state():
+            return {
+                "last_sync_date": "2026-04-15",
+                "seen": [],
+                "records": [],
+                "last_scan_result": persisted_scan_result,
+            }
+
+        @staticmethod
+        def fetch_one(*args, **kwargs):
+            return {}
+
+    import infra.storage.data_store as data_store_module
+
+    monkeypatch.setattr(data_store_module, "data_store", _Store())
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: [])
+
+    engine = EarningsEngine(cache_file=str(tmp_path / "earnings_state.json"))
+
+    assert engine.last_scan_result == persisted_scan_result
 
 
 def test_cached_record_rows_preserve_sorting_without_dataframe_conversion():
@@ -666,7 +711,33 @@ def test_compute_single_quarter_qoq_error_edges(monkeypatch):
         "safe_ak_fetch",
         lambda fetch_func, *args, **kwargs: (_ for _ in ()).throw(ValueError("bad fetch")),
     )
-    assert engine.compute_single_quarter_qoq("000007", 100.0, "20260331") == {"error": "抛锚"}
+    assert engine.compute_single_quarter_qoq("000007", 100.0, "20260331") == {
+        "error": "THS_SOURCE_GAP",
+        "source_gap": {
+            "source": "同花顺历史底稿",
+            "symbol": "000007",
+            "retryable": True,
+            "last_success_basis": engine_module._THS_NO_LAST_SUCCESS_BASIS,
+            "error": "bad fetch",
+        },
+    }
+
+
+def test_compute_single_quarter_qoq_does_not_use_stale_ths_data_for_selection(monkeypatch):
+    engine = _build_engine()
+    stale_financial_df = pd.DataFrame({"报告期": ["2025-12-31"]})
+    stale_financial_df.attrs["earnings_source_gap"] = {
+        "source": "同花顺历史底稿",
+        "symbol": "300738",
+        "retryable": True,
+        "last_success_basis": "同花顺历史底稿内存缓存（100秒前成功）",
+        "error": "THS timeout",
+    }
+    monkeypatch.setattr(engine_module, "safe_ak_fetch", lambda *args, **kwargs: stale_financial_df.copy())
+
+    result = engine.compute_single_quarter_qoq("300738", 100.0, "20260331")
+
+    assert result == {"error": "THS_SOURCE_GAP", "source_gap": stale_financial_df.attrs["earnings_source_gap"]}
 
 
 def test_prune_retryable_seen_fingerprints_removes_active_orphans(monkeypatch):
@@ -731,6 +802,137 @@ def test_fetch_daily_surprises_does_not_mark_seen_when_candidate_fails_threshold
     assert result.empty
     assert engine.seen_fingerprints == set()
     assert engine.local_records == []
+
+
+def test_fetch_daily_surprises_surfaces_terminal_ths_source_gaps_without_marking_seen(monkeypatch):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"300738", "600641"}
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "300738",
+                "股票简称": "奥飞数据",
+                "最新公告日期": "2026-04-16",
+                "净利润-净利润": 1_000_000,
+            },
+            {
+                "股票代码": "600641",
+                "股票简称": "先导基电",
+                "最新公告日期": "2026-04-16",
+                "净利润-净利润": 1_000_000,
+            },
+        ]
+    )
+    saved_states = []
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20251231"])
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: saved_states.append(dict(engine.last_scan_result)))
+    monkeypatch.setattr(
+        engine,
+        "compute_single_quarter_qoq",
+        lambda code, *args, **kwargs: {
+            "error": "THS_SOURCE_GAP",
+            "source_gap": {
+                "source": "同花顺历史底稿",
+                "symbol": code,
+                "retryable": True,
+                "last_success_basis": engine_module._THS_NO_LAST_SUCCESS_BASIS,
+                "error": f"THS timeout: {code}",
+            },
+        },
+    )
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-16")
+
+    assert result.empty
+    assert engine.last_sync_date == "2026-04-15"
+    assert engine.seen_fingerprints == set()
+    assert engine.local_records == []
+    assert engine.last_scan_result["status"] == "degraded"
+    assert engine.last_scan_result["retryable"] is True
+    assert engine.last_scan_result["source_gap_count"] == 2
+    assert engine.last_scan_result["error"].startswith("同花顺历史底稿数据源缺口：300738 奥飞数据、600641 先导基电")
+    assert "可重试" in engine.last_scan_result["error"]
+    assert "最后成功依据" in engine.last_scan_result["error"]
+    assert engine.last_scan_result["source_gaps"] == [
+        {
+            "source": "同花顺历史底稿",
+            "symbol": "300738",
+            "stock_name": "奥飞数据",
+            "report_date": "20251231",
+            "data_type": "财报",
+            "retryable": True,
+            "last_success_basis": engine_module._THS_NO_LAST_SUCCESS_BASIS,
+            "error": "THS timeout: 300738",
+        },
+        {
+            "source": "同花顺历史底稿",
+            "symbol": "600641",
+            "stock_name": "先导基电",
+            "report_date": "20251231",
+            "data_type": "财报",
+            "retryable": True,
+            "last_success_basis": engine_module._THS_NO_LAST_SUCCESS_BASIS,
+            "error": "THS timeout: 600641",
+        },
+    ]
+    assert saved_states == [engine.last_scan_result]
+
+
+def test_fetch_daily_surprises_does_not_select_stale_ths_basis_and_keeps_it_retryable(monkeypatch):
+    engine = _build_engine()
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "300738",
+                "股票简称": "奥飞数据",
+                "最新公告日期": "2026-04-16",
+                "净利润-净利润": 1_000_000,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20251231"])
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+    monkeypatch.setattr(
+        engine,
+        "compute_single_quarter_qoq",
+        lambda *args, **kwargs: {
+            "error": "THS_SOURCE_GAP",
+            "source_gap": {
+                "source": "同花顺历史底稿",
+                "symbol": "300738",
+                "retryable": True,
+                "last_success_basis": "同花顺历史底稿内存缓存（100秒前成功）",
+                "error": "THS timeout",
+            },
+        },
+    )
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-16")
+
+    assert result.empty
+    assert engine.last_sync_date == "2026-04-15"
+    assert engine.seen_fingerprints == set()
+    assert engine.local_records == []
+    assert engine.last_scan_result["status"] == "degraded"
+    assert engine.last_scan_result["source_gaps"][0]["last_success_basis"] == "同花顺历史底稿内存缓存（100秒前成功）"
 
 
 def test_fetch_daily_surprises_marks_seen_only_after_valid_record(monkeypatch):

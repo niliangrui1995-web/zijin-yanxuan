@@ -3,7 +3,8 @@
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QEvent, QPoint, QRect, Qt
-from PyQt6.QtGui import QHelpEvent, QRegion, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import QHelpEvent, QPaintEvent, QRegion, QStandardItem, QStandardItemModel
+from PyQt6.QtWidgets import QWidget
 
 import ui.components.table_controls as table_controls_module
 from ui.components import (
@@ -142,6 +143,21 @@ def _rows(count: int):
 def _process_events(app, rounds: int = 4):
     for _ in range(rounds):
         app.processEvents()
+
+
+def _arm_visible_shell_nav_repaint_guard(table, app):
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    table.resize(640, 360)
+    table.show()
+    _process_events(app)
+    table.prepare_shell_nav_repaint_guard()
+    table._activate_shell_nav_repaint_guard()
+    assert table._shell_nav_repaint_guard is not None
+    assert table.viewport().isVisible()
+
+
+def _full_viewport_paint_event(table):
+    return QPaintEvent(table.viewport().rect())
 
 
 def test_vcp_table_view_restores_current_row_selection_after_model_reset(qt_application):
@@ -397,11 +413,13 @@ def test_vcp_table_view_delete_later_stops_deferred_restores():
             table.deleteLater()
 
 
-def test_vcp_table_view_model_flash_role_starts_table_repaint_timer():
+def test_vcp_table_view_model_flash_role_starts_table_repaint_timer(qt_application):
     table = VCPTableView()
     source_model = StockTableModel(["代码", "名称", "现价"])
     table.setModel(source_model)
     try:
+        table.show()
+        _process_events(qt_application)
         source_model.update_data(_rows(1))
         assert table._flash_repaint_timer.isActive() is False
 
@@ -410,6 +428,148 @@ def test_vcp_table_view_model_flash_role_starts_table_repaint_timer():
         source_model.update_data(updated_rows)
 
         assert table._flash_repaint_timer.isActive() is True
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_legacy_flash_repaint_stops_while_hidden(qt_application):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    table.setModel(source_model)
+    try:
+        table.show()
+        _process_events(qt_application)
+        source_model.update_data(_rows(1))
+        visible_rows = _rows(1)
+        visible_rows[0]["现价"] = "11.00"
+        source_model.update_data(visible_rows)
+
+        assert table._flash_repaint_timer.isSingleShot() is False
+        assert table._flash_repaint_timer.isActive() is True
+
+        table.hide()
+        _process_events(qt_application)
+
+        assert table._flash_repaint_timer.isActive() is False
+        assert table._flash_repaint_until == 0.0
+
+        hidden_rows = _rows(1)
+        hidden_rows[0]["现价"] = "12.00"
+        source_model.update_data(hidden_rows)
+
+        assert table._flash_repaint_timer.isActive() is False
+        assert table._flash_repaint_until == 0.0
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_queued_legacy_flash_tick_skips_hidden_viewport(qt_application):
+    class RecordingViewport(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.update_calls = []
+
+        def update(self, *args):  # noqa: N802 - Qt API naming
+            self.update_calls.append(args)
+            super().update(*args)
+
+    table = VCPTableView()
+    viewport = RecordingViewport()
+    table.setViewport(viewport)
+    try:
+        table.show()
+        _process_events(qt_application)
+        table.hide()
+        _process_events(qt_application)
+        viewport.update_calls.clear()
+
+        # A timer event can already be queued when the tab becomes hidden.
+        table._flash_repaint_until = float("inf")
+        table._flash_repaint_timer.start()
+        table._tick_flash_repaint()
+
+        assert viewport.update_calls == []
+        assert table._flash_repaint_timer.isActive() is False
+        assert table._flash_repaint_until == 0.0
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_shell_nav_guard_allows_first_and_bounds_redundant_full_paints(
+    qt_application,
+    monkeypatch,
+):
+    table = VCPTableView()
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application)
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+
+        decisions = [item[2]["tags"]["decision"] for item in recorded]
+        assert decisions == ["first_full_allowed", "suppress_redundant_full", "suppress_redundant_full"]
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_shell_nav_guard_turns_data_changed_into_visible_partial_update(
+    qt_application,
+    monkeypatch,
+):
+    table = VCPTableView()
+    model = QStandardItemModel(3, 2)
+    for row in range(model.rowCount()):
+        for column in range(model.columnCount()):
+            model.setItem(row, column, QStandardItem(f"{row}-{column}"))
+    table.setModel(model)
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application)
+        assert not table.visualRect(model.index(0, 0)).isEmpty()
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        assert model.setData(model.index(0, 0), "changed") is True
+        updates = []
+        monkeypatch.setattr(table.viewport(), "update", lambda *args: updates.append(args))
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert len(updates) == 1
+        assert len(updates[0]) == 1
+        dirty_region = updates[0][0]
+        assert isinstance(dirty_region, QRegion)
+        assert not dirty_region.isEmpty()
+        assert dirty_region != QRegion(table.viewport().rect())
+
+        assert table._maybe_defer_shell_nav_full_paint(QPaintEvent(dirty_region)) is False
+        guard = table._shell_nav_repaint_guard
+        assert guard is not None
+        assert guard["partial_update_pending"] is False
+        assert guard["rendered_content_epoch"] == guard["content_epoch"]
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_shell_nav_guard_fails_open_after_structure_change_or_hide(qt_application):
+    table = VCPTableView()
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        table._on_model_layout_changed()
+        assert table._shell_nav_repaint_guard is None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        _arm_visible_shell_nav_repaint_guard(table, qt_application)
+        table.hide()
+        _process_events(qt_application)
+        assert table._shell_nav_repaint_guard is None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
     finally:
         table.deleteLater()
 

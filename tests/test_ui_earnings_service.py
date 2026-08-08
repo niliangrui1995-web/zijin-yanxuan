@@ -235,19 +235,146 @@ def test_earnings_refresh_routine_surfaces_degraded_scan(qt_application):
         def fetch_daily_surprises(self, *, target_publish_date=None):
             self.last_scan_result = {
                 "status": "degraded",
-                "error": "【正式财报池】(20251231): Response ended prematurely",
+                "error": "同花顺历史底稿数据源缺口：300738 奥飞数据；可重试；最后成功依据：300738=N/A",
+                "retryable": True,
+                "source_gaps": [
+                    {
+                        "source": "同花顺历史底稿",
+                        "symbol": "300738",
+                        "stock_name": "奥飞数据",
+                        "retryable": True,
+                        "last_success_basis": "N/A",
+                    }
+                ],
             }
             return pd.DataFrame()
 
     service = EarningsRefreshService(engine=DegradedEngine(), job_runner=_FakeJobRunner())
     emitted = []
+    degradations = []
     service.sig_new_surprises_found.connect(lambda frame, mode: emitted.append((len(frame), mode)))
+    service.sig_scan_degraded.connect(lambda scan_result, mode: degradations.append((scan_result, mode)))
 
     routine_result = service.run_routine_scan(reason="scheduled:08:30")
 
     assert routine_result["status"] == "degraded"
-    assert routine_result["error"] == "【正式财报池】(20251231): Response ended prematurely"
+    assert routine_result["error"] == "同花顺历史底稿数据源缺口：300738 奥飞数据；可重试；最后成功依据：300738=N/A"
+    assert routine_result["retryable"] is True
+    assert routine_result["source_gaps"][0]["symbol"] == "300738"
     assert emitted == [(0, "routine")]
+    assert degradations == [
+        (
+            {
+                "status": "degraded",
+                "error": "同花顺历史底稿数据源缺口：300738 奥飞数据；可重试；最后成功依据：300738=N/A",
+                "retryable": True,
+                "source_gaps": [
+                    {
+                        "source": "同花顺历史底稿",
+                        "symbol": "300738",
+                        "stock_name": "奥飞数据",
+                        "retryable": True,
+                        "last_success_basis": "N/A",
+                    }
+                ],
+            },
+            "routine",
+        )
+    ]
+
+
+def test_earnings_refresh_gap_fill_surfaces_degraded_scan(qt_application):
+    class DegradedEngine(_FakeEarningsEngine):
+        def fetch_daily_surprises(self, *, target_publish_date=None):
+            self.last_scan_result = {
+                "status": "degraded",
+                "error": "同花顺历史底稿数据源缺口：600641 先导基电；可重试；最后成功依据：600641=N/A",
+                "retryable": True,
+                "source_gaps": [
+                    {
+                        "source": "同花顺历史底稿",
+                        "symbol": "600641",
+                        "stock_name": "先导基电",
+                        "retryable": True,
+                        "last_success_basis": "N/A",
+                    }
+                ],
+            }
+            return pd.DataFrame()
+
+    service = EarningsRefreshService(engine=DegradedEngine(), job_runner=_FakeJobRunner())
+    degradations = []
+    service.sig_scan_degraded.connect(lambda scan_result, mode: degradations.append((scan_result, mode)))
+
+    result = service.run_gap_fill(["2026-04-16"], mode="gap_fill")
+
+    assert result["status"] == "degraded"
+    assert result["retryable"] is True
+    assert result["source_gaps"][0]["symbol"] == "600641"
+    assert degradations[0][1] == "gap_fill"
+
+
+def test_earnings_refresh_startup_gap_fill_surfaces_degraded_scan(monkeypatch, qt_application):
+    class DegradedEngine(_FakeEarningsEngine):
+        def fetch_daily_surprises(self, *, target_publish_date=None):
+            self.last_scan_result = {
+                "status": "degraded",
+                "error": "同花顺历史底稿数据源缺口：600641 先导基电；可重试；最后成功依据：600641=N/A",
+                "retryable": True,
+                "source_gaps": [
+                    {
+                        "source": "同花顺历史底稿",
+                        "symbol": "600641",
+                        "stock_name": "先导基电",
+                        "retryable": True,
+                        "last_success_basis": "N/A",
+                    }
+                ],
+            }
+            return pd.DataFrame()
+
+    monkeypatch.setattr(
+        EarningsScheduler,
+        "_build_startup_scan_dates",
+        staticmethod(lambda last_sync_date, has_cached_records: ["2026-04-16"]),
+    )
+    service = EarningsRefreshService(engine=DegradedEngine(), job_runner=_FakeJobRunner())
+    degradations = []
+    service.sig_scan_degraded.connect(lambda scan_result, mode: degradations.append((scan_result, mode)))
+
+    result = service.run_startup_gap_fill()
+
+    assert result["status"] == "degraded"
+    assert result["retryable"] is True
+    assert result["source_gaps"][0]["symbol"] == "600641"
+    assert degradations[0][1] == "startup_gap_fill"
+
+
+def test_earnings_refresh_cached_rows_replays_persisted_degraded_scan(qt_application):
+    engine = _FakeEarningsEngine()
+    engine.last_scan_result = {
+        "status": "degraded",
+        "retryable": True,
+        "source_gaps": [
+            {
+                "source": "同花顺历史底稿",
+                "symbol": "300738",
+                "stock_name": "奥飞数据",
+                "last_success_basis": "N/A",
+            }
+        ],
+    }
+    service = EarningsRefreshService(
+        engine=engine,
+        job_runner=_FakeJobRunner(),
+        cache_rows_loader=lambda: [{"股票代码": "000001"}],
+    )
+    degradations = []
+    service.sig_scan_degraded.connect(lambda scan_result, mode: degradations.append((scan_result, mode)))
+
+    assert service.load_cached_records_async()
+
+    assert degradations == [(engine.last_scan_result, "warm_cache")]
 
 
 def test_earnings_refresh_background_entrypoints_run_and_emit(qt_application):

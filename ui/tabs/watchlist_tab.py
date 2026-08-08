@@ -813,6 +813,12 @@ class _WatchlistBackgroundPreloadMixin:
         if callable(prepare):
             prepare()
 
+    def prepare_shell_nav_repaint_guard(self) -> None:
+        table = getattr(self, "table_sp", None)
+        prepare = getattr(table, "prepare_shell_nav_repaint_guard", None)
+        if callable(prepare):
+            prepare()
+
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
             self._vcp_task_generation += 1

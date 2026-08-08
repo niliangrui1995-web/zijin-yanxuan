@@ -99,6 +99,35 @@ def _force_manual_earnings_scan(tab, date_list: list[str]) -> None:
     tab._ensure_scheduler().force_manual_scan(date_list)
 
 
+def _source_gap_status_segments(scan_result: object) -> tuple[str, ...]:
+    if not isinstance(scan_result, Mapping):
+        return ("数据源暂不可用", "可重试")
+    source_gaps = scan_result.get("source_gaps")
+    if isinstance(source_gaps, (list, tuple)):
+        normalized_gaps = [dict(item) for item in source_gaps if isinstance(item, Mapping)]
+    else:
+        normalized_gaps = []
+    if normalized_gaps:
+        ordered_gaps = sorted(
+            normalized_gaps,
+            key=lambda item: (str(item.get("symbol") or ""), str(item.get("report_date") or "")),
+        )
+        identities = "、".join(
+            " ".join(part for part in (str(item.get("symbol") or "").strip(), str(item.get("stock_name") or "").strip()) if part)
+            or "未知股票"
+            for item in ordered_gaps
+        )
+        bases = "；".join(
+            f"{str(item.get('symbol') or '未知股票').strip()}={str(item.get('last_success_basis') or 'N/A').strip()}"
+            for item in ordered_gaps
+        )
+        return (f"同花顺历史底稿缺口：{identities}", "可重试", f"最后成功依据：{bases}")
+    error_text = str(scan_result.get("error") or "").strip()
+    if "数据源缺口" in error_text:
+        return (error_text, "可重试")
+    return ("数据源暂不可用", "可重试")
+
+
 class _EarningsBackgroundPreloadMixin:
     def prime_background_load(self) -> bool:
         if getattr(self, "_runtime_cleanup_done", False):
@@ -174,6 +203,7 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
 
         # 业绩页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
+        event_bus.sig_auto_refresh_status_changed.connect(self._on_auto_refresh_status_changed)
 
         # 调度器按需创建，避免隐藏页签挂载时加载业绩缓存。
         self.scheduler = None
@@ -209,6 +239,9 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
             self._owns_earnings_service = callable(parent_getter) and parent_getter() is self
             self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
             self.scheduler.sig_fetch_failed.connect(self._on_fetch_failed)
+            scan_degraded_signal = getattr(self.scheduler, "sig_scan_degraded", None)
+            if scan_degraded_signal is not None:
+                scan_degraded_signal.connect(self._on_scan_degraded)
         return self.scheduler
 
     def _ensure_runtime_started(self) -> None:
@@ -539,6 +572,34 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
         self._set_window_status("业绩抓取失败", mode_text, short_error)
 
     @pyqtSlot(object, str)
+    def _on_scan_degraded(self, scan_result: object, mode: str = "routine"):
+        _finish_earnings_background_preload(self, mode)
+        mode_text = {
+            "gap_fill": "历史回补",
+            "routine": "定时扫描",
+            "startup_gap_fill": "启动回补",
+            "warm_cache": "上次扫描",
+        }.get(mode, mode or "未知任务")
+        segments = (mode_text, *_source_gap_status_segments(scan_result))
+        if hasattr(self, "table_state"):
+            if self.row_data:
+                self.table_state.show_table()
+            else:
+                self.table_state.show_error("业绩数据源缺口", "；".join(segments[1:]))
+        self._set_window_status("业绩数据源缺口", *segments)
+
+    @pyqtSlot(object)
+    def _on_auto_refresh_status_changed(self, payload: object):
+        if not isinstance(payload, Mapping):
+            return
+        job_key = str(payload.get("job_key") or "").strip()
+        status = str(payload.get("status") or "").strip()
+        if job_key not in {"earnings_routine", "earnings_startup_gap_fill"} or status != "degraded":
+            return
+        mode = "startup_gap_fill" if job_key == "earnings_startup_gap_fill" else "routine"
+        self._on_scan_degraded(payload, mode)
+
+    @pyqtSlot(object, str)
     def _on_new_data_found(self, payload: object, mode: str = "routine"):
         """将缓存行或巡检 DataFrame 转成本地字典并无缝合并展示。"""
         _finish_earnings_background_preload(self, mode)
@@ -758,12 +819,19 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
                 disconnect = getattr(self.scheduler.sig_fetch_failed, "disconnect", None)
                 if callable(disconnect):
                     disconnect(self._on_fetch_failed)
+            with suppress(TypeError, RuntimeError):
+                scan_degraded_signal = getattr(self.scheduler, "sig_scan_degraded", None)
+                disconnect = getattr(scan_degraded_signal, "disconnect", None)
+                if callable(disconnect):
+                    disconnect(self._on_scan_degraded)
             if getattr(self, "_owns_earnings_service", False):
                 shutdown = getattr(self.scheduler, "shutdown", None)
                 if callable(shutdown):
                     shutdown()
         with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
+        with suppress(TypeError, RuntimeError):
+            event_bus.sig_auto_refresh_status_changed.disconnect(self._on_auto_refresh_status_changed)
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:

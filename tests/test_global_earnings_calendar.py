@@ -3,7 +3,11 @@ import datetime as dt
 import importlib
 import io
 import json
+import subprocess
+import sys
+import textwrap
 import threading
+import time
 from types import SimpleNamespace
 
 import yfinance as yf
@@ -1651,3 +1655,154 @@ def test_service_sync_cache_shape_edges_and_filter_invalid_dates():
 
     invalid = EarningsCalendarEvent("Bad", "BAD", "sector", "not-a-date")
     assert GlobalEarningsCalendarService._filter_window([invalid], today=dt.date(2026, 5, 5), lookahead_days=10) == []
+
+
+def test_refresh_events_provider_deadline_persists_fast_sources_and_marks_slow_source_degraded(monkeypatch, tmp_path):
+    from domains.global_earnings_calendar import service as calendar_service
+
+    class MemoryStore:
+        def __init__(self):
+            self.data = {}
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    metric_calls = []
+
+    class SlowProvider:
+        def fetch(self, *_args, **_kwargs):
+            started.set()
+            release.wait(timeout=2)
+            finished.set()
+            return []
+
+    class FastProvider:
+        def fetch(self, universe, **_kwargs):
+            company = universe["FAST"]
+            return [
+                EarningsCalendarEvent(
+                    company.company,
+                    company.ticker,
+                    company.sector,
+                    "2026-05-08",
+                    source="Fast",
+                    market=company.market,
+                )
+            ]
+
+    class EmptyProvider:
+        def fetch(self, *_args, **_kwargs):
+            return []
+
+    def capture_metric(name, value, **kwargs):
+        metric_calls.append((name, value, kwargs))
+
+    monkeypatch.setattr(calendar_service, "record_metric", capture_metric, raising=False)
+    service = GlobalEarningsCalendarService(
+        data_store=MemoryStore(),
+        universe={"FAST": OligarchCompany("Fast", "FAST", "sector", "normal", "US")},
+        confirmed_provider=ConfirmedEarningsEventsProvider(tmp_path / "missing.json"),
+        official_providers=[("Slow", SlowProvider()), ("Fast", FastProvider())],
+        nasdaq_provider=EmptyProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+    )
+
+    try:
+        started_at = time.monotonic()
+        events = service.refresh_events(
+            today=dt.date(2026, 5, 8),
+            lookahead_days=1,
+            provider_timeout_sec=0.05,
+        )
+        elapsed_sec = time.monotonic() - started_at
+    finally:
+        release.set()
+
+    assert started.is_set()
+    assert finished.wait(timeout=1)
+    assert elapsed_sec < 0.5
+    assert [(event.ticker, event.source) for event in events] == [("FAST", "Fast")]
+    cache_state = service.load_cache_status()
+    assert cache_state["status"] == "degraded"
+    assert cache_state["providers"] == ["Slow"]
+    assert cache_state["provider_total_failure_count"] == 1
+    assert any(
+        name == "global_earnings_calendar_provider_fetch_ms"
+        and kwargs["tags"] == {"provider": "Slow", "status": "timeout"}
+        for name, _value, kwargs in metric_calls
+    )
+    assert any(
+        name == "global_earnings_calendar_provider_timeout_count"
+        and value == 1
+        and kwargs["tags"] == {"provider": "Slow"}
+        for name, value, kwargs in metric_calls
+    )
+
+
+def test_provider_deadline_does_not_hold_refresh_worker_process_open():
+    script = textwrap.dedent(
+        """
+        import datetime as dt
+        import threading
+
+        from domains.global_earnings_calendar import service as calendar_service
+        from domains.global_earnings_calendar.models import OligarchCompany
+        from domains.global_earnings_calendar.providers.nasdaq import NasdaqEarningsCalendarProvider
+
+
+        class Store:
+            def __init__(self):
+                self.data = {}
+
+            def load_json(self, key, default=None):
+                return self.data.get(key, default)
+
+            def save_json(self, key, data):
+                self.data[key] = data
+
+
+        class EmptyProvider:
+            def fetch(self, *_args, **_kwargs):
+                return []
+
+
+        class BlockingSession:
+            def get(self, *_args, **_kwargs):
+                threading.Event().wait(timeout=10)
+                return None
+
+
+        calendar_service.record_metric = lambda *_args, **_kwargs: None
+        service = calendar_service.GlobalEarningsCalendarService(
+            data_store=Store(),
+            universe={"FAST": OligarchCompany("Fast", "FAST", "sector", "normal", "US")},
+            confirmed_provider=EmptyProvider(),
+            official_providers=[],
+            nasdaq_provider=NasdaqEarningsCalendarProvider(session=BlockingSession(), max_workers=1),
+            provider=EmptyProvider(),
+            yfinance_provider=EmptyProvider(),
+        )
+        service.refresh_events(today=dt.date(2026, 5, 8), lookahead_days=0, provider_timeout_sec=0.05)
+        print("provider-deadline-done")
+        """
+    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError("provider deadline left the refresh worker process running") from exc
+
+    assert completed.returncode == 0, completed.stderr
+    assert "provider-deadline-done" in completed.stdout

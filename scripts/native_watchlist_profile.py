@@ -35,6 +35,11 @@ RESIDUAL_REPAINT_METRICS = (
     "tab_transition_snapshot_ms",
     "tab_transition_snapshot_skipped",
 )
+SHELL_NAV_REPAINT_METRICS = (
+    "watchlist_table_paint_ms",
+    "watchlist_shell_nav_repaint_guard",
+    "ui_event_loop_stall_ms",
+)
 
 
 def _native_platform_error(*, requested: str, actual: str, system: str | None = None) -> str:
@@ -81,6 +86,73 @@ def _sample_delivered_full_viewport(sample) -> bool:
     if value is not None:
         return str(value).strip().lower() == "true"
     return float(tags.get("dirty_bounding_area_ratio", 0.0) or 0.0) >= 0.99
+
+
+def _summarize_shell_nav_paint_metrics(paint_samples: list) -> dict:
+    """Summarize Watchlist paint metrics observed during a shell-nav return."""
+    samples = list(paint_samples or ())
+    full_flags = [_sample_delivered_full_viewport(sample) for sample in samples]
+    other_full_flags = [
+        full and str((getattr(sample, "tags", {}) or {}).get("reason", "")).strip() == "other"
+        for sample, full in zip(samples, full_flags, strict=True)
+    ]
+    after_first = samples[1:]
+    after_first_full_flags = full_flags[1:]
+    after_first_other_full_flags = other_full_flags[1:]
+    return {
+        "count": len(samples),
+        "durations": summarize_durations([sample.value for sample in samples]),
+        "full_viewport_count": sum(full_flags),
+        "full_viewport_after_first_count": sum(after_first_full_flags),
+        "other_full_viewport_count": sum(other_full_flags),
+        "other_full_viewport_after_first_count": sum(after_first_other_full_flags),
+        "samples": [
+            {
+                "elapsed_ms": round(float(sample.value), 3),
+                "reason": str(sample.tags.get("reason", "")),
+                "delivered_full_viewport": str(sample.tags.get("delivered_full_viewport", "")),
+                "delivery_kind": str(sample.tags.get("delivery_kind", "")),
+                "paint_event_spontaneous": str(sample.tags.get("paint_event_spontaneous", "")),
+                "workspace_load_reason": str(sample.tags.get("workspace_load_reason", "")),
+            }
+            for sample in samples
+        ],
+        "after_first_count": len(after_first),
+    }
+
+
+def _summarize_shell_nav_guard_metrics(guard_samples: list) -> dict:
+    """Summarize the Watchlist-only shell-nav paint guard's phase-local decisions."""
+    samples = list(guard_samples or ())
+    decision_counts: dict[str, int] = defaultdict(int)
+    fallback_reason_counts: dict[str, int] = defaultdict(int)
+    normalized_samples = []
+    for sample in samples:
+        tags = getattr(sample, "tags", {}) or {}
+        decision = str(tags.get("decision", "") or "").strip() or "unspecified"
+        fallback_reason = str(tags.get("fallback_reason", "") or "").strip()
+        decision_counts[decision] += 1
+        if fallback_reason:
+            fallback_reason_counts[fallback_reason] += 1
+        normalized_samples.append(
+            {
+                "decision": decision,
+                "workspace_load_reason": str(tags.get("workspace_load_reason", "") or ""),
+                "age_ms": str(tags.get("age_ms", "") or ""),
+                "remaining": str(tags.get("remaining", "") or ""),
+                "dirty_bounding_area_ratio": str(
+                    tags.get("dirty_bounding_area_ratio", "") or ""
+                ),
+                "dirty_region_rects": str(tags.get("dirty_region_rects", "") or ""),
+                "fallback_reason": fallback_reason,
+            }
+        )
+    return {
+        "count": len(samples),
+        "decision_counts": dict(sorted(decision_counts.items())),
+        "fallback_reason_counts": dict(sorted(fallback_reason_counts.items())),
+        "samples": normalized_samples,
+    }
 
 
 def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dict:
@@ -228,6 +300,53 @@ def _watchlist_reveal_acceptance(paint_region: dict) -> dict:
     full_after_first = int(after_first.get("full_viewport_count", 0) or 0)
     if full_after_first:
         violations.append(f"watchlist_full_viewport_after_reveal={full_after_first}")
+    return {"status": "pass" if not violations else "fail", "violations": violations}
+
+
+def _shell_nav_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
+    if not results:
+        if expected_cycles is not None and int(expected_cycles) > 0:
+            return {"status": "fail", "violations": ["shell_nav_cycles_missing"]}
+        return {"status": "not_run", "violations": []}
+
+    violations: list[str] = []
+    expected_count = None if expected_cycles is None else max(0, int(expected_cycles))
+    if expected_count is not None:
+        observed_cycles = [int(result.get("cycle", -1) or -1) for result in results]
+        for cycle in range(1, expected_count + 1):
+            if observed_cycles.count(cycle) != 1:
+                violations.append(f"cycle={cycle} result_count={observed_cycles.count(cycle)}")
+        if len(results) != expected_count:
+            violations.append(f"result_count={len(results)} expected={expected_count}")
+
+    for result in results:
+        cycle = result.get("cycle")
+        paint_region = result.get("paint_region", {}) or {}
+        paint_metrics = result.get("paint_metrics", {}) or {}
+        stalls = result.get("ui_stall_snapshot", {}) or {}
+        expected_tab_count = result.get("expected_tab_count")
+        if expected_tab_count is not None and int(result.get("tab_count", -1) or -1) != int(expected_tab_count):
+            violations.append(
+                f"cycle={cycle} tab_count={int(result.get('tab_count', -1) or -1)} expected={int(expected_tab_count)}"
+            )
+        # The QApplication event filter records incoming QPaintEvents before
+        # VCPTableView.viewportEvent can consume one. Keep paint_region in the
+        # report as a native invalidation diagnostic, but judge the regression
+        # only from the table's actual paintEvent metric below.
+        if int(paint_metrics.get("count", 0) or 0) < 1:
+            violations.append(f"cycle={cycle} actual_paint_metric_missing")
+        if int(paint_metrics.get("full_viewport_count", 0) or 0) > 1:
+            violations.append(f"cycle={cycle} actual_full_viewport_metric_budget")
+        if int(paint_metrics.get("full_viewport_after_first_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} actual_full_viewport_after_first")
+        if int(paint_metrics.get("other_full_viewport_count", 0) or 0) > 1:
+            violations.append(f"cycle={cycle} other_full_viewport_metric_budget")
+        if int(paint_metrics.get("other_full_viewport_after_first_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} other_full_viewport_after_first")
+        if not bool(stalls.get("installed")):
+            violations.append(f"cycle={cycle} stall_probe_missing")
+        elif int(stalls.get("event_loop_critical_count", 0) or 0) != 0:
+            violations.append(f"cycle={cycle} event_loop_critical_stall")
     return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
@@ -474,6 +593,26 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--quote-cycle-ms", type=int, default=1000)
     parser.add_argument("--quote-target-count", type=int, default=6)
     parser.add_argument(
+        "--shell-nav-cycles",
+        type=int,
+        default=0,
+        help="After Watchlist settles, return to it through the production shell navigation this many times.",
+    )
+    parser.add_argument(
+        "--shell-nav-settle-ms",
+        type=int,
+        default=1200,
+        help="Collection window after each production shell-navigation return.",
+    )
+    parser.add_argument(
+        "--shell-nav-only",
+        action="store_true",
+        help=(
+            "For a shell-navigation regression run, keep the pre-navigation "
+            "initial-reveal gate diagnostic-only. Requires --shell-nav-cycles > 0."
+        ),
+    )
+    parser.add_argument(
         "--question-dialog-ms",
         type=int,
         default=0,
@@ -492,7 +631,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--top-functions", type=int, default=30)
     parser.add_argument("--no-cprofile", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if bool(args.shell_nav_only) and max(0, int(args.shell_nav_cycles)) <= 0:
+        parser.error("--shell-nav-only requires --shell-nav-cycles > 0")
+    return args
 
 
 def _coerce_probe_price(value, default: float = 10.0) -> float:
@@ -833,6 +975,9 @@ class _NativeProfileController:
         self._quote_cycle_payload_sizes: list[int] = []
         self._quote_results: list[dict] = []
         self._quote_phase: dict | None = None
+        self._shell_nav_cycle_index = 0
+        self._shell_nav_results: list[dict] = []
+        self._shell_nav_phase: dict | None = None
         self._question_dialog_probed = False
         self._question_dialog_phase: dict | None = None
         self._residual_cycle_index = 0
@@ -1025,6 +1170,7 @@ class _NativeProfileController:
         reveal_started_at = self._watchlist_reveal_started_at or completed_at
         reveal_paint_region = self.paint_probe.paint_region_summary("watchlist_reveal")
         reveal_acceptance = _watchlist_reveal_acceptance(reveal_paint_region)
+        reveal_acceptance_enforced = not bool(getattr(self.args, "shell_nav_only", False))
         self.report["watchlist_reveal"] = {
             "elapsed_ms": round((completed_at - reveal_started_at) * 1000.0, 3),
             "paint_region": reveal_paint_region,
@@ -1035,8 +1181,9 @@ class _NativeProfileController:
             "ui_stall_snapshot": self._stall_snapshot(),
             "acceptance_scope": "first_reveal_plus_zero_later_full_viewport_paints",
             "acceptance": reveal_acceptance,
+            "acceptance_enforced": reveal_acceptance_enforced,
         }
-        if reveal_acceptance["status"] != "pass":
+        if reveal_acceptance_enforced and reveal_acceptance["status"] != "pass":
             self.report["errors"].append("watchlist reveal repaint acceptance failed")
 
     def _after_watchlist_settle(self) -> None:
@@ -1148,8 +1295,216 @@ class _NativeProfileController:
             self.report["errors"].append("background prewarm repaint acceptance failed")
         self._continue_after_background_prewarm()
 
+    def _resolve_shell_nav_targets(self):
+        workspace = getattr(self.window, "_workspace", None)
+        nav = getattr(self.window, "_shell_navigation_widget", None)
+        switch_group = getattr(nav, "_switch_group", None)
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
+        watchlist_index = next(
+            (index for index, spec in enumerate(specs) if str(spec.get("key") or "") == "watchlist"),
+            -1,
+        )
+        group_to_indices = dict(getattr(nav, "_group_to_indices", {}) or {})
+        if not group_to_indices:
+            group_to_indices = dict(getattr(workspace, "tab_indices_by_group", lambda: {})() or {})
+        watchlist_group = next(
+            (
+                group
+                for group, indices in group_to_indices.items()
+                if watchlist_index in list(indices or ())
+            ),
+            "",
+        )
+        outbound_group = next(
+            (
+                group
+                for group, indices in group_to_indices.items()
+                if group != watchlist_group and list(indices or ())
+            ),
+            "",
+        )
+        outbound_indices = list(group_to_indices.get(outbound_group, ()) or ())
+        if (
+            workspace is None
+            or not callable(switch_group)
+            or watchlist_index < 0
+            or not watchlist_group
+            or not outbound_group
+            or not outbound_indices
+        ):
+            return None
+        return {
+            "workspace": workspace,
+            "nav": nav,
+            "switch_group": switch_group,
+            "watchlist_index": watchlist_index,
+            "watchlist_group": watchlist_group,
+            "outbound_group": outbound_group,
+            "outbound_indices": outbound_indices,
+        }
+
+    def _start_shell_nav_cycle(self) -> None:
+        if self._done or self._shell_nav_phase is not None:
+            return
+        targets = self._resolve_shell_nav_targets()
+        if targets is None:
+            self._fail("production shell navigation unavailable")
+            return
+        cycle = self._shell_nav_cycle_index + 1
+        self._shell_nav_phase = {
+            **targets,
+            "cycle": cycle,
+            "outbound_started_at": time.perf_counter(),
+        }
+        self._set_phase(f"shell_nav_{cycle}_outbound")
+        try:
+            targets["switch_group"](targets["outbound_group"])
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            self._fail(f"shell navigation outbound failed: {exc}")
+            return
+        self.QTimer.singleShot(0, self._poll_shell_nav_outbound)
+
+    def _poll_shell_nav_outbound(self) -> None:
+        phase = self._shell_nav_phase
+        if self._done or phase is None:
+            return
+        workspace = phase["workspace"]
+        tabs = getattr(workspace, "tabs", None)
+        current_index = int(getattr(tabs, "currentIndex", lambda: -1)()) if tabs is not None else -1
+        if current_index in phase["outbound_indices"]:
+            cycle = int(phase["cycle"])
+            self._reset_stall_probe()
+            phase["return_started_at"] = time.perf_counter()
+            phase["metric_offsets"] = self._metric_offsets(SHELL_NAV_REPAINT_METRICS)
+            self._set_phase(f"shell_nav_{cycle}_watchlist_return")
+            try:
+                phase["switch_group"](
+                    phase["watchlist_group"],
+                    preferred_index=phase["watchlist_index"],
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                self._fail(f"shell navigation return failed: {exc}")
+                return
+            self.QTimer.singleShot(
+                max(1, int(self.args.shell_nav_settle_ms)),
+                self._finish_shell_nav_cycle,
+            )
+            return
+        elapsed_ms = (time.perf_counter() - float(phase["outbound_started_at"])) * 1000.0
+        timeout_ms = max(2_000, int(self.args.shell_nav_settle_ms) * 5)
+        if elapsed_ms >= timeout_ms:
+            self._fail("shell navigation outbound timeout")
+            return
+        self.QTimer.singleShot(25, self._poll_shell_nav_outbound)
+
+    def _capture_shell_nav_visual_artifacts(self, cycle: int, table) -> dict[str, dict]:
+        """Save read-only screenshots for the shell-nav result without changing acceptance."""
+        artifact_dir = Path(self.activation_profile_path).parent
+        paths = {
+            "main_window": artifact_dir / f"shell_nav_cycle_{cycle}_main_window.png",
+            "watchlist_viewport": artifact_dir / f"shell_nav_cycle_{cycle}_watchlist_viewport.png",
+        }
+        try:
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return {
+                name: {"path": str(path), "saved": False, "error": str(exc)}
+                for name, path in paths.items()
+            }
+
+        viewport_getter = getattr(table, "viewport", None)
+        try:
+            viewport = viewport_getter() if callable(viewport_getter) else None
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            viewport = None
+        widgets = {
+            "main_window": self.window,
+            "watchlist_viewport": viewport,
+        }
+        artifacts: dict[str, dict] = {}
+        for name, widget in widgets.items():
+            path = paths[name]
+            artifact = {"path": str(path), "saved": False}
+            try:
+                if widget is None:
+                    artifact["error"] = "unavailable"
+                else:
+                    pixmap = widget.grab()
+                    if pixmap is None or pixmap.isNull():
+                        artifact["error"] = "empty_grab"
+                    elif not bool(pixmap.save(str(path), "PNG")):
+                        artifact["error"] = "save_failed"
+                    else:
+                        artifact["saved"] = True
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                artifact["error"] = str(exc)
+            artifacts[name] = artifact
+        return artifacts
+
+    def _finish_shell_nav_cycle(self) -> None:
+        phase = self._shell_nav_phase
+        if self._done or phase is None:
+            return
+        workspace = phase["workspace"]
+        tabs = getattr(workspace, "tabs", None)
+        current_index = int(getattr(tabs, "currentIndex", lambda: -1)()) if tabs is not None else -1
+        if current_index != int(phase["watchlist_index"]):
+            self._fail("shell navigation return did not activate watchlist")
+            return
+        cycle = int(phase["cycle"])
+        phase_name = f"shell_nav_{cycle}_watchlist_return"
+        tab_count = int(getattr(tabs, "count", lambda: 0)()) if tabs is not None else 0
+        expected_tab_count = len(list(getattr(workspace, "tab_specs", lambda: [])() or []))
+        paint_region = self.paint_probe.paint_region_summary(phase_name)
+        phase_metrics = self._metrics_since(phase["metric_offsets"])
+        paint_metrics = _summarize_shell_nav_paint_metrics(
+            phase_metrics.get("watchlist_table_paint_ms", [])
+        )
+        repaint_guard = _summarize_shell_nav_guard_metrics(
+            phase_metrics.get("watchlist_shell_nav_repaint_guard", [])
+        )
+        try:
+            tab_getter = getattr(workspace, "get_loaded_tab", None)
+            watchlist_tab = tab_getter("watchlist") if callable(tab_getter) else None
+            table = getattr(watchlist_tab, "table_sp", None)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            table = None
+        visual_artifacts = self._capture_shell_nav_visual_artifacts(cycle, table)
+        self._shell_nav_results.append(
+            {
+                "cycle": cycle,
+                "activation_path": "ShellNavigationWidget._switch_group",
+                "return_reason": "shell_nav",
+                "outbound_group": str(phase["outbound_group"]),
+                "watchlist_group": str(phase["watchlist_group"]),
+                "tab_count": tab_count,
+                "expected_tab_count": expected_tab_count,
+                "elapsed_ms": round(
+                    (time.perf_counter() - float(phase["return_started_at"])) * 1000.0,
+                    3,
+                ),
+                "paint_region": paint_region,
+                "paint_metrics": paint_metrics,
+                "repaint_guard": repaint_guard,
+                "visual_artifacts": visual_artifacts,
+                "heartbeat_lateness": summarize_durations(
+                    list(self._heartbeat_by_phase.get(phase_name, ()))
+                ),
+                "event_loop_stalls": summarize_durations(
+                    [sample.value for sample in phase_metrics.get("ui_event_loop_stall_ms", [])]
+                ),
+                "ui_stall_snapshot": self._stall_snapshot(),
+            }
+        )
+        self._shell_nav_cycle_index = cycle
+        self._shell_nav_phase = None
+        self.QTimer.singleShot(0, self._continue_after_background_prewarm)
+
     def _continue_after_background_prewarm(self) -> None:
         if self._done:
+            return
+        if self._shell_nav_cycle_index < max(0, int(self.args.shell_nav_cycles)):
+            self._start_shell_nav_cycle()
             return
         if max(0, int(self.args.question_dialog_ms)) > 0 and not self._question_dialog_probed:
             self._run_question_dialog_probe()
@@ -1330,21 +1685,18 @@ class _NativeProfileController:
         return stall_probe.stall_snapshot() if stall_probe is not None else {"installed": False}
 
     @staticmethod
-    def _metric_offsets() -> dict[str, float]:
-        recorded_after = time.time()
-        return {name: recorded_after for name in RESIDUAL_REPAINT_METRICS}
+    def _metric_offsets(metric_names: tuple[str, ...] = RESIDUAL_REPAINT_METRICS) -> dict[str, int]:
+        from core.observability import metric_history
+
+        return {str(name): len(metric_history(str(name))) for name in metric_names}
 
     @staticmethod
-    def _metrics_since(offsets: dict[str, float]) -> dict[str, list]:
+    def _metrics_since(offsets: dict[str, int]) -> dict[str, list]:
         from core.observability import metric_history
 
         return {
-            name: [
-                sample
-                for sample in metric_history(name)
-                if float(sample.recorded_at) >= float(offsets.get(name, 0.0))
-            ]
-            for name in RESIDUAL_REPAINT_METRICS
+            str(name): list(metric_history(str(name)))[max(0, int(offset or 0)) :]
+            for name, offset in offsets.items()
         }
 
     def _prepare_residual_repaint(self) -> None:
@@ -1632,6 +1984,20 @@ class _NativeProfileController:
         }
         if quote_acceptance_enforced and quote_acceptance["status"] != "pass":
             self.report["errors"].append("quote repaint acceptance failed")
+        shell_nav_expected_cycles = max(0, int(self.args.shell_nav_cycles))
+        shell_nav_acceptance = _shell_nav_repaint_acceptance(
+            self._shell_nav_results,
+            expected_cycles=shell_nav_expected_cycles,
+        )
+        self.report["shell_nav_cycles"] = {
+            "completed": self._shell_nav_cycle_index,
+            "settle_ms": max(1, int(self.args.shell_nav_settle_ms)),
+            "acceptance": shell_nav_acceptance,
+            "acceptance_enforced": shell_nav_expected_cycles > 0,
+            "results": list(self._shell_nav_results),
+        }
+        if shell_nav_expected_cycles > 0 and shell_nav_acceptance["status"] != "pass":
+            self.report["errors"].append("shell navigation repaint acceptance failed")
         expected_cycles = max(0, int(self.args.residual_repaint_cycles))
         acceptance = _residual_repaint_acceptance(
             self._residual_results,
@@ -1760,6 +2126,9 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "quote_cycles": int(args.quote_cycles),
             "quote_cycle_ms": int(args.quote_cycle_ms),
             "quote_target_count": int(args.quote_target_count),
+            "shell_nav_cycles": int(args.shell_nav_cycles),
+            "shell_nav_settle_ms": int(args.shell_nav_settle_ms),
+            "shell_nav_only": bool(args.shell_nav_only),
             "question_dialog_ms": int(args.question_dialog_ms),
             "residual_repaint_cycles": int(args.residual_repaint_cycles),
             "legacy_quote_repaint": bool(args.legacy_quote_repaint),
@@ -1877,6 +2246,7 @@ def main(argv: list[str] | None = None) -> int:
                 "watchlist_first_paint_ms": report.get("paint_events", {}).get(
                     "watchlist_first_paint_after_activation_ms"
                 ),
+                "shell_nav_acceptance": report.get("shell_nav_cycles", {}).get("acceptance", {}).get("status"),
                 "max_active_dispatch_ms": max(
                     (
                         float(item["elapsed_ms"])
