@@ -145,8 +145,8 @@ def _process_events(app, rounds: int = 4):
         app.processEvents()
 
 
-def _arm_visible_shell_nav_repaint_guard(table, app):
-    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+def _arm_visible_shell_nav_repaint_guard(table, app, *, scope: str = "watchlist"):
+    table.set_targeted_flash_repaint_enabled(True, metric_scope=scope)
     table.resize(640, 360)
     table.show()
     _process_events(app)
@@ -516,6 +516,49 @@ def test_vcp_table_view_shell_nav_guard_allows_first_and_bounds_redundant_full_p
 
         decisions = [item[2]["tags"]["decision"] for item in recorded]
         assert decisions == ["first_full_allowed", "suppress_redundant_full", "suppress_redundant_full"]
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_shell_nav_guard_accepts_lhb_scope(qt_application):
+    table = VCPTableView()
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application, scope="lhb")
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+    finally:
+        table.deleteLater()
+
+
+def test_lhb_shell_nav_guard_rearms_after_required_structure_paint(qt_application):
+    table = VCPTableView()
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application, scope="lhb")
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        table._on_model_layout_changed()
+        assert table._shell_nav_repaint_guard is not None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        table._pending_paint_metric = None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+    finally:
+        table.deleteLater()
+
+
+def test_lhb_shell_nav_guard_ignores_internal_state_restore_selection_change(qt_application):
+    table = VCPTableView()
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application, scope="lhb")
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table._restoring_refresh_state = True
+        try:
+            table._on_shell_nav_guard_selection_changed()
+        finally:
+            table._restoring_refresh_state = False
+
+        assert table._shell_nav_repaint_guard is not None
     finally:
         table.deleteLater()
 

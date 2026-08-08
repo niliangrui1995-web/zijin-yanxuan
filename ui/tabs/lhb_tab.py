@@ -1054,6 +1054,11 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
 
     hideEvent = _lhb_hide_event
 
+    def prepare_shell_nav_repaint_guard(self) -> None:
+        prepare = getattr(self.table, "prepare_shell_nav_repaint_guard", None)
+        if callable(prepare):
+            prepare()
+
     def on_workspace_tab_activated(self) -> None:
         started_at = time.perf_counter()
         _flush_pending_lhb_display(self)

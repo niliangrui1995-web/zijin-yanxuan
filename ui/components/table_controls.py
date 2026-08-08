@@ -260,14 +260,19 @@ class VCPTableView(QTableView):
             self.updateGeometry()
 
     def _on_sort_indicator_changed(self, column: int, _order):
-        self._invalidate_shell_nav_repaint_guard("sort_changed")
+        if not (self._restoring_refresh_state and self._paint_metric_scope == "lhb"):
+            self._invalidate_shell_nav_repaint_guard("sort_changed")
         self._sorted_column = column
         self.viewport().update()
 
     def _on_shell_nav_header_geometry_changed(self, *_args) -> None:
+        if self._restoring_refresh_state and self._paint_metric_scope == "lhb":
+            return
         self._invalidate_shell_nav_repaint_guard("header_geometry")
 
     def _on_shell_nav_scroll_changed(self, *_args) -> None:
+        if self._restoring_refresh_state and self._paint_metric_scope == "lhb":
+            return
         self._invalidate_shell_nav_repaint_guard("scroll_changed")
 
     def sorted_column(self) -> int:
@@ -335,6 +340,8 @@ class VCPTableView(QTableView):
         self._shell_nav_guard_selection_model = None
 
     def _on_shell_nav_guard_selection_changed(self, *_args) -> None:
+        if self._restoring_refresh_state and self._paint_metric_scope == "lhb":
+            return
         self._invalidate_shell_nav_repaint_guard("selection_changed")
 
     def _connect_refresh_model(self, model) -> None:
@@ -645,8 +652,8 @@ class VCPTableView(QTableView):
         self._flash_dirty_indexes.clear()
 
     def prepare_shell_nav_repaint_guard(self) -> None:
-        """Arm a short, Watchlist-only guard for redundant shell-nav full paints."""
-        if self._closing or self._paint_metric_scope != "watchlist":
+        """Arm a short guard for redundant shell-nav full paints on data tables."""
+        if self._closing or self._paint_metric_scope not in {"watchlist", "lhb"}:
             return
         now = time.monotonic()
         self._shell_nav_repaint_guard = {
@@ -735,6 +742,17 @@ class VCPTableView(QTableView):
         if guard is None:
             return
         guard["structural_epoch"] = int(guard.get("structural_epoch", 0) or 0) + 1
+        if self._paint_metric_scope == "lhb" and reason in {"model_layout_changed", "model_reset"}:
+            # Default LHB quote ordering can legitimately reorder rows just after a
+            # shell-nav reveal.  Allow that one structural paint, then retain the
+            # bounded guard for the redundant full updates that follow it.
+            if bool(guard.get("first_full_seen", False)):
+                guard["first_full_seen"] = False
+                guard["viewport_size"] = None
+                guard["visible_dirty_region"] = QRegion()
+                guard["partial_update_pending"] = False
+                self._record_shell_nav_repaint_guard(guard, "rearm_after_structure", fallback_reason=reason)
+            return
         if bool(guard.get("first_full_seen", False)):
             self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason=reason)
             self._clear_shell_nav_repaint_guard()

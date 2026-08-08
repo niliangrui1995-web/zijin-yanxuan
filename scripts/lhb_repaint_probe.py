@@ -2,9 +2,10 @@
 
 Examples:
   python scripts/lhb_repaint_probe.py --rows 70
-  python scripts/lhb_repaint_probe.py --rows 70 --update-threshold 200
-  python scripts/lhb_repaint_probe.py --rows 70 --benchmark-full-paint
-  python scripts/lhb_repaint_probe.py --rows 70 --max-paint-ms 200
+   python scripts/lhb_repaint_probe.py --rows 70 --update-threshold 200
+   python scripts/lhb_repaint_probe.py --rows 70 --benchmark-full-paint
+   python scripts/lhb_repaint_probe.py --rows 70 --max-paint-ms 200
+   python scripts/lhb_repaint_probe.py --rows 50 --shell-nav-cycles 3
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ os.environ["VCP_HUNTER_SETTINGS_APPLICATION"] = "LhbRepaintProbe"
 
 from PyQt6.QtCore import QEvent, QObject  # noqa: E402
 from PyQt6.QtGui import QRegion  # noqa: E402
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtTest import QSignalSpy  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -42,6 +44,9 @@ _IMPORT_LOGGING_DISABLE = logging.root.manager.disable
 logging.disable(logging.CRITICAL)
 try:
     from core.observability import clear_metric_history, metric_history  # noqa: E402
+    from infra.diagnostics.ui_stall_probe import install_ui_stall_probe  # noqa: E402
+    from ui.components.main_window_shell import ShellNavigationWidget  # noqa: E402
+    from ui.components.smooth_tab_widget import SmoothTabWidget  # noqa: E402
     from ui.tabs.lhb_tab import LHB_VIEW_UPDATE_THRESHOLD, LhbTab  # noqa: E402
 finally:
     logging.disable(_IMPORT_LOGGING_DISABLE)
@@ -191,6 +196,213 @@ def _full_paint_benchmark(tab: LhbTab, app: QApplication, cycles: int) -> dict:
     return {"legacy_rescan": legacy, "cached_scale": cached}
 
 
+class _ShellNavProbeWorkspace:
+    def __init__(self, tabs: SmoothTabWidget, lhb_index: int):
+        self.tabs = tabs
+        self._lhb_index = lhb_index
+        self.activations: list[tuple[int, str]] = []
+        self.prepare_intervals: list[int] = []
+
+    def tab_indices_by_group(self) -> dict[str, list[int]]:
+        return {
+            "home": [0, *range(2, self.tabs.count())],
+            "lhb": [self._lhb_index],
+        }
+
+    def prepare_shell_group_rebuild_navigation(self, *, interval_ms: int = 0) -> None:
+        self.prepare_intervals.append(int(interval_ms))
+
+    def activate_tab(self, index: int, *, reason: str = "user") -> bool:
+        self.activations.append((int(index), str(reason)))
+        widget = self.tabs.widget(int(index))
+        if int(index) == self._lhb_index and isinstance(widget, LhbTab):
+            widget._workspace_load_reason = str(reason)
+            widget.prepare_shell_nav_repaint_guard()
+        self.tabs.setCurrentIndex(int(index))
+        if int(index) == self._lhb_index and isinstance(widget, LhbTab):
+            widget.on_workspace_tab_activated()
+        return True
+
+
+def _sort_quote_payload(rows: list[dict], *, cycle: int) -> dict[str, dict]:
+    count = max(1, len(rows))
+    descending_by_code = bool(cycle % 2)
+    payload = {}
+    for row_number, row in enumerate(rows, start=1):
+        relative = count - row_number + 1 if descending_by_code else row_number
+        payload[str(row["代码"])] = {
+            "close": 10.0 + relative / 100.0,
+            "last_close": 10.0,
+            "open": 10.0,
+            "zongguben": 100_000_000.0,
+        }
+    return payload
+
+
+def _signal_spans(spy: QSignalSpy) -> list[tuple[int, int, int, int]]:
+    return [
+        (entry[0].row(), entry[0].column(), entry[1].row(), entry[1].column())
+        for entry in spy
+        if len(entry) >= 2 and entry[0].isValid() and entry[1].isValid()
+    ]
+
+
+def run_shell_nav_probe(*, row_count: int, cycles: int) -> dict:
+    """Exercise the real ShellNavigationWidget path with an 11-tab workspace."""
+    app = QApplication.instance() or QApplication([])
+    tabs = SmoothTabWidget()
+    nav = ShellNavigationWidget()
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._should_start_pool_on_show = lambda: False
+    tab._pool_bootstrap_started = True
+    tabs.addTab(QWidget(), "Home")
+    lhb_index = tabs.addTab(tab, "LHB")
+    for index in range(2, 11):
+        tabs.addTab(QWidget(), f"Tab {index}")
+    workspace = _ShellNavProbeWorkspace(tabs, lhb_index)
+    rows = _lhb_rows(max(1, int(row_count)))
+    stall_probe = install_ui_stall_probe(app)
+    if stall_probe is not None:
+        stall_probe.reset_stall_snapshot()
+
+    try:
+        tab.model.update_data(rows, hydrate_latest_quotes=False)
+        tab._refresh_lhb_lineage(rows)
+        tab.table_state.show_table()
+        tab.table._pending_paint_metric = None
+        tabs.resize(1200, 800)
+        tabs.show()
+        _process_events_for(app, 80)
+        nav.bind_workspace(workspace, tabs)
+        _process_events_for(app, 30)
+
+        source_layout = QSignalSpy(tab.model.layoutChanged)
+        proxy_layout = QSignalSpy(tab.proxy_model.layoutChanged)
+        source_reset = QSignalSpy(tab.model.modelReset)
+        source_data = QSignalSpy(tab.model.dataChanged)
+        proxy_data = QSignalSpy(tab.proxy_model.dataChanged)
+        cycle_results = []
+        probe_cycles = max(1, int(cycles))
+        expected_span = (0, 0, len(rows) - 1, tab.model.columnCount() - 1)
+
+        for cycle in range(probe_cycles):
+            before_layout = len(source_layout)
+            before_proxy_layout = len(proxy_layout)
+            before_reset = len(source_reset)
+            before_data = len(source_data)
+            before_proxy_data = len(proxy_data)
+            clear_metric_history()
+
+            nav._switch_group("lhb")
+            _process_events_for(app, 80)
+            tab._apply_quote_snapshot_now(_sort_quote_payload(rows, cycle=cycle))
+            _process_events_for(app, 80)
+            tab.table.viewport().update()
+            _process_events_for(app, 80)
+
+            paint_samples = metric_history("lhb_table_paint_ms")
+            paint_tags = [dict(sample.tags) for sample in paint_samples]
+            structural_index = next(
+                (
+                    index
+                    for index, tags in enumerate(paint_tags)
+                    if tags.get("structural_reason") == "model_layout_changed"
+                ),
+                -1,
+            )
+            later_tags = paint_tags[structural_index + 1 :] if structural_index >= 0 else []
+            guard_events = [
+                {
+                    key: str(sample.tags.get(key, ""))
+                    for key in ("decision", "fallback_reason", "age_ms", "remaining")
+                }
+                for sample in metric_history("lhb_shell_nav_repaint_guard")
+            ]
+            guard_decisions = [event["decision"] for event in guard_events]
+            data_spans = _signal_spans(source_data)[before_data:]
+            proxy_data_spans = _signal_spans(proxy_data)[before_proxy_data:]
+            flash_callbacks = metric_history("lhb_flash_repaint_callback_ms")
+            activation_samples = metric_history("lhb_tab_activation_ms")
+            event_loop_stalls = metric_history("ui_event_loop_stall_ms")
+            method_stalls = metric_history("ui_method_stall_ms")
+            critical_event_loop_stalls = sum(
+                sample.tags.get("severity") == "critical"
+                for sample in event_loop_stalls
+            )
+            cycle_results.append(
+                {
+                    "cycle": cycle + 1,
+                    "tab_count": tabs.count(),
+                    "activation": workspace.activations[-1] if workspace.activations else None,
+                    "source_layout_changed": len(source_layout) - before_layout,
+                    "proxy_layout_changed": len(proxy_layout) - before_proxy_layout,
+                    "source_model_reset": len(source_reset) - before_reset,
+                    "source_data_spans": data_spans,
+                    "proxy_data_spans": proxy_data_spans,
+                    "expected_structural_span": expected_span,
+                    "paint_samples": [
+                        {
+                            key: tags.get(key, "")
+                            for key in (
+                                "reason",
+                                "pending_reasons",
+                                "delivery_kind",
+                                "delivered_full_viewport",
+                                "requested_full_viewport",
+                            )
+                        }
+                        for tags in paint_tags
+                    ],
+                    "other_full_viewport_after_structure": sum(
+                        tags.get("reason") == "other" and tags.get("delivered_full_viewport") == "true"
+                        for tags in later_tags
+                    ),
+                    "guard_decisions": guard_decisions,
+                    "guard_events": guard_events,
+                    "activation_ms": [round(float(sample.value), 3) for sample in activation_samples],
+                    "flash_requested_full_viewport": [
+                        str(sample.tags.get("requested_full_viewport", "")) for sample in flash_callbacks
+                    ],
+                    "event_loop_stall_ms": [round(float(sample.value), 3) for sample in event_loop_stalls],
+                    "method_stall_ms": [round(float(sample.value), 3) for sample in method_stalls],
+                    "critical_event_loop_stalls": critical_event_loop_stalls,
+                }
+            )
+            nav._switch_group("home")
+            _process_events_for(app, 60)
+
+        accepted = bool(
+            tabs.count() == 11
+            and all(
+                result["activation"] == (lhb_index, "shell_nav")
+                and result["source_layout_changed"] == 1
+                and result["proxy_layout_changed"] == 1
+                and result["source_model_reset"] == 0
+                and result["expected_structural_span"] in result["source_data_spans"]
+                and result["expected_structural_span"] in result["proxy_data_spans"]
+                and result["other_full_viewport_after_structure"] == 0
+                and "rearm_after_structure" in result["guard_decisions"]
+                and "suppress_redundant_full" in result["guard_decisions"]
+                for result in cycle_results
+            )
+        )
+        return {
+            "mode": "offscreen_shell_nav_structural_repaint",
+            "status": "pass" if accepted else "fail",
+            "tab_count": tabs.count(),
+            "cycles": cycle_results,
+            "group_rebuild_prepared": workspace.prepare_intervals,
+            "stall_snapshot": stall_probe.stall_snapshot() if stall_probe is not None else {"installed": False},
+            "qt_platform": os.environ.get("QT_QPA_PLATFORM", ""),
+            "note": "Structural gate only; absolute paint/stall milliseconds are same-machine diagnostics.",
+        }
+    finally:
+        nav.deleteLater()
+        tabs.close()
+        tabs.deleteLater()
+        app.processEvents()
+
+
 def run_probe(
     *,
     row_count: int,
@@ -198,6 +410,7 @@ def run_probe(
     benchmark_full_paint: bool = False,
     max_paint_ms: float | None = None,
     cycles: int = 5,
+    shell_nav_cycles: int = 0,
 ) -> dict:
     app = QApplication.instance() or QApplication([])
     tab = LhbTab(object(), autoload_pool=False)
@@ -251,6 +464,10 @@ def run_probe(
     )
     threshold_tags_match = threshold_tag_match_count >= probe_cycles
     paint_durations = [float(sample.value) for sample in quote_paint_samples]
+    flash_requested_full_viewport = [
+        str(sample.tags.get("requested_full_viewport", ""))
+        for sample in metric_history("lhb_flash_repaint_callback_ms")
+    ]
     paint_max_ms = max(paint_durations, default=0.0)
     paint_budget_pass = max_paint_ms is None or paint_max_ms <= max(0.0, float(max_paint_ms))
     bounded_region_pass = bool(
@@ -303,6 +520,7 @@ def run_probe(
             for sample in paint_samples
         ],
         "paint_durations_ms": [round(value, 3) for value in paint_durations],
+        "flash_requested_full_viewport": flash_requested_full_viewport,
     }
     if benchmark_full_paint:
         benchmark = _full_paint_benchmark(tab, app, 3)
@@ -311,6 +529,10 @@ def run_probe(
         benchmark["linear_cache_gate_pass"] = cached_calls > 0 and legacy_calls >= cached_calls * 2
         result["full_paint_benchmark"] = benchmark
         accepted = accepted and bool(benchmark["linear_cache_gate_pass"])
+    if shell_nav_cycles > 0:
+        shell_nav = run_shell_nav_probe(row_count=len(rows), cycles=shell_nav_cycles)
+        result["shell_nav"] = shell_nav
+        accepted = accepted and shell_nav["status"] == "pass"
     result["status"] = "pass" if accepted else "fail"
     tab.table.viewport().removeEventFilter(region_probe)
     tab.close()
@@ -331,6 +553,12 @@ def main() -> int:
     parser.add_argument("--benchmark-full-paint", action="store_true")
     parser.add_argument("--cycles", type=int, default=5, help="Quote update cycles used by the structural gate.")
     parser.add_argument(
+        "--shell-nav-cycles",
+        type=int,
+        default=0,
+        help="Also exercise ShellNavigationWidget with 11 tabs and LHB default quote reordering.",
+    )
+    parser.add_argument(
         "--max-paint-ms",
         type=float,
         default=None,
@@ -346,6 +574,7 @@ def main() -> int:
             benchmark_full_paint=bool(args.benchmark_full_paint),
             max_paint_ms=args.max_paint_ms,
             cycles=args.cycles,
+            shell_nav_cycles=max(0, int(args.shell_nav_cycles)),
         )
     finally:
         _cleanup_probe_runtime()

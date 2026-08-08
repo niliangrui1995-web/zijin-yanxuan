@@ -743,6 +743,59 @@ def test_lhb_table_uses_targeted_coalesced_flash_repaint():
         tab.deleteLater()
 
 
+def test_lhb_shell_nav_repaint_guard_delegates_to_table(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    calls = []
+    monkeypatch.setattr(tab.table, "prepare_shell_nav_repaint_guard", lambda: calls.append("prepared"))
+    try:
+        tab.prepare_shell_nav_repaint_guard()
+
+        assert calls == ["prepared"]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_quote_default_resort_emits_one_layout_and_full_data_span():
+    tab = LhbTab(object(), autoload_pool=False)
+    rows = [
+        {"代码": f"{row:06d}", "名称": f"股票{row}", "涨幅%": 0.0}
+        for row in range(1, 51)
+    ]
+    tab.model.update_data(rows, hydrate_latest_quotes=False)
+    source_layout = QSignalSpy(tab.model.layoutChanged)
+    proxy_layout = QSignalSpy(tab.proxy_model.layoutChanged)
+    source_data = QSignalSpy(tab.model.dataChanged)
+    proxy_data = QSignalSpy(tab.proxy_model.dataChanged)
+    quotes = {
+        f"{row:06d}": {
+            "close": 10.0 + row / 100.0,
+            "last_close": 10.0,
+            "open": 10.0,
+            "zongguben": 100_000_000.0,
+        }
+        for row in range(1, 51)
+    }
+    try:
+        tab._apply_quote_snapshot_now(quotes)
+
+        assert len(source_layout) == 1
+        assert len(proxy_layout) == 1
+        expected_span = (0, 0, 49, tab.model.columnCount() - 1)
+        source_spans = [
+            (event[0].row(), event[0].column(), event[1].row(), event[1].column())
+            for event in source_data
+        ]
+        proxy_spans = [
+            (event[0].row(), event[0].column(), event[1].row(), event[1].column())
+            for event in proxy_data
+        ]
+        assert expected_span in source_spans
+        assert expected_span in proxy_spans
+        assert [row["代码"] for row in tab.model.row_data[:3]] == ["000050", "000049", "000048"]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_hidden_cache_only_preload_stages_rows_without_model_invalidation(monkeypatch):
     tab = LhbTab(object(), autoload_pool=False)
     model_reset = QSignalSpy(tab.model.modelReset)

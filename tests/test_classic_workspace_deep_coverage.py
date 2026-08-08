@@ -214,6 +214,28 @@ def test_classic_workspace_arms_loaded_watchlist_guard_before_shell_nav_switch()
     assert calls == []
 
 
+def test_classic_workspace_arms_loaded_lhb_guard_before_shell_nav_switch():
+    tabs = _Tabs(count=2, current=0)
+    calls = []
+
+    class LhbWidget:
+        def prepare_shell_nav_repaint_guard(self):
+            calls.append(tabs.currentIndex())
+
+    spec = {"key": "lhb", "loaded": True, "widget": LhbWidget()}
+    fake = SimpleNamespace(
+        tabs=tabs,
+        _pending_tab_activation_reasons={},
+        _startup_last_allowed_index=-1,
+        _spec_for_key_or_index=lambda _index: spec,
+        _defer_interactive_activation_until_preload_ready=lambda *_args: False,
+    )
+
+    assert workspace_module.ClassicWorkspace.activate_tab(fake, 1, reason="shell_nav")
+    assert calls == [0]
+    assert tabs.currentIndex() == 1
+
+
 def test_classic_workspace_event_wiring_prewarm_prime_and_copy_hook_errors(monkeypatch):
     import app.services.ui_event_service as event_module
 
