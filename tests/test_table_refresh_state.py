@@ -156,6 +156,16 @@ def _arm_visible_shell_nav_repaint_guard(table, app, *, scope: str = "watchlist"
     assert table.viewport().isVisible()
 
 
+def _arm_visible_ai_preload_repaint_guard(table, app, *, load_reason: str = "background_prewarm"):
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="ai_industry_chain")
+    table.resize(640, 360)
+    table.show()
+    _process_events(app)
+    table.prepare_workspace_preload_repaint_guard(load_reason=load_reason)
+    assert table._shell_nav_repaint_guard is not None
+    assert table.viewport().isVisible()
+
+
 def _full_viewport_paint_event(table):
     return QPaintEvent(table.viewport().rect())
 
@@ -557,6 +567,79 @@ def test_vcp_table_view_shell_nav_guard_blocks_post_budget_full_paint_event(qt_a
             "suppress_redundant_full",
             "suppress_redundant_full_after_budget",
         ]
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_ai_preload_guard_skips_visible_redundant_full_paints(
+    qt_application,
+    monkeypatch,
+):
+    class RecordingTable(VCPTableView):
+        def __init__(self):
+            super().__init__()
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    table = RecordingTable()
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        _arm_visible_ai_preload_repaint_guard(table, qt_application)
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        for _ in range(4):
+            QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+
+        assert table.actual_paint_calls == 0
+        assert [item[0] for item in recorded] == [
+            "ai_industry_chain_preload_repaint_guard",
+        ] * 4
+        assert [item[2]["tags"]["decision"] for item in recorded] == [
+            "suppress_redundant_full",
+            "suppress_redundant_full",
+            "suppress_redundant_full_after_budget",
+            "suppress_redundant_full_after_budget",
+        ]
+        assert {item[2]["tags"]["workspace_load_reason"] for item in recorded} == {
+            "background_prewarm"
+        }
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_ai_preload_guard_keeps_real_content_and_structure_paints(
+    qt_application,
+    monkeypatch,
+):
+    table = VCPTableView()
+    model = QStandardItemModel(3, 2)
+    for row in range(model.rowCount()):
+        for column in range(model.columnCount()):
+            model.setItem(row, column, QStandardItem(f"{row}-{column}"))
+    table.setModel(model)
+    try:
+        _arm_visible_ai_preload_repaint_guard(table, qt_application)
+        assert model.setData(model.index(0, 0), "changed") is True
+        updates = []
+        monkeypatch.setattr(table.viewport(), "update", lambda *args: updates.append(args))
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert len(updates) == 1
+        assert isinstance(updates[0][0], QRegion)
+        assert updates[0][0] != QRegion(table.viewport().rect())
+
+        table._on_model_reset()
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        table._pending_paint_metric = None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
     finally:
         table.deleteLater()
 

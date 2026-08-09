@@ -1302,6 +1302,54 @@ def test_visible_watchlist_prewarm_finishes_before_runtime_consumers(
         workspace.deleteLater()
 
 
+def test_background_prewarm_placeholder_replacement_arms_current_ai_repaint_guard(qt_application):
+    class _GuardedAiTab(_ControlledPreloadTab):
+        def __init__(self, key, events, parent=None):
+            super().__init__(key, events, parent)
+            self.guard_load_reasons = []
+
+        def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+            self.guard_load_reasons.append(load_reason)
+
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    ai_spec = workspace._spec_for_key_or_index("ai_industry_chain")
+    ai_spec["factory"] = lambda **_kwargs: _GuardedAiTab("ai_industry_chain", events, workspace)
+
+    try:
+        ai_index = workspace._tab_index_for_key("ai_industry_chain")
+        blocked = workspace.tabs.blockSignals(True)
+        workspace.tabs.setCurrentIndex(ai_index)
+        workspace.tabs.blockSignals(blocked)
+        ai_tab = workspace.ensure_tab_loaded(
+            "ai_industry_chain",
+            reason=TabLoadReason.RESTORE_LAST_TAB.value,
+        )
+        assert workspace.tabs.currentWidget() is ai_tab
+        assert ai_tab.guard_load_reasons == [TabLoadReason.RESTORE_LAST_TAB.value]
+
+        ai_tab.guard_load_reasons.clear()
+        workspace._background_prewarm_active_key = "na_daily"
+        na_tab = workspace.ensure_tab_loaded(
+            "na_daily",
+            reason=TabLoadReason.BACKGROUND_PREWARM.value,
+        )
+
+        assert na_tab is workspace.get_loaded_tab("na_daily")
+        assert ai_tab.guard_load_reasons == [TabLoadReason.BACKGROUND_PREWARM.value]
+        assert workspace.tabs.currentWidget() is ai_tab
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_visible_watchlist_prime_failure_hands_hidden_tabs_back_to_lazy_loading(
     qt_application,
 ):

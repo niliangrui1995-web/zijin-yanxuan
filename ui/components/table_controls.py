@@ -658,8 +658,39 @@ class VCPTableView(QTableView):
         """Arm a short guard for redundant shell-nav full paints on data tables."""
         if self._closing or self._paint_metric_scope not in {"watchlist", "lhb"}:
             return
+        self._arm_redundant_full_paint_guard(
+            workspace_load_reason="shell_nav",
+            metric_name=f"{self._paint_metric_scope}_shell_nav_repaint_guard",
+            retain_after_budget=False,
+            preserve_visible_frame=False,
+        )
+
+    def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+        """Protect an already rendered AI table from a nearby preload mount repaint burst."""
+        load_reason_text = str(load_reason or "").strip()
+        if (
+            self._closing
+            or self._paint_metric_scope != "ai_industry_chain"
+            or load_reason_text not in {"background_prewarm", "restore_last_tab"}
+        ):
+            return
+        self._arm_redundant_full_paint_guard(
+            workspace_load_reason=load_reason_text,
+            metric_name="ai_industry_chain_preload_repaint_guard",
+            retain_after_budget=True,
+            preserve_visible_frame=True,
+        )
+
+    def _arm_redundant_full_paint_guard(
+        self,
+        *,
+        workspace_load_reason: str,
+        metric_name: str,
+        retain_after_budget: bool,
+        preserve_visible_frame: bool,
+    ) -> None:
         now = time.monotonic()
-        self._shell_nav_repaint_guard = {
+        guard = {
             "armed_until": now + self.SHELL_NAV_REPAINT_GUARD_ARM_MS / 1000.0,
             "active_until": 0.0,
             "active_started_at": 0.0,
@@ -672,7 +703,27 @@ class VCPTableView(QTableView):
             "visible_dirty_region": QRegion(),
             "partial_update_pending": False,
             "suppressed": 0,
+            "workspace_load_reason": str(workspace_load_reason or ""),
+            "metric_name": str(metric_name or ""),
+            "retain_after_budget": bool(retain_after_budget),
+            "rearm_after_required_full": bool(preserve_visible_frame),
         }
+        self._shell_nav_repaint_guard = guard
+        viewport = self.viewport()
+        if not (
+            preserve_visible_frame
+            and self.isVisible()
+            and viewport is not None
+            and viewport.isVisible()
+        ):
+            return
+        self._activate_shell_nav_repaint_guard()
+        viewport_rect = viewport.rect()
+        guard["first_full_seen"] = True
+        guard["viewport_size"] = (viewport_rect.width(), viewport_rect.height())
+        guard["rendered_content_epoch"] = int(guard.get("content_epoch", 0) or 0)
+        guard["rendered_structural_epoch"] = int(guard.get("structural_epoch", 0) or 0)
+        self._record_shell_nav_repaint_guard(guard, "visible_frame_preserved")
 
     def _activate_shell_nav_repaint_guard(self) -> None:
         guard = self._shell_nav_repaint_guard
@@ -726,18 +777,20 @@ class VCPTableView(QTableView):
 
             tags = {
                 "decision": decision,
-                "workspace_load_reason": "shell_nav",
+                "workspace_load_reason": str(guard.get("workspace_load_reason", "shell_nav") or "shell_nav"),
                 "age_ms": f"{max(0.0, (time.monotonic() - started_at) * 1000.0):.3f}",
                 "remaining": str(
                     max(0, self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS - int(guard.get("suppressed", 0) or 0))
                 ),
                 "suppressed": str(int(guard.get("suppressed", 0) or 0)),
+                "retain_after_budget": str(bool(guard.get("retain_after_budget", False))).lower(),
                 "dirty_bounding_area_ratio": f"{ratio:.4f}",
                 "dirty_region_rects": str(rects),
             }
             if fallback_reason:
                 tags["fallback_reason"] = fallback_reason
-            record_metric(f"{scope}_shell_nav_repaint_guard", 1, unit="count", tags=tags)
+            metric_name = str(guard.get("metric_name", "") or f"{scope}_shell_nav_repaint_guard")
+            record_metric(metric_name, 1, unit="count", tags=tags)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             log.debug("skip shell-nav repaint guard metric: %s", exc)
 
@@ -746,10 +799,12 @@ class VCPTableView(QTableView):
         if guard is None:
             return
         guard["structural_epoch"] = int(guard.get("structural_epoch", 0) or 0) + 1
-        if self._paint_metric_scope == "lhb" and reason in {"model_layout_changed", "model_reset"}:
-            # Default LHB quote ordering can legitimately reorder rows just after a
-            # shell-nav reveal.  Allow that one structural paint, then retain the
-            # bounded guard for the redundant full updates that follow it.
+        if reason in {"model_layout_changed", "model_reset"} and (
+            self._paint_metric_scope == "lhb"
+            or bool(guard.get("rearm_after_required_full", False))
+        ):
+            # A required structural frame is allowed, then the short guard remains
+            # available for the redundant native full paints that can follow it.
             if bool(guard.get("first_full_seen", False)):
                 guard["first_full_seen"] = False
                 guard["viewport_size"] = None
@@ -840,8 +895,15 @@ class VCPTableView(QTableView):
                 self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="structural_change")
                 self._clear_shell_nav_repaint_guard()
                 return False
+            if str(pending_metric.get("reason", "") or "") == "flash_expiry":
+                # Flash expiry has its own requested dirty region.  Let its paint
+                # event through rather than leaving a stale highlight on screen.
+                self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="flash_expiry")
+                self._clear_shell_nav_repaint_guard()
+                return False
             if (
                 self._paint_metric_scope != "watchlist"
+                and not bool(guard.get("retain_after_budget", False))
                 and int(guard.get("suppressed", 0) or 0) >= self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS
             ):
                 self._clear_shell_nav_repaint_guard()
@@ -863,6 +925,19 @@ class VCPTableView(QTableView):
                 _dirty_ratio, _dirty_rects, dirty_is_full = _paint_region_metrics(dirty_region, viewport_rect)
                 if dirty_region.isEmpty() or dirty_is_full or not viewport.updatesEnabled():
                     fallback_reason = "dirty_region" if dirty_region.isEmpty() or dirty_is_full else "updates_disabled"
+                    if (
+                        dirty_is_full
+                        and bool(guard.get("rearm_after_required_full", False))
+                    ):
+                        guard["rendered_content_epoch"] = int(guard.get("content_epoch", 0) or 0)
+                        guard["visible_dirty_region"] = QRegion()
+                        guard["partial_update_pending"] = False
+                        self._record_shell_nav_repaint_guard(
+                            guard,
+                            "allow_content_full",
+                            fallback_reason=fallback_reason,
+                        )
+                        return False
                     self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason=fallback_reason)
                     self._clear_shell_nav_repaint_guard()
                     return False
@@ -877,7 +952,10 @@ class VCPTableView(QTableView):
             guard["suppressed"] = suppressed
             decision = (
                 "suppress_redundant_full_after_budget"
-                if self._paint_metric_scope == "watchlist"
+                if (
+                    self._paint_metric_scope == "watchlist"
+                    or bool(guard.get("retain_after_budget", False))
+                )
                 and suppressed > self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS
                 else "suppress_redundant_full"
             )

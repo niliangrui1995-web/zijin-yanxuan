@@ -337,6 +337,46 @@ class StockTableModel(QAbstractTableModel):
             return False
         return set(old_ids) == set(new_ids)
 
+    def _single_row_membership_delta(self, rows: list) -> tuple[str, int] | None:
+        """Return a safe one-row insert/remove delta, otherwise keep the reset path."""
+        if not self._data or not rows or abs(len(rows) - len(self._data)) != 1:
+            return None
+
+        old_ids = self._row_id_sequence(self._data)
+        new_ids = self._row_id_sequence(rows)
+        if (
+            not all(old_ids)
+            or not all(new_ids)
+            or len(set(old_ids)) != len(old_ids)
+            or len(set(new_ids)) != len(new_ids)
+        ):
+            return None
+
+        if len(rows) > len(self._data):
+            added_ids = set(new_ids).difference(old_ids)
+            if len(added_ids) != 1:
+                return None
+            row = new_ids.index(next(iter(added_ids)))
+            retained_rows = rows[:row] + rows[row + 1 :]
+            if (
+                old_ids == new_ids[:row] + new_ids[row + 1 :]
+                and not any(old is new for old, new in zip(self._data, retained_rows, strict=True))
+            ):
+                return "insert", row
+            return None
+
+        removed_ids = set(old_ids).difference(new_ids)
+        if len(removed_ids) != 1:
+            return None
+        row = old_ids.index(next(iter(removed_ids)))
+        retained_rows = self._data[:row] + self._data[row + 1 :]
+        if (
+            new_ids == old_ids[:row] + old_ids[row + 1 :]
+            and not any(old is new for old, new in zip(retained_rows, rows, strict=True))
+        ):
+            return "remove", row
+        return None
+
     def _record_cell_flash(self, row: int, col: int, old_value, new_value) -> bool:
         if row < 0 or col < 0 or col >= len(self._headers):
             return False
@@ -444,7 +484,29 @@ class StockTableModel(QAbstractTableModel):
                 self._flash_roles(include_flash=False),
             )
 
-    def update_data(self, new_data, *, hydrate_latest_quotes: bool = True):
+    def _emit_single_row_membership_delta(self, rows: list, delta: tuple[str, int]) -> None:
+        action, row = delta
+        _sync_serial_values(rows)
+        self._flash_records.clear()
+        self._clear_sort_value_cache()
+        if action == "insert":
+            self.beginInsertRows(QModelIndex(), row, row)
+            self._data.insert(row, rows[row])
+            self.endInsertRows()
+        else:
+            self.beginRemoveRows(QModelIndex(), row, row)
+            self._data.pop(row)
+            self.endRemoveRows()
+        self._emit_incremental_rows(rows)
+
+    def update_data(
+        self,
+        new_data,
+        *,
+        hydrate_latest_quotes: bool = True,
+        allow_single_row_membership_delta: bool = False,
+        membership_reconcile_source: str = "",
+    ):
         _prune_flash_records(self._flash_records)
         self._clear_money_bar_max_abs_cache()
         rows = list(new_data or [])
@@ -455,6 +517,26 @@ class StockTableModel(QAbstractTableModel):
             return
         if self._can_reorder_incrementally(rows):
             self._emit_reordered_rows(rows)
+            if hydrate_latest_quotes:
+                self._hydrate_latest_quotes_from_store()
+            return
+
+        membership_delta = None
+        if allow_single_row_membership_delta and len(rows) != len(self._data):
+            membership_delta = self._single_row_membership_delta(rows)
+            record_metric(
+                "watchlist_membership_reconcile",
+                1,
+                unit="count",
+                tags={
+                    "mode": f"{membership_delta[0]}_one" if membership_delta is not None else "reset_fallback",
+                    "old_rows": str(len(self._data)),
+                    "new_rows": str(len(rows)),
+                    "source": membership_reconcile_source or "watchlist_rows",
+                },
+            )
+        if membership_delta is not None:
+            self._emit_single_row_membership_delta(rows, membership_delta)
             if hydrate_latest_quotes:
                 self._hydrate_latest_quotes_from_store()
             return

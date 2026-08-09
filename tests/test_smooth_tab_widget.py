@@ -211,3 +211,47 @@ def test_stock_table_model_same_code_reorder_avoids_model_reset():
     assert len(change_spy) == 1
     assert [row["代码"] for row in model.row_data] == ["000003", "000001", "000002"]
     assert model.row_data[2]["名称"] == "B+"
+
+
+def test_stock_table_model_keeps_reset_for_unscoped_membership_delta():
+    model = StockTableModel(["代码", "名称"])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A"},
+            {"代码": "000002", "名称": "B"},
+        ]
+    )
+    reset_spy = QSignalSpy(model.modelReset)
+
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A"},
+            {"代码": "000002", "名称": "B"},
+            {"代码": "000003", "名称": "C"},
+        ]
+    )
+
+    assert len(reset_spy) == 1
+
+
+def test_stock_table_model_single_member_opt_in_rejects_multi_row_delta():
+    model = StockTableModel(["代码", "名称"])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A"},
+            {"代码": "000002", "名称": "B"},
+        ]
+    )
+    reset_spy = QSignalSpy(model.modelReset)
+
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A"},
+            {"代码": "000002", "名称": "B"},
+            {"代码": "000003", "名称": "C"},
+            {"代码": "000004", "名称": "D"},
+        ],
+        allow_single_row_membership_delta=True,
+    )
+
+    assert len(reset_spy) == 1

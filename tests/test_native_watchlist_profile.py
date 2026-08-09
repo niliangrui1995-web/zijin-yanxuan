@@ -14,7 +14,11 @@ from scripts.native_watchlist_profile import (
     _parse_args,
     _quote_repaint_acceptance,
     _residual_repaint_acceptance,
+    _reset_to_first_paint_delays,
     _shell_nav_repaint_acceptance,
+    _summarize_membership_reconcile_metrics,
+    _summarize_model_signal_events,
+    _summarize_paint_delay_metrics,
     _summarize_shell_nav_guard_metrics,
     _summarize_shell_nav_paint_metrics,
     _summarize_residual_repaint_metrics,
@@ -71,6 +75,8 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.shell_nav_cycles == 0
     assert args.shell_nav_settle_ms == 1200
     assert args.shell_nav_only is False
+    assert args.membership_delta_probe is False
+    assert args.disable_market_pulse is False
     assert args.question_dialog_ms == 0
     assert args.residual_repaint_cycles == 0
     assert args.legacy_quote_repaint is False
@@ -79,12 +85,22 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
 
 def test_native_watchlist_profile_cli_accepts_shell_nav_sampling_options():
     args = _parse_args(
-        ["--shell-nav-cycles", "2", "--shell-nav-settle-ms", "1600", "--shell-nav-only"]
+        [
+            "--shell-nav-cycles",
+            "2",
+            "--shell-nav-settle-ms",
+            "1600",
+            "--shell-nav-only",
+            "--membership-delta-probe",
+            "--disable-market-pulse",
+        ]
     )
 
     assert args.shell_nav_cycles == 2
     assert args.shell_nav_settle_ms == 1600
     assert args.shell_nav_only is True
+    assert args.membership_delta_probe is True
+    assert args.disable_market_pulse is True
 
 
 def test_native_watchlist_profile_shell_nav_only_requires_a_shell_nav_cycle():
@@ -543,6 +559,86 @@ def test_native_watchlist_profile_region_summary_does_not_treat_sparse_span_as_f
     assert summary["full_viewport_count"] == 0
     assert summary["spontaneous_count"] == 1
     assert summary["samples"][0]["region_rect_count"] == 2
+
+
+def test_native_watchlist_profile_model_signal_and_reset_to_paint_metrics_are_ordered():
+    events = [
+        {"model": "source", "signal": "model_reset", "recorded_at_ms": 100.0},
+        {"model": "proxy", "signal": "model_reset", "recorded_at_ms": 101.0},
+        {"model": "source", "signal": "rows_inserted", "recorded_at_ms": 102.0},
+    ]
+    paint_region = {
+        "samples": [
+            {"recorded_at_ms": 103.5, "delivered_full_viewport": True},
+            {"recorded_at_ms": 105.0, "delivered_full_viewport": False},
+        ]
+    }
+
+    assert _summarize_model_signal_events(events) == {
+        "count": 3,
+        "counts": {
+            "proxy.model_reset": 1,
+            "source.model_reset": 1,
+            "source.rows_inserted": 1,
+        },
+        "events": events,
+    }
+    assert _reset_to_first_paint_delays(events, paint_region) == {
+        "count": 2,
+        "samples": [
+            {
+                "model": "source",
+                "reset_at_ms": 100.0,
+                "first_paint_at_ms": 103.5,
+                "delay_ms": 3.5,
+                "first_paint_full_viewport": True,
+            },
+            {
+                "model": "proxy",
+                "reset_at_ms": 101.0,
+                "first_paint_at_ms": 103.5,
+                "delay_ms": 2.5,
+                "first_paint_full_viewport": True,
+            },
+        ],
+    }
+
+
+def test_native_watchlist_profile_summarizes_structural_delay_and_membership_metrics():
+    delay_sample = SimpleNamespace(
+        value=3346.63,
+        tags={
+            "reason": "model_reset",
+            "structural_reason": "model_reset",
+            "pending_reasons": "model_reset,quote_data_changed",
+            "changed_rows": "1",
+            "changed_indexes": "1",
+            "model_rows": "46",
+        },
+    )
+    reconcile_sample = SimpleNamespace(
+        value=1,
+        tags={"mode": "insert_one", "old_rows": "45", "new_rows": "46", "source": "initial_data"},
+    )
+
+    assert _summarize_paint_delay_metrics([delay_sample])["samples"] == [
+        {
+            "delay_ms": 3346.63,
+            "reason": "model_reset",
+            "structural_reason": "model_reset",
+            "pending_reasons": "model_reset,quote_data_changed",
+            "changed_rows": "1",
+            "changed_indexes": "1",
+            "model_rows": "46",
+        }
+    ]
+    assert _summarize_membership_reconcile_metrics([reconcile_sample]) == {
+        "count": 1,
+        "modes": {"insert_one": 1},
+        "samples": [
+            {"mode": "insert_one", "old_rows": "45", "new_rows": "46", "source": "initial_data"}
+        ],
+    }
 
 
 def test_native_watchlist_profile_metric_offsets_use_history_lengths(monkeypatch):

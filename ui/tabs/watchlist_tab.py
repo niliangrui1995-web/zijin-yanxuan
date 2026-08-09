@@ -292,6 +292,7 @@ def _apply_watchlist_rows(
     refresh_quote_store: bool = True,
     describe_rows: bool = True,
     update_status: bool = True,
+    update_source: str = "watchlist_rows",
 ) -> None:
     row_payload = list(rows or [])
     with ui_stall_span(
@@ -319,7 +320,12 @@ def _apply_watchlist_rows(
                 tab="watchlist",
                 signal=str(len(row_payload)),
             ):
-                owner.model.update_data(row_payload, hydrate_latest_quotes=False)
+                owner.model.update_data(
+                    row_payload,
+                    hydrate_latest_quotes=False,
+                    allow_single_row_membership_delta=True,
+                    membership_reconcile_source=update_source,
+                )
             owner._last_watchlist_signature = signature
             quote_task_id = task_registry.quote_refresh("watchlist").task_id
             if refresh_quote_store:
@@ -348,7 +354,14 @@ def _apply_special_data_payload(owner, payload, *, refresh_indicators, indicator
         unit="ms",
         tags={"rows": str(data.get("row_count", len(rows)))},
     )
-    _apply_watchlist_rows(owner, rows, refresh_quote_store=False, describe_rows=False, update_status=False)
+    _apply_watchlist_rows(
+        owner,
+        rows,
+        refresh_quote_store=False,
+        describe_rows=False,
+        update_status=False,
+        update_source="initial_data",
+    )
     owner._finish_initial_data_loading()
     owner._watchlist_initial_data_finished = True
     if refresh_indicators and indicator_delay_ms is None:

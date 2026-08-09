@@ -577,7 +577,38 @@ def _configure_loaded_tab_widget(workspace, widget, key: str, load_reason: str) 
     )
 
 
-def _replace_workspace_placeholder(workspace, spec: dict, key: str, index: int, widget) -> None:
+def _prepare_workspace_preload_repaint_guard(workspace, widget, load_reason: str) -> None:
+    load_reason_text = normalize_tab_load_reason(load_reason)
+    if load_reason_text not in {
+        TabLoadReason.BACKGROUND_PREWARM.value,
+        TabLoadReason.RESTORE_LAST_TAB.value,
+    }:
+        return
+    current_widget = workspace.tabs.currentWidget()
+    seen: set[int] = set()
+    for candidate in (current_widget, widget):
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        prepare_guard = getattr(candidate, "prepare_workspace_preload_repaint_guard", None)
+        if not callable(prepare_guard):
+            continue
+        try:
+            prepare_guard(load_reason=load_reason_text)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug("skip workspace preload repaint guard: %s", exc)
+
+
+def _replace_workspace_placeholder(
+    workspace,
+    spec: dict,
+    key: str,
+    index: int,
+    widget,
+    *,
+    load_reason: str = "",
+) -> None:
+    _prepare_workspace_preload_repaint_guard(workspace, widget, load_reason)
     current_index = workspace.tabs.currentIndex()
     previous_blocked = workspace.tabs.blockSignals(True)
     old_widget = spec.get("page_widget") or spec.get("widget")
@@ -1024,7 +1055,14 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
                 mounted=False,
             )
         else:
-            _replace_workspace_placeholder(self, spec, key, index, widget)
+            _replace_workspace_placeholder(
+                self,
+                spec,
+                key,
+                index,
+                widget,
+                load_reason=load_reason,
+            )
             _register_loaded_workspace_tab(self, spec, key, index, widget, load_reason)
         return widget
 

@@ -37,7 +37,9 @@ RESIDUAL_REPAINT_METRICS = (
 )
 SHELL_NAV_REPAINT_METRICS = (
     "watchlist_table_paint_ms",
+    "watchlist_table_paint_delay_ms",
     "watchlist_shell_nav_repaint_guard",
+    "watchlist_membership_reconcile",
     "ui_event_loop_stall_ms",
 )
 
@@ -114,10 +116,65 @@ def _summarize_shell_nav_paint_metrics(paint_samples: list) -> dict:
                 "delivery_kind": str(sample.tags.get("delivery_kind", "")),
                 "paint_event_spontaneous": str(sample.tags.get("paint_event_spontaneous", "")),
                 "workspace_load_reason": str(sample.tags.get("workspace_load_reason", "")),
+                "structural_reason": str(sample.tags.get("structural_reason", "")),
+                "pending_reasons": str(sample.tags.get("pending_reasons", "")),
+                "changed_rows": str(sample.tags.get("changed_rows", "")),
+                "changed_indexes": str(sample.tags.get("changed_indexes", "")),
+                "model_rows": str(sample.tags.get("model_rows", "")),
             }
             for sample in samples
         ],
         "after_first_count": len(after_first),
+    }
+
+
+def _summarize_paint_delay_metrics(delay_samples: list) -> dict:
+    samples = list(delay_samples or ())
+    return {
+        "count": len(samples),
+        "durations": summarize_durations([sample.value for sample in samples]),
+        "samples": [
+            {
+                "delay_ms": round(float(sample.value), 3),
+                "reason": str(sample.tags.get("reason", "")),
+                "structural_reason": str(sample.tags.get("structural_reason", "")),
+                "pending_reasons": str(sample.tags.get("pending_reasons", "")),
+                "changed_rows": str(sample.tags.get("changed_rows", "")),
+                "changed_indexes": str(sample.tags.get("changed_indexes", "")),
+                "model_rows": str(sample.tags.get("model_rows", "")),
+            }
+            for sample in samples
+        ],
+    }
+
+
+def _summarize_membership_reconcile_metrics(samples: list) -> dict:
+    rows = list(samples or ())
+    return {
+        "count": len(rows),
+        "modes": dict(
+            sorted(
+                (
+                    mode,
+                    sum(
+                        str((getattr(sample, "tags", {}) or {}).get("mode", "")) == mode
+                        for sample in rows
+                    ),
+                )
+                for mode in {
+                    str((getattr(sample, "tags", {}) or {}).get("mode", "")) for sample in rows
+                }
+            )
+        ),
+        "samples": [
+            {
+                "mode": str(sample.tags.get("mode", "")),
+                "old_rows": str(sample.tags.get("old_rows", "")),
+                "new_rows": str(sample.tags.get("new_rows", "")),
+                "source": str(sample.tags.get("source", "")),
+            }
+            for sample in rows
+        ],
     }
 
 
@@ -614,6 +671,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--membership-delta-probe",
+        action="store_true",
+        help=(
+            "After Watchlist settles, remove and restore one existing member in the isolated profile "
+            "to record source/proxy signals and reset-to-paint timing."
+        ),
+    )
+    parser.add_argument(
+        "--disable-market-pulse",
+        action="store_true",
+        help="For isolated provenance comparison only, stop the titlebar MarketPulseStrip timer after the window is shown.",
+    )
+    parser.add_argument(
         "--question-dialog-ms",
         type=int,
         default=0,
@@ -803,14 +873,23 @@ class _FirstPaintProbe(QObject):
         self._activation_started = 0.0
         self._phase = "startup_idle"
         self._watchlist_viewport = None
+        self._watchlist_update_targets: dict[int, str] = {}
         self._paint_regions_by_phase: dict[str, list[dict]] = defaultdict(list)
+        self._viewport_update_requests_by_phase: dict[str, list[dict]] = defaultdict(list)
         self.events: dict[str, float] = {}
         app.installEventFilter(self)
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt API naming
         event_type = event.type()
-        if watched is self._watchlist_viewport and event_type == self._qevent_type.Paint:
-            self._record_paint_region(watched, event)
+        update_target = self._watchlist_update_targets.get(id(watched), "")
+        if watched is self._watchlist_viewport:
+            if event_type == self._qevent_type.Paint:
+                self._record_paint_region(watched, event)
+        if update_target and event_type in {
+            self._qevent_type.UpdateRequest,
+            self._qevent_type.UpdateLater,
+        }:
+            self._record_viewport_update_request(event_type, target=update_target)
         if watched is self._window:
             self._record_widget_event("window", event_type)
         elif watched.__class__.__name__ == "WatchlistTab":
@@ -824,6 +903,19 @@ class _FirstPaintProbe(QObject):
     def attach_watchlist_table(self, table) -> None:
         viewport = getattr(table, "viewport", None)
         self._watchlist_viewport = viewport() if callable(viewport) else None
+        self._watchlist_update_targets.clear()
+        if self._watchlist_viewport is not None:
+            self._watchlist_update_targets[id(self._watchlist_viewport)] = "viewport"
+        widget = table
+        depth = 0
+        while widget is not None:
+            label = "table" if depth == 0 else f"ancestor_{depth}:{type(widget).__name__}"
+            self._watchlist_update_targets[id(widget)] = label
+            if widget is self._window:
+                break
+            parent_widget = getattr(widget, "parentWidget", None)
+            widget = parent_widget() if callable(parent_widget) else None
+            depth += 1
 
     def set_phase(self, phase: str) -> None:
         self._phase = str(phase or "unknown")
@@ -841,6 +933,10 @@ class _FirstPaintProbe(QObject):
             for sample in phase_samples
         ]
         return self._summarize_paint_regions(samples)
+
+    def viewport_update_request_summary(self, phase: str) -> dict:
+        samples = list(self._viewport_update_requests_by_phase.get(str(phase or "unknown"), ()))
+        return {"count": len(samples), "samples": [dict(sample) for sample in samples]}
 
     @staticmethod
     def _summarize_paint_regions(samples: list[dict]) -> dict:
@@ -911,16 +1007,37 @@ class _FirstPaintProbe(QObject):
             )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
-        self._paint_regions_by_phase[self._phase].append(
+        recorded_at_ms = round((time.perf_counter() - self._origin) * 1000.0, 3)
+        last_request = next(
+            reversed(self._viewport_update_requests_by_phase.get(self._phase, ())),
+            None,
+        )
+        sample = {
+            "dirty_bounding_area_ratio": ratio,
+            "region_rect_count": rect_count,
+            "delivered_full_viewport": delivered_full,
+            "paint_event_spontaneous": bool(event.spontaneous()),
+            "background_prewarm_active_key_at_paint": str(
+                getattr(getattr(self._window, "_workspace", None), "_background_prewarm_active_key", "")
+                or ""
+            ),
+            "recorded_at_ms": recorded_at_ms,
+        }
+        if last_request is not None:
+            sample["last_update_request_type"] = str(last_request["event_type"])
+            sample["last_update_request_target"] = str(last_request.get("target", ""))
+            sample["last_update_request_at_ms"] = float(last_request["recorded_at_ms"])
+            sample["update_request_to_paint_ms"] = round(
+                max(0.0, recorded_at_ms - float(last_request["recorded_at_ms"])),
+                3,
+            )
+        self._paint_regions_by_phase[self._phase].append(sample)
+
+    def _record_viewport_update_request(self, event_type, *, target: str) -> None:
+        self._viewport_update_requests_by_phase[self._phase].append(
             {
-                "dirty_bounding_area_ratio": ratio,
-                "region_rect_count": rect_count,
-                "delivered_full_viewport": delivered_full,
-                "paint_event_spontaneous": bool(event.spontaneous()),
-                "background_prewarm_active_key_at_paint": str(
-                    getattr(getattr(self._window, "_workspace", None), "_background_prewarm_active_key", "")
-                    or ""
-                ),
+                "event_type": str(getattr(event_type, "name", event_type)),
+                "target": str(target),
                 "recorded_at_ms": round((time.perf_counter() - self._origin) * 1000.0, 3),
             }
         )
@@ -933,6 +1050,126 @@ class _FirstPaintProbe(QObject):
         else:
             return
         self.events.setdefault(key, (time.perf_counter() - self._origin) * 1000.0)
+
+
+def _summarize_model_signal_events(events: list[dict]) -> dict:
+    normalized = [dict(event) for event in events or ()]
+    counts: dict[str, int] = defaultdict(int)
+    for event in normalized:
+        counts[f"{event.get('model', 'unknown')}.{event.get('signal', 'unknown')}"] += 1
+    return {
+        "count": len(normalized),
+        "counts": dict(sorted(counts.items())),
+        "events": normalized,
+    }
+
+
+def _reset_to_first_paint_delays(events: list[dict], paint_region: dict) -> dict:
+    paint_samples = sorted(
+        list((paint_region or {}).get("samples", ()) or ()),
+        key=lambda sample: float(sample.get("recorded_at_ms", 0.0) or 0.0),
+    )
+    samples = []
+    for event in events or ():
+        if str(event.get("signal", "")) != "model_reset":
+            continue
+        reset_at_ms = float(event.get("recorded_at_ms", 0.0) or 0.0)
+        first_paint = next(
+            (
+                sample
+                for sample in paint_samples
+                if float(sample.get("recorded_at_ms", 0.0) or 0.0) >= reset_at_ms
+            ),
+            None,
+        )
+        samples.append(
+            {
+                "model": str(event.get("model", "unknown")),
+                "reset_at_ms": round(reset_at_ms, 3),
+                "first_paint_at_ms": (
+                    round(float(first_paint.get("recorded_at_ms", 0.0) or 0.0), 3)
+                    if first_paint is not None
+                    else None
+                ),
+                "delay_ms": (
+                    round(max(0.0, float(first_paint.get("recorded_at_ms", 0.0) or 0.0) - reset_at_ms), 3)
+                    if first_paint is not None
+                    else None
+                ),
+                "first_paint_full_viewport": (
+                    bool(first_paint.get("delivered_full_viewport", False)) if first_paint is not None else None
+                ),
+            }
+        )
+    return {"count": len(samples), "samples": samples}
+
+
+class _WatchlistModelSignalProbe:
+    _SIGNALS = (
+        ("modelAboutToBeReset", "model_about_to_reset"),
+        ("modelReset", "model_reset"),
+        ("rowsInserted", "rows_inserted"),
+        ("rowsRemoved", "rows_removed"),
+        ("layoutChanged", "layout_changed"),
+    )
+
+    def __init__(self, *, origin: float):
+        self._origin = origin
+        self._source_model = None
+        self._proxy_model = None
+        self._connections: list[tuple[object, object]] = []
+        self.events: list[dict] = []
+
+    def attach(self, source_model, proxy_model) -> bool:
+        if source_model is self._source_model and proxy_model is self._proxy_model:
+            return bool(self._connections)
+        self.close()
+        self._source_model = source_model
+        self._proxy_model = proxy_model
+        for model_name, model in (("source", source_model), ("proxy", proxy_model)):
+            if model is None:
+                continue
+            for signal_name, normalized_name in self._SIGNALS:
+                signal = getattr(model, signal_name, None)
+                if signal is None:
+                    continue
+                slot = self._make_slot(model_name, normalized_name)
+                try:
+                    signal.connect(slot)
+                except (RuntimeError, TypeError):
+                    continue
+                self._connections.append((signal, slot))
+        return bool(self._connections)
+
+    def close(self) -> None:
+        for signal, slot in self._connections:
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        self._connections.clear()
+        self._source_model = None
+        self._proxy_model = None
+
+    def offset(self) -> int:
+        return len(self.events)
+
+    def events_since(self, offset: int) -> list[dict]:
+        return [dict(event) for event in self.events[max(0, int(offset)) :]]
+
+    def _make_slot(self, model_name: str, signal_name: str):
+        def slot(*args):
+            event = {
+                "model": model_name,
+                "signal": signal_name,
+                "recorded_at_ms": round((time.perf_counter() - self._origin) * 1000.0, 3),
+            }
+            if signal_name in {"rows_inserted", "rows_removed"} and len(args) >= 3:
+                event["first_row"] = int(args[1])
+                event["last_row"] = int(args[2])
+            self.events.append(event)
+
+        return slot
 
 
 class _NativeProfileController:
@@ -979,6 +1216,12 @@ class _NativeProfileController:
         self._shell_nav_cycle_index = 0
         self._shell_nav_results: list[dict] = []
         self._shell_nav_phase: dict | None = None
+        self._model_signal_probe = _WatchlistModelSignalProbe(origin=origin)
+        self._membership_reconcile_metric_offset = self._metric_offsets(
+            ("watchlist_membership_reconcile",)
+        )
+        self._membership_delta_probe_started = False
+        self._membership_delta_phase: dict | None = None
         self._question_dialog_probed = False
         self._question_dialog_phase: dict | None = None
         self._residual_cycle_index = 0
@@ -1123,6 +1366,11 @@ class _NativeProfileController:
                 "targeted_flash_repaint": bool(getattr(table, "_targeted_flash_repaint", False)),
             }
         proxy = getattr(tab, "proxy_model", None)
+        self.report["watchlist"]["model_signal_monitor"] = {
+            "attached": self._model_signal_probe.attach(model, proxy),
+            "source_model": type(model).__name__ if model is not None else "",
+            "proxy_model": type(proxy).__name__ if proxy is not None else "",
+        }
         headers = list(getattr(model, "headers", None) or [])
         if proxy is not None and headers and max(0, int(self.args.residual_repaint_cycles)) > 0:
             sort_header = "RPS强度" if "RPS强度" in headers else "代码"
@@ -1377,6 +1625,7 @@ class _NativeProfileController:
             self._reset_stall_probe()
             phase["return_started_at"] = time.perf_counter()
             phase["metric_offsets"] = self._metric_offsets(SHELL_NAV_REPAINT_METRICS)
+            phase["model_signal_offset"] = self._model_signal_probe.offset()
             self._set_phase(f"shell_nav_{cycle}_watchlist_return")
             try:
                 phase["switch_group"](
@@ -1458,6 +1707,12 @@ class _NativeProfileController:
         expected_tab_count = len(list(getattr(workspace, "tab_specs", lambda: [])() or []))
         paint_region = self.paint_probe.paint_region_summary(phase_name)
         phase_metrics = self._metrics_since(phase["metric_offsets"])
+        signal_probe = getattr(self, "_model_signal_probe", None)
+        phase_signal_events = (
+            signal_probe.events_since(phase.get("model_signal_offset", 0))
+            if signal_probe is not None
+            else []
+        )
         paint_metrics = _summarize_shell_nav_paint_metrics(
             phase_metrics.get("watchlist_table_paint_ms", [])
         )
@@ -1486,7 +1741,23 @@ class _NativeProfileController:
                 ),
                 "paint_region": paint_region,
                 "paint_metrics": paint_metrics,
+                "paint_delays": _summarize_paint_delay_metrics(
+                    phase_metrics.get("watchlist_table_paint_delay_ms", [])
+                ),
+                "membership_reconcile": _summarize_membership_reconcile_metrics(
+                    phase_metrics.get("watchlist_membership_reconcile", [])
+                ),
                 "repaint_guard": repaint_guard,
+                "model_signals": _summarize_model_signal_events(phase_signal_events),
+                "reset_to_first_paint": _reset_to_first_paint_delays(
+                    phase_signal_events,
+                    paint_region,
+                ),
+                "viewport_update_requests": (
+                    self.paint_probe.viewport_update_request_summary(phase_name)
+                    if callable(getattr(self.paint_probe, "viewport_update_request_summary", None))
+                    else {"count": 0, "samples": []}
+                ),
                 "visual_artifacts": visual_artifacts,
                 "heartbeat_lateness": summarize_durations(
                     list(self._heartbeat_by_phase.get(phase_name, ()))
@@ -1507,10 +1778,172 @@ class _NativeProfileController:
         if self._shell_nav_cycle_index < max(0, int(self.args.shell_nav_cycles)):
             self._start_shell_nav_cycle()
             return
+        if bool(self.args.membership_delta_probe) and not self._membership_delta_probe_started:
+            self._start_membership_delta_probe()
+            return
         if max(0, int(self.args.question_dialog_ms)) > 0 and not self._question_dialog_probed:
             self._run_question_dialog_probe()
             return
         self._continue_after_watchlist_settle()
+
+    def _watchlist_model_targets(self):
+        workspace = getattr(self.window, "_workspace", None)
+        tab = workspace.get_loaded_tab("watchlist") if workspace is not None else None
+        model = getattr(tab, "model", None)
+        proxy = getattr(tab, "proxy_model", None)
+        return workspace, tab, model, proxy
+
+    def _start_membership_delta_probe(self) -> None:
+        if self._done or self._membership_delta_phase is not None:
+            return
+        workspace, _tab, model, proxy = self._watchlist_model_targets()
+        rows = [dict(row) for row in list(getattr(model, "row_data", None) or []) if isinstance(row, dict)]
+        if model is None or proxy is None or len(rows) < 2 or len(rows) != int(model.rowCount()):
+            self._fail("watchlist membership-delta probe unavailable")
+            return
+
+        self._membership_delta_probe_started = True
+        removed_row = len(rows) // 2
+        removed_code = str(rows[removed_row].get("代码", "") or "").strip()
+        if not removed_code:
+            self._fail("watchlist membership-delta probe missing code identity")
+            return
+        self._reset_stall_probe()
+        phase_name = "membership_delta_remove"
+        self._set_phase(phase_name)
+        metric_offsets = self._metric_offsets(SHELL_NAV_REPAINT_METRICS)
+        signal_offset = self._model_signal_probe.offset()
+        started_at = time.perf_counter()
+        model.update_data(
+            [dict(row) for index, row in enumerate(rows) if index != removed_row],
+            hydrate_latest_quotes=False,
+            allow_single_row_membership_delta=True,
+            membership_reconcile_source="native_profile_membership_delta",
+        )
+        self._membership_delta_phase = {
+            "workspace": workspace,
+            "model": model,
+            "proxy": proxy,
+            "initial_rows": rows,
+            "initial_row_count": len(rows),
+            "removed_row": removed_row,
+            "removed_code": removed_code,
+            "remove": {
+                "phase_name": phase_name,
+                "call_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+                "metric_offsets": metric_offsets,
+                "signal_offset": signal_offset,
+            },
+            "initial_signal_offset": signal_offset,
+        }
+        self.QTimer.singleShot(300, self._finish_membership_delta_remove)
+
+    def _membership_delta_phase_result(self, phase: dict, details: dict) -> dict:
+        phase_name = str(details["phase_name"])
+        paint_region = self.paint_probe.paint_region_summary(phase_name)
+        metrics = self._metrics_since(details["metric_offsets"])
+        signal_events = self._model_signal_probe.events_since(details["signal_offset"])
+        return {
+            "phase": phase_name,
+            "call_ms": details["call_ms"],
+            "paint_region": paint_region,
+            "paint_metrics": _summarize_shell_nav_paint_metrics(
+                metrics.get("watchlist_table_paint_ms", [])
+            ),
+            "paint_delays": _summarize_paint_delay_metrics(
+                metrics.get("watchlist_table_paint_delay_ms", [])
+            ),
+            "membership_reconcile": _summarize_membership_reconcile_metrics(
+                metrics.get("watchlist_membership_reconcile", [])
+            ),
+            "model_signals": _summarize_model_signal_events(signal_events),
+            "reset_to_first_paint": _reset_to_first_paint_delays(signal_events, paint_region),
+            "viewport_update_requests": self.paint_probe.viewport_update_request_summary(phase_name),
+            "ui_stall_snapshot": self._stall_snapshot(),
+        }
+
+    def _finish_membership_delta_remove(self) -> None:
+        phase = self._membership_delta_phase
+        if self._done or phase is None:
+            return
+        phase["remove_result"] = self._membership_delta_phase_result(phase, phase["remove"])
+        model = phase["model"]
+        self._reset_stall_probe()
+        phase_name = "membership_delta_restore"
+        self._set_phase(phase_name)
+        metric_offsets = self._metric_offsets(SHELL_NAV_REPAINT_METRICS)
+        signal_offset = self._model_signal_probe.offset()
+        started_at = time.perf_counter()
+        model.update_data(
+            [dict(row) for row in phase["initial_rows"]],
+            hydrate_latest_quotes=False,
+            allow_single_row_membership_delta=True,
+            membership_reconcile_source="native_profile_membership_delta",
+        )
+        phase["restore"] = {
+            "phase_name": phase_name,
+            "call_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+            "metric_offsets": metric_offsets,
+            "signal_offset": signal_offset,
+        }
+        self.QTimer.singleShot(300, self._finish_membership_delta_restore)
+
+    def _finish_membership_delta_restore(self) -> None:
+        phase = self._membership_delta_phase
+        if self._done or phase is None:
+            return
+        restore_result = self._membership_delta_phase_result(phase, phase["restore"])
+        signal_events = self._model_signal_probe.events_since(phase["initial_signal_offset"])
+        signal_summary = _summarize_model_signal_events(signal_events)
+        counts = signal_summary["counts"]
+        model = phase["model"]
+        proxy = phase["proxy"]
+        workspace = phase["workspace"]
+        tab_count = int(getattr(getattr(workspace, "tabs", None), "count", lambda: 0)())
+        expected_tab_count = len(list(getattr(workspace, "tab_specs", lambda: [])() or []))
+        expected_row_count = int(phase["initial_row_count"])
+        expected_counts = {
+            "source.rows_removed": 1,
+            "proxy.rows_removed": 1,
+            "source.rows_inserted": 1,
+            "proxy.rows_inserted": 1,
+            "source.model_reset": 0,
+            "proxy.model_reset": 0,
+        }
+        violations = [
+            f"{name}={counts.get(name, 0)} expected={expected}"
+            for name, expected in expected_counts.items()
+            if int(counts.get(name, 0)) != expected
+        ]
+        try:
+            source_row_count = int(model.rowCount())
+            proxy_row_count = int(proxy.rowCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            source_row_count = proxy_row_count = -1
+        if source_row_count != expected_row_count or proxy_row_count != expected_row_count:
+            violations.append(
+                f"row_count=source:{source_row_count},proxy:{proxy_row_count},expected:{expected_row_count}"
+            )
+        if tab_count != expected_tab_count:
+            violations.append(f"tab_count={tab_count} expected={expected_tab_count}")
+        self.report["watchlist"]["membership_delta_probe"] = {
+            "removed_row": int(phase["removed_row"]),
+            "removed_code": phase["removed_code"],
+            "initial_row_count": expected_row_count,
+            "source_row_count": source_row_count,
+            "proxy_row_count": proxy_row_count,
+            "tab_count": tab_count,
+            "expected_tab_count": expected_tab_count,
+            "remove": phase["remove_result"],
+            "restore": restore_result,
+            "signals": signal_summary,
+            "acceptance": {"status": "pass" if not violations else "fail", "violations": violations},
+        }
+        self._membership_delta_phase = None
+        if violations:
+            self._fail("watchlist membership-delta probe acceptance failed")
+            return
+        self._continue_after_background_prewarm()
 
     def _continue_after_watchlist_settle(self) -> None:
         if self._done:
@@ -2016,6 +2449,17 @@ class _NativeProfileController:
         self.report["background_tasks_at_finish"] = int(getattr(background_job_runner, "active_count", 0) or 0)
         stall_probe = get_ui_stall_probe()
         self.report["ui_stall_snapshot"] = stall_probe.stall_snapshot() if stall_probe is not None else {"installed": False}
+        self.report.setdefault("watchlist", {}).setdefault("model_signal_monitor", {}).update(
+            _summarize_model_signal_events(self._model_signal_probe.events)
+        )
+        self.report.setdefault("watchlist", {})["membership_reconcile_monitor"] = (
+            _summarize_membership_reconcile_metrics(
+                self._metrics_since(self._membership_reconcile_metric_offset).get(
+                    "watchlist_membership_reconcile", []
+                )
+            )
+        )
+        self._model_signal_probe.close()
         self._set_phase("profile_finalize")
         self.report["dispatcher"] = self.dispatcher_probe.finish()
         self.report["paint_events"] = self.paint_probe.report()
@@ -2130,6 +2574,8 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "shell_nav_cycles": int(args.shell_nav_cycles),
             "shell_nav_settle_ms": int(args.shell_nav_settle_ms),
             "shell_nav_only": bool(args.shell_nav_only),
+            "membership_delta_probe": bool(args.membership_delta_probe),
+            "disable_market_pulse": bool(args.disable_market_pulse),
             "question_dialog_ms": int(args.question_dialog_ms),
             "residual_repaint_cycles": int(args.residual_repaint_cycles),
             "legacy_quote_repaint": bool(args.legacy_quote_repaint),
@@ -2177,6 +2623,14 @@ def _build_profiled_main_window(app, qevent_type, args, report, paths, origin):
     window.show()
     window.raise_()
     window.activateWindow()
+    pulse_strip = getattr(window, "_market_pulse_strip", None)
+    pulse_timer = getattr(pulse_strip, "_timer", None)
+    if bool(args.disable_market_pulse) and pulse_timer is not None:
+        pulse_timer.stop()
+    report["runtime_controls"] = {
+        "market_pulse_disabled": bool(args.disable_market_pulse),
+        "market_pulse_timer_active": bool(pulse_timer is not None and pulse_timer.isActive()),
+    }
     report["timings"]["window_show_call_ms"] = round((time.perf_counter() - show_started) * 1000.0, 3)
     if not args.no_cprofile:
         startup_profiler.disable()

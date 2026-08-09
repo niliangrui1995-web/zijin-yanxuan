@@ -377,6 +377,169 @@ def test_watchlist_vcp_refresh_skips_layout_when_active_sort_value_is_unchanged(
         tab.deleteLater()
 
 
+def test_watchlist_single_member_delta_uses_rows_signals_without_proxy_reset(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    clear_metric_history()
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        initial_rows = [
+            {
+                "代码": f"{600000 + index:06d}",
+                "名称": f"样本{index}",
+                "现价": f"{10 + index:.2f}",
+                "涨幅%": "0.00",
+                "市值": f"{100 + index}亿",
+                "RPS强度": str(90 - index),
+            }
+            for index in range(45)
+        ]
+        tab.model.update_data(initial_rows, hydrate_latest_quotes=False)
+        updated_rows = [dict(row) for row in initial_rows]
+        updated_rows[3].update({"现价": "88.88", "涨幅%": "8.80", "市值": "888亿", "RPS强度": "99"})
+        inserted_row = {
+            "代码": "688888",
+            "名称": "新增样本",
+            "现价": "18.88",
+            "涨幅%": "1.88",
+            "市值": "188亿",
+            "RPS强度": "91",
+        }
+        updated_rows.insert(12, inserted_row)
+        source_reset_spy = QSignalSpy(tab.model.modelReset)
+        proxy_reset_spy = QSignalSpy(tab.proxy_model.modelReset)
+        source_insert_spy = QSignalSpy(tab.model.rowsInserted)
+        proxy_insert_spy = QSignalSpy(tab.proxy_model.rowsInserted)
+
+        watchlist_module._apply_watchlist_rows(
+            tab,
+            updated_rows,
+            refresh_quote_store=False,
+            describe_rows=False,
+            update_status=False,
+        )
+        app.processEvents()
+
+        assert len(source_reset_spy) == 0
+        assert len(proxy_reset_spy) == 0
+        assert len(source_insert_spy) == 1
+        assert len(proxy_insert_spy) == 1
+        assert source_insert_spy[0][1:] == [12, 12]
+        assert tab.model.rowCount() == 46
+        assert tab.proxy_model.rowCount() == 46
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in updated_rows]
+        assert tab.model.row_data[3]["现价"] == "88.88"
+        assert tab.model.row_data[3]["涨幅%"] == "8.80"
+        assert tab.model.row_data[3]["市值"] == "888亿"
+        assert tab.model.row_data[3]["RPS强度"] == "99"
+        assert metric_history("watchlist_membership_reconcile")[-1].tags == {
+            "mode": "insert_one",
+            "old_rows": "45",
+            "new_rows": "46",
+            "source": "watchlist_rows",
+        }
+
+        source_remove_spy = QSignalSpy(tab.model.rowsRemoved)
+        proxy_remove_spy = QSignalSpy(tab.proxy_model.rowsRemoved)
+        restored_rows = [dict(row) for row in updated_rows if row["代码"] != inserted_row["代码"]]
+        watchlist_module._apply_watchlist_rows(
+            tab,
+            restored_rows,
+            refresh_quote_store=False,
+            describe_rows=False,
+            update_status=False,
+        )
+        app.processEvents()
+
+        assert len(source_reset_spy) == 0
+        assert len(proxy_reset_spy) == 0
+        assert len(source_remove_spy) == 1
+        assert len(proxy_remove_spy) == 1
+        assert source_remove_spy[0][1:] == [12, 12]
+        assert tab.model.rowCount() == 45
+        assert tab.proxy_model.rowCount() == 45
+        assert metric_history("watchlist_membership_reconcile")[-1].tags == {
+            "mode": "remove_one",
+            "old_rows": "46",
+            "new_rows": "45",
+            "source": "watchlist_rows",
+        }
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_initial_payload_single_member_delta_avoids_model_reset(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    clear_metric_history()
+    monkeypatch.setattr(watchlist_module, "_capture_latest_quote_snapshot", lambda _codes=None: {})
+    monkeypatch.setattr(watchlist_module, "_can_refresh_watchlist_live", lambda _owner: False)
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", lambda *_args, **_kwargs: None)
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        initial_rows = [
+            {
+                "代码": f"{600000 + index:06d}",
+                "名称": f"样本{index}",
+                "现价": f"{10 + index:.2f}",
+                "涨幅%": "0.00",
+                "市值": f"{100 + index}亿",
+                "RPS强度": str(90 - index),
+            }
+            for index in range(45)
+        ]
+        watchlist_module._apply_watchlist_rows(
+            tab,
+            initial_rows,
+            refresh_quote_store=False,
+            describe_rows=False,
+            update_status=False,
+        )
+        payload_rows = [dict(row) for row in initial_rows]
+        payload_rows.insert(
+            12,
+            {
+                "代码": "688888",
+                "名称": "初始回填新增样本",
+                "现价": "18.88",
+                "涨幅%": "1.88",
+                "市值": "188亿",
+                "RPS强度": "91",
+            },
+        )
+        source_reset_spy = QSignalSpy(tab.model.modelReset)
+        proxy_reset_spy = QSignalSpy(tab.proxy_model.modelReset)
+        source_insert_spy = QSignalSpy(tab.model.rowsInserted)
+        proxy_insert_spy = QSignalSpy(tab.proxy_model.rowsInserted)
+
+        watchlist_module._apply_special_data_payload(
+            tab,
+            {"rows": payload_rows, "elapsed_ms": 1.0, "row_count": 46},
+            refresh_indicators=False,
+            indicator_delay_ms=None,
+        )
+        app.processEvents()
+
+        assert len(source_reset_spy) == 0
+        assert len(proxy_reset_spy) == 0
+        assert len(source_insert_spy) == 1
+        assert len(proxy_insert_spy) == 1
+        assert source_insert_spy[0][1:] == [12, 12]
+        assert tab.model.rowCount() == 46
+        assert tab.proxy_model.rowCount() == 46
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in payload_rows]
+        assert metric_history("watchlist_membership_reconcile")[-1].tags == {
+            "mode": "insert_one",
+            "old_rows": "45",
+            "new_rows": "46",
+            "source": "initial_data",
+        }
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_watchlist_startup_can_skip_indicator_refresh(monkeypatch):
     calc_calls = []
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)

@@ -475,6 +475,11 @@ class AIIndustryChainTab(BaseStockTab):
             return False
         return _schedule_chain_load(self, force_workbook=False, background_prime=True)
 
+    def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+        prepare = getattr(self.table, "prepare_workspace_preload_repaint_guard", None)
+        if callable(prepare):
+            prepare(load_reason=load_reason)
+
     def is_background_preload_complete(self) -> bool:
         """Return whether cache load and hidden period-return derivation have settled."""
         if getattr(self, "_runtime_cleanup_done", False):
@@ -541,7 +546,7 @@ class AIIndustryChainTab(BaseStockTab):
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
         self.table.set_coalesced_flash_repaint_enabled(True)
-        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="ai_industry_chain")
+        self.table.set_targeted_flash_repaint_enabled(True, metric_scope="ai_industry_chain")
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)

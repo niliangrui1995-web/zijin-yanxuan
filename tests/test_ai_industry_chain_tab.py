@@ -207,6 +207,26 @@ def test_ai_industry_chain_coalesces_dense_quote_repaints(monkeypatch, tmp_path)
         tab.deleteLater()
 
 
+def test_ai_industry_chain_delegates_workspace_preload_repaint_guard(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
+    tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
+    calls = []
+    monkeypatch.setattr(
+        tab.table,
+        "prepare_workspace_preload_repaint_guard",
+        lambda *, load_reason: calls.append(load_reason),
+    )
+
+    try:
+        tab.prepare_workspace_preload_repaint_guard(load_reason="background_prewarm")
+        assert calls == ["background_prewarm"]
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
 def test_ai_industry_chain_reset_view_restores_source_order(monkeypatch, tmp_path):
     workbook_path = tmp_path / "AI产业链.xlsx"
     _write_workbook(workbook_path)
@@ -246,7 +266,7 @@ def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypa
 
     try:
         assert tab.table._paint_metric_scope == "ai_industry_chain"
-        assert tab.table._targeted_flash_repaint is False
+        assert tab.table._targeted_flash_repaint is True
 
         tab._load_chain_data(async_period_returns=False)
         global_store.merge_quotes(
