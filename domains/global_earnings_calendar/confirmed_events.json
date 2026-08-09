@@ -1367,6 +1367,42 @@
       "original_timezone": "Asia/Tokyo",
       "call_time_source_url": "https://www.ibiden.co.jp/ir/calendar/",
       "call_time_source_type": "official_ir_calendar"
+    },
+    {
+      "company": "CoreWeave",
+      "ticker": "CRWV",
+      "sector": "云巨头/算力租赁/数据基础设施",
+      "report_date": "2026-08-11",
+      "fiscal_period": "Jun/2026",
+      "time_label": "5:00 PM ET",
+      "beijing_time": "2026-08-12 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://investors.coreweave.com/news/news-details/2026/CoreWeave-Announces-Date-of-Second-Quarter-2026-Financial-Results-and-Conference-Call/default.aspx",
+      "market": "US",
+      "original_call_time_text": "Tuesday, August 11, 2026 at 5:00 PM Eastern Time",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://investors.coreweave.com/news/news-details/2026/CoreWeave-Announces-Date-of-Second-Quarter-2026-Financial-Results-and-Conference-Call/default.aspx",
+      "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Lumentum",
+      "ticker": "LITE",
+      "sector": "光芯片与硅光",
+      "report_date": "2026-08-11",
+      "fiscal_period": "Jun/2026",
+      "time_label": "2:00 PM PT / 5:00 PM ET",
+      "beijing_time": "2026-08-12 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://investor.lumentum.com/financial-news-releases/news-details/2026/Lumentum-Announces-Reporting-Date-for-Fourth-Quarter-and-Fiscal-Year-2026-Results/default.aspx",
+      "market": "US",
+      "original_call_time_text": "Tuesday, August 11, 2026 at 2:00 p.m. PT/5:00 p.m. ET",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://investor.lumentum.com/financial-news-releases/news-details/2026/Lumentum-Announces-Reporting-Date-for-Fourth-Quarter-and-Fiscal-Year-2026-Results/default.aspx",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }
