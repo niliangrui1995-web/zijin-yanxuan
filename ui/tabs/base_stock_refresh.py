@@ -535,6 +535,22 @@ def _should_defer_cache_snapshot_apply(owner, *, async_local: bool, force_apply:
     return not (app is None or app.closingDown())
 
 
+def _should_defer_cache_snapshot_until_visible(owner, *, async_local: bool, force_apply: bool = False) -> bool:
+    """Keep hidden-tab cache projections off the GUI thread until activation."""
+    if not async_local or not _is_owner_runtime_active(owner):
+        return False
+    if bool(force_apply or getattr(owner, "_f5_cache_snapshot_apply", False)):
+        return False
+
+    is_visible = getattr(owner, "isVisible", None)
+    if not callable(is_visible):
+        return False
+    try:
+        return not bool(is_visible())
+    except (RuntimeError, TypeError):
+        return False
+
+
 _QUOTE_SNAPSHOT_APPLY_CHUNK_SIZE = 48
 _QUOTE_ROW_CODE_KEYS = ("\u4ee3\u7801", "浠ｇ爜", "code", "symbol")
 
@@ -1056,7 +1072,35 @@ def _refresh_table_from_latest_snapshot_impl(
         return
 
     quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
-    if quote_subset and not CacheSnapshotApplyQueue.enqueue(owner, quote_subset, async_local=async_local):
+    if not quote_subset:
+        return
+
+    force_apply = bool(getattr(owner, "_f5_cache_snapshot_apply", False))
+    if _should_defer_cache_snapshot_until_visible(
+        owner,
+        async_local=async_local,
+        force_apply=force_apply,
+    ):
+        owner._deferred_quote_refresh = True
+        record_metric(
+            "cache_snapshot_deferred_until_visible_count",
+            1.0,
+            unit="count",
+            tags={
+                "tab": owner.__class__.__name__,
+                "codes": str(len(quote_subset)),
+                "signal": "cache_snapshot",
+                "reason": "hidden",
+            },
+        )
+        return
+
+    if not CacheSnapshotApplyQueue.enqueue(
+        owner,
+        quote_subset,
+        async_local=async_local,
+        force_apply=force_apply,
+    ):
         _apply_cache_snapshot_payload(
             owner,
             quote_subset,

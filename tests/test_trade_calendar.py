@@ -294,9 +294,20 @@ def test_oligarch_earnings_panel_shows_degraded_ticker_cache_status():
             return {
                 "status": "degraded",
                 "providers": ["MOPS"],
-                "failed_tickers": ["3711.TW"],
+                "failed_tickers": ["2383.TW", "3711.TW"],
                 "stale_cache_reused": True,
                 "reused_event_count": 1,
+                "retryable": True,
+                "details": [
+                    {
+                        "provider": "MOPS",
+                        "stop_after_ticker": "2383.TW",
+                        "sample_error": "TLS connect error: invalid library",
+                    }
+                ],
+                "last_success_basis": [
+                    {"source": "MOPS", "ticker": "3711.TW", "report_date": "2026-06-30"}
+                ],
             }
 
     panel = OligarchEarningsCalendarPanel(
@@ -317,8 +328,11 @@ def test_oligarch_earnings_panel_shows_degraded_ticker_cache_status():
 
         assert "\u964d\u7ea7" in status_text
         assert "MOPS" in status_text
-        assert "3711.TW" in status_text
+        assert "\u6570\u636e\u6e90\u7f3a\u53e3: MOPS 2383.TW\u8d77" in status_text
         assert "\u65e7\u5feb\u7167 1 \u6761" in status_text
+        assert "\u53ef\u91cd\u8bd5" in status_text
+        assert "\u539f\u59cb\u9519\u8bef: MOPS: TLS connect error: invalid library" in status_text
+        assert "\u6700\u540e\u6210\u529f\u4f9d\u636e: MOPS \u672c\u5730\u65e7\u5feb\u7167 3711.TW\uff08\u62a5\u544a\u65e5 2026-06-30\uff0c\u975e\u672c\u8f6e\u6210\u529f\uff09" in status_text
     finally:
         panel.deleteLater()
 

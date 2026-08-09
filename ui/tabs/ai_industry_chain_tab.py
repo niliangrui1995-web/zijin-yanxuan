@@ -541,6 +541,7 @@ class AIIndustryChainTab(BaseStockTab):
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
         self.table.set_coalesced_flash_repaint_enabled(True)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="ai_industry_chain")
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)

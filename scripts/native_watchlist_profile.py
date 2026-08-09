@@ -140,6 +140,7 @@ def _summarize_shell_nav_guard_metrics(guard_samples: list) -> dict:
                 "workspace_load_reason": str(tags.get("workspace_load_reason", "") or ""),
                 "age_ms": str(tags.get("age_ms", "") or ""),
                 "remaining": str(tags.get("remaining", "") or ""),
+                "suppressed": str(tags.get("suppressed", "") or ""),
                 "dirty_bounding_area_ratio": str(
                     tags.get("dirty_bounding_area_ratio", "") or ""
                 ),

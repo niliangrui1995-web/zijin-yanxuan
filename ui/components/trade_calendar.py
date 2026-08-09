@@ -885,16 +885,65 @@ class OligarchEarningsCalendarPanel(QFrame):
             reused_count = int(status.get("reused_event_count", 0) or 0)
         except (TypeError, ValueError):
             reused_count = 0
-        detail_text = day_text or ticker_text
-        if reused_count:
-            return (
-                f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25\uff0c"
-                f"\u5df2\u4fdd\u7559\u65e7\u5feb\u7167 {reused_count} \u6761{detail_text}"
-            )
-        return (
-            f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25\uff0c"
-            f"\u5df2\u4fdd\u7559\u53ef\u7528\u65e7\u5feb\u7167{detail_text}"
+        raw_details = status.get("details")
+        details = (
+            [dict(item) for item in raw_details if hasattr(item, "items")]
+            if isinstance(raw_details, (list, tuple))
+            else []
         )
+        gap_parts = []
+        error_parts = []
+        for detail in details:
+            detail_provider = str(detail.get("provider", "") or "").strip() or provider_text
+            stop_after_ticker = str(detail.get("stop_after_ticker", "") or "").strip().upper()
+            if stop_after_ticker:
+                gap_parts.append(f"{detail_provider} {stop_after_ticker}\u8d77")
+            sample_error = str(detail.get("sample_error", "") or "").strip()
+            if sample_error:
+                error_parts.append(f"{detail_provider}: {sample_error}")
+        detail_text = day_text or ticker_text
+        parts = [f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25"]
+        if gap_parts:
+            parts.append("\u6570\u636e\u6e90\u7f3a\u53e3: " + "\uff1b".join(gap_parts))
+        elif detail_text:
+            parts.append(detail_text.lstrip("\uff5c"))
+        if reused_count:
+            parts.append(f"\u5df2\u4fdd\u7559\u65e7\u5feb\u7167 {reused_count} \u6761")
+        else:
+            parts.append("\u5df2\u4fdd\u7559\u53ef\u7528\u65e7\u5feb\u7167")
+        retryable = status.get("retryable")
+        if retryable is True or str(retryable or "").strip().lower() in {"1", "true", "yes"}:
+            parts.append("\u53ef\u91cd\u8bd5")
+        if error_parts:
+            parts.append("\u539f\u59cb\u9519\u8bef: " + "\uff1b".join(error_parts))
+        raw_basis = status.get("last_success_basis")
+        basis_parts = []
+        if isinstance(raw_basis, (list, tuple)):
+            for item in raw_basis:
+                if not hasattr(item, "items"):
+                    continue
+                basis = dict(item)
+                source = str(basis.get("source", "") or "").strip() or provider_text
+                ticker = str(basis.get("ticker", "") or "").strip().upper()
+                report_date = str(basis.get("report_date", "") or "").strip()[:10]
+                if not ticker:
+                    continue
+                suffix = (
+                    f"\uff08\u62a5\u544a\u65e5 {report_date}\uff0c\u975e\u672c\u8f6e\u6210\u529f\uff09"
+                    if report_date
+                    else "\uff08\u975e\u672c\u8f6e\u6210\u529f\uff09"
+                )
+                basis_parts.append(f"{source} \u672c\u5730\u65e7\u5feb\u7167 {ticker}{suffix}")
+        if basis_parts:
+            parts.append("\u6700\u540e\u6210\u529f\u4f9d\u636e: " + "\uff1b".join(basis_parts))
+        elif reused_count:
+            parts.append(
+                f"\u6700\u540e\u6210\u529f\u4f9d\u636e: {provider_text}\u672c\u5730\u65e7\u5feb\u7167 {reused_count} \u6761"
+                "\uff08\u975e\u672c\u8f6e\u6210\u529f\uff0c\u660e\u7ec6\u672a\u8bb0\u5f55\uff09"
+            )
+        else:
+            parts.append("\u6700\u540e\u6210\u529f\u4f9d\u636e: N/A\uff08\u672a\u4f7f\u7528\u66ff\u4ee3\u6765\u6e90\uff09")
+        return "\uff5c".join(parts)
 
     @staticmethod
     def _format_group_title(day: str) -> str:

@@ -235,10 +235,9 @@ def test_ai_industry_chain_reset_view_restores_source_order(monkeypatch, tmp_pat
         tab.deleteLater()
 
 
-def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypatch, tmp_path):
+def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypatch, tmp_path, qt_application):
     workbook_path = tmp_path / "AI产业链.xlsx"
     _write_workbook(workbook_path)
-    monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
     global_store.reset_quotes()
 
     provider = DummyProvider()
@@ -246,6 +245,9 @@ def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypa
     monkeypatch.setattr(tab, "refresh_table_quotes_and_market_caps", lambda **kwargs: None)
 
     try:
+        assert tab.table._paint_metric_scope == "ai_industry_chain"
+        assert tab.table._targeted_flash_repaint is False
+
         tab._load_chain_data(async_period_returns=False)
         global_store.merge_quotes(
             {
@@ -253,7 +255,9 @@ def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypa
             }
         )
 
-        tab.refresh_table_from_latest_snapshot()
+        tab.show()
+        qt_application.processEvents()
+        qt_application.processEvents()
 
         row = tab.model.row_data[0]
         assert row["现价"] == "13.20"

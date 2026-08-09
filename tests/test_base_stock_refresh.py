@@ -300,17 +300,22 @@ def test_refresh_table_quotes_and_market_caps_can_prime_local_snapshot_async(mon
     assert ("market_caps", None) in calls
 
 
-def test_refresh_table_from_latest_snapshot_skips_async_local_prime_when_hidden(monkeypatch):
+def test_refresh_table_from_latest_snapshot_defers_hidden_async_snapshot_until_visible(monkeypatch):
     from ui.tabs import base_stock_refresh as refresh_module
 
+    _reset_cache_snapshot_apply_queue(refresh_module)
+    scheduled = []
     calls = []
+    metrics = []
+    visible = {"value": False}
+    snapshot = {"000001": {"close": 10.0}}
 
     class DummyModel:
         row_data = [{"代码": "000001"}]
 
     class DummyOwner:
         def isVisible(self):
-            return False
+            return visible["value"]
 
         def _resolve_active_quote_model(self):
             return DummyModel()
@@ -318,6 +323,17 @@ def test_refresh_table_from_latest_snapshot_skips_async_local_prime_when_hidden(
         def _apply_quote_snapshot(self, payload):
             calls.append(("snapshot", dict(payload or {})))
 
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda ms, callback: scheduled.append((ms, callback))),
+    )
+    monkeypatch.setattr(refresh_module, "record_metric", lambda name, value, **kwargs: metrics.append((name, value, kwargs)))
     monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
     monkeypatch.setattr(
         refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None))
@@ -329,14 +345,66 @@ def test_refresh_table_from_latest_snapshot_skips_async_local_prime_when_hidden(
     )
     monkeypatch.setattr(
         "core.global_store.global_store.get_latest_quotes",
-        lambda: {"000001": {"close": 10.0}},
+        lambda: snapshot,
     )
 
-    refresh_module.refresh_table_from_latest_snapshot(DummyOwner(), async_local=True)
+    try:
+        owner = DummyOwner()
+        refresh_module.refresh_table_from_latest_snapshot(owner, async_local=True)
 
-    assert ("async", None) not in calls
-    assert ("sync", None) not in calls
-    assert ("snapshot", {"000001": {"close": 10.0}}) in calls
+        assert ("async", None) not in calls
+        assert ("sync", None) not in calls
+        assert calls == []
+        assert scheduled == []
+        assert owner._deferred_quote_refresh is True
+        assert not refresh_module.CacheSnapshotApplyQueue.is_pending(owner)
+
+        snapshot["000001"] = {"close": 11.0}
+        refresh_module.refresh_table_from_latest_snapshot(owner, async_local=True)
+
+        assert calls == []
+        assert scheduled == []
+        assert owner._deferred_quote_refresh is True
+        assert not refresh_module.CacheSnapshotApplyQueue.is_pending(owner)
+        assert metrics == [
+            (
+                "cache_snapshot_deferred_until_visible_count",
+                1.0,
+                {
+                    "unit": "count",
+                    "tags": {
+                        "tab": "DummyOwner",
+                        "codes": "1",
+                        "signal": "cache_snapshot",
+                        "reason": "hidden",
+                    },
+                },
+            ),
+            (
+                "cache_snapshot_deferred_until_visible_count",
+                1.0,
+                {
+                    "unit": "count",
+                    "tags": {
+                        "tab": "DummyOwner",
+                        "codes": "1",
+                        "signal": "cache_snapshot",
+                        "reason": "hidden",
+                    },
+                },
+            ),
+        ]
+
+        visible["value"] = True
+        refresh_module.replay_deferred_quotes(owner)
+
+        assert calls == []
+        assert owner._deferred_quote_refresh is False
+        assert len(scheduled) == 1
+        scheduled.pop(0)[1]()
+        assert calls == [("snapshot", {"000001": {"close": 11.0}})]
+    finally:
+        _reset_cache_snapshot_apply_queue(refresh_module)
 
 
 def test_refresh_table_from_latest_snapshot_defers_visible_async_snapshots_by_tab(monkeypatch):

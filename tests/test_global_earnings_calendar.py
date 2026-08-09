@@ -1354,13 +1354,13 @@ def test_refresh_events_marks_degraded_mops_partial_stop_and_reuses_failed_ticke
             self.last_degradation = {
                 "provider": "MOPS",
                 "reason": "ticker_fetch_stopped",
-                "failed_tickers": ["3711.TW"],
-                "failed_count": 1,
-                "requested_tickers": ["2330.TW", "3711.TW"],
-                "requested_count": 2,
+                "failed_tickers": ["2383.TW", "3711.TW"],
+                "failed_count": 2,
+                "requested_tickers": ["2330.TW", "2383.TW", "3711.TW"],
+                "requested_count": 3,
                 "returned_events": 1,
                 "all_tickers_failed": False,
-                "stop_after_ticker": "3711.TW",
+                "stop_after_ticker": "2383.TW",
                 "sample_error": "TLS connect error: invalid library",
             }
             company = universe["2330.TW"]
@@ -1384,6 +1384,7 @@ def test_refresh_events_marks_degraded_mops_partial_stop_and_reuses_failed_ticke
         data_store=store,
         universe={
             "2330.TW": OligarchCompany("TSMC", "2330.TW", "foundry", "super_giant", "TW"),
+            "2383.TW": OligarchCompany("EMC", "2383.TW", "PCB", "normal", "TW"),
             "3711.TW": OligarchCompany("ASE", "3711.TW", "advanced packaging", "normal", "TW"),
         },
         confirmed_provider=ConfirmedEarningsEventsProvider("missing.json"),
@@ -1404,9 +1405,15 @@ def test_refresh_events_marks_degraded_mops_partial_stop_and_reuses_failed_ticke
     assert payload["source"] == "provider"
     assert payload["cache_state"]["status"] == "degraded"
     assert payload["cache_state"]["providers"] == ["MOPS"]
-    assert payload["cache_state"]["failed_tickers"] == ["3711.TW"]
+    assert payload["cache_state"]["failed_tickers"] == ["2383.TW", "3711.TW"]
     assert payload["cache_state"]["reused_event_count"] == 1
     assert payload["cache_state"]["stale_cache_reused"] is True
+    assert payload["cache_state"]["retryable"] is True
+    assert payload["cache_state"]["details"][0]["stop_after_ticker"] == "2383.TW"
+    assert payload["cache_state"]["details"][0]["sample_error"] == "TLS connect error: invalid library"
+    assert payload["cache_state"]["last_success_basis"] == [
+        {"source": "MOPS", "ticker": "3711.TW", "report_date": "2026-06-30"}
+    ]
 
 
 def test_refresh_events_merges_cached_tickers_that_were_not_refreshed():

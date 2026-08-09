@@ -160,6 +160,9 @@ class VCPTableView(QTableView):
 
     SHELL_NAV_REPAINT_GUARD_ARM_MS = 750
     SHELL_NAV_REPAINT_GUARD_ACTIVE_MS = 750
+    # Watchlist treats this as an observability threshold because Qt can deliver
+    # more than two redundant full paints inside one bounded native burst.
+    # LHB retains its existing post-budget fail-open behavior.
     SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS = 2
 
     def __init__(self, parent=None, default_row_height: int = None):
@@ -728,6 +731,7 @@ class VCPTableView(QTableView):
                 "remaining": str(
                     max(0, self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS - int(guard.get("suppressed", 0) or 0))
                 ),
+                "suppressed": str(int(guard.get("suppressed", 0) or 0)),
                 "dirty_bounding_area_ratio": f"{ratio:.4f}",
                 "dirty_region_rects": str(rects),
             }
@@ -836,10 +840,12 @@ class VCPTableView(QTableView):
                 self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="structural_change")
                 self._clear_shell_nav_repaint_guard()
                 return False
-            if int(guard.get("suppressed", 0) or 0) >= self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS:
+            if (
+                self._paint_metric_scope != "watchlist"
+                and int(guard.get("suppressed", 0) or 0) >= self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS
+            ):
                 self._clear_shell_nav_repaint_guard()
                 return False
-
             dirty_region = guard.get("visible_dirty_region")
             dirty_region = dirty_region if isinstance(dirty_region, QRegion) else QRegion()
             content_changed = int(guard.get("content_epoch", 0) or 0) != int(
@@ -867,8 +873,15 @@ class VCPTableView(QTableView):
                 self._record_shell_nav_repaint_guard(guard, decision, region=dirty_region)
                 return True
 
-            guard["suppressed"] = int(guard.get("suppressed", 0) or 0) + 1
-            self._record_shell_nav_repaint_guard(guard, "suppress_redundant_full")
+            suppressed = int(guard.get("suppressed", 0) or 0) + 1
+            guard["suppressed"] = suppressed
+            decision = (
+                "suppress_redundant_full_after_budget"
+                if self._paint_metric_scope == "watchlist"
+                and suppressed > self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS
+                else "suppress_redundant_full"
+            )
+            self._record_shell_nav_repaint_guard(guard, decision)
             return True
         except Exception as exc:  # noqa: BLE001 - Paint handling must fail open on an unexpected Qt wrapper error.
             self._clear_shell_nav_repaint_guard()

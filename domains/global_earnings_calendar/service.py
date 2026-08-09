@@ -495,10 +495,29 @@ class GlobalEarningsCalendarService:
         return requested_count > 0 and failed_count >= requested_count and returned_events == 0
 
     @staticmethod
+    def _last_success_basis(events: list[EarningsCalendarEvent]) -> list[dict[str, str]]:
+        basis: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for event in sorted_events(events):
+            source = str(event.source or "").strip()
+            ticker = str(event.ticker or "").strip().upper()
+            report_date = event_calendar_date(event)[:10]
+            identity = (source, ticker, report_date)
+            if not source or not ticker or identity in seen:
+                continue
+            seen.add(identity)
+            item = {"source": source, "ticker": ticker}
+            if report_date:
+                item["report_date"] = report_date
+            basis.append(item)
+        return basis
+
+    @staticmethod
     def _degraded_cache_state(
         degradations: list[dict[str, object]],
         *,
         reused_event_count: int,
+        last_success_basis: list[dict[str, str]],
         provider_attempted_count: int,
         provider_total_failure_count: int,
     ) -> dict[str, object]:
@@ -531,6 +550,7 @@ class GlobalEarningsCalendarService:
             "failed_tickers": failed_tickers,
             "stale_cache_reused": reused_event_count > 0,
             "reused_event_count": max(0, int(reused_event_count or 0)),
+            "last_success_basis": [dict(item) for item in last_success_basis],
             "retryable": True,
             "all_providers_failed": all_providers_failed,
             "provider_attempted_count": max(0, int(provider_attempted_count or 0)),
@@ -552,6 +572,7 @@ class GlobalEarningsCalendarService:
             "failed_tickers": [],
             "stale_cache_reused": bool(cached_events),
             "reused_event_count": len(cached_events),
+            "last_success_basis": self._last_success_basis(cached_events),
             "retryable": True,
             "error": error_text,
             "details": [
@@ -750,6 +771,7 @@ class GlobalEarningsCalendarService:
                 (str(event.ticker or "").strip().upper(), str(event.source or "").strip()) for event in network_events
             }
             cached_fallback_events = []
+            reused_for_degradation = []
             stale_cache_reused = 0
             for event in cached_events:
                 source = str(event.source or "").strip()
@@ -757,11 +779,13 @@ class GlobalEarningsCalendarService:
                 failed_tickers = failed_tickers_by_source.get(source, set())
                 if failed_tickers and ticker in failed_tickers:
                     cached_fallback_events.append(event)
+                    reused_for_degradation.append(event)
                     stale_cache_reused += 1
                     continue
                 failed_days = failed_days_by_source.get(source, set())
                 if failed_days and event_calendar_date(event)[:10] in failed_days:
                     cached_fallback_events.append(event)
+                    reused_for_degradation.append(event)
                     stale_cache_reused += 1
                     continue
                 key = (ticker, source)
@@ -772,6 +796,7 @@ class GlobalEarningsCalendarService:
                 self._degraded_cache_state(
                     provider_degradations,
                     reused_event_count=stale_cache_reused,
+                    last_success_basis=self._last_success_basis(reused_for_degradation),
                     provider_attempted_count=provider_attempted_count,
                     provider_total_failure_count=provider_total_failure_count,
                 )
@@ -786,6 +811,7 @@ class GlobalEarningsCalendarService:
             cache_state = self._degraded_cache_state(
                 provider_degradations,
                 reused_event_count=len(cached_events),
+                last_success_basis=self._last_success_basis(cached_events),
                 provider_attempted_count=provider_attempted_count,
                 provider_total_failure_count=provider_total_failure_count,
             )

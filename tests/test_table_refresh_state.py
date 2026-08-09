@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from PyQt6.QtCore import QEvent, QPoint, QRect, Qt
+from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PyQt6.QtGui import QHelpEvent, QPaintEvent, QRegion, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QWidget
 
@@ -495,7 +495,7 @@ def test_vcp_table_view_queued_legacy_flash_tick_skips_hidden_viewport(qt_applic
         table.deleteLater()
 
 
-def test_vcp_table_view_shell_nav_guard_allows_first_and_bounds_redundant_full_paints(
+def test_vcp_table_view_shell_nav_guard_keeps_suppressing_redundant_full_paints_within_active_window(
     qt_application,
     monkeypatch,
 ):
@@ -511,11 +511,52 @@ def test_vcp_table_view_shell_nav_guard_allows_first_and_bounds_redundant_full_p
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
-        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
-        assert table._shell_nav_repaint_guard is None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert table._shell_nav_repaint_guard is not None
 
         decisions = [item[2]["tags"]["decision"] for item in recorded]
-        assert decisions == ["first_full_allowed", "suppress_redundant_full", "suppress_redundant_full"]
+        assert decisions == [
+            "first_full_allowed",
+            "suppress_redundant_full",
+            "suppress_redundant_full",
+            "suppress_redundant_full_after_budget",
+        ]
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_shell_nav_guard_blocks_post_budget_full_paint_event(qt_application, monkeypatch):
+    class RecordingTable(VCPTableView):
+        def __init__(self):
+            super().__init__()
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    table = RecordingTable()
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application)
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        for _ in range(4):
+            QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+
+        assert table.actual_paint_calls == 1
+        decisions = [item[2]["tags"]["decision"] for item in recorded]
+        assert decisions == [
+            "first_full_allowed",
+            "suppress_redundant_full",
+            "suppress_redundant_full",
+            "suppress_redundant_full_after_budget",
+        ]
     finally:
         table.deleteLater()
 
@@ -527,6 +568,20 @@ def test_vcp_table_view_shell_nav_guard_accepts_lhb_scope(qt_application):
 
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+    finally:
+        table.deleteLater()
+
+
+def test_lhb_shell_nav_guard_retains_post_budget_fail_open(qt_application):
+    table = VCPTableView()
+    try:
+        _arm_visible_shell_nav_repaint_guard(table, qt_application, scope="lhb")
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
     finally:
         table.deleteLater()
 
