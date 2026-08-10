@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ui.workspaces.tab_capabilities import QuoteUniverseCapability
-from ui.workspaces.tab_registry import TabQuotePolicy
+from ui.workspaces.tab_capabilities import F5OffMarketQuoteUniverseCapability, QuoteUniverseCapability
+from ui.workspaces.tab_registry import TabPostF5Policy, TabQuotePolicy
 
 
 class QuoteUniverseService:
@@ -52,6 +52,21 @@ class QuoteUniverseService:
             return tuple(key for key in keys if key == visible_key)
         return keys
 
+    def _f5_off_market_tab_keys(self) -> tuple[str, ...]:
+        keys = []
+        for spec in self._tab_specs():
+            key = str(spec.get("key", "")).strip()
+            if not key:
+                continue
+            quote_policy = str(spec.get("quote_policy") or "").strip()
+            post_f5_policy = str(spec.get("post_f5_policy") or "").strip()
+            if (
+                quote_policy == TabQuotePolicy.A_SHARE_REALTIME.value
+                or post_f5_policy == TabPostF5Policy.DATA_REFRESH.value
+            ):
+                keys.append(key)
+        return tuple(keys)
+
     def collect_realtime_quote_codes(self) -> set[str]:
         workspace = self._workspace
         codes: set[str] = set()
@@ -63,4 +78,21 @@ class QuoteUniverseService:
             if isinstance(tab, QuoteUniverseCapability):
                 codes.update(tab.get_realtime_quote_codes())
 
+        return codes
+
+    def collect_f5_off_market_quote_codes(self) -> set[str]:
+        workspace = self._workspace
+        get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
+        if not callable(get_loaded_tab):
+            return set()
+
+        codes: set[str] = set()
+        for key in self._f5_off_market_tab_keys():
+            tab = get_loaded_tab(key)
+            if not isinstance(tab, F5OffMarketQuoteUniverseCapability):
+                continue
+            for code in tab.get_f5_off_market_quote_codes() or set():
+                normalized = str(code or "").strip()
+                if len(normalized) == 6 and normalized.isdigit():
+                    codes.add(normalized)
         return codes

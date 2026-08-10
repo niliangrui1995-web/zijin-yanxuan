@@ -235,3 +235,51 @@ def test_main_window_f5_done_waits_for_scheduled_tab_refresh_before_quotes(monke
     assert len(scheduled) == 1
     _run_post_f5_quote_timer(scheduled)
     assert calls == ["update_last_f5_time", "schedule_tabs", "refresh_after_cache_reload"]
+
+
+def test_main_window_f5_done_replays_all_loaded_quotes_after_information_sources_finish(monkeypatch):
+    calls = []
+    captured = {}
+
+    def _schedule_information_sources(*, interval_ms, on_finished):
+        calls.append(("schedule_information_sources", interval_ms))
+        captured["on_finished"] = on_finished
+        return True
+
+    def _refresh_information_quotes(codes, *, on_completed):
+        calls.append(("refresh_information_quotes", set(codes)))
+        on_completed()
+        return True
+
+    dummy_window = SimpleNamespace(
+        _update_last_f5_time=lambda: calls.append("update_last_f5_time"),
+        central_quotes_svc=SimpleNamespace(
+            refresh_after_cache_reload=lambda: calls.append("refresh_after_cache_reload"),
+            refresh_after_f5_information_sources=_refresh_information_quotes,
+        ),
+        _workspace=SimpleNamespace(
+            refresh_information_sources_after_f5_scheduled=_schedule_information_sources,
+            get_f5_off_market_quote_codes=lambda: {"300001"},
+            replay_all_loaded_quote_snapshots_after_f5_scheduled=(
+                lambda *, interval_ms: calls.append(("replay_quotes", interval_ms)) or True
+            ),
+        ),
+    )
+    scheduled = _capture_runtime_timers(monkeypatch)
+
+    MainWindowQT._on_f5_done(dummy_window, 0, 0)
+
+    assert calls == ["update_last_f5_time", ("schedule_information_sources", 2500)]
+    captured["on_finished"]()
+
+    _run_post_f5_quote_timer(scheduled)
+    _run_post_f5_quote_timer(scheduled)
+    _run_post_f5_quote_timer(scheduled)
+
+    assert calls == [
+        "update_last_f5_time",
+        ("schedule_information_sources", 2500),
+        "refresh_after_cache_reload",
+        ("refresh_information_quotes", {"300001"}),
+        ("replay_quotes", 16),
+    ]

@@ -66,8 +66,13 @@ def _shutdown_stock_context_facade(facade, *, timeout_ms: int = 750) -> bool:
     if facade._shutdown_started:
         return bool(facade._shutdown_result)
     facade._shutdown_started = True
-    for attribute in ("_f5_refresh_scheduler", "_f5_information_source_scheduler"):
+    for attribute in (
+        "_f5_refresh_scheduler",
+        "_f5_information_source_scheduler",
+        "_f5_quote_replay_scheduler",
+    ):
         _cancel_workspace_scheduler(facade._workspace, attribute)
+    setattr(facade._workspace, "_f5_information_source_finished_callbacks", [])
     facade._shutdown_result = bool(facade._stock_context_service.shutdown(timeout_ms=timeout_ms))
     return facade._shutdown_result
 
@@ -195,6 +200,17 @@ class WorkspaceFacade:
             skip_cache_reload_tabs=skip_cache_reload_tabs,
         )
 
+    def replay_all_loaded_quote_snapshots_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 0,
+    ) -> bool:
+        return self._workspace_table_service.replay_all_loaded_quote_snapshots_after_f5_scheduled(
+            on_finished=on_finished,
+            interval_ms=interval_ms,
+        )
+
     def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
         return self._workspace_table_service.refresh_tabs_after_ai_industry_chain_update()
 
@@ -272,6 +288,12 @@ class WorkspaceFacade:
 
         existing = getattr(self._workspace, "_f5_information_source_scheduler", None)
         if existing is not None and getattr(existing, "is_running", lambda: False)():
+            if callable(on_finished):
+                callbacks = getattr(self._workspace, "_f5_information_source_finished_callbacks", None)
+                if not isinstance(callbacks, list):
+                    callbacks = []
+                    setattr(self._workspace, "_f5_information_source_finished_callbacks", callbacks)
+                callbacks.append(on_finished)
             return True
         if self._is_post_f5_information_refresh_cooling_down():
             if callable(on_finished):
@@ -298,12 +320,23 @@ class WorkspaceFacade:
             lambda label, message: log.warning(f"[F5] {label} scheduled information source refresh failed: {message}")
         )
 
+        callbacks = [on_finished] if callable(on_finished) else []
+        setattr(self._workspace, "_f5_information_source_finished_callbacks", callbacks)
+
         def _cleanup():
             if getattr(self._workspace, "_f5_information_source_scheduler", None) is scheduler:
                 setattr(self._workspace, "_f5_information_source_scheduler", None)
+            finished_callbacks = list(
+                getattr(self._workspace, "_f5_information_source_finished_callbacks", []) or []
+            )
+            setattr(self._workspace, "_f5_information_source_finished_callbacks", [])
             try:
-                if callable(on_finished):
-                    on_finished()
+                for callback in finished_callbacks:
+                    if callable(callback):
+                        try:
+                            callback()
+                        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                            log.warning(f"[F5] information source completion callback failed: {exc}")
             finally:
                 scheduler.deleteLater()
 
@@ -344,6 +377,9 @@ class WorkspaceFacade:
 
     def get_realtime_quote_codes(self) -> set[str]:
         return self._quote_universe_service.collect_realtime_quote_codes()
+
+    def get_f5_off_market_quote_codes(self) -> set[str]:
+        return self._quote_universe_service.collect_f5_off_market_quote_codes()
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         return self._call_bool(self._get_loaded_tab("watchlist"), "refresh_watchlist_names", code2name)

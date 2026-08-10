@@ -227,6 +227,57 @@ def _post_f5_quote_refresh_callback(main_window):
     return _queue
 
 
+def _post_f5_information_quote_sync_callback(main_window, workspace):
+    state = {"sync_queued": False, "replay_queued": False}
+
+    def _queue_replay() -> None:
+        if state["replay_queued"]:
+            return
+        replay = getattr(workspace, "replay_all_loaded_quote_snapshots_after_f5_scheduled", None)
+        if not callable(replay):
+            return
+        state["replay_queued"] = True
+
+        def _run_replay() -> None:
+            try:
+                replay(interval_ms=F5_REFRESH_FRAME_INTERVAL_MS)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                log.error(f"[F5] 盘后全量报价表格回放异常: {exc}")
+
+        QTimer.singleShot(F5_REFRESH_FRAME_INTERVAL_MS, _run_replay)
+
+    def _queue() -> None:
+        if state["sync_queued"]:
+            return
+        collect_codes = getattr(workspace, "get_f5_off_market_quote_codes", None)
+        refresh = getattr(
+            getattr(main_window, "central_quotes_svc", None),
+            "refresh_after_f5_information_sources",
+            None,
+        )
+        if not callable(collect_codes) or not callable(refresh):
+            return
+        state["sync_queued"] = True
+
+        try:
+            codes = collect_codes() or set()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.error(f"[F5] 收集盘后信息页报价代码异常: {exc}")
+            return
+        if not codes:
+            return
+
+        def _refresh() -> None:
+            try:
+                refresh(codes, on_completed=_queue_replay)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                log.error(f"[F5] 盘后全量报价快照异常: {exc}")
+
+        QTimer.singleShot(F5_REFRESH_FRAME_INTERVAL_MS, _refresh)
+
+    return _queue
+
+
 def _try_scheduled_f5_snapshot_refresh(workspace, on_finished) -> bool:
     scheduled_refresh = getattr(workspace, "refresh_all_tabs_after_f5_scheduled", None)
     if not callable(scheduled_refresh):
@@ -271,6 +322,7 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     main_window._update_last_f5_time()
     workspace = getattr(main_window, "_workspace", None)
     _refresh_workspace_snapshots_after_f5(workspace, _post_f5_quote_refresh_callback(main_window))
+    post_information_quote_sync = _post_f5_information_quote_sync_callback(main_window, workspace)
 
     try:
         event_bus.sig_cache_reload_completed.emit()
@@ -285,7 +337,17 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     )
     if callable(refresh_information_sources_after_f5_scheduled):
         try:
-            scheduled_info_refresh_started = bool(refresh_information_sources_after_f5_scheduled(interval_ms=2500))
+            try:
+                scheduled_info_refresh_started = bool(
+                    refresh_information_sources_after_f5_scheduled(
+                        interval_ms=2500,
+                        on_finished=post_information_quote_sync,
+                    )
+                )
+            except TypeError:
+                scheduled_info_refresh_started = bool(refresh_information_sources_after_f5_scheduled(interval_ms=2500))
+                if scheduled_info_refresh_started:
+                    post_information_quote_sync()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             scheduled_info_refresh_started = False
             log.error(f"[F5] scheduled information source refresh failed: {exc}")
@@ -296,6 +358,7 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
             refresh_information_sources_after_f5()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.error(f"[F5] 情报源自动刷新异常: {exc}")
+        post_information_quote_sync()
     elif not scheduled_info_refresh_started:
         auto_sync_after_f5 = getattr(workspace, "run_fund_holdings_auto_sync_after_f5", None)
         if callable(auto_sync_after_f5):
@@ -303,6 +366,7 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
                 auto_sync_after_f5()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.error(f"[F5] 基金持仓自动更新异常: {exc}")
+        post_information_quote_sync()
 
     if count > 0:
         if hasattr(main_window, "lbl_status"):

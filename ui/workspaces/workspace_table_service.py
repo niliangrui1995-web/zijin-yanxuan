@@ -188,6 +188,54 @@ class WorkspaceTableService:
         scheduler.start(tasks)
         return True
 
+    def replay_all_loaded_quote_snapshots_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 0,
+        frame_budget_ms: int = 6,
+    ) -> bool:
+        """Replay the latest quote snapshot without reloading a tab's business data."""
+        tabs = self._ordered_refreshable_tabs(skip_cache_reload_tabs=False)
+        if not tabs:
+            if callable(on_finished):
+                from PyQt6.QtCore import QTimer
+
+                QTimer.singleShot(0, on_finished)
+            return False
+
+        existing = getattr(self._workspace, "_f5_quote_replay_scheduler", None)
+        if existing is not None and getattr(existing, "is_running", lambda: False)():
+            existing.cancel()
+
+        tasks = [
+            (
+                tab.__class__.__name__,
+                lambda tab=tab: self._refresh_latest_snapshot_for_f5(tab),
+            )
+            for tab in tabs
+        ]
+        parent = self._workspace if isinstance(self._workspace, QObject) else None
+        scheduler = FrameTaskScheduler(
+            parent,
+            interval_ms=interval_ms,
+            frame_budget_ms=frame_budget_ms,
+            max_tasks_per_frame=1,
+        )
+        scheduler.taskFailed.connect(lambda label, message: log.warning(f"[F5] {label} quote replay failed: {message}"))
+
+        def _cleanup():
+            if getattr(self._workspace, "_f5_quote_replay_scheduler", None) is scheduler:
+                setattr(self._workspace, "_f5_quote_replay_scheduler", None)
+            if callable(on_finished):
+                on_finished()
+            scheduler.deleteLater()
+
+        scheduler.finished.connect(_cleanup)
+        setattr(self._workspace, "_f5_quote_replay_scheduler", scheduler)
+        scheduler.start(tasks)
+        return True
+
     def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
         results: dict[str, bool] = {}
         for index, tab in enumerate(self._iter_tabs()):

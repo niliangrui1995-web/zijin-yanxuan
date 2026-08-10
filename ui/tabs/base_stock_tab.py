@@ -38,13 +38,14 @@ from ui.tabs.base_stock_refresh import (
     _latest_quote_snapshot as latest_quote_snapshot,
 )
 from ui.tabs.base_stock_refresh import (
-    async_update_market_caps as run_async_market_caps,
-)
-from ui.tabs.base_stock_refresh import (
+    _should_prime_f5_local_snapshot,
     cancel_workspace_background_snapshot,
     replay_deferred_quotes,
     workspace_background_snapshot_cancellation_settled,
     workspace_background_snapshot_complete,
+)
+from ui.tabs.base_stock_refresh import (
+    async_update_market_caps as run_async_market_caps,
 )
 from ui.tabs.base_stock_refresh import (
     collect_quote_refresh_codes as collect_refresh_quote_codes,
@@ -368,9 +369,10 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
         if reason and not is_interactive_tab_load_reason(reason):
             return False
-        if not self.isVisible():
+        visible = self.isVisible()
+        if not visible and not _should_prime_f5_local_snapshot(self, current_model):
             return False
-        if getattr(self, "_workspace_background_snapshot_ready", False):
+        if visible and getattr(self, "_workspace_background_snapshot_ready", False):
             refresh_preloaded_quote_snapshot(self, current_model=current_model)
             return True
         self.refresh_table_from_latest_snapshot(current_model=current_model, async_local=True)
@@ -400,6 +402,14 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         return [row for row in row_data if isinstance(row, dict)]
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        codes: set[str] = set()
+        for row in self.get_row_data(current_model=current_model):
+            code = str(row.get("代码", "")).strip()
+            if len(code) == 6 and code.isdigit():
+                codes.add(code)
+        return codes
+
+    def get_f5_off_market_quote_codes(self, current_model=None) -> set[str]:
         codes: set[str] = set()
         for row in self.get_row_data(current_model=current_model):
             code = str(row.get("代码", "")).strip()

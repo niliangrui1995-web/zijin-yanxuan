@@ -71,6 +71,10 @@ def _make_quote_tab(codes):
     return SimpleNamespace(get_realtime_quote_codes=lambda: set(codes or set()))
 
 
+def _make_f5_quote_tab(codes):
+    return SimpleNamespace(get_f5_off_market_quote_codes=lambda: set(codes or set()))
+
+
 def _drain_qt_events(app) -> None:
     app.processEvents()
     loop = QEventLoop()
@@ -173,6 +177,33 @@ def test_workspace_quote_universe_uses_explicit_policy_instead_of_visual_group()
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
     assert codes == {"000001", "300750", "601318"}
+
+
+def test_workspace_collects_loaded_information_tabs_for_f5_off_market_quotes():
+    workspace = _make_workspace(
+        tabs={
+            "watchlist": _make_f5_quote_tab({"000001"}),
+            "stock_candidates": _make_f5_quote_tab({"300750"}),
+            "scan": _make_f5_quote_tab({"000002"}),
+            "ai_industry_chain": _make_f5_quote_tab({"688498"}),
+            "foreign_block": _make_f5_quote_tab({"600000"}),
+            "earnings": _make_f5_quote_tab({"300001"}),
+            "fund_holdings": _make_f5_quote_tab({"002594", "00700"}),
+            "asian_market": _make_f5_quote_tab({"600519"}),
+            "system_log": _make_f5_quote_tab({"601318"}),
+        }
+    )
+
+    assert ClassicWorkspace.get_realtime_quote_codes(workspace) == set()
+    assert ClassicWorkspace.get_f5_off_market_quote_codes(workspace) == {
+        "000001",
+        "300750",
+        "000002",
+        "688498",
+        "600000",
+        "300001",
+        "002594",
+    }
 
 
 def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
@@ -1278,6 +1309,39 @@ def test_workspace_schedules_refreshes_all_tabs_after_f5():
     assert getattr(workspace, "_f5_refresh_scheduler", None) is None
 
 
+def test_workspace_final_f5_quote_replay_refreshes_loaded_tabs_without_source_refresh():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+
+    class InfoTab:
+        workspace_key = "earnings"
+
+        def prepare_post_f5_refresh(self):
+            raise AssertionError("final quote replay must not refresh the information source")
+
+        def refresh_table_from_latest_snapshot(self, *, async_local=True):
+            calls.append(("earnings", async_local))
+
+    tabs = {
+        "watchlist": SimpleNamespace(
+            refresh_table_from_latest_snapshot=lambda **kwargs: calls.append(("watchlist", kwargs["async_local"]))
+        ),
+        "earnings": InfoTab(),
+        "system_log": SimpleNamespace(),
+    }
+    workspace = _make_workspace(tabs=tabs)
+    workspace.get_tab = lambda key: (_ for _ in ()).throw(AssertionError(f"replay must not load {key}"))
+
+    assert ClassicWorkspace.replay_all_loaded_quote_snapshots_after_f5_scheduled(workspace, interval_ms=0) is True
+
+    for _ in range(10):
+        app.processEvents()
+        if getattr(workspace, "_f5_quote_replay_scheduler", None) is None:
+            break
+
+    assert calls == [("watchlist", True), ("earnings", True)]
+
+
 def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
     app = QApplication.instance() or QApplication([])
     calls = []
@@ -1510,6 +1574,37 @@ def test_workspace_schedules_information_sources_after_f5():
             break
 
     assert calls == ["scan", "earnings", "fund"]
+
+
+def test_workspace_keeps_each_f5_completion_callback_while_information_refresh_is_running():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+    completed = []
+    workspace = _make_workspace(
+        tabs={
+            "scan": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True),
+        }
+    )
+    workspace.tab_specs = lambda: [{"key": "scan", "group": INFO_SOURCE_GROUP}]
+
+    assert ClassicWorkspace.refresh_information_sources_after_f5_scheduled(
+        workspace,
+        interval_ms=0,
+        on_finished=lambda: completed.append("first"),
+    ) is True
+    assert ClassicWorkspace.refresh_information_sources_after_f5_scheduled(
+        workspace,
+        interval_ms=0,
+        on_finished=lambda: completed.append("second"),
+    ) is True
+
+    for _ in range(10):
+        app.processEvents()
+        if getattr(workspace, "_f5_information_source_scheduler", None) is None:
+            break
+
+    assert calls == ["scan"]
+    assert completed == ["first", "second"]
 
 
 def test_workspace_prepares_information_sources_before_scheduled_f5_refresh():

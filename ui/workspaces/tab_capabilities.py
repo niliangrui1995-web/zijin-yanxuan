@@ -58,6 +58,11 @@ class QuoteUniverseCapability(Protocol):
 
 
 @runtime_checkable
+class F5OffMarketQuoteUniverseCapability(Protocol):
+    def get_f5_off_market_quote_codes(self) -> set[str]: ...
+
+
+@runtime_checkable
 class StockSignalSourceCapability(Protocol):
     def iter_stock_signals(self) -> list[StockSignal]: ...
 

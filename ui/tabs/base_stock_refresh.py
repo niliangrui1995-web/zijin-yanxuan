@@ -256,18 +256,80 @@ def _quote_entry_has_cap(entry: Mapping[str, object] | None) -> bool:
     )
 
 
+def _normalize_quote_trade_date(value: object) -> str:
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def _f5_market_snapshot_trade_date(owner) -> str:
+    if owner is None:
+        return ""
+    provider_available, provider = _owner_data_provider(owner)
+    if not provider_available:
+        return ""
+    return _normalize_quote_trade_date(getattr(provider, "_market_data_snapshot_trade_date", ""))
+
+
+def _f5_market_snapshot_identity(owner) -> tuple[str, int]:
+    trade_date = _f5_market_snapshot_trade_date(owner)
+    if not trade_date:
+        return "", 0
+    provider_available, provider = _owner_data_provider(owner)
+    cache_data = getattr(provider, "cache_data", None) if provider_available else None
+    return trade_date, id(cache_data)
+
+
+def _f5_stale_quote_attempts(owner) -> set[str]:
+    identity = _f5_market_snapshot_identity(owner)
+    if not identity[0]:
+        return set()
+    state = getattr(owner, "_f5_stale_local_quote_attempts", None)
+    if not isinstance(state, dict) or state.get("identity") != identity:
+        return set()
+    attempts = state.get("codes")
+    return attempts if isinstance(attempts, set) else set()
+
+
+def _mark_f5_stale_quote_attempt(owner, code: str) -> None:
+    identity = _f5_market_snapshot_identity(owner)
+    if not identity[0]:
+        return
+    state = getattr(owner, "_f5_stale_local_quote_attempts", None)
+    if not isinstance(state, dict) or state.get("identity") != identity:
+        state = {"identity": identity, "codes": set()}
+        try:
+            setattr(owner, "_f5_stale_local_quote_attempts", state)
+        except (AttributeError, RuntimeError, TypeError):
+            return
+    attempts = state.get("codes")
+    if isinstance(attempts, set):
+        attempts.add(code)
+
+
+def _quote_entry_is_older_than_f5_snapshot(owner, entry: Mapping[str, object] | None) -> bool:
+    expected_date = _f5_market_snapshot_trade_date(owner)
+    quote_date = _normalize_quote_trade_date(dict(entry or {}).get("date"))
+    return bool(expected_date and quote_date and quote_date < expected_date)
+
+
 def _collect_local_quote_targets(
     owner,
     model,
     latest_quotes: Mapping[str, object] | None = None,
 ) -> list[str]:
     latest_quotes = latest_quotes or {}
+    stale_attempts = _f5_stale_quote_attempts(owner)
     target_codes: list[str] = []
     for code in collect_table_codes(owner, model):
         if not is_a_share_code(code):
             continue
         snapshot_entry = _quote_entry_copy(latest_quotes, code)
-        if not _quote_entry_has_price(snapshot_entry) or not _quote_entry_has_cap(snapshot_entry):
+        is_stale = _quote_entry_is_older_than_f5_snapshot(owner, snapshot_entry)
+        if (
+            not _quote_entry_has_price(snapshot_entry)
+            or not _quote_entry_has_cap(snapshot_entry)
+            or (is_stale and code not in stale_attempts)
+        ):
             target_codes.append(code)
     return list(dict.fromkeys(target_codes))
 
@@ -294,13 +356,28 @@ def _prepare_local_quote_prime(owner, current_model=None) -> tuple[list[str], di
     target_codes = _collect_local_quote_targets(owner, model, latest_quotes)
     if not target_codes:
         return None
+    for code in target_codes:
+        if _quote_entry_is_older_than_f5_snapshot(owner, _quote_entry_copy(latest_quotes, code)):
+            _mark_f5_stale_quote_attempt(owner, code)
     return target_codes, _quote_subset_for_codes(latest_quotes, target_codes)
+
+
+def _should_prime_f5_local_snapshot(owner, current_model=None) -> bool:
+    if not _f5_market_snapshot_trade_date(owner):
+        return False
+    try:
+        model = current_model or owner._resolve_active_quote_model()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    if not model or not hasattr(model, "row_data"):
+        return False
+    return bool(_collect_local_quote_targets(owner, model, _latest_quote_snapshot()))
 
 
 def _owner_data_provider(owner) -> tuple[bool, object | None]:
     try:
         return True, owner.data_provider
-    except RuntimeError:
+    except (AttributeError, RuntimeError):
         return False, None
 
 
@@ -308,9 +385,16 @@ def _build_missing_offline_quotes(
     provider,
     target_codes: list[str],
     latest_quotes: Mapping[str, object],
+    *,
+    owner=None,
 ) -> dict:
     missing_price_codes = [
-        code for code in target_codes if not _quote_entry_has_price(_quote_entry_copy(latest_quotes, code))
+        code
+        for code in target_codes
+        if (
+            not _quote_entry_has_price(_quote_entry_copy(latest_quotes, code))
+            or _quote_entry_is_older_than_f5_snapshot(owner, _quote_entry_copy(latest_quotes, code))
+        )
     ]
     return build_offline_quotes(provider, missing_price_codes) if missing_price_codes else {}
 
@@ -341,6 +425,8 @@ def _merge_local_quote_payload(
     latest_quotes: Mapping[str, object],
     offline_quotes: Mapping[str, object],
     finance_snapshot: dict,
+    *,
+    owner=None,
 ) -> dict:
     payload_codes = set(offline_quotes) | set(finance_snapshot)
     current_quotes = _fresh_quotes_for_merge(latest_quotes, payload_codes)
@@ -348,7 +434,10 @@ def _merge_local_quote_payload(
     for code in payload_codes:
         current_entry = _quote_entry_copy(current_quotes, code) or _quote_entry_copy(latest_quotes, code)
         offline_entry = _quote_entry_copy(offline_quotes, code)
-        if offline_entry and not _quote_entry_has_price(current_entry):
+        if offline_entry and (
+            not _quote_entry_has_price(current_entry)
+            or _quote_entry_is_older_than_f5_snapshot(owner, current_entry)
+        ):
             current_entry.update(offline_entry)
         if current_entry:
             quote_payload[code] = current_entry
@@ -369,9 +458,19 @@ def _build_local_quote_payload(
         return {}
 
     latest_quotes = dict(latest_quotes or {})
-    offline_quotes = _build_missing_offline_quotes(provider, target_codes, latest_quotes)
+    offline_quotes = _build_missing_offline_quotes(
+        provider,
+        target_codes,
+        latest_quotes,
+        owner=owner,
+    )
     finance_snapshot = _load_local_finance_snapshot(owner, target_codes)
-    return _merge_local_quote_payload(latest_quotes, offline_quotes, finance_snapshot)
+    return _merge_local_quote_payload(
+        latest_quotes,
+        offline_quotes,
+        finance_snapshot,
+        owner=owner,
+    )
 
 
 def prime_local_quote_snapshot(owner, current_model=None) -> dict:
@@ -987,7 +1086,11 @@ def _prepare_table_refresh(owner, current_model, async_local: bool):
     codes = collect_table_codes(owner, model)
     if not codes:
         return None
-    if _should_prime_local_snapshot(owner, async_local=async_local):
+    if (
+        _should_prime_local_snapshot(owner, async_local=async_local)
+        or bool(getattr(owner, "_f5_cache_snapshot_apply", False))
+        or _should_prime_f5_local_snapshot(owner, model)
+    ):
         primer = prime_local_quote_snapshot_async if async_local else prime_local_quote_snapshot
         primer(owner, model)
     return model, codes

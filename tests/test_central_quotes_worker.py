@@ -174,6 +174,171 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
         main_window.deleteLater()
 
 
+def test_central_quotes_service_replays_f5_information_codes_after_market_close(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    from ui.workers import central_quotes_worker as worker_module
+
+    class DummyProvider:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_realtime_quotes_batch(self, codes):
+            ordered = tuple(sorted(codes))
+            self.calls.append(ordered)
+            return {
+                code: {"close": 12.3, "last_close": 12.0, "date": "2026-08-10"}
+                for code in ordered
+            }
+
+    provider = DummyProvider()
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: {"000001"})
+    completed = []
+    pending = []
+
+    def _capture_background(
+        fn,
+        on_success=None,
+        on_error=None,
+        task_id=None,
+        cancellation_token=None,
+        timeout_sec=None,
+    ):
+        del cancellation_token, timeout_sec
+        pending.append((fn, on_success, on_error, str(task_id)))
+        return task_id
+
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _capture_background)
+    monkeypatch.setattr(worker_module.task_manager, "is_task_token_active", lambda _task_id, _token: True)
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
+    global_store.reset_runtime_state()
+
+    try:
+        assert service.refresh_after_f5_information_sources(
+            {"300001"},
+            on_completed=lambda: completed.append(global_store.get_latest_quotes()["300001"]["close"]),
+        ) is True
+        snapshot_tasks = [
+            task for task in pending if task[3].startswith("central_quotes_off_market_snapshot_")
+        ]
+        assert len(snapshot_tasks) == 1
+
+        fn, on_success, _on_error, _task_id = snapshot_tasks[0]
+        on_success(fn())
+        app.processEvents()
+
+        assert provider.calls == [("000001", "300001")]
+        assert completed == [12.3]
+    finally:
+        global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_waits_for_the_current_f5_generation(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    from ui.workers import central_quotes_worker as worker_module
+
+    service = CentralQuotesService(main_window, object(), code_supplier=lambda: {"000001"})
+    submitted = []
+    completed = []
+
+    def _capture_submit(_service, name, fn, on_success, on_error, task_id, timeout_sec):
+        submitted.append(
+            SimpleNamespace(
+                name=name,
+                fn=fn,
+                on_success=on_success,
+                on_error=on_error,
+                task_id=task_id,
+                timeout_sec=timeout_sec,
+            )
+        )
+        return _accepted_submission(task_id)
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
+    monkeypatch.setattr(worker_module, "_submit_central_task", _capture_submit)
+    global_store.reset_runtime_state()
+
+    try:
+        service._trigger_fetch()
+        assert len(submitted) == 1
+
+        assert service.refresh_after_f5_information_sources(
+            {"000001"},
+            on_completed=lambda: completed.append("done"),
+        ) is True
+        submitted[0].on_success({"quotes": {"000001": {"close": 12.3, "last_close": 12.0}}})
+
+        assert completed == []
+
+        worker_module._replay_pending_fetch(service)
+        assert len(submitted) == 2
+        submitted[1].on_success({"quotes": {"000001": {"close": 12.4, "last_close": 12.0}}})
+
+        assert completed == ["done"]
+    finally:
+        global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_replays_when_some_f5_information_quotes_are_missing(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    from ui.workers import central_quotes_worker as worker_module
+
+    service = CentralQuotesService(main_window, object(), code_supplier=lambda: {"000001"})
+    pending = []
+    completed = []
+
+    def _capture_submit(_service, name, fn, on_success, on_error, task_id, timeout_sec):
+        pending.append((on_success, on_error))
+        return _accepted_submission(task_id)
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
+    monkeypatch.setattr(worker_module, "_submit_central_task", _capture_submit)
+    global_store.reset_runtime_state()
+
+    try:
+        assert service.refresh_after_f5_information_sources(
+            {"300001"},
+            on_completed=lambda: completed.append("replay"),
+        ) is True
+        assert len(pending) == 1
+
+        pending[0][0]({"quotes": {"000001": {"close": 12.3, "last_close": 12.0}}})
+        app.processEvents()
+
+        assert completed == ["replay"]
+    finally:
+        global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_does_not_add_information_codes_during_market_hours(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    service = CentralQuotesService(main_window, object(), code_supplier=lambda: {"000001"})
+    triggered = []
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": True))
+    monkeypatch.setattr(service, "_trigger_fetch_for_reason", triggered.append)
+
+    try:
+        assert service.refresh_after_f5_information_sources({"300001"}) is False
+        assert triggered == []
+        assert service._f5_off_market_codes == set()
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_off_market_snapshot_fetches_new_universe_codes(monkeypatch):
     app = QApplication.instance() or QApplication([])
     main_window = QWidget()

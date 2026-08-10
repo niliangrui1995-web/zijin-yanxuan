@@ -14,6 +14,7 @@ from app.services.central_quote_polling_service import CentralQuotePoller
 from app.services.quote_runtime_state import QuoteRuntimeState, QuoteRuntimeStateCompatMixin
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_quote_service import (
+    coerce_number,
     publish_rt_quotes,
     read_provider_health,
     read_realtime_quote_request_policy,
@@ -383,11 +384,65 @@ def _process_quote_fetch_result(
     )
 
 
+def _matches_f5_off_market_codes(
+    service,
+    code_signature: tuple[str, ...],
+    f5_sync_generation: int,
+) -> bool:
+    expected_codes = set(getattr(service, "_f5_off_market_codes", set()) or set())
+    return bool(
+        f5_sync_generation
+        and f5_sync_generation == getattr(service, "_f5_off_market_generation", 0)
+        and expected_codes
+        and expected_codes.issubset(set(code_signature))
+    )
+
+
+def _finish_f5_off_market_sync(
+    service,
+    code_signature: tuple[str, ...],
+    published: dict,
+    f5_sync_generation: int,
+) -> None:
+    if not _matches_f5_off_market_codes(service, code_signature, f5_sync_generation):
+        return
+    callback = getattr(service, "_f5_off_market_completion", None)
+    expected_codes = set(getattr(service, "_f5_off_market_codes", set()) or set())
+    service._f5_off_market_codes = set()
+    service._f5_off_market_completion = None
+    covered_codes = {
+        str(code)
+        for code, payload in dict(published or {}).items()
+        if coerce_number(dict(payload or {}).get("close")) > 0
+    }
+    missing_codes = expected_codes - covered_codes
+    if missing_codes:
+        log.warning(f"[F5] 盘后全量报价缺失 {len(missing_codes)} 只，转本地快照兜底")
+    if callable(callback):
+        try:
+            callback()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[F5] 盘后全量报价回放回调失败: {exc}")
+
+
+def _fail_f5_off_market_sync(
+    service,
+    code_signature: tuple[str, ...],
+    error_message: str,
+    f5_sync_generation: int,
+) -> None:
+    if not _matches_f5_off_market_codes(service, code_signature, f5_sync_generation):
+        return
+    log.warning(f"[F5] 盘后全量报价快照构建失败: {error_message}")
+    _finish_f5_off_market_sync(service, code_signature, {}, f5_sync_generation)
+
+
 def _publish_off_market_snapshot(
     service,
     payload: dict,
     *,
     code_signature: tuple[str, ...] = (),
+    f5_sync_generation: int = 0,
 ) -> None:
     quotes = (payload or {}).get("quotes") or {}
     current_source = _quote_result_source(quotes, (payload or {}).get("provider_stats") or {})
@@ -397,15 +452,24 @@ def _publish_off_market_snapshot(
     if code_signature:
         service._off_market_snapshot_signature = code_signature
     if not any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values()):
+        _finish_f5_off_market_sync(service, code_signature, {}, f5_sync_generation)
         return
-    service.publish_external_quotes(
+    published = service.publish_external_quotes(
         quotes,
         source="central_quotes.off_market",
         require_valid=True,
     )
+    _finish_f5_off_market_sync(service, code_signature, published, f5_sync_generation)
 
 
-def _plan_off_market_snapshot_request(service, codes: set[str]) -> tuple[set[str], tuple[str, ...]] | None:
+def _f5_off_market_request_generation(service, code_signature: tuple[str, ...]) -> int:
+    expected_codes = set(getattr(service, "_f5_off_market_codes", set()) or set())
+    if not expected_codes or not expected_codes.issubset(set(code_signature)):
+        return 0
+    return int(getattr(service, "_f5_off_market_generation", 0) or 0)
+
+
+def _plan_off_market_snapshot_request(service, codes: set[str]) -> tuple[set[str], tuple[str, ...], int] | None:
     code_signature = tuple(sorted(codes))
     if (
         service._closed
@@ -417,14 +481,14 @@ def _plan_off_market_snapshot_request(service, codes: set[str]) -> tuple[set[str
 
     request_codes = set(codes)
     if not service._off_market_snapshot_emitted:
-        return request_codes, code_signature
+        return request_codes, code_signature, _f5_off_market_request_generation(service, code_signature)
 
     previous_codes = set(service._off_market_snapshot_signature)
     if not previous_codes:
         return None
     request_codes.difference_update(previous_codes)
     if request_codes:
-        return request_codes, code_signature
+        return request_codes, code_signature, _f5_off_market_request_generation(service, code_signature)
 
     service._off_market_snapshot_signature = code_signature
     return None
@@ -434,6 +498,7 @@ def _off_market_snapshot_callbacks(
     service,
     request_codes: set[str],
     code_signature: tuple[str, ...],
+    f5_sync_generation: int,
     request_generation: int,
 ):
     def _bg_fetch(cancellation_token):
@@ -454,6 +519,7 @@ def _off_market_snapshot_callbacks(
                 service,
                 payload,
                 code_signature=code_signature,
+                f5_sync_generation=f5_sync_generation,
             )
         finally:
             _schedule_pending_fetch_replay(service)
@@ -465,6 +531,7 @@ def _off_market_snapshot_callbacks(
         try:
             if not service._closed:
                 log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
+                _fail_f5_off_market_sync(service, code_signature, error_message, f5_sync_generation)
         finally:
             _schedule_pending_fetch_replay(service)
 
@@ -475,6 +542,7 @@ def _submit_off_market_snapshot_request(
     service,
     request_codes: set[str],
     code_signature: tuple[str, ...],
+    f5_sync_generation: int,
 ) -> None:
     service._off_market_snapshot_fetching = True
     service._off_market_snapshot_generation += 1
@@ -483,6 +551,7 @@ def _submit_off_market_snapshot_request(
         service,
         request_codes,
         code_signature,
+        f5_sync_generation,
         request_generation,
     )
     try:
@@ -500,12 +569,14 @@ def _submit_off_market_snapshot_request(
     except Exception:
         if request_generation == service._off_market_snapshot_generation:
             service._off_market_snapshot_fetching = False
+        _fail_f5_off_market_sync(service, code_signature, "任务提交异常", f5_sync_generation)
         service._task_lifecycle.cancel("off_market_snapshot", reason="submission_failed")
         raise
     submission_failure = _central_submission_failure_reason(submission_receipt)
     if submission_failure:
         if request_generation == service._off_market_snapshot_generation:
             service._off_market_snapshot_fetching = False
+        _fail_f5_off_market_sync(service, code_signature, submission_failure, f5_sync_generation)
         service._task_lifecycle.cancel(
             "off_market_snapshot",
             reason=submission_failure,
@@ -532,6 +603,14 @@ def _prepare_quote_fetch_cycle(service, reason: str) -> tuple[set[str], str, dic
             service._off_market_snapshot_fetching = False
 
     codes = service._get_all_active_codes()
+    if not quote_refreshable:
+        codes.update(getattr(service, "_f5_off_market_codes", set()) or set())
+    elif getattr(service, "_f5_off_market_codes", set()):
+        service._f5_off_market_codes = set()
+        service._f5_off_market_generation = int(
+            getattr(service, "_f5_off_market_generation", 0) or 0
+        ) + 1
+        service._f5_off_market_completion = None
     maintenance_stats = service._run_maintenance(
         active_codes_count=_active_code_count(codes),
         quote_refreshable=quote_refreshable,
@@ -773,6 +852,9 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         self._off_market_snapshot_signature: tuple[str, ...] = ()
         self._off_market_snapshot_fetching = False
         self._off_market_snapshot_generation = 0
+        self._f5_off_market_codes: set[str] = set()
+        self._f5_off_market_generation = 0
+        self._f5_off_market_completion: Callable[[], None] | None = None
         self._opening_warmup_signature: tuple[str, ...] = ()
         self._opening_warmup_cursor = 0
         self._fallback_pressure_signature: tuple[str, ...] = ()
@@ -811,6 +893,32 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         if self._closed:
             return
         self._trigger_fetch_for_reason("cache_reload")
+
+    def refresh_after_f5_information_sources(self, codes, *, on_completed=None) -> bool:
+        """盘后信息源刷新完成后，补齐已加载 A 股页的离线报价快照。"""
+        if self._closed:
+            return False
+        normalized_codes = {
+            str(code).strip()
+            for code in (codes or set())
+            if _A_SHARE_CODE_RE.match(str(code).strip())
+        }
+        if not normalized_codes:
+            return False
+        try:
+            if MarketCalendar.is_quote_refresh_time():
+                return False
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[F5] 无法确认盘后报价窗口: {exc}")
+            return False
+
+        self._f5_off_market_codes = normalized_codes
+        self._f5_off_market_generation += 1
+        self._f5_off_market_completion = on_completed if callable(on_completed) else None
+        self._off_market_snapshot_emitted = False
+        self._off_market_snapshot_signature = ()
+        self._trigger_fetch_for_reason("cache_reload")
+        return True
 
     def publish_external_quotes(
         self,
@@ -1289,4 +1397,9 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
             self.state.shutdown()
             self._off_market_snapshot_generation += 1
             self._off_market_snapshot_fetching = False
+            self._f5_off_market_codes = set()
+            self._f5_off_market_generation = int(
+                getattr(self, "_f5_off_market_generation", 0) or 0
+            ) + 1
+            self._f5_off_market_completion = None
         self._task_lifecycle.shutdown(timeout_ms=1_000)

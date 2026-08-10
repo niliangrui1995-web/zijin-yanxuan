@@ -27,9 +27,11 @@ class _Scheduler:
 def test_workspace_facade_shutdown_is_idempotent_and_cancels_frame_schedulers():
     refresh_scheduler = _Scheduler()
     information_scheduler = _Scheduler()
+    quote_replay_scheduler = _Scheduler()
     workspace = SimpleNamespace(
         _f5_refresh_scheduler=refresh_scheduler,
         _f5_information_source_scheduler=information_scheduler,
+        _f5_quote_replay_scheduler=quote_replay_scheduler,
     )
     shutdown_calls = []
     facade = object.__new__(WorkspaceFacade)
@@ -45,8 +47,10 @@ def test_workspace_facade_shutdown_is_idempotent_and_cancels_frame_schedulers():
     assert shutdown_calls == [{"timeout_ms": 123}]
     assert workspace._f5_refresh_scheduler is None
     assert workspace._f5_information_source_scheduler is None
+    assert workspace._f5_quote_replay_scheduler is None
     assert (refresh_scheduler.cancel_calls, refresh_scheduler.delete_calls) == (1, 1)
     assert (information_scheduler.cancel_calls, information_scheduler.delete_calls) == (1, 1)
+    assert (quote_replay_scheduler.cancel_calls, quote_replay_scheduler.delete_calls) == (1, 1)
 
 
 def test_classic_workspace_shutdown_blocks_delayed_background_prewarm(monkeypatch):

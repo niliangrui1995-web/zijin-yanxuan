@@ -195,6 +195,188 @@ def test_local_quote_snapshot_async_runs_in_background(monkeypatch):
     assert tasks and "_local_quote_snapshot_" in tasks[0]
 
 
+def test_local_quote_snapshot_replaces_complete_quote_with_older_f5_trade_date(monkeypatch):
+    from app.services.ui_quote_service import resolve_quote_metrics
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    class DummyProvider:
+        _market_data_snapshot_trade_date = "20260810"
+
+        def __init__(self):
+            self.offline_calls = []
+
+        def build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {
+                "000001": {
+                    "close": 10.5,
+                    "last_close": 10.0,
+                    "date": "2026-08-10",
+                }
+            }
+
+    class DummyOwner:
+        def __init__(self):
+            self.data_provider = DummyProvider()
+
+        @staticmethod
+        def _resolve_active_quote_model():
+            return SimpleNamespace(row_data=[{}])
+
+        @staticmethod
+        def _load_cached_finance_snapshot(_codes):
+            return {"000001": {"zongguben": 100_000_000}}
+
+    stale_quote = {
+        "000001": {
+            "close": 9.0,
+            "last_close": 8.5,
+            "market_cap": 900_000_000,
+            "date": "2026-08-07",
+        }
+    }
+    owner = DummyOwner()
+
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "_latest_quote_snapshot", lambda: stale_quote)
+    monkeypatch.setattr(refresh_module, "publish_rt_quotes", lambda payload, source="": dict(payload or {}))
+
+    payload = refresh_module.prime_local_quote_snapshot(owner)
+
+    assert owner.data_provider.offline_calls == [["000001"]]
+    assert payload["000001"]["close"] == 10.5
+    assert payload["000001"]["last_close"] == 10.0
+    assert payload["000001"]["date"] == "2026-08-10"
+    assert payload["000001"]["market_cap"] == 1_050_000_000
+    assert round(resolve_quote_metrics({}, payload["000001"])["pct"], 6) == 5.0
+
+
+def test_local_quote_snapshot_keeps_same_f5_trade_date_quote_out_of_offline_rebuild(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    owner = SimpleNamespace(data_provider=SimpleNamespace(_market_data_snapshot_trade_date="20260810"))
+    model = SimpleNamespace(row_data=[{}])
+    quotes = {
+        "000001": {
+            "close": 10.5,
+            "last_close": 10.0,
+            "market_cap": 1_050_000_000,
+            "date": "2026-08-10",
+        }
+    }
+
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+
+    assert refresh_module._collect_local_quote_targets(owner, model, quotes) == []
+
+
+def test_local_quote_snapshot_rebuilds_a_stale_halted_quote_once_per_f5_snapshot(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    class DummyProvider:
+        _market_data_snapshot_trade_date = "20260810"
+
+        def __init__(self):
+            self.cache_data = {}
+            self.offline_calls = []
+
+        def build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"000001": {"close": 9.0, "last_close": 8.5, "date": "2026-08-07"}}
+
+    class DummyOwner:
+        def __init__(self):
+            self.data_provider = DummyProvider()
+
+        @staticmethod
+        def _resolve_active_quote_model():
+            return SimpleNamespace(row_data=[{}])
+
+        @staticmethod
+        def _load_cached_finance_snapshot(_codes):
+            return {"000001": {"zongguben": 100_000_000}}
+
+    stale_quote = {
+        "000001": {
+            "close": 9.0,
+            "last_close": 8.5,
+            "market_cap": 900_000_000,
+            "date": "2026-08-07",
+        }
+    }
+    owner = DummyOwner()
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "_latest_quote_snapshot", lambda: stale_quote)
+    monkeypatch.setattr(refresh_module, "publish_rt_quotes", lambda payload, source="": dict(payload or {}))
+
+    assert refresh_module.prime_local_quote_snapshot(owner)
+    assert refresh_module.prime_local_quote_snapshot(owner) == {}
+    assert owner.data_provider.offline_calls == [["000001"]]
+
+    owner.data_provider.cache_data = {}
+
+    assert refresh_module.prime_local_quote_snapshot(owner)
+    assert owner.data_provider.offline_calls == [["000001"], ["000001"]]
+
+
+def test_f5_snapshot_replay_primes_hidden_stale_quotes(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    model = SimpleNamespace(row_data=[{}])
+    owner = SimpleNamespace(
+        _f5_cache_snapshot_apply=True,
+        data_provider=SimpleNamespace(_market_data_snapshot_trade_date="20260810", cache_data={}),
+        _resolve_active_quote_model=lambda: model,
+    )
+    calls = []
+    stale_quote = {
+        "000001": {
+            "close": 9.0,
+            "last_close": 8.5,
+            "market_cap": 900_000_000,
+            "date": "2026-08-07",
+        }
+    }
+
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "_latest_quote_snapshot", lambda: stale_quote)
+    monkeypatch.setattr(
+        refresh_module,
+        "prime_local_quote_snapshot_async",
+        lambda target, current_model=None: calls.append((target, current_model)) or True,
+    )
+
+    assert refresh_module._prepare_table_refresh(owner, None, async_local=True) == (model, ["000001"])
+    assert calls == [(owner, model)]
+
+
+def test_hidden_tab_late_rows_prime_stale_f5_quotes(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+    from ui.tabs.base_stock_tab import BaseStockTab
+
+    model = SimpleNamespace(row_data=[{}])
+    calls = []
+    owner = SimpleNamespace(
+        data_provider=SimpleNamespace(_market_data_snapshot_trade_date="20260810", cache_data={}),
+        isVisible=lambda: False,
+        refresh_table_from_latest_snapshot=lambda current_model=None, **kwargs: calls.append((current_model, kwargs)),
+    )
+    stale_quote = {
+        "000001": {
+            "close": 9.0,
+            "last_close": 8.5,
+            "market_cap": 900_000_000,
+            "date": "2026-08-07",
+        }
+    }
+
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "_latest_quote_snapshot", lambda: stale_quote)
+
+    assert BaseStockTab._prime_visible_local_quote_snapshot(owner, model) is True
+    assert calls == [(model, {"async_local": True})]
+
+
 def test_workspace_snapshot_uses_distinct_task_id_while_visible_snapshot_is_active(monkeypatch):
     from app.services.ui_task_service import background_job_runner as task_manager
     from ui.tabs import base_stock_refresh as refresh_module

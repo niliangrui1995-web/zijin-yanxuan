@@ -1464,6 +1464,9 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     def get_realtime_quote_codes(self) -> set[str]:
         return _resolve_workspace_facade(self).get_realtime_quote_codes()
 
+    def get_f5_off_market_quote_codes(self) -> set[str]:
+        return _resolve_workspace_facade(self).get_f5_off_market_quote_codes()
+
     def get_scan_results(self) -> list[dict]:
         return _resolve_workspace_facade(self).get_scan_results()
 
@@ -1484,6 +1487,17 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             on_finished=on_finished,
             interval_ms=interval_ms,
             skip_cache_reload_tabs=skip_cache_reload_tabs,
+        )
+
+    def replay_all_loaded_quote_snapshots_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 0,
+    ) -> bool:
+        return _resolve_workspace_facade(self).replay_all_loaded_quote_snapshots_after_f5_scheduled(
+            on_finished=on_finished,
+            interval_ms=interval_ms,
         )
 
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
