@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import time
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import datetime
@@ -10,6 +11,8 @@ from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
+from core.observability import record_metric
+from infra.diagnostics.ui_stall_probe import ui_stall_span
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import (
@@ -193,7 +196,15 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
             self._runtime_start_delay_ms = 0
         self._initial_visible_work_pending = False
         self._initial_visible_work_done = self._runtime_start_delay_ms <= 0
-        self._init_ui()
+        table_construct_started_at = time.perf_counter()
+        with ui_stall_span("EarningsTab._init_ui", tab="earnings", signal="table_construct"):
+            self._init_ui()
+        record_metric(
+            "earnings_table_construct_ms",
+            (time.perf_counter() - table_construct_started_at) * 1000.0,
+            unit="ms",
+            tags={"runtime_start_delay_ms": str(self._runtime_start_delay_ms)},
+        )
         self._recalc_pe_timer = QTimer(self)
         self._recalc_pe_timer.setSingleShot(True)
         self._recalc_pe_timer.timeout.connect(self._recalc_pe_ttm)
@@ -356,6 +367,10 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
+        # 缓存回放会同时更新多行报价字段；合并闪烁过期重绘并限制到脏区，
+        # 不改变行情、筛选或缓存数据，只避免 60ms 定时器反复整表重绘。
+        self.table.set_coalesced_flash_repaint_enabled(True)
+        self.table.set_targeted_flash_repaint_enabled(True, metric_scope="earnings")
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
@@ -534,20 +549,38 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
 
     def _apply_display_trade_window(self, force_refresh: bool = False) -> bool:
         """将展示数据裁剪到近 N 个交易日，并按需刷新表格。"""
-        pruned_rows = self._prune_rows_to_recent_trade_window(self.row_data)
-        changed = force_refresh or len(pruned_rows) != len(self.row_data)
-        self.row_data = pruned_rows
+        started_at = time.perf_counter()
+        source_rows = len(self.row_data)
+        with ui_stall_span(
+            "EarningsTab._apply_display_trade_window",
+            tab="earnings",
+            signal="model_refresh" if force_refresh else "window_refresh",
+        ):
+            pruned_rows = self._prune_rows_to_recent_trade_window(self.row_data)
+            changed = force_refresh or len(pruned_rows) != len(self.row_data)
+            self.row_data = pruned_rows
 
-        if changed:
-            self.model.update_data(self.row_data, hydrate_latest_quotes=False)
-            self._apply_latest_quotes_from_store()
-            self._prime_visible_local_quote_snapshot(self.model)
+            if changed:
+                self.model.update_data(self.row_data, hydrate_latest_quotes=False)
+                self._apply_latest_quotes_from_store()
+                self._prime_visible_local_quote_snapshot(self.model)
 
-        if hasattr(self, "table_state"):
-            if self.row_data:
-                self.table_state.show_table()
-            else:
-                self.table_state.show_empty(f"仅展示近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日数据")
+            if hasattr(self, "table_state"):
+                if self.row_data:
+                    self.table_state.show_table()
+                else:
+                    self.table_state.show_empty(f"仅展示近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日数据")
+        record_metric(
+            "earnings_display_window_apply_ms",
+            (time.perf_counter() - started_at) * 1000.0,
+            unit="ms",
+            tags={
+                "force_refresh": str(bool(force_refresh)).lower(),
+                "source_rows": str(source_rows),
+                "display_rows": str(len(self.row_data)),
+                "model_refresh": str(bool(changed)).lower(),
+            },
+        )
         return changed
 
     @pyqtSlot(str, str)
@@ -631,6 +664,7 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
         _set_earnings_hit_status(self, mode, len(records))
 
         # 缓存回放可能有上千行；先建立索引，让去重覆盖保持 O(n)，避免逐行扫描 row_data。
+        merge_started_at = time.perf_counter()
         existing_rows_by_key = {
             (str(r.get("代码", "")).strip(), str(r.get("报告期", "")).strip()): r
             for r in self.row_data
@@ -708,6 +742,17 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
             else:
                 self.row_data.append(row_obj)
                 existing_rows_by_key[existing_key] = row_obj
+
+        record_metric(
+            "earnings_record_merge_ms",
+            (time.perf_counter() - merge_started_at) * 1000.0,
+            unit="ms",
+            tags={
+                "mode": str(mode or "routine"),
+                "input_records": str(len(records)),
+                "source_rows": str(len(self.row_data)),
+            },
+        )
 
         # 只展示近 N 个交易日窗口，避免自然日累计导致表格越来越重。
         self._apply_display_trade_window(force_refresh=True)
@@ -859,40 +904,71 @@ class EarningsTab(_EarningsBackgroundPreloadMixin, BaseStockTab):
 
     def _recalc_pe_ttm(self):
         """PE(TTM) = 市值 / (最新单季扣非利润 × 4)，两个数据表里都有，直接算"""
+        started_at = time.perf_counter()
         model_rows = getattr(self.model, "row_data", None) or self.row_data
         updated = 0
+        updated_rows = []
+        signal_ranges = 0
 
-        for row_idx, row_dict in enumerate(model_rows):
-            cap_str = str(row_dict.get("市值", "--")).strip()
-            raw_profit = row_dict.get("_raw_profit", 0)
+        with ui_stall_span("EarningsTab._recalc_pe_ttm", tab="earnings", signal="derived_pe"):
+            for row_idx, row_dict in enumerate(model_rows):
+                cap_str = str(row_dict.get("市值", "--")).strip()
+                raw_profit = row_dict.get("_raw_profit", 0)
 
-            try:
-                raw_profit_val = float(raw_profit or 0)
-            except (ValueError, TypeError):
-                continue
+                try:
+                    raw_profit_val = float(raw_profit or 0)
+                except (ValueError, TypeError):
+                    continue
 
-            if cap_str in ("", "--") or raw_profit_val <= 0:
-                continue
+                if cap_str in ("", "--") or raw_profit_val <= 0:
+                    continue
 
-            try:
-                # 解析市值字符串："150亿" → 150e8，"3200万" → 3200e4
-                if "亿" in cap_str:
-                    cap = float(cap_str.replace("亿", "")) * 1e8
-                elif "万" in cap_str:
-                    cap = float(cap_str.replace("万", "")) * 1e4
-                else:
-                    cap = float(cap_str)
-
-                pe = cap / (raw_profit_val * 4.0)
-                new_pe = f"{pe:.1f}"
-                if row_dict.get("PE(TTM)") != new_pe:
-                    if hasattr(self.model, "set_cell_value"):
-                        self.model.set_cell_value(row_idx, "PE(TTM)", new_pe)
+                try:
+                    # 解析市值字符串："150亿" → 150e8，"3200万" → 3200e4
+                    if "亿" in cap_str:
+                        cap = float(cap_str.replace("亿", "")) * 1e8
+                    elif "万" in cap_str:
+                        cap = float(cap_str.replace("万", "")) * 1e4
                     else:
-                        row_dict["PE(TTM)"] = new_pe
-                    updated += 1
-            except (ValueError, ZeroDivisionError) as _e:
-                log.debug(f"[业绩监控] PE 计算异常({cap_str}): {_e}")
+                        cap = float(cap_str)
+
+                    pe = cap / (raw_profit_val * 4.0)
+                    new_pe = f"{pe:.1f}"
+                    if row_dict.get("PE(TTM)") != new_pe:
+                        if hasattr(self.model, "set_cell_value"):
+                            self.model.set_cell_value(
+                                row_idx,
+                                "PE(TTM)",
+                                new_pe,
+                                emit_signal=False,
+                                record_flash=False,
+                            )
+                        else:
+                            row_dict["PE(TTM)"] = new_pe
+                        updated_rows.append(row_idx)
+                        updated += 1
+                except (ValueError, ZeroDivisionError) as _e:
+                    log.debug(f"[业绩监控] PE 计算异常({cap_str}): {_e}")
+
+            if updated_rows and hasattr(self.model, "dataChanged"):
+                pe_column = self.model.headers.index("PE(TTM)")
+                self.model.dataChanged.emit(
+                    self.model.index(min(updated_rows), pe_column),
+                    self.model.index(max(updated_rows), pe_column),
+                    self.model._flash_roles(include_flash=False),
+                )
+                signal_ranges = 1
+
+        record_metric(
+            "earnings_pe_recalc_ms",
+            (time.perf_counter() - started_at) * 1000.0,
+            unit="ms",
+            tags={
+                "updated_rows": str(updated),
+                "signal_ranges": str(signal_ranges),
+                "flash_repaint": "false",
+            },
+        )
 
         if updated > 0:
             log.debug(f"[业绩监控] PE(TTM) 已刷新 {updated} 行")

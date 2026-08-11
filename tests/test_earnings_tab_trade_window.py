@@ -514,6 +514,73 @@ def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(mon
         tab.deleteLater()
 
 
+def test_earnings_pe_recalc_batches_model_notification_without_flash(monkeypatch, earnings_qt):
+    """派生 PE 回填合并为一次模型通知，避免 53 次 GUI 信号。"""
+    EarningsTab = earnings_qt.EarningsTab
+    metrics = []
+    monkeypatch.setattr(
+        earnings_qt.module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+        raising=False,
+    )
+    tab = EarningsTab()
+    try:
+        row_count = 53
+        tab.model.update_data(
+            [
+                {
+                    "代码": f"{index:06d}",
+                    "市值": "100亿",
+                    "_raw_profit": 250_000_000,
+                    "PE(TTM)": "--",
+                }
+                for index in range(row_count)
+            ],
+            hydrate_latest_quotes=False,
+        )
+        notifications = []
+        tab.model.dataChanged.connect(
+            lambda top_left, bottom_right, roles: notifications.append(
+                (
+                    top_left.row(),
+                    bottom_right.row(),
+                    top_left.column(),
+                    bottom_right.column(),
+                    {int(getattr(role, "value", role)) for role in roles},
+                )
+            )
+        )
+
+        tab._recalc_pe_ttm()
+
+        pe_column = tab.model.headers.index("PE(TTM)")
+        assert [row["PE(TTM)"] for row in tab.model.row_data] == ["10.0"] * row_count
+        assert len(notifications) == 1
+        top_row, bottom_row, top_column, bottom_column, roles = notifications[0]
+        assert (top_row, bottom_row, top_column, bottom_column) == (0, row_count - 1, pe_column, pe_column)
+        assert int(Qt.ItemDataRole.UserRole) + 1 not in roles
+        assert tab.model._flash_records == {}
+        assert tab.table._coalesced_flash_repaint is True
+        assert tab.table._targeted_flash_repaint is True
+        assert tab.table._paint_metric_scope == "earnings"
+        from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
+
+        assert tab.table._flash_repaint_timer.isSingleShot() is True
+        assert tab.table._flash_repaint_timer.interval() == int(FLASH_DURATION_SECONDS * 1000)
+        assert any(
+            name == "earnings_pe_recalc_ms"
+            and kwargs["tags"] == {
+                "updated_rows": str(row_count),
+                "signal_ranges": "1",
+                "flash_repaint": "false",
+            }
+            for name, _value, kwargs in metrics
+        )
+    finally:
+        tab.deleteLater()
+
+
 def test_earnings_refresh_after_f5_schedules_routine_scan(monkeypatch):
     earnings_module = _earnings_module()
     EarningsTab = earnings_module.EarningsTab
@@ -576,6 +643,12 @@ def test_earnings_refresh_after_ai_chain_update_replays_filtered_cache():
 
 
 def test_earnings_tab_preserves_discovery_time_from_engine_frame(monkeypatch, earnings_qt):
+    metrics = []
+    monkeypatch.setattr(
+        earnings_qt.module,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+    )
     tab = earnings_qt.EarningsTab()
     try:
         monkeypatch.setattr(tab, "_apply_display_trade_window", lambda force_refresh=False: True)
@@ -605,6 +678,15 @@ def test_earnings_tab_preserves_discovery_time_from_engine_frame(monkeypatch, ea
         assert tab.row_data[0]["代码"] == "300604"
         assert tab.row_data[0]["揭晓日"] == "2026-04-20"
         assert tab.row_data[0]["发现时间"] == "2026-06-27T08:31:02"
+        assert any(
+            name == "earnings_record_merge_ms"
+            and kwargs["tags"] == {
+                "mode": "warm_cache",
+                "input_records": "1",
+                "source_rows": "1",
+            }
+            for name, _value, kwargs in metrics
+        )
     finally:
         tab.deleteLater()
 

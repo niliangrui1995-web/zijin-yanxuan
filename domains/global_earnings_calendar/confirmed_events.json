@@ -1403,6 +1403,42 @@
       "original_timezone": "America/Los_Angeles",
       "call_time_source_url": "https://investor.lumentum.com/financial-news-releases/news-details/2026/Lumentum-Announces-Reporting-Date-for-Fourth-Quarter-and-Fiscal-Year-2026-Results/default.aspx",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Coherent",
+      "ticker": "COHR",
+      "sector": "光模块与光引擎",
+      "report_date": "2026-08-12",
+      "fiscal_period": "Jun/2026",
+      "time_label": "4:30 PM ET",
+      "beijing_time": "2026-08-13 04:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://viavid.webcasts.com/starthere.jsp?ei=1765925&tp_key=bd5f839a10",
+      "market": "US",
+      "original_call_time_text": "Wednesday, August 12, 2026 at 4:30 p.m. ET",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://www.coherent.com/news/press-releases/fy2026-fourth-quarter-fy2026-conference-call-announced",
+      "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "AVC",
+      "ticker": "3017.TW",
+      "sector": "液冷与散热材料",
+      "report_date": "2026-08-12",
+      "fiscal_period": "",
+      "time_label": "14:30 Taiwan time",
+      "beijing_time": "2026-08-12 14:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://mops.twse.com.tw/mops/#/web/t100sb02_1",
+      "market": "TW",
+      "original_call_time_text": "115/08/12 14:30；受邀参加富邦证券法人说明会，说明115年第二季营运结果与未来展望",
+      "original_timezone": "Asia/Shanghai",
+      "call_time_source_url": "https://mops.twse.com.tw/mops/#/web/t100sb02_1",
+      "call_time_source_type": "exchange_announcement"
     }
   ]
 }

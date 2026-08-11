@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
+import os
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QColor, QHideEvent, QShowEvent
-from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QRect, Qt
+from PyQt6.QtGui import QColor, QHideEvent, QImage, QPainter, QShowEvent
+from PyQt6.QtTest import QSignalSpy, QTest
+from PyQt6.QtWidgets import QApplication, QPushButton, QStyle, QStyleOptionViewItem, QWidget
 
 from app.services.stock_context_model_service import StockContextSnapshot
 from core.event_bus import event_bus
@@ -85,7 +86,7 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
         assert tab.table_sp._paint_metric_scope == "watchlist"
         assert tab.table_sp.viewport().testAttribute(
             Qt.WidgetAttribute.WA_OpaquePaintEvent
-        ) is False
+        ) is True
         tab.model.update_data(rows)
         price_column = tab.model.headers.index("现价")
         code_column = tab.model.headers.index("代码")
@@ -195,6 +196,173 @@ def test_watchlist_non_sort_quote_refresh_keeps_runtime_dirty_region_local(monke
         tab.table_sp.viewport().removeEventFilter(probe)
         tab.shutdown()
         tab.deleteLater()
+
+
+def test_watchlist_opaque_viewport_delegate_overwrites_hovered_cell_pixels(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    previous_style_sheet = app.styleSheet()
+    from ui.styles.global_qss import generate_global_qss
+
+    app.setStyleSheet(generate_global_qss())
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        rows = [
+            {
+                "\u4ee3\u7801": f"{600000 + index:06d}",
+                "\u540d\u79f0": f"Watchlist hover row {index}",
+                "\u73b0\u4ef7": f"{10 + index:.2f}",
+                "\u6da8\u5e45%": 0.0,
+                "\u5e02\u503c": "--",
+                "RPS\u5f3a\u5ea6": str(99 - index),
+            }
+            for index in range(12)
+        ]
+        tab.model.update_data(rows)
+        table = tab.table_sp
+        viewport = table.viewport()
+        assert viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent) is True
+
+        index = table.model().index(1, 1)
+
+        def image_bytes(image: QImage) -> bytes:
+            bits = image.bits()
+            bits.setsize(image.sizeInBytes())
+            return bytes(bits)
+
+        def paint_cell(state, image=None) -> QImage:
+            target = image if image is not None else QImage(160, 32, QImage.Format.Format_ARGB32)
+            if image is None:
+                target.fill(QColor("#e91e63"))
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, target.width(), target.height())
+            option.state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Active | state
+            option.widget = table
+            option.palette = table.palette()
+            option.font = table.font()
+            painter = QPainter(target)
+            try:
+                tab.delegate.paint(painter, option, index)
+            finally:
+                painter.end()
+            return target
+
+        selected = QStyle.StateFlag.State_Selected
+        baseline = paint_cell(selected)
+        hovered = paint_cell(selected | QStyle.StateFlag.State_MouseOver)
+        scratch = paint_cell(selected | QStyle.StateFlag.State_MouseOver)
+        paint_cell(selected, scratch)
+
+        assert image_bytes(hovered) != image_bytes(baseline)
+        assert image_bytes(scratch) == image_bytes(baseline)
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+        app.setStyleSheet(previous_style_sheet)
+
+
+@pytest.mark.skipif(
+    os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen",
+    reason="requires the native QWidget backing store",
+)
+def test_watchlist_opaque_viewport_native_hover_and_empty_tail_pixels(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    previous_style_sheet = app.styleSheet()
+    from ui.styles.global_qss import generate_global_qss
+
+    app.setStyleSheet(generate_global_qss())
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        rows = [
+            {
+                "\u4ee3\u7801": f"{600000 + index:06d}",
+                "\u540d\u79f0": f"Watchlist native hover row {index}",
+                "\u73b0\u4ef7": f"{10 + index:.2f}",
+                "\u6da8\u5e45%": 0.0,
+                "\u5e02\u503c": "--",
+                "RPS\u5f3a\u5ea6": str(99 - index),
+            }
+            for index in range(46)
+        ]
+        tab.model.update_data(rows)
+        tab._update_status_summary()
+        tab.resize(960, 720)
+        tab.show()
+        tab.raise_()
+        tab.activateWindow()
+
+        def drain_events(rounds: int = 8) -> None:
+            for _ in range(rounds):
+                app.processEvents()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.UpdateRequest)
+                app.processEvents()
+                QTest.qWait(5)
+
+        def cell_pixels(row: int) -> bytes:
+            index = tab.table_sp.model().index(row, 1)
+            rect = tab.table_sp.visualRect(index)
+            assert rect.isValid() and not rect.isEmpty()
+            image = tab.table_sp.viewport().grab().toImage().copy(rect)
+            return image_pixels(image)
+
+        def image_pixels(image: QImage) -> bytes:
+            bits = image.bits()
+            bits.setsize(image.sizeInBytes())
+            return bytes(bits)
+
+        states = []
+
+        class _ProbeDelegate(watchlist_module.StockItemDelegate):
+            def paint(self, painter, option, index):
+                if index.row() in {1, 7} and index.column() == 1:
+                    states.append(
+                        (index.row(), bool(option.state & QStyle.StateFlag.State_MouseOver))
+                    )
+                return super().paint(painter, option, index)
+
+        table = tab.table_sp
+        table.setItemDelegate(_ProbeDelegate(table))
+        drain_events(12)
+
+        def move_to_row(row: int) -> None:
+            rect = table.visualRect(table.model().index(row, 1))
+            assert rect.isValid() and not rect.isEmpty()
+            QTest.mouseMove(table.viewport(), rect.center())
+            drain_events()
+
+        move_to_row(0)
+        baseline = cell_pixels(1)
+        move_to_row(1)
+        hovered = cell_pixels(1)
+        move_to_row(7)
+        restored = cell_pixels(1)
+
+        assert baseline != hovered
+        assert restored == baseline
+        hover_at = next(index for index, state in enumerate(states) if state == (1, True))
+        assert any(state == (1, False) for state in states[hover_at + 1 :])
+
+        tab.model.update_data([])
+        table.clearSelection()
+        drain_events()
+        empty_reference = table.viewport().grab().toImage()
+        tab.model.update_data(rows)
+        tab._filter_table("native-opaque-missing-filter")
+        drain_events()
+        empty_after_filter = table.viewport().grab().toImage()
+        assert image_pixels(empty_after_filter) == image_pixels(empty_reference)
+
+        tab.resize(1120, 860)
+        drain_events()
+        expanded = table.viewport().grab().toImage()
+        base_pixel = expanded.pixelColor(8, 8)
+        tail_pixel = expanded.pixelColor(expanded.width() // 2, expanded.height() - 24)
+        assert tail_pixel == base_pixel
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+        app.setStyleSheet(previous_style_sheet)
 
 
 def test_watchlist_quote_refresh_reorders_once_when_price_sort_key_changes(monkeypatch):

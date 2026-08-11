@@ -68,6 +68,7 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.load_timeout_ms == 8000
     assert args.heartbeat_ms == 25
     assert args.background_prewarm is False
+    assert args.restore_last_tab is False
     assert args.prewarm_timeout_ms == 60_000
     assert args.quote_cycles == 0
     assert args.quote_cycle_ms == 1000
@@ -101,6 +102,50 @@ def test_native_watchlist_profile_cli_accepts_shell_nav_sampling_options():
     assert args.shell_nav_only is True
     assert args.membership_delta_probe is True
     assert args.disable_market_pulse is True
+
+
+def test_native_watchlist_profile_cli_accepts_restore_last_tab_reveal_probe():
+    args = _parse_args(["--background-prewarm", "--restore-last-tab"])
+
+    assert args.background_prewarm is True
+    assert args.restore_last_tab is True
+
+
+@pytest.mark.parametrize(
+    ("restore_last_tab", "expected_activation", "expected_restore"),
+    [(False, [(0, "user")], []), (True, [], [(0, 0)])],
+)
+def test_native_watchlist_profile_activation_uses_requested_workspace_path(
+    monkeypatch, restore_last_tab, expected_activation, expected_restore
+):
+    import infra.diagnostics.ui_stall_probe as stall_probe_module
+
+    monkeypatch.setattr(stall_probe_module, "get_ui_stall_probe", lambda: None)
+    activation_calls = []
+    restore_calls = []
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "watchlist"}],
+        activate_tab=lambda index, *, reason: activation_calls.append((index, reason)) or True,
+        schedule_restore_last_tab=lambda index, *, delay_ms: restore_calls.append((index, delay_ms)),
+    )
+    controller = object.__new__(_NativeProfileController)
+    controller._done = False
+    controller.window = SimpleNamespace(_workspace=workspace)
+    controller.args = SimpleNamespace(
+        background_prewarm=False,
+        restore_last_tab=restore_last_tab,
+    )
+    controller.cprofile_enabled = False
+    controller.report = {"timings": {}}
+    controller.paint_probe = SimpleNamespace(mark_activation=lambda _started: None)
+    controller._set_phase = lambda _phase: None
+    controller._fail = pytest.fail
+    controller._load_poll = SimpleNamespace(start=lambda: None)
+
+    _NativeProfileController._activate_watchlist(controller)
+
+    assert activation_calls == expected_activation
+    assert restore_calls == expected_restore
 
 
 def test_native_watchlist_profile_shell_nav_only_requires_a_shell_nav_cycle():

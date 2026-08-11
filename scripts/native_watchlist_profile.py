@@ -641,6 +641,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Run the production 11-tab background prewarm and measure Watchlist repaints until it finishes.",
     )
+    parser.add_argument(
+        "--restore-last-tab",
+        action="store_true",
+        help="Activate Watchlist through the production restore_last_tab reason instead of a user click.",
+    )
     parser.add_argument("--prewarm-timeout-ms", type=int, default=60_000)
     parser.add_argument(
         "--quote-cycles",
@@ -1299,7 +1304,20 @@ class _NativeProfileController:
             self._reset_stall_probe()
             self._set_phase("watchlist_reveal")
         call_started = time.perf_counter()
-        activated = bool(workspace.activate_tab(index, reason="user"))
+        if bool(self.args.restore_last_tab):
+            schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
+            if callable(schedule_restore):
+                schedule_restore(index, delay_ms=0)
+                activated = True
+            else:
+                restore = getattr(workspace, "restore_last_tab", None)
+                if callable(restore):
+                    restore(index)
+                    activated = True
+                else:
+                    activated = False
+        else:
+            activated = bool(workspace.activate_tab(index, reason="user"))
         self.report["timings"]["watchlist_activate_call_ms"] = round(
             (time.perf_counter() - call_started) * 1000.0, 3
         )
@@ -2567,6 +2585,7 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "load_timeout_ms": int(args.load_timeout_ms),
             "heartbeat_ms": int(args.heartbeat_ms),
             "background_prewarm": bool(args.background_prewarm),
+            "restore_last_tab": bool(args.restore_last_tab),
             "prewarm_timeout_ms": int(args.prewarm_timeout_ms),
             "quote_cycles": int(args.quote_cycles),
             "quote_cycle_ms": int(args.quote_cycle_ms),
