@@ -82,6 +82,7 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
     try:
         assert tab.model._sparse_update_coalescing is True
         assert tab.model._sparse_quote_update_coalescing is False
+        assert tab.model._presentation_cache_enabled is True
         assert tab.table_sp._targeted_flash_repaint is True
         assert tab.table_sp._paint_metric_scope == "watchlist"
         assert tab.table_sp.viewport().testAttribute(

@@ -1108,6 +1108,7 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         ]
         self.model = StockTableModel(headers)
         self.model.set_sparse_update_coalescing(True)
+        self.model.set_presentation_cache_enabled(True)
         # 仅行情保留真实连续区间，避免首末行大矩形失效；VCP/context 批量更新仍按原策略合并。
         self.model.set_sparse_quote_update_coalescing(False)
         self.model.set_muted_text_headers(["RPS强度", "细分板块", "摘要", "备注"])

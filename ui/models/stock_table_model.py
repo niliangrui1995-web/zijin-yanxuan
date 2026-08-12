@@ -46,6 +46,18 @@ BUY_POINT_TRIGGER_ICON = "🚀"
 FOREIGN_BROKER_KEYWORDS = ("高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和")
 _UNHANDLED_ROLE = object()
 _PRICE_MOVE_HEADERS = ("现价", "市价", "收盘", "最新价")
+_PRESENTATION_CACHE_MISS = object()
+_PRESENTATION_CACHE_MAX_ENTRIES = 4096
+_PRESENTATION_CACHE_ROLES = frozenset(
+    {
+        int(Qt.ItemDataRole.DisplayRole),
+        int(Qt.ItemDataRole.ToolTipRole),
+        int(Qt.ItemDataRole.TextAlignmentRole),
+        int(Qt.ItemDataRole.FontRole),
+        int(Qt.ItemDataRole.ForegroundRole),
+        int(Qt.ItemDataRole.BackgroundRole),
+    }
+)
 _ROW_CHANGE_DEPENDENCIES = {
     **{key: _PRICE_MOVE_HEADERS for key in ("涨幅%", "涨幅", "涨跌%", "涨跌")},
     "_row_style": (SERIAL_HEADER,),
@@ -164,6 +176,9 @@ class StockTableModel(QAbstractTableModel):
         self._data = data or []
         self._flash_records = {}
         self._sort_value_cache = {}
+        self._presentation_cache_enabled = False
+        self._presentation_cache: dict[int, dict[tuple[int, int], object]] = {}
+        self._presentation_cache_entry_count = 0
         self._money_bar_max_abs_cache: dict[str, float] = {}
         self._plain_style_headers = set()
         self._plain_background_headers = set()
@@ -171,6 +186,7 @@ class StockTableModel(QAbstractTableModel):
         self._sparse_update_coalescing = False
         self._sparse_quote_update_coalescing: bool | None = None
         self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
+        self.dataChanged.connect(self._invalidate_presentation_cache_for_changed_indexes)
 
         fonts = _build_table_model_fonts()
         self.base_font = fonts["base"]
@@ -190,18 +206,54 @@ class StockTableModel(QAbstractTableModel):
 
     def set_plain_style_headers(self, headers):
         self._plain_style_headers = {str(header) for header in (headers or []) if str(header).strip()}
+        self.clear_presentation_cache()
 
     def _uses_plain_style(self, header: str) -> bool:
         return header in self._plain_style_headers
 
     def set_plain_background_headers(self, headers):
         self._plain_background_headers = {str(header) for header in (headers or []) if str(header).strip()}
+        self.clear_presentation_cache()
 
     def _uses_plain_background(self, header: str) -> bool:
         return header in self._plain_background_headers
 
     def set_muted_text_headers(self, headers):
         self._muted_text_headers = {str(header) for header in (headers or []) if str(header).strip()}
+        self.clear_presentation_cache()
+
+    def set_presentation_cache_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self._presentation_cache_enabled == enabled:
+            return
+        self._presentation_cache_enabled = enabled
+        self.clear_presentation_cache()
+
+    def clear_presentation_cache(self) -> None:
+        self._presentation_cache.clear()
+        self._presentation_cache_entry_count = 0
+
+    def _presentation_cache_value(self, row: int, col: int, role: int):
+        if not self._presentation_cache_enabled or role not in _PRESENTATION_CACHE_ROLES:
+            return _PRESENTATION_CACHE_MISS
+        return self._presentation_cache.get(row, {}).get((col, role), _PRESENTATION_CACHE_MISS)
+
+    def _cache_presentation_value(self, row: int, col: int, role: int, value):
+        if not self._presentation_cache_enabled or role not in _PRESENTATION_CACHE_ROLES:
+            return value
+        row_cache = self._presentation_cache.get(row)
+        if row_cache is None:
+            row_cache = {}
+            self._presentation_cache[row] = row_cache
+        cache_key = (col, role)
+        if cache_key not in row_cache:
+            if self._presentation_cache_entry_count >= _PRESENTATION_CACHE_MAX_ENTRIES:
+                self.clear_presentation_cache()
+                row_cache = {}
+                self._presentation_cache[row] = row_cache
+            self._presentation_cache_entry_count += 1
+        row_cache[cache_key] = value
+        return value
 
     def set_sparse_update_coalescing(self, enabled: bool) -> None:
         self._sparse_update_coalescing = bool(enabled)
@@ -390,6 +442,15 @@ class StockTableModel(QAbstractTableModel):
     def _clear_sort_value_cache(self) -> None:
         self._sort_value_cache.clear()
 
+    def _clear_presentation_cache_for_rows(self, rows) -> None:
+        for row in set(rows or ()):
+            row_cache = self._presentation_cache.pop(row, None)
+            if row_cache is not None:
+                self._presentation_cache_entry_count = max(
+                    0,
+                    self._presentation_cache_entry_count - len(row_cache),
+                )
+
     def _clear_sort_value_cache_for_rows(self, rows) -> None:
         if not self._sort_value_cache:
             return
@@ -412,6 +473,15 @@ class StockTableModel(QAbstractTableModel):
             row, col = cache_key
             if row_start <= row <= row_end and col_start <= col <= col_end:
                 self._sort_value_cache.pop(cache_key, None)
+
+    def _invalidate_presentation_cache_for_changed_indexes(self, top_left, bottom_right, *_args) -> None:
+        if not self._presentation_cache_enabled:
+            return
+        if not top_left.isValid() or not bottom_right.isValid():
+            self.clear_presentation_cache()
+            return
+        row_start, row_end = sorted((top_left.row(), bottom_right.row()))
+        self._clear_presentation_cache_for_rows(range(row_start, row_end + 1))
 
     def _record_row_flashes(self, row: int, old_row: dict, new_row: dict) -> bool:
         if not isinstance(old_row, dict) or not isinstance(new_row, dict):
@@ -460,6 +530,7 @@ class StockTableModel(QAbstractTableModel):
             return
 
         self._clear_sort_value_cache_for_rows(changed_rows)
+        self._clear_presentation_cache_for_rows(changed_rows)
         for (start_col, end_col), span_rows in sorted(changed_rows_by_span.items()):
             _emit_model_row_ranges(
                 self,
@@ -476,6 +547,7 @@ class StockTableModel(QAbstractTableModel):
         self._data = rows
         self._flash_records.clear()
         self._clear_sort_value_cache()
+        self.clear_presentation_cache()
         self.layoutChanged.emit()
         if self.rowCount() and self.columnCount():
             self.dataChanged.emit(
@@ -489,6 +561,7 @@ class StockTableModel(QAbstractTableModel):
         _sync_serial_values(rows)
         self._flash_records.clear()
         self._clear_sort_value_cache()
+        self.clear_presentation_cache()
         if action == "insert":
             self.beginInsertRows(QModelIndex(), row, row)
             self._data.insert(row, rows[row])
@@ -546,6 +619,7 @@ class StockTableModel(QAbstractTableModel):
         _sync_serial_values(self._data)
         self._flash_records.clear()
         self._clear_sort_value_cache()
+        self.clear_presentation_cache()
         self.endResetModel()
         if hydrate_latest_quotes:
             self._hydrate_latest_quotes_from_store()
@@ -621,6 +695,7 @@ class StockTableModel(QAbstractTableModel):
 
         new_data[insert_row:insert_row] = items_to_move
         self._clear_sort_value_cache()
+        self.clear_presentation_cache()
         codes = [d.get("代码") for d in new_data if d.get("代码")]
         self.sig_rows_reordered.emit(codes)
         return False
@@ -638,6 +713,7 @@ class StockTableModel(QAbstractTableModel):
         if 0 <= row < len(self._data):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
+            self._clear_presentation_cache_for_rows((row,))
             if old_val != new_val and col_name in {
                 "上榜净买额(万)",
                 "机构净买(万)",
@@ -1094,22 +1170,26 @@ class StockTableModel(QAbstractTableModel):
 
         row = index.row()
         col = index.column()
+        role_value = int(role)
+        cached_value = self._presentation_cache_value(row, col, role_value)
+        if cached_value is not _PRESENTATION_CACHE_MISS:
+            return cached_value
         item_dict = self._data[row]
         key = self._headers[col]
         raw_val = item_dict.get(key, "")
 
         if role == Qt.ItemDataRole.DisplayRole:
-            return self._display_value(row, key, raw_val, item_dict)
+            return self._cache_presentation_value(row, col, role_value, self._display_value(row, key, raw_val, item_dict))
         if role == Qt.ItemDataRole.ToolTipRole:
-            return self._tooltip_value(key, raw_val, item_dict)
+            return self._cache_presentation_value(row, col, role_value, self._tooltip_value(key, raw_val, item_dict))
         if role == Qt.ItemDataRole.TextAlignmentRole:
-            return self._alignment_value(key, raw_val)
+            return self._cache_presentation_value(row, col, role_value, self._alignment_value(key, raw_val))
         if role == Qt.ItemDataRole.FontRole:
-            return self._font_value(key, raw_val, item_dict)
+            return self._cache_presentation_value(row, col, role_value, self._font_value(key, raw_val, item_dict))
         if role == Qt.ItemDataRole.ForegroundRole:
-            return self._foreground_value(key, raw_val, item_dict)
+            return self._cache_presentation_value(row, col, role_value, self._foreground_value(key, raw_val, item_dict))
         if role == Qt.ItemDataRole.BackgroundRole:
-            return self._background_value(key, raw_val)
+            return self._cache_presentation_value(row, col, role_value, self._background_value(key, raw_val))
         if role == Qt.ItemDataRole.UserRole:
             return self._sort_value(row, col, key, raw_val, item_dict)
         custom_value = _custom_cell_role_value(self, role, row, col, key, raw_val, item_dict)

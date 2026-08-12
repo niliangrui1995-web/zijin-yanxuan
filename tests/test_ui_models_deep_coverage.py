@@ -664,6 +664,49 @@ def test_stock_data_role_dispatch_header_and_badge_suppression():
     assert model._accent_rail_value(model.row_data[0]) is None
 
 
+def test_stock_presentation_cache_reuses_roles_invalidates_changed_row_and_preserves_live_flash(monkeypatch):
+    model = _stock(["代码", "名称", "现价", "涨幅%"], [{"代码": "1", "名称": "A", "现价": "10", "涨幅%": "1"}])
+    model.set_presentation_cache_enabled(True)
+    index = model.index(0, model.headers.index("名称"))
+    role_methods = {
+        Qt.ItemDataRole.DisplayRole: "_display_value",
+        Qt.ItemDataRole.ToolTipRole: "_tooltip_value",
+        Qt.ItemDataRole.TextAlignmentRole: "_alignment_value",
+        Qt.ItemDataRole.FontRole: "_font_value",
+        Qt.ItemDataRole.ForegroundRole: "_foreground_value",
+        Qt.ItemDataRole.BackgroundRole: "_background_value",
+    }
+    calls = {method: 0 for method in role_methods.values()}
+    for method in calls:
+        original = getattr(model, method)
+
+        def counted(*args, _method=method, _original=original):
+            calls[_method] += 1
+            return _original(*args)
+
+        monkeypatch.setattr(model, method, counted)
+
+    for role in role_methods:
+        model.data(index, role)
+        model.data(index, role)
+    assert calls == {method: 1 for method in role_methods.values()}
+
+    model.set_cell_value(0, "名称", "B")
+
+    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "B"
+    for role in role_methods:
+        model.data(index, role)
+    assert calls == {method: 2 for method in role_methods.values()}
+    model.clear_presentation_cache()
+    assert model._presentation_cache == {}
+
+    quote_index = model.index(0, model.headers.index("现价"))
+    assert model.set_cell_value(0, "现价", "11")
+    assert model.data(quote_index, helpers.STOCK_CELL_RENDER_ROLE)[2] is not None
+    model._flash_records[0][quote_index.column()]["time"] = time.time() - helpers.FLASH_DURATION_SECONDS - 1
+    assert model.data(quote_index, helpers.STOCK_CELL_RENDER_ROLE)[2] is None
+
+
 def test_rt_model_identity_update_guards_and_public_accessors():
     model = RtTableModel([{"\u4ee3\u7801": "1", "\u540d\u79f0": "A"}, {"\u4ee3\u7801": "2", "\u540d\u79f0": "B"}])
     assert model.row_data is model._data

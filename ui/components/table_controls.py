@@ -305,6 +305,7 @@ class VCPTableView(QTableView):
         if self._closing:
             return
         self._invalidate_shell_nav_repaint_guard("theme_changed")
+        self._clear_model_presentation_cache()
         self._apply_screen_width_limit()
         self.style().unpolish(self)
         self.style().polish(self)
@@ -317,6 +318,17 @@ class VCPTableView(QTableView):
         super().setModel(model)
         self._connect_refresh_model(model)
         self._connect_shell_nav_guard_selection_model()
+
+    def _clear_model_presentation_cache(self) -> None:
+        model = self.model()
+        seen: set[int] = set()
+        while model is not None and id(model) not in seen:
+            seen.add(id(model))
+            clear_cache = getattr(model, "clear_presentation_cache", None)
+            if callable(clear_cache):
+                clear_cache()
+            source_model = getattr(model, "sourceModel", None)
+            model = source_model() if callable(source_model) else None
 
     def _connect_shell_nav_guard_selection_model(self) -> None:
         selection_model = self.selectionModel()
@@ -1319,6 +1331,12 @@ class VCPTableView(QTableView):
             QEvent.Type.PaletteChange,
         }:
             self._invalidate_shell_nav_repaint_guard("viewport_change")
+            if event_type in {
+                QEvent.Type.StyleChange,
+                QEvent.Type.FontChange,
+                QEvent.Type.PaletteChange,
+            }:
+                self._clear_model_presentation_cache()
         elif event_type in {
             QEvent.Type.MouseButtonPress,
             QEvent.Type.MouseButtonDblClick,

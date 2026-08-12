@@ -222,6 +222,24 @@ def test_vcp_table_view_skips_restore_snapshot_for_initial_empty_model(qt_applic
         table.deleteLater()
 
 
+def test_vcp_table_view_palette_change_clears_source_presentation_cache(qt_application):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    source_model.update_data(_rows(1), hydrate_latest_quotes=False)
+    source_model.set_presentation_cache_enabled(True)
+    source_model.data(source_model.index(0, 1), Qt.ItemDataRole.DisplayRole)
+    proxy_model = RtSortFilterProxyModel(table)
+    proxy_model.setSourceModel(source_model)
+    table.setModel(proxy_model)
+
+    try:
+        assert source_model._presentation_cache
+        table.viewportEvent(QEvent(QEvent.Type.PaletteChange))
+        assert source_model._presentation_cache == {}
+    finally:
+        table.deleteLater()
+
+
 def test_vcp_table_view_restores_header_only_when_snapshot_changed(qt_application, monkeypatch):
     table = VCPTableView()
     source_model = StockTableModel(["代码", "名称", "现价"])
