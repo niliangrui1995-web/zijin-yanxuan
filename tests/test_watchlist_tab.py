@@ -86,7 +86,7 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
         assert tab.table_sp._paint_metric_scope == "watchlist"
         assert tab.table_sp.viewport().testAttribute(
             Qt.WidgetAttribute.WA_OpaquePaintEvent
-        ) is True
+        ) is False
         tab.model.update_data(rows)
         price_column = tab.model.headers.index("现价")
         code_column = tab.model.headers.index("代码")
@@ -198,7 +198,7 @@ def test_watchlist_non_sort_quote_refresh_keeps_runtime_dirty_region_local(monke
         tab.deleteLater()
 
 
-def test_watchlist_opaque_viewport_delegate_overwrites_hovered_cell_pixels(monkeypatch):
+def test_watchlist_viewport_delegate_overwrites_hovered_cell_pixels(monkeypatch):
     _patch_watchlist_constructor(monkeypatch)
     app = QApplication.instance() or QApplication([])
     previous_style_sheet = app.styleSheet()
@@ -221,7 +221,7 @@ def test_watchlist_opaque_viewport_delegate_overwrites_hovered_cell_pixels(monke
         tab.model.update_data(rows)
         table = tab.table_sp
         viewport = table.viewport()
-        assert viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent) is True
+        assert viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent) is False
 
         index = table.model().index(1, 1)
 
@@ -265,7 +265,7 @@ def test_watchlist_opaque_viewport_delegate_overwrites_hovered_cell_pixels(monke
     os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen",
     reason="requires the native QWidget backing store",
 )
-def test_watchlist_opaque_viewport_native_hover_and_empty_tail_pixels(monkeypatch):
+def test_watchlist_viewport_native_hover_and_empty_tail_pixels(monkeypatch):
     _patch_watchlist_constructor(monkeypatch)
     app = QApplication.instance() or QApplication([])
     previous_style_sheet = app.styleSheet()

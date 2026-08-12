@@ -1116,10 +1116,10 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.setModel(self.proxy_model)
         self.table_sp.set_coalesced_flash_repaint_enabled(True)
         self.table_sp.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
-        # QTableView covers every requested viewport pixel.  Declaring that contract
-        # keeps Qt's backing store from issuing redundant full clears after a staged
-        # Watchlist reveal; the delegate coverage regression guards its cell-paint side.
-        self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        # Partial viewport paints do not reliably overwrite every pixel when this tab
+        # is revealed after another workspace page.  Let Qt clear the dirty background
+        # so old page content cannot remain underneath the table cells.
+        self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)

@@ -1439,6 +1439,42 @@
       "original_timezone": "Asia/Shanghai",
       "call_time_source_url": "https://mops.twse.com.tw/mops/#/web/t100sb02_1",
       "call_time_source_type": "exchange_announcement"
+    },
+    {
+      "company": "Applied Materials",
+      "ticker": "AMAT",
+      "sector": "前道晶圆设备与量测",
+      "report_date": "2026-08-13",
+      "fiscal_period": "Jul/2026",
+      "time_label": "4:30 PM EDT",
+      "beijing_time": "2026-08-14 04:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "strategic_giant",
+      "conference_url": "https://ir.appliedmaterials.com/events/event-details/q3-2026-applied-materials-earnings-conference-call",
+      "market": "US",
+      "original_call_time_text": "Thursday, August 13, 2026 at 4:30 PM EDT",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://ir.appliedmaterials.com/events/event-details/q3-2026-applied-materials-earnings-conference-call",
+      "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Alchip",
+      "ticker": "3661.TW",
+      "sector": "AI加速芯片与定制ASIC",
+      "report_date": "2026-08-12",
+      "fiscal_period": "",
+      "time_label": "Aug 14, 2026 14:30 PM (Taiwan local time)",
+      "beijing_time": "2026-08-14 14:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://www.alchip.com/public/index.php/en/Investors/financials/seminar",
+      "market": "TW",
+      "original_call_time_text": "Aug 14, 2026 14:30 PM — [Online] 2026 Q2 Institutional Investor Meeting – 2026 Q2 Results and Future Forecast",
+      "original_timezone": "Asia/Shanghai",
+      "call_time_source_url": "https://www.alchip.com/public/index.php/en/Investors/financials/seminar",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }
