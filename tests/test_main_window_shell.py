@@ -245,6 +245,21 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs(qt_application):
         window.deleteLater()
 
 
+def test_main_window_titlebar_pulse_strip_stays_static_after_show(qt_application):
+    window = DummyShellWindow()
+    try:
+        assert window._market_pulse_strip.height() == 3
+        assert window._market_pulse_strip._timer.isActive() is False
+
+        window.show()
+        qt_application.processEvents()
+
+        assert window._market_pulse_strip.isVisible() is True
+        assert window._market_pulse_strip._timer.isActive() is False
+    finally:
+        window.deleteLater()
+
+
 class DummyGroupedWorkspace:
     @staticmethod
     def tab_indices_by_group():

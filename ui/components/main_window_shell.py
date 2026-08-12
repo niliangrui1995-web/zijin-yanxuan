@@ -141,8 +141,8 @@ class MarketPulseStrip(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if not self._timer.isActive():
-            self._timer.start()
+        # Keep the titlebar accent static: a 45ms child update otherwise
+        # continuously invalidates the shared MainWindow backing store.
 
     def hideEvent(self, event) -> None:
         self._timer.stop()
