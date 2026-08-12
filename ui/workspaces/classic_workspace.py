@@ -638,6 +638,10 @@ def _replace_workspace_placeholder(
     spec["mounted"] = True
     if old_widget is not None and old_widget is not widget:
         old_widget.deleteLater()
+    if key == "watchlist":
+        sync_viewport_background = getattr(widget, "sync_workspace_viewport_background", None)
+        if callable(sync_viewport_background):
+            sync_viewport_background()
 
 
 def _register_loaded_workspace_tab(

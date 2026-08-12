@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QRect, Qt
-from PyQt6.QtGui import QColor, QHideEvent, QImage, QPainter, QShowEvent
+from PyQt6.QtGui import QColor, QHideEvent, QImage, QPainter, QPalette, QShowEvent
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QPushButton, QStyle, QStyleOptionViewItem, QWidget
 
@@ -88,6 +88,8 @@ def test_watchlist_quote_refresh_keeps_sparse_ranges_and_targeted_flash(monkeypa
         assert tab.table_sp.viewport().testAttribute(
             Qt.WidgetAttribute.WA_OpaquePaintEvent
         ) is False
+        assert tab.table_sp.viewport().autoFillBackground() is True
+        assert tab.table_sp.viewport().backgroundRole() == QPalette.ColorRole.Base
         tab.model.update_data(rows)
         price_column = tab.model.headers.index("现价")
         code_column = tab.model.headers.index("代码")
@@ -786,6 +788,11 @@ def test_watchlist_first_open_defers_data_until_background_delivery(monkeypatch)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _capture_task)
     monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
+    monkeypatch.setattr(
         watchlist_module.watchlist_vm,
         "get_watchlist_data",
         lambda: load_calls.append("load") or {"600519": {"名称": "贵州茅台"}},
@@ -868,6 +875,11 @@ def test_watchlist_initial_delivery_uses_latest_quote_snapshot(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _capture_task)
     monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
+    monkeypatch.setattr(
         watchlist_module.watchlist_vm,
         "get_watchlist_data",
         lambda: {"600519": {"名称": "贵州茅台"}},
@@ -932,6 +944,11 @@ def test_watchlist_loading_overlay_is_delayed_and_cancelled_for_quick_delivery(m
 
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _capture_task)
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
     monkeypatch.setattr(
         watchlist_module.TableStateWrapper,
         "show_loading",
@@ -1045,6 +1062,11 @@ def test_watchlist_initial_delivery_is_ignored_after_shutdown(monkeypatch):
 
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _capture_task)
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
+    )
     monkeypatch.setattr(watchlist_module.task_manager, "cancel_task", lambda *args, **kwargs: True)
     monkeypatch.setattr(watchlist_module.task_manager, "wait_for_tasks", lambda *args, **kwargs: True)
 
@@ -1965,7 +1987,16 @@ def test_watchlist_lineage_and_signature_skip_unchanged_render(monkeypatch):
         tab._render_table(["600519"], data, {})
         lineage = tab.get_data_lineage()
 
-        assert update_calls == [(1, {"hydrate_latest_quotes": False})]
+        assert update_calls == [
+            (
+                1,
+                {
+                    "hydrate_latest_quotes": False,
+                    "allow_single_row_membership_delta": True,
+                    "membership_reconcile_source": "watchlist_rows",
+                },
+            )
+        ]
         assert len(quote_refresh_calls) == 1
         assert {"key", "view", "source", "provider", "cache_refs", "network_capable"}.isdisjoint(lineage)
         assert lineage["triggered_network"] is False
@@ -2375,6 +2406,11 @@ def test_watchlist_indicator_apply_queues_persist_without_sync_write(monkeypatch
             {"fn": fn, "args": args, "kwargs": kwargs, "task_id": task_id}
         )
         or (task_id or "queued"),
+    )
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "is_task_token_active",
+        lambda _task_id, _token: True,
     )
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())

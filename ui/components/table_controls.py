@@ -28,6 +28,7 @@ from PyQt6.QtGui import (
     QFont,
     QFontMetrics,
     QLinearGradient,
+    QPalette,
     QPainter,
     QPainterPath,
     QPen,
@@ -309,7 +310,29 @@ class VCPTableView(QTableView):
         self._apply_screen_width_limit()
         self.style().unpolish(self)
         self.style().polish(self)
+        self.sync_viewport_base_background()
         self.viewport().update()
+
+    def set_viewport_base_background_enabled(self, enabled: bool) -> None:
+        """Opt in to a palette-backed viewport background for this table only."""
+        enabled = bool(enabled)
+        self.setProperty("vcpViewportBaseBackground", enabled)
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        if not enabled:
+            viewport.setAutoFillBackground(False)
+            return
+        self.sync_viewport_base_background()
+
+    def sync_viewport_base_background(self) -> None:
+        if not bool(self.property("vcpViewportBaseBackground")):
+            return
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        viewport.setBackgroundRole(QPalette.ColorRole.Base)
+        viewport.setAutoFillBackground(True)
 
     def setModel(self, model):
         self._invalidate_shell_nav_repaint_guard("model_changed")

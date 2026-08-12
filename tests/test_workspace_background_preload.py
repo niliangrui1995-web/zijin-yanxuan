@@ -39,6 +39,20 @@ class _ControlledPreloadTab(QWidget):
         return BackgroundPreloadCancellationReceipt.immediate()
 
 
+class _ViewportBackgroundPreloadTab(_ControlledPreloadTab):
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(key, events, parent)
+        self.workspace = parent
+        self.viewport_background_sync_calls = 0
+
+    def sync_workspace_viewport_background(self) -> None:
+        self.viewport_background_sync_calls += 1
+        workspace = self.workspace
+        spec = workspace._spec_for_key_or_index("watchlist")
+        assert spec["mounted"] is True
+        assert workspace.tabs.currentWidget() is self
+
+
 class _FailingPrimeTab(_ControlledPreloadTab):
     def prime_background_load(self):
         super().prime_background_load()
@@ -1440,6 +1454,95 @@ def test_current_watchlist_placeholder_mounts_when_background_step_has_no_priori
         assert workspace.tabs.currentWidget() is staged
         assert workspace._spec_for_key_or_index("watchlist")["mounted"] is True
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_staged_watchlist_mount_syncs_viewport_background_after_placeholder_replace(
+    qt_application,
+):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _ViewportBackgroundPreloadTab(
+        "watchlist", events, workspace
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        placeholder = workspace.tabs.widget(watchlist_index)
+        blocked = workspace.tabs.blockSignals(True)
+        workspace.tabs.setCurrentIndex(watchlist_index)
+        workspace.tabs.blockSignals(blocked)
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._background_preload_coordinator.start()
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        staged = workspace.get_loaded_tab("watchlist")
+        assert isinstance(staged, _ViewportBackgroundPreloadTab)
+        assert workspace.tabs.currentWidget() is placeholder
+        assert staged.viewport_background_sync_calls == 0
+
+        staged.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+        assert workspace.tabs.currentWidget() is staged
+        assert watchlist_spec["mounted"] is True
+        assert staged.viewport_background_sync_calls == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_direct_watchlist_restore_syncs_viewport_background_after_placeholder_replace(
+    qt_application,
+):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _ViewportBackgroundPreloadTab(
+        "watchlist", events, workspace
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        placeholder = workspace.tabs.widget(watchlist_index)
+
+        tab = workspace.ensure_tab_loaded(
+            "watchlist",
+            reason=TabLoadReason.RESTORE_LAST_TAB.value,
+        )
+
+        assert isinstance(tab, _ViewportBackgroundPreloadTab)
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+        assert workspace.tabs.currentWidget() is tab
+        assert workspace.tabs.currentWidget() is not placeholder
+        assert watchlist_spec["mounted"] is True
+        assert tab.viewport_background_sync_calls == 1
     finally:
         workspace.shutdown()
         workspace.deleteLater()

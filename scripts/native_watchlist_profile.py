@@ -35,6 +35,8 @@ RESIDUAL_REPAINT_METRICS = (
     "tab_transition_snapshot_ms",
     "tab_transition_snapshot_skipped",
 )
+WATCHLIST_REVEAL_METRICS = RESIDUAL_REPAINT_METRICS + ("ui_event_loop_stall_ms",)
+PREWARM_RUNTIME_METRICS = ("ui_method_stall_ms", "ui_event_loop_stall_ms")
 SHELL_NAV_REPAINT_METRICS = (
     "watchlist_table_paint_ms",
     "watchlist_table_paint_delay_ms",
@@ -213,6 +215,32 @@ def _summarize_shell_nav_guard_metrics(guard_samples: list) -> dict:
     }
 
 
+def _summarize_named_runtime_spans(samples: list, *, names: tuple[str, ...]) -> dict:
+    requested_names = tuple(str(name) for name in names)
+    grouped: dict[str, list] = {name: [] for name in requested_names}
+    for sample in samples or ():
+        method = str((getattr(sample, "tags", {}) or {}).get("method", ""))
+        if method in grouped:
+            grouped[method].append(sample)
+    return {
+        "count": sum(len(rows) for rows in grouped.values()),
+        "methods": {
+            name: {
+                "durations": summarize_durations([sample.value for sample in rows]),
+                "samples": [
+                    {
+                        "elapsed_ms": round(float(sample.value), 3),
+                        "tab": str((getattr(sample, "tags", {}) or {}).get("tab", "")),
+                        "signal": str((getattr(sample, "tags", {}) or {}).get("signal", "")),
+                    }
+                    for sample in rows
+                ],
+            }
+            for name, rows in grouped.items()
+        },
+    }
+
+
 def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dict:
     paint_samples = list(samples_by_name.get("watchlist_table_paint_ms", ()))
     paint_ratios = [
@@ -223,6 +251,11 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
     after_first_paint_ratios = paint_ratios[1:]
     paint_full_flags = [_sample_delivered_full_viewport(sample) for sample in paint_samples]
     after_first_paint_full_flags = paint_full_flags[1:]
+    paint_other_full_flags = [
+        full and str((getattr(sample, "tags", {}) or {}).get("reason", "")).strip() == "other"
+        for sample, full in zip(paint_samples, paint_full_flags, strict=True)
+    ]
+    after_first_paint_other_full_flags = paint_other_full_flags[1:]
     snapshot_samples = list(samples_by_name.get("tab_transition_snapshot_ms", ()))
     skipped_samples = list(samples_by_name.get("tab_transition_snapshot_skipped", ()))
     model_samples = list(samples_by_name.get("watchlist_model_update_ms", ()))
@@ -239,6 +272,7 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
         "paint": {
             "durations": summarize_durations([sample.value for sample in paint_samples]),
             "full_viewport_count": sum(paint_full_flags),
+            "other_full_viewport_count": sum(paint_other_full_flags),
             "max_dirty_bounding_area_ratio": round(max(paint_ratios, default=0.0), 4),
             "reasons": [str(sample.tags.get("reason", "")) for sample in paint_samples],
             "samples": [
@@ -279,6 +313,8 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
                     "elapsed_ms": round(float(paint_samples[0].value), 3),
                     "dirty_bounding_area_ratio": round(paint_ratios[0], 4),
                     "reason": str(paint_samples[0].tags.get("reason", "")),
+                    "delivered_full_viewport": paint_full_flags[0],
+                    "delivery_kind": str(paint_samples[0].tags.get("delivery_kind", "")),
                 }
                 if paint_samples
                 else None
@@ -286,6 +322,7 @@ def _summarize_residual_repaint_metrics(samples_by_name: dict[str, list]) -> dic
             "after_first": {
                 "durations": summarize_durations([sample.value for sample in after_first_paint_samples]),
                 "full_viewport_count": sum(after_first_paint_full_flags),
+                "other_full_viewport_count": sum(after_first_paint_other_full_flags),
                 "max_dirty_bounding_area_ratio": round(max(after_first_paint_ratios, default=0.0), 4),
             },
         },
@@ -346,18 +383,36 @@ def _background_prewarm_acceptance(
     return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
-def _watchlist_reveal_acceptance(paint_region: dict) -> dict:
-    """Allow the necessary reveal paint, but reject any later full-viewport paint."""
+def _watchlist_reveal_acceptance(paint_metrics: dict, *, viewport_background: dict | None = None) -> dict:
+    """Inspect actual VCPTableView paint metrics, not raw QPaintEvent observations."""
     violations: list[str] = []
-    paint_count = int(paint_region.get("count", 0) or 0)
+    paint_count = int((paint_metrics.get("durations") or {}).get("count", 0) or 0)
     if paint_count <= 0:
         violations.append("watchlist_reveal_paint_missing")
-    elif not bool((paint_region.get("first") or {}).get("delivered_full_viewport")):
+    first_paint = paint_metrics.get("first") or {}
+    if paint_count > 0 and not bool(first_paint.get("delivered_full_viewport")):
         violations.append("watchlist_first_reveal_not_full_viewport")
-    after_first = paint_region.get("after_first", {}) or {}
+    elif paint_count > 0 and str(first_paint.get("reason", "")).strip() != "preload_reveal":
+        violations.append(
+            f"watchlist_first_reveal_reason={str(first_paint.get('reason', '')).strip()!r}"
+        )
+    after_first = paint_metrics.get("after_first", {}) or {}
     full_after_first = int(after_first.get("full_viewport_count", 0) or 0)
     if full_after_first:
         violations.append(f"watchlist_full_viewport_after_reveal={full_after_first}")
+    other_full_after_first = int(after_first.get("other_full_viewport_count", 0) or 0)
+    if other_full_after_first:
+        violations.append(
+            f"watchlist_other_full_viewport_after_reveal={other_full_after_first}"
+        )
+    if viewport_background and bool(viewport_background.get("available")):
+        if not bool(viewport_background.get("auto_fill_background")):
+            violations.append("watchlist_viewport_base_background_disabled")
+        if str(viewport_background.get("background_role", "")) != "Base":
+            violations.append(
+                "watchlist_viewport_background_role="
+                f"{str(viewport_background.get('background_role', ''))!r}"
+            )
     return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
@@ -941,7 +996,36 @@ class _FirstPaintProbe(QObject):
 
     def viewport_update_request_summary(self, phase: str) -> dict:
         samples = list(self._viewport_update_requests_by_phase.get(str(phase or "unknown"), ()))
-        return {"count": len(samples), "samples": [dict(sample) for sample in samples]}
+        return self._summarize_viewport_update_requests(samples)
+
+    @staticmethod
+    def _summarize_viewport_update_requests(samples: list[dict]) -> dict:
+        normalized_samples = [dict(sample) for sample in samples]
+        event_type_counts: dict[str, int] = defaultdict(int)
+        target_counts: dict[str, int] = defaultdict(int)
+        upstream_target_counts: dict[str, int] = defaultdict(int)
+        upstream_update_request_count = 0
+        upstream_update_later_count = 0
+        for sample in normalized_samples:
+            event_type = str(sample.get("event_type", ""))
+            target = str(sample.get("target", ""))
+            event_type_counts[event_type] += 1
+            target_counts[target] += 1
+            if target not in {"viewport", "table"}:
+                upstream_target_counts[target] += 1
+                if event_type == "UpdateRequest":
+                    upstream_update_request_count += 1
+                elif event_type == "UpdateLater":
+                    upstream_update_later_count += 1
+        return {
+            "count": len(normalized_samples),
+            "event_type_counts": dict(sorted(event_type_counts.items())),
+            "target_counts": dict(sorted(target_counts.items())),
+            "upstream_target_counts": dict(sorted(upstream_target_counts.items())),
+            "backing_store_update_request_count": upstream_update_request_count,
+            "upstream_update_later_count": upstream_update_later_count,
+            "samples": normalized_samples,
+        }
 
     @staticmethod
     def _summarize_paint_regions(samples: list[dict]) -> dict:
@@ -1238,6 +1322,7 @@ class _NativeProfileController:
         self._background_prewarm_first_hidden_key = ""
         self._watchlist_reveal_started_at = 0.0
         self._watchlist_reveal_offsets: dict[str, float] | None = None
+        self._watchlist_prewarm_offsets: dict[str, int] | None = None
 
         workspace = getattr(window, "_workspace", None)
         coordinator = getattr(workspace, "_background_preload_coordinator", None)
@@ -1300,7 +1385,8 @@ class _NativeProfileController:
 
         if bool(self.args.background_prewarm):
             self._watchlist_reveal_started_at = time.perf_counter()
-            self._watchlist_reveal_offsets = self._metric_offsets()
+            self._watchlist_reveal_offsets = self._metric_offsets(WATCHLIST_REVEAL_METRICS)
+            self._watchlist_prewarm_offsets = self._metric_offsets(PREWARM_RUNTIME_METRICS)
             self._reset_stall_probe()
             self._set_phase("watchlist_reveal")
         call_started = time.perf_counter()
@@ -1348,6 +1434,14 @@ class _NativeProfileController:
             "visible": bool(tab.isVisible()),
             "workspace_load_reason": str(getattr(tab, "_workspace_load_reason", "")),
         }
+        staging_host = getattr(workspace, "_background_preload_staging_host", None)
+        staging_parent = staging_host.parentWidget() if staging_host is not None else None
+        self.report["watchlist"]["preload_staging_host"] = {
+            "exists": staging_host is not None,
+            "parent_type": type(staging_parent).__name__ if staging_parent is not None else "",
+            "is_top_level": bool(staging_host is not None and staging_host.isWindow()),
+            "visible": bool(staging_host is not None and staging_host.isVisible()),
+        }
         table = getattr(tab, "table_sp", None)
         if table is not None:
             self.paint_probe.attach_watchlist_table(table)
@@ -1382,6 +1476,7 @@ class _NativeProfileController:
                 "flash_timer_interval_ms": int(flash_timer.interval()) if flash_timer is not None else None,
                 "coalesced_flash_repaint": bool(getattr(table, "_coalesced_flash_repaint", False)),
                 "targeted_flash_repaint": bool(getattr(table, "_targeted_flash_repaint", False)),
+                "viewport_background": self._watchlist_viewport_background_snapshot(),
             }
         proxy = getattr(tab, "proxy_model", None)
         self.report["watchlist"]["model_signal_monitor"] = {
@@ -1430,23 +1525,77 @@ class _NativeProfileController:
         self._reset_stall_probe()
         self._set_phase("background_prewarm")
 
+    def _watchlist_viewport_background_snapshot(self) -> dict:
+        workspace = getattr(getattr(self, "window", None), "_workspace", None)
+        tab_getter = getattr(workspace, "get_loaded_tab", None)
+        tab = tab_getter("watchlist") if callable(tab_getter) else None
+        table = getattr(tab, "table_sp", None)
+        viewport = table.viewport() if table is not None else None
+        if viewport is None:
+            return {"available": False}
+        role = viewport.backgroundRole()
+        return {
+            "available": True,
+            "auto_fill_background": bool(viewport.autoFillBackground()),
+            "background_role": str(getattr(role, "name", role)),
+            "viewport_opaque_paint": bool(
+                viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+            ),
+        }
+
     def _record_watchlist_reveal(self, completed_at: float) -> None:
         if "watchlist_reveal" in self.report:
             return
-        reveal_offsets = self._watchlist_reveal_offsets or self._metric_offsets()
+        reveal_offsets = self._watchlist_reveal_offsets or self._metric_offsets(
+            WATCHLIST_REVEAL_METRICS
+        )
         reveal_started_at = self._watchlist_reveal_started_at or completed_at
         reveal_paint_region = self.paint_probe.paint_region_summary("watchlist_reveal")
-        reveal_acceptance = _watchlist_reveal_acceptance(reveal_paint_region)
+        viewport_update_requests = getattr(self.paint_probe, "viewport_update_request_summary", None)
+        reveal_samples_by_name = self._metrics_since(reveal_offsets)
+        reveal_metrics = _summarize_residual_repaint_metrics(reveal_samples_by_name)
+        prewarm_offsets = getattr(self, "_watchlist_prewarm_offsets", None)
+        prewarm_runtime_samples = (
+            self._metrics_since(prewarm_offsets) if prewarm_offsets is not None else {}
+        )
+        prewarm_runtime_spans = _summarize_named_runtime_spans(
+            prewarm_runtime_samples.get("ui_method_stall_ms", []),
+            names=(
+                "ClassicWorkspace.ensure_tab_loaded",
+                "ClassicWorkspace._prewarm_next_tab",
+            ),
+        )
+        viewport_background = self._watchlist_viewport_background_snapshot()
+        watchlist_report = self.report.get("watchlist")
+        if isinstance(watchlist_report, dict):
+            repaint_runtime = watchlist_report.get("repaint_runtime")
+            if isinstance(repaint_runtime, dict):
+                repaint_runtime["viewport_background"] = viewport_background
+        reveal_acceptance = _watchlist_reveal_acceptance(
+            reveal_metrics["paint"],
+            viewport_background=viewport_background,
+        )
         reveal_acceptance_enforced = not bool(getattr(self.args, "shell_nav_only", False))
         self.report["watchlist_reveal"] = {
             "elapsed_ms": round((completed_at - reveal_started_at) * 1000.0, 3),
             "paint_region": reveal_paint_region,
-            "metrics": _summarize_residual_repaint_metrics(self._metrics_since(reveal_offsets)),
+            "backing_store_update_requests": (
+                viewport_update_requests("watchlist_reveal")
+                if callable(viewport_update_requests)
+                else {"count": 0, "samples": []}
+            ),
+            "metrics": reveal_metrics,
+            "viewport_background": viewport_background,
+            "prewarm_runtime_spans": prewarm_runtime_spans,
+            "event_loop_stalls": summarize_durations(
+                [sample.value for sample in reveal_samples_by_name.get("ui_event_loop_stall_ms", [])]
+            ),
             "heartbeat_lateness": summarize_durations(
                 list(self._heartbeat_by_phase.get("watchlist_reveal", ()))
             ),
             "ui_stall_snapshot": self._stall_snapshot(),
-            "acceptance_scope": "first_reveal_plus_zero_later_full_viewport_paints",
+            "acceptance_metric_source": "watchlist_table_paint_ms",
+            "acceptance_scope": "actual_vcp_first_preload_reveal_plus_zero_later_full_viewport_paints",
             "acceptance": reveal_acceptance,
             "acceptance_enforced": reveal_acceptance_enforced,
         }
@@ -1518,6 +1667,18 @@ class _NativeProfileController:
         lazy_keys = [key for key in planned_order if not specs_by_key.get(key, {}).get("loaded")]
         paint_region = self.paint_probe.paint_region_summary("background_prewarm")
         offsets = self._background_prewarm_offsets or self._metric_offsets()
+        prewarm_metrics = _summarize_residual_repaint_metrics(self._metrics_since(offsets))
+        prewarm_offsets = getattr(self, "_watchlist_prewarm_offsets", None)
+        visible_watchlist_runtime_samples = (
+            self._metrics_since(prewarm_offsets) if prewarm_offsets is not None else {}
+        )
+        visible_watchlist_runtime_spans = _summarize_named_runtime_spans(
+            visible_watchlist_runtime_samples.get("ui_method_stall_ms", []),
+            names=(
+                "ClassicWorkspace.ensure_tab_loaded",
+                "ClassicWorkspace._prewarm_next_tab",
+            ),
+        )
         acceptance = _background_prewarm_acceptance(
             status,
             paint_region,
@@ -1551,7 +1712,8 @@ class _NativeProfileController:
             "completion_scope": str(status.get("completion_scope") or ""),
             "status": status,
             "paint_region": paint_region,
-            "metrics": _summarize_residual_repaint_metrics(self._metrics_since(offsets)),
+            "metrics": prewarm_metrics,
+            "visible_watchlist_runtime_spans": visible_watchlist_runtime_spans,
             "heartbeat_lateness": heartbeat_lateness,
             "ui_stall_snapshot": stall_snapshot,
             "event_loop_observation": event_loop_observation,

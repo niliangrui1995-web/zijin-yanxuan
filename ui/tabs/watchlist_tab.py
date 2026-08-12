@@ -826,6 +826,12 @@ class _WatchlistBackgroundPreloadMixin:
         if callable(prepare):
             prepare()
 
+    def sync_workspace_viewport_background(self) -> None:
+        table = getattr(self, "table_sp", None)
+        sync = getattr(table, "sync_viewport_base_background", None)
+        if callable(sync):
+            sync()
+
     def prepare_shell_nav_repaint_guard(self) -> None:
         table = getattr(self, "table_sp", None)
         prepare = getattr(table, "prepare_shell_nav_repaint_guard", None)
@@ -1117,10 +1123,9 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.setModel(self.proxy_model)
         self.table_sp.set_coalesced_flash_repaint_enabled(True)
         self.table_sp.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
-        # Partial viewport paints do not reliably overwrite every pixel when this tab
-        # is revealed after another workspace page.  Let Qt clear the dirty background
-        # so old page content cannot remain underneath the table cells.
+        # Keep the non-opaque contract while the viewport owns its palette background.
         self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.table_sp.set_viewport_base_background_enabled(True)
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)

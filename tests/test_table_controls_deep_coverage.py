@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QEvent, QPoint, Qt
-from PyQt6.QtGui import QFont, QHelpEvent, QPixmap, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import QFont, QHelpEvent, QPalette, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QTableView
 
@@ -256,6 +256,30 @@ def test_vcp_table_view_model_state_density_and_flash_paths(monkeypatch, qt_appl
         table._tick_flash_repaint()
         assert not table._flash_repaint_timer.isActive()
         table._closing = False
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_vcp_table_view_keeps_opt_in_base_viewport_background_after_theme_restyle(qt_application):
+    table = controls.VCPTableView()
+    try:
+        viewport = table.viewport()
+        table.set_viewport_base_background_enabled(True)
+
+        assert table.property("vcpViewportBaseBackground") is True
+        assert viewport.autoFillBackground() is True
+        assert viewport.backgroundRole() == QPalette.ColorRole.Base
+
+        viewport.setAutoFillBackground(False)
+        table._on_theme_changed("dark")
+
+        assert viewport.autoFillBackground() is True
+        assert viewport.backgroundRole() == QPalette.ColorRole.Base
+
+        table.set_viewport_base_background_enabled(False)
+        assert table.property("vcpViewportBaseBackground") is False
+        assert viewport.autoFillBackground() is False
     finally:
         table.close()
         table.deleteLater()

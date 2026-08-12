@@ -199,6 +199,7 @@ def test_native_watchlist_profile_summarizes_residual_repaint_structure():
     assert summary["paint"]["full_viewport_count"] == 1
     assert summary["paint"]["max_dirty_bounding_area_ratio"] == 1.0
     assert summary["paint"]["first"]["dirty_bounding_area_ratio"] == 0.125
+    assert summary["paint"]["first"]["delivered_full_viewport"] is False
     assert summary["paint"]["after_first"]["full_viewport_count"] == 1
     assert summary["snapshot"]["capture_count"] == 0
     assert summary["snapshot"]["skipped_count"] == 1
@@ -345,38 +346,182 @@ def test_native_watchlist_profile_accepts_finished_lazy_handoff_without_hidden_s
 
 
 def test_native_watchlist_profile_reveal_acceptance_allows_only_first_full_paint():
-    paint_region = {
-        "count": 2,
+    paint_metrics = {
+        "durations": {"count": 2},
         "full_viewport_count": 1,
-        "first": {"delivered_full_viewport": True},
-        "after_first": {"count": 1, "full_viewport_count": 0},
+        "first": {"reason": "preload_reveal", "delivered_full_viewport": True},
+        "after_first": {
+            "count": 1,
+            "full_viewport_count": 0,
+            "other_full_viewport_count": 0,
+        },
     }
 
-    assert _watchlist_reveal_acceptance(paint_region) == {
+    assert _watchlist_reveal_acceptance(paint_metrics) == {
         "status": "pass",
         "violations": [],
     }
 
-    paint_region["full_viewport_count"] = 2
-    paint_region["after_first"]["full_viewport_count"] = 1
-    assert _watchlist_reveal_acceptance(paint_region) == {
+    paint_metrics["full_viewport_count"] = 2
+    paint_metrics["after_first"]["full_viewport_count"] = 1
+    paint_metrics["after_first"]["other_full_viewport_count"] = 1
+    assert _watchlist_reveal_acceptance(paint_metrics) == {
         "status": "fail",
-        "violations": ["watchlist_full_viewport_after_reveal=1"],
+        "violations": [
+            "watchlist_full_viewport_after_reveal=1",
+            "watchlist_other_full_viewport_after_reveal=1",
+        ],
     }
-    assert _watchlist_reveal_acceptance({"count": 0, "after_first": {}}) == {
+    assert _watchlist_reveal_acceptance({"durations": {"count": 0}, "after_first": {}}) == {
         "status": "fail",
         "violations": ["watchlist_reveal_paint_missing"],
     }
     assert _watchlist_reveal_acceptance(
         {
-            "count": 1,
-            "first": {"delivered_full_viewport": False},
+            "durations": {"count": 1},
+            "first": {"reason": "preload_reveal", "delivered_full_viewport": False},
             "after_first": {"full_viewport_count": 0},
         }
     ) == {
         "status": "fail",
         "violations": ["watchlist_first_reveal_not_full_viewport"],
     }
+    assert _watchlist_reveal_acceptance(
+        {
+            "durations": {"count": 1},
+            "first": {"reason": "other", "delivered_full_viewport": True},
+            "after_first": {"full_viewport_count": 0},
+        }
+    ) == {
+        "status": "fail",
+        "violations": ["watchlist_first_reveal_reason='other'"],
+    }
+    assert _watchlist_reveal_acceptance(
+        paint_metrics={
+            "durations": {"count": 1},
+            "first": {"reason": "preload_reveal", "delivered_full_viewport": True},
+            "after_first": {"full_viewport_count": 0},
+        },
+        viewport_background={
+            "available": True,
+            "auto_fill_background": False,
+            "background_role": "Window",
+        },
+    ) == {
+        "status": "fail",
+        "violations": [
+            "watchlist_viewport_base_background_disabled",
+            "watchlist_viewport_background_role='Window'",
+        ],
+    }
+
+
+def test_native_watchlist_profile_summarizes_backing_store_upstream_requests():
+    summary = _FirstPaintProbe._summarize_viewport_update_requests(
+        [
+            {"event_type": "UpdateLater", "target": "viewport", "recorded_at_ms": 1.0},
+            {
+                "event_type": "UpdateLater",
+                "target": "ancestor_5:ClassicWorkspace",
+                "recorded_at_ms": 2.0,
+            },
+            {
+                "event_type": "UpdateRequest",
+                "target": "ancestor_8:MainWindowQT",
+                "recorded_at_ms": 3.0,
+            },
+        ]
+    )
+
+    assert summary["event_type_counts"] == {"UpdateLater": 2, "UpdateRequest": 1}
+    assert summary["target_counts"]["viewport"] == 1
+    assert summary["upstream_target_counts"] == {
+        "ancestor_5:ClassicWorkspace": 1,
+        "ancestor_8:MainWindowQT": 1,
+    }
+    assert summary["backing_store_update_request_count"] == 1
+    assert summary["upstream_update_later_count"] == 1
+
+
+def test_native_watchlist_profile_summarizes_visible_watchlist_prewarm_spans():
+    samples = [
+        SimpleNamespace(
+            value=110.4,
+            tags={
+                "method": "ClassicWorkspace.ensure_tab_loaded",
+                "tab": "watchlist",
+                "signal": "background_prewarm",
+            },
+        ),
+        SimpleNamespace(
+            value=111.2,
+            tags={
+                "method": "ClassicWorkspace._prewarm_next_tab",
+                "tab": "",
+                "signal": "background_prewarm",
+            },
+        ),
+        SimpleNamespace(value=70.0, tags={"method": "unrelated"}),
+    ]
+
+    summary = native_watchlist_profile._summarize_named_runtime_spans(
+        samples,
+        names=(
+            "ClassicWorkspace.ensure_tab_loaded",
+            "ClassicWorkspace._prewarm_next_tab",
+        ),
+    )
+
+    assert summary["count"] == 2
+    assert summary["methods"]["ClassicWorkspace.ensure_tab_loaded"]["durations"]["max_ms"] == 110.4
+    assert summary["methods"]["ClassicWorkspace._prewarm_next_tab"]["samples"] == [
+        {"elapsed_ms": 111.2, "tab": "", "signal": "background_prewarm"}
+    ]
+
+
+def test_native_watchlist_profile_reveal_acceptance_uses_actual_vcp_metrics_not_raw_events():
+    table_metric = SimpleNamespace(
+        value=18.0,
+        tags={
+            "reason": "preload_reveal",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+        },
+    )
+    controller = object.__new__(_NativeProfileController)
+    controller.args = SimpleNamespace(shell_nav_only=False)
+    controller.report = {"errors": []}
+    controller._watchlist_reveal_offsets = {"watchlist_table_paint_ms": 0}
+    controller._watchlist_reveal_started_at = 1.0
+    controller.paint_probe = SimpleNamespace(
+        paint_region_summary=lambda _phase: {
+            "count": 3,
+            "full_viewport_count": 3,
+            "after_first": {"count": 2, "full_viewport_count": 2},
+        },
+        viewport_update_request_summary=lambda _phase: {
+            "count": 2,
+            "backing_store_update_request_count": 1,
+            "samples": [],
+        },
+    )
+    controller._metrics_since = lambda _offsets: {
+        "watchlist_table_paint_ms": [table_metric],
+        "ui_event_loop_stall_ms": [SimpleNamespace(value=24.0)],
+    }
+    controller._heartbeat_by_phase = {}
+    controller._stall_snapshot = lambda: {"installed": True, "total_count": 0}
+
+    _NativeProfileController._record_watchlist_reveal(controller, 1.2)
+
+    reveal = controller.report["watchlist_reveal"]
+    assert reveal["paint_region"]["full_viewport_count"] == 3
+    assert reveal["metrics"]["paint"]["full_viewport_count"] == 1
+    assert reveal["acceptance_metric_source"] == "watchlist_table_paint_ms"
+    assert reveal["acceptance"] == {"status": "pass", "violations": []}
+    assert reveal["event_loop_stalls"]["max_ms"] == 24.0
+    assert controller.report["errors"] == []
 
 
 def test_native_watchlist_profile_shell_nav_acceptance_allows_only_initial_full_viewport():
@@ -797,7 +942,11 @@ def test_native_watchlist_profile_shell_nav_only_scopes_reveal_enforcement(shell
     controller._watchlist_reveal_offsets = {}
     controller._watchlist_reveal_started_at = 1.0
     controller.paint_probe = SimpleNamespace(
-        paint_region_summary=lambda _phase: {"count": 0, "after_first": {}}
+        paint_region_summary=lambda _phase: {"count": 0, "after_first": {}},
+        viewport_update_request_summary=lambda _phase: {
+            "count": 1,
+            "samples": [{"event_type": "UpdateRequest", "target": "ancestor_8:MainWindowQT"}],
+        },
     )
     controller._metrics_since = lambda _offsets: {}
     controller._heartbeat_by_phase = {}
@@ -808,6 +957,10 @@ def test_native_watchlist_profile_shell_nav_only_scopes_reveal_enforcement(shell
     reveal = controller.report["watchlist_reveal"]
     assert reveal["acceptance"]["status"] == "fail"
     assert reveal["acceptance_enforced"] is (not shell_nav_only)
+    assert reveal["backing_store_update_requests"] == {
+        "count": 1,
+        "samples": [{"event_type": "UpdateRequest", "target": "ancestor_8:MainWindowQT"}],
+    }
     assert controller.report["errors"] == (
         [] if shell_nav_only else ["watchlist reveal repaint acceptance failed"]
     )
