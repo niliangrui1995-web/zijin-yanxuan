@@ -1,0 +1,451 @@
+{
+  "turns_requested": 1,
+  "states": [
+    {
+      "label": "hidden_before",
+      "at_ms": 2812.79,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "visible": false,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ],
+          "visible": false,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ],
+          "visible": false,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "hidden_updates_disabled",
+      "at_ms": 2813.436,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "visible": false,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ],
+          "visible": false,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ],
+          "visible": false,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "production_mount_return",
+      "at_ms": 2835.278,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_event_loop_turn_1",
+      "at_ms": 2838.066,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "before_reenable",
+      "at_ms": 2845.537,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_reenable",
+      "at_ms": 2845.589,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_reenable_settle",
+      "at_ms": 3087.847,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "before_profile_finish",
+      "at_ms": 4736.428,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "operation": "disable_watchlist_updates_before_production_mount"
+    },
+    {
+      "operation": "reenable_watchlist_updates",
+      "at_ms": 2845.585
+    }
+  ],
+  "frozen_qtimers": [
+    {
+      "parent": "MainWindowQT",
+      "object_name": "",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "UiStallProbe",
+      "object_name": "",
+      "interval_ms": 25
+    },
+    {
+      "parent": "QuotePulseDot",
+      "object_name": "",
+      "interval_ms": 24
+    },
+    {
+      "parent": "MarketPulseStrip",
+      "object_name": "",
+      "interval_ms": 45
+    },
+    {
+      "parent": "MainWindowStatusBar",
+      "object_name": "",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "StatusFlowStrip",
+      "object_name": "",
+      "interval_ms": 42
+    }
+  ],
+  "captures": {},
+  "vcp_paint_events": [
+    {
+      "at_ms": 2856.583,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 1,
+      "after_reenable_ms": 10.998
+    },
+    {
+      "at_ms": 2856.705,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 1,
+      "after_reenable_ms": 11.12
+    },
+    {
+      "at_ms": 3097.167,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 1,
+      "after_reenable_ms": 251.582
+    },
+    {
+      "at_ms": 3097.222,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 1,
+      "after_reenable_ms": 251.637
+    }
+  ],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final_runtime": {
+      "row_count": 47,
+      "visible": true,
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 1,
+        "total_ms": 166.357,
+        "max_ms": 166.357,
+        "p50_ms": 166.357,
+        "p95_ms": 166.357,
+        "p99_ms": 166.357,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "other_full_viewport_count": 1,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 2,
+      "total_ms": 392.69,
+      "max_ms": 226.334,
+      "p50_ms": 196.345,
+      "p95_ms": 223.335,
+      "p99_ms": 225.734,
+      "over_50ms": 2,
+      "over_100ms": 2
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=1",
+        "watchlist_other_full_viewport_after_reveal=1"
+      ]
+    }
+  },
+  "timing": {
+    "mount_return_at_ms": 2835.271,
+    "reenable_at_ms": 2845.585,
+    "reveal_delay_ms": 10.314,
+    "turns_completed": 1
+  }
+}

@@ -1,0 +1,1126 @@
+{
+  "mode": "base",
+  "theme_readback": true,
+  "timeline": [
+    {
+      "at_ms": 2759.489,
+      "label": "before_viewport_background_variant",
+      "viewport": {
+        "exists": true,
+        "visible": false,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 2782.845,
+      "label": "before_viewport_background_variant_apply",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 2783.017,
+      "label": "after_viewport_background_variant_apply",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": true,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 5071.027,
+      "label": "before_theme_alternate_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "window_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 5256.389,
+      "label": "after_theme_alternate_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "window_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 5674.269,
+      "label": "before_theme_restored_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 5885.047,
+      "label": "after_theme_restored_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 5886.022,
+      "label": "before_final_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 6091.206,
+      "label": "after_final_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    }
+  ],
+  "viewport": {
+    "before_mount": {
+      "exists": true,
+      "visible": false,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        640,
+        435
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "before_apply": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "after_apply": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": true,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "before_capture": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "after_capture": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    }
+  },
+  "terminal_capture": {
+    "status": "saved",
+    "path": "D:\\vcp_hunter_runtime_ab\\20260812_viewport_background_ab\\base_theme_readback_run1\\final_viewport_visual.png",
+    "width": 2546,
+    "height": 1214,
+    "device_pixel_ratio": 1.0,
+    "sha256": "e5f34d86f866cf43d7532c386c5ac48059f21718bae3427f1bbe620777f2c99b",
+    "vcp_paint_events_during_capture": [],
+    "before": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "after": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    }
+  },
+  "theme_readback_result": {
+    "pre_theme_acceptance": {
+      "elapsed_ms": 2667.101,
+      "paint_region": {
+        "count": 1,
+        "full_viewport_count": 1,
+        "spontaneous_count": 1,
+        "max_dirty_bounding_area_ratio": 1.0,
+        "max_region_rect_count": 1,
+        "first": {
+          "dirty_bounding_area_ratio": 1.0,
+          "region_rect_count": 1,
+          "delivered_full_viewport": true
+        },
+        "after_first": {
+          "count": 0,
+          "full_viewport_count": 0,
+          "max_dirty_bounding_area_ratio": 0.0
+        },
+        "samples": [
+          {
+            "dirty_bounding_area_ratio": 1.0,
+            "region_rect_count": 1,
+            "delivered_full_viewport": true,
+            "paint_event_spontaneous": true,
+            "background_prewarm_active_key_at_paint": "",
+            "recorded_at_ms": 1857.098,
+            "last_update_request_type": "UpdateRequest",
+            "last_update_request_target": "ancestor_8:MainWindowQT",
+            "last_update_request_at_ms": 1850.013,
+            "update_request_to_paint_ms": 7.085
+          }
+        ]
+      },
+      "backing_store_update_requests": {
+        "count": 46,
+        "event_type_counts": {
+          "UpdateLater": 6,
+          "UpdateRequest": 40
+        },
+        "target_counts": {
+          "ancestor_1:LazyWatchlistTableStateWrapper": 1,
+          "ancestor_2:WatchlistTab": 1,
+          "ancestor_3:QStackedWidget": 2,
+          "ancestor_8:MainWindowQT": 40,
+          "table": 1,
+          "viewport": 1
+        },
+        "upstream_target_counts": {
+          "ancestor_1:LazyWatchlistTableStateWrapper": 1,
+          "ancestor_2:WatchlistTab": 1,
+          "ancestor_3:QStackedWidget": 2,
+          "ancestor_8:MainWindowQT": 40
+        },
+        "backing_store_update_request_count": 40,
+        "upstream_update_later_count": 4,
+        "samples": [
+          {
+            "event_type": "UpdateLater",
+            "target": "viewport",
+            "recorded_at_ms": 1848.61
+          },
+          {
+            "event_type": "UpdateLater",
+            "target": "ancestor_3:QStackedWidget",
+            "recorded_at_ms": 1848.712
+          },
+          {
+            "event_type": "UpdateLater",
+            "target": "ancestor_3:QStackedWidget",
+            "recorded_at_ms": 1848.778
+          },
+          {
+            "event_type": "UpdateLater",
+            "target": "table",
+            "recorded_at_ms": 1848.794
+          },
+          {
+            "event_type": "UpdateLater",
+            "target": "ancestor_1:LazyWatchlistTableStateWrapper",
+            "recorded_at_ms": 1848.805
+          },
+          {
+            "event_type": "UpdateLater",
+            "target": "ancestor_2:WatchlistTab",
+            "recorded_at_ms": 1849.775
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 1850.013
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2083.777
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2087.321
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2094.293
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2127.229
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2175.208
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2214.887
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2266.004
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2315.123
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2361.094
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2401.211
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2455.402
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2502.814
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2541.111
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2590.151
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2641.074
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2675.014
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2691.53
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2736.334
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2783.689
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2828.126
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2876.347
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2923.025
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 2966.224
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3015.942
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3063.678
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3110.756
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3157.935
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3204.637
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3251.597
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3291.797
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3340.402
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3391.768
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3438.435
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3485.291
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3532.532
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3579.195
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3628.515
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3670.295
+          },
+          {
+            "event_type": "UpdateRequest",
+            "target": "ancestor_8:MainWindowQT",
+            "recorded_at_ms": 3715.769
+          }
+        ]
+      },
+      "metrics": {
+        "model_updates": [
+          {
+            "elapsed_ms": 1.991,
+            "changed_headers": "买点,市价,市值,涨幅,涨幅%,现价",
+            "mode": "direct",
+            "reason": "quote_snapshot"
+          }
+        ],
+        "paint": {
+          "durations": {
+            "count": 1,
+            "total_ms": 220.914,
+            "max_ms": 220.914,
+            "p50_ms": 220.914,
+            "p95_ms": 220.914,
+            "p99_ms": 220.914,
+            "over_50ms": 1,
+            "over_100ms": 1
+          },
+          "full_viewport_count": 1,
+          "other_full_viewport_count": 0,
+          "max_dirty_bounding_area_ratio": 1.0,
+          "reasons": [
+            "preload_reveal"
+          ],
+          "samples": [
+            {
+              "elapsed_ms": 220.914,
+              "reason": "preload_reveal",
+              "requested_dirty_bounding_area_ratio": null,
+              "delivered_dirty_bounding_area_ratio": "1.0000",
+              "targeted_request_reason": "",
+              "region_expanded": "false",
+              "delivery_kind": "structural_full_viewport",
+              "delivered_full_viewport": "true",
+              "pending_reasons": "preload_reveal",
+              "structural_reason": "preload_reveal",
+              "targeted_request_coalesced_with_structural": "",
+              "paint_event_spontaneous": "true",
+              "background_prewarm_active_key_at_paint": "",
+              "preload_staged": "false",
+              "background_preload_ready": "true"
+            }
+          ],
+          "first": {
+            "elapsed_ms": 220.914,
+            "dirty_bounding_area_ratio": 1.0,
+            "reason": "preload_reveal",
+            "delivered_full_viewport": true,
+            "delivery_kind": "structural_full_viewport"
+          },
+          "after_first": {
+            "durations": {
+              "count": 0,
+              "total_ms": 0,
+              "max_ms": 0.0,
+              "p50_ms": 0.0,
+              "p95_ms": 0.0,
+              "p99_ms": 0.0,
+              "over_50ms": 0,
+              "over_100ms": 0
+            },
+            "full_viewport_count": 0,
+            "other_full_viewport_count": 0,
+            "max_dirty_bounding_area_ratio": 0.0
+          }
+        },
+        "snapshot": {
+          "capture_count": 0,
+          "durations": {
+            "count": 0,
+            "total_ms": 0,
+            "max_ms": 0.0,
+            "p50_ms": 0.0,
+            "p95_ms": 0.0,
+            "p99_ms": 0.0,
+            "over_50ms": 0,
+            "over_100ms": 0
+          },
+          "skipped_count": 0,
+          "skipped_pairs": []
+        }
+      },
+      "event_loop_stalls": {
+        "count": 1,
+        "total_ms": 210.038,
+        "max_ms": 210.038,
+        "p50_ms": 210.038,
+        "p95_ms": 210.038,
+        "p99_ms": 210.038,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "heartbeat_lateness": {
+        "count": 100,
+        "total_ms": 290.912,
+        "max_ms": 210.039,
+        "p50_ms": 0.0,
+        "p95_ms": 2.521,
+        "p99_ms": 25.222,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "ui_stall_snapshot": {
+        "installed": true,
+        "total_count": 2,
+        "critical_count": 2,
+        "event_loop_count": 1,
+        "event_loop_critical_count": 1,
+        "method_count": 1,
+        "method_critical_count": 1,
+        "max_elapsed_ms": 220.528,
+        "warn_threshold_ms": 50.0,
+        "critical_threshold_ms": 100.0
+      },
+      "acceptance_metric_source": "watchlist_table_paint_ms",
+      "acceptance_scope": "actual_vcp_first_preload_reveal_plus_zero_later_full_viewport_paints",
+      "acceptance": {
+        "status": "pass",
+        "violations": []
+      },
+      "acceptance_enforced": true
+    },
+    "original_name": "曜黑",
+    "alternate_requested_name": "月白",
+    "after_alternate": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ffffffff",
+        "inactive": "#ffffffff",
+        "disabled": "#ffffffff"
+      },
+      "window_colors": {
+        "active": "#ffffffff",
+        "inactive": "#ffffffff",
+        "disabled": "#ffffffff"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "alternate_capture": {
+      "status": "saved",
+      "path": "D:\\vcp_hunter_runtime_ab\\20260812_viewport_background_ab\\base_theme_readback_run1\\theme_alternate_viewport_visual.png",
+      "width": 2546,
+      "height": 1214,
+      "device_pixel_ratio": 1.0,
+      "sha256": "78b38adf3c63579cb578fa1c03886617ea3b7a8a38d5d9f67797a97621861002",
+      "vcp_paint_events_during_capture": [],
+      "before": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "window_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      },
+      "after": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "window_colors": {
+          "active": "#ffffffff",
+          "inactive": "#ffffffff",
+          "disabled": "#ffffffff"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    "restore_requested_name": "曜黑",
+    "after_restore": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "restored_capture": {
+      "status": "saved",
+      "path": "D:\\vcp_hunter_runtime_ab\\20260812_viewport_background_ab\\base_theme_readback_run1\\theme_restored_viewport_visual.png",
+      "width": 2546,
+      "height": 1214,
+      "device_pixel_ratio": 1.0,
+      "sha256": "e5f34d86f866cf43d7532c386c5ac48059f21718bae3427f1bbe620777f2c99b",
+      "vcp_paint_events_during_capture": [],
+      "before": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      },
+      "after": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    }
+  },
+  "result": {
+    "status": "ok",
+    "tab_count": 11,
+    "final": {
+      "row_count": 47,
+      "visible": true,
+      "load_reason": "restore_last_tab",
+      "runtime": {
+        "watchlist_page_opaque_paint": false,
+        "table_opaque_paint": false,
+        "viewport_opaque_paint": false,
+        "watchlist_page_size": [
+          2556,
+          1296
+        ],
+        "table_size": [
+          2556,
+          1249
+        ],
+        "viewport_size": [
+          2546,
+          1214
+        ],
+        "copy_hook_installed": true,
+        "ambient_pulse_property": false,
+        "ambient_timer_active": false,
+        "ambient_timer_interval_ms": 120,
+        "flash_timer_active": false,
+        "flash_timer_interval_ms": 500,
+        "coalesced_flash_repaint": true,
+        "targeted_flash_repaint": true
+      }
+    },
+    "paint_reasons": [
+      "preload_reveal"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 0,
+        "total_ms": 0,
+        "max_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "over_50ms": 0,
+        "over_100ms": 0
+      },
+      "full_viewport_count": 0,
+      "other_full_viewport_count": 0,
+      "max_dirty_bounding_area_ratio": 0.0
+    },
+    "paint_durations": {
+      "count": 1,
+      "total_ms": 220.914,
+      "max_ms": 220.914,
+      "p50_ms": 220.914,
+      "p95_ms": 220.914,
+      "p99_ms": 220.914,
+      "over_50ms": 1,
+      "over_100ms": 1
+    },
+    "reveal_acceptance": {
+      "status": "pass",
+      "violations": []
+    }
+  }
+}

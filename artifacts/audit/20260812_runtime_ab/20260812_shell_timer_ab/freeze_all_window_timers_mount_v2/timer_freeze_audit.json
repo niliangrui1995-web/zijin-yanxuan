@@ -1,0 +1,160 @@
+[
+  {
+    "hook": "before_prepare_reveal",
+    "count": 19,
+    "timers": [
+      {
+        "parent_path": "MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 1000,
+        "single_shot": false,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "UiStallProbe/MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 25,
+        "single_shot": false,
+        "timer_type": "TimerType.PreciseTimer"
+      },
+      {
+        "parent_path": "QuotePulseDot/TitleBarSyncWidget:titleBarSyncWidget/QWidget:titleBarNavHost/DraggableTitleBar:customTitleBar/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 24,
+        "single_shot": false,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "MarketPulseStrip:marketPulseStrip/DraggableTitleBar:customTitleBar/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 45,
+        "single_shot": false,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "BackgroundTabPreloadCoordinator/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 80,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 800,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 500,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 120,
+        "single_shot": false,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 120,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 500,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "WatchlistTab/QWidget:backgroundPreloadStagingHost/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "MainWindowStatusBar:statusBarWidget/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 1000,
+        "single_shot": false,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "StatusFlowStrip:statusFlowStrip/MainWindowStatusBar:statusBarWidget/QWidget:mainWindowFrame/MainWindowQT",
+        "object_name": "",
+        "active_before": true,
+        "interval_ms": 42,
+        "single_shot": false,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      },
+      {
+        "parent_path": "MainWindowQT",
+        "object_name": "",
+        "active_before": false,
+        "interval_ms": 0,
+        "single_shot": true,
+        "timer_type": "TimerType.CoarseTimer"
+      }
+    ]
+  }
+]

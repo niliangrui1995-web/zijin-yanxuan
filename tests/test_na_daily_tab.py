@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 from pathlib import Path
 
 import pytest
@@ -181,6 +182,279 @@ def test_na_daily_tab_apply_rows_triggers_cap_and_quote_refresh(monkeypatch, tmp
         assert tab._na_daily_codes == {"000001"}
         assert refresh_calls == [{"quote_task_id": "na_daily_quotes"}]
     finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_na_daily_history_browser_keeps_latest_snapshot_and_marks_missing_dates(monkeypatch, tmp_path):
+    provider = DummyProvider()
+    tab = _build_tab(monkeypatch, provider)
+    monkeypatch.setattr(tab, "_refresh_history_index", lambda: None, raising=False)
+
+    latest_file = Path(tmp_path) / "战报_20260814083002.md"
+    latest_file.write_text("# latest\n", encoding="utf-8")
+    latest_row = {
+        "代码": "000001",
+        "名称": "最新标的",
+        "现价": "--",
+        "涨幅%": "--",
+        "市值": "--",
+        "日报时间": "20260814",
+        "细分板块": "最新",
+        "股价弹性": "",
+        "催化剂": "最新催化",
+        "风控": "",
+        "评级": "",
+        "_report_ts": 20260814083002,
+        "_report_row_rank": 0,
+    }
+    history_row = {**latest_row, "代码": "000002", "名称": "历史标的", "日报时间": "20260810", "催化剂": "历史催化"}
+
+    try:
+        tab._apply_na_daily_rows([latest_row], [str(latest_file)], ("latest",), emit_event=False, refresh_quotes=False)
+        tab._na_daily_service._rows = [dict(latest_row)]
+        tab._na_daily_service._report_files = [str(latest_file)]
+
+        dialog = tab._show_history_browser()
+        dialog.set_history_entries(
+            [
+                {"date": "20260814", "state": "available", "report_files": [str(latest_file)]},
+                {
+                    "date": "20260813",
+                    "state": "missing",
+                    "report_files": [],
+                    "manifest_status": "failed_exception",
+                    "message": "no meaningful upstream evidence",
+                },
+                {"date": "20260810", "state": "available", "report_files": ["D:/reports/战报_20260810083002.md"]},
+            ]
+        )
+        missing_index = dialog.date_combo.findData("20260813")
+        assert "缺失" in dialog.date_combo.itemText(missing_index)
+
+        spy = QSignalSpy(event_bus.sig_na_daily_updated)
+        tab._apply_history_payload(
+            {
+                "status": "success",
+                "report_date": "20260810",
+                "rows": [history_row],
+                "report_files": ["D:/reports/战报_20260810083002.md"],
+            }
+        )
+
+        assert dialog.model.row_data == [history_row]
+        assert tab.model.row_data == [latest_row]
+        assert tab.get_row_data() == [latest_row]
+        assert tab._na_daily_codes == {"000001"}
+        assert tab._na_daily_service.rows == [latest_row]
+        assert len(spy) == 0
+
+        tab._apply_history_payload(
+            {
+                "status": "missing",
+                "report_date": "20260813",
+                "message": "no meaningful upstream evidence",
+                "rows": [],
+                "report_files": [],
+            }
+        )
+
+        assert dialog.model.row_data == []
+        assert "2026-08-13" in dialog.history_status_label.text()
+        assert "未生成战报" in dialog.history_status_label.text()
+        assert tab.model.row_data == [latest_row]
+        assert tab.get_row_data() == [latest_row]
+        assert len(spy) == 0
+
+        tab._apply_history_payload(
+            {
+                "status": "error",
+                "report_date": "20260810",
+                "message": "读取失败",
+                "rows": [],
+                "report_files": [],
+            }
+        )
+
+        assert "历史战报加载失败" in dialog.history_status_label.text()
+        assert tab.model.row_data == [latest_row]
+        assert len(spy) == 0
+    finally:
+        dialog = getattr(tab, "_history_dialog", None)
+        if dialog is not None:
+            dialog.close()
+        tab.close()
+        tab.deleteLater()
+
+
+def test_na_daily_history_browser_wires_background_selection_and_discards_stale_results(monkeypatch, tmp_path):
+    class QueuedRunner:
+        def __init__(self):
+            self.jobs = []
+            self.cancellations = []
+
+        def run_in_background(self, fn, **kwargs):
+            self.jobs.append((fn, dict(kwargs)))
+            return str(kwargs["task_id"])
+
+        def abandon_task(self, task_id):
+            return bool(task_id)
+
+        def cancel_task(self, task_id, *, reason="cancelled"):
+            self.cancellations.append((str(task_id), reason))
+            return True
+
+        @staticmethod
+        def wait_for_tasks(_task_ids, *, timeout_ms):
+            return timeout_ms >= 0
+
+        @staticmethod
+        def is_task_unsettled(_task_id):
+            return False
+
+    def write_report(date, code, catalyst):
+        report_dir = tmp_path / date
+        report_dir.mkdir(exist_ok=True)
+        report_file = report_dir / f"战报_{date}083002.md"
+        report_file.write_text("# structured sidecar\n", encoding="utf-8")
+        report_file.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "sniper_tables": [
+                        {
+                            "track_name": "历史接线测试",
+                            "targets": [{"name": f"标的{code}", "code": code, "catalyst": catalyst, "risk": "🟢"}],
+                        }
+                    ],
+                    "today_advice": [{"code": code, "priority": "P1"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return report_file
+
+    runner = QueuedRunner()
+    provider = DummyProvider()
+    tab = _build_tab(monkeypatch, provider)
+    monkeypatch.setattr(na_daily_tab_module, "task_manager", runner)
+    if hasattr(tab, "_task_lifecycle"):
+        delattr(tab, "_task_lifecycle")
+    monkeypatch.setattr(tab._na_daily_service, "_get_na_daily_output_dir", lambda: str(tmp_path))
+
+    latest_file = write_report("20260814", "000001", "最新催化")
+    write_report("20260810", "000002", "历史催化")
+    missing_dir = tmp_path / "20260813"
+    missing_dir.mkdir()
+    (missing_dir / "run_manifest.json").write_text(
+        json.dumps({"status": "failed_exception", "status_reason": "no meaningful upstream evidence"}),
+        encoding="utf-8-sig",
+    )
+    non_trading_dir = tmp_path / "20260809"
+    non_trading_dir.mkdir()
+    (non_trading_dir / "run_manifest.json").write_text(
+        json.dumps({"status": "skipped_non_trading_day"}),
+        encoding="utf-8-sig",
+    )
+    latest_row = {
+        "代码": "000001",
+        "名称": "最新标的",
+        "现价": "--",
+        "涨幅%": "--",
+        "市值": "--",
+        "日报时间": "20260814",
+        "细分板块": "最新",
+        "股价弹性": "",
+        "催化剂": "最新催化",
+        "风控": "",
+        "评级": "P1",
+        "_report_ts": 20260814083002,
+        "_report_row_rank": 0,
+    }
+
+    try:
+        tab._na_daily_service.apply_refresh_payload(
+            {
+                "status": "success",
+                "rows": [latest_row],
+                "report_files": [str(latest_file)],
+                "report_signature": ("latest",),
+            },
+            emit_event=False,
+        )
+        tab._apply_na_daily_rows([latest_row], [str(latest_file)], ("latest",), emit_event=False, refresh_quotes=False)
+        cache_path = Path(na_daily_service_module.NA_DAILY_CACHE_FILE)
+        cache_before = cache_path.read_text(encoding="utf-8")
+        spy = QSignalSpy(event_bus.sig_na_daily_updated)
+
+        dialog = tab._show_history_browser()
+        assert len(runner.jobs) == 1
+        index_fn, index_kwargs = runner.jobs[0]
+        assert index_kwargs["task_id"] == na_daily_tab_module._NA_DAILY_HISTORY_INDEX_TASK
+        assert index_kwargs["timeout_sec"] == 30
+        index_kwargs["on_success"](index_fn())
+
+        history_index = dialog.date_combo.findData("20260810")
+        missing_index = dialog.date_combo.findData("20260813")
+        non_trading_index = dialog.date_combo.findData("20260809")
+        assert history_index > 0
+        assert "缺失" in dialog.date_combo.itemText(missing_index)
+        assert "非交易日" in dialog.date_combo.itemText(non_trading_index)
+
+        dialog.date_combo.setCurrentIndex(history_index)
+        assert len(runner.jobs) == 2
+        stale_load_fn, stale_load_kwargs = runner.jobs[1]
+        assert stale_load_kwargs["task_id"] == na_daily_tab_module._NA_DAILY_HISTORY_LOAD_TASK
+        assert stale_load_kwargs["timeout_sec"] == 30
+        stale_payload = stale_load_fn()
+
+        tab._refresh_history_index()
+        assert len(runner.jobs) == 3
+        assert any(reason == "history_index_refresh" for _task_id, reason in runner.cancellations)
+        refreshed_index_fn, refreshed_index_kwargs = runner.jobs[2]
+        refreshed_index_kwargs["on_success"](refreshed_index_fn())
+        assert dialog.date_combo.currentData() == ""
+        assert dialog.model.row_data == []
+        stale_load_kwargs["on_success"](stale_payload)
+        assert dialog.model.row_data == []
+
+        dialog.date_combo.setCurrentIndex(history_index)
+        assert len(runner.jobs) == 4
+        history_load_fn, history_load_kwargs = runner.jobs[3]
+        history_load_kwargs["on_success"](history_load_fn())
+        assert [(row["代码"], row["日报时间"]) for row in dialog.model.row_data] == [("000002", "20260810")]
+        assert tab.model.row_data == [latest_row]
+        assert tab.get_row_data() == [latest_row]
+        assert tab._na_daily_service.rows == [latest_row]
+        assert len(spy) == 0
+        assert cache_path.read_text(encoding="utf-8") == cache_before
+
+        dialog.date_combo.setCurrentIndex(missing_index)
+        assert len(runner.jobs) == 5
+        missing_load_fn, missing_load_kwargs = runner.jobs[4]
+        missing_load_kwargs["on_success"](missing_load_fn())
+        assert dialog.model.row_data == []
+        assert "2026-08-13" in dialog.history_status_label.text()
+        assert "未生成战报" in dialog.history_status_label.text()
+        assert tab.model.row_data == [latest_row]
+        assert tab._na_daily_service.rows == [latest_row]
+        assert len(spy) == 0
+        assert cache_path.read_text(encoding="utf-8") == cache_before
+
+        dialog.date_combo.setCurrentIndex(history_index)
+        late_load_fn, late_load_kwargs = runner.jobs[5]
+        late_payload = late_load_fn()
+        tab.shutdown()
+        assert not dialog.isVisible()
+        late_load_kwargs["on_success"](late_payload)
+        assert tab.model.row_data == [latest_row]
+        assert tab._na_daily_service.rows == [latest_row]
+        assert len(spy) == 0
+        assert cache_path.read_text(encoding="utf-8") == cache_before
+    finally:
+        dialog = getattr(tab, "_history_dialog", None)
+        if dialog is not None:
+            dialog.close()
         tab.close()
         tab.deleteLater()
 

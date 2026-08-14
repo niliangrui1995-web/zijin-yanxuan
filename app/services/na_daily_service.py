@@ -45,6 +45,10 @@ def list_recent_report_files(output_dir: str | None = None, *, limit: int = 5) -
     return _repository(output_dir).list_recent_report_files(limit=limit)
 
 
+def list_report_history(output_dir: str | None = None) -> list[dict[str, object]]:
+    return _repository(output_dir).list_report_history()
+
+
 def load_report_payload(path: str) -> tuple[list[dict], dict[str, dict]]:
     return _repository().load_report_payload(path)
 
@@ -140,6 +144,52 @@ def build_na_daily_refresh_payload(output_dir: str | None = None, *, limit: int 
     return {
         "job_key": "na_daily_full",
         "status": "success",
+        "rows": list(rows),
+        "records": len(rows),
+        "report_files": list(resolved_files),
+        "report_signature": tuple(report_signature),
+        "cache_file": NA_DAILY_CACHE_FILE,
+    }
+
+
+def build_na_daily_history_payload(output_dir: str | None, report_date: str) -> dict:
+    normalized_date = str(report_date or "").strip()
+    history = list_report_history(output_dir)
+    entry = next((item for item in history if item.get("date") == normalized_date), None)
+    if entry is None:
+        return {
+            "job_key": "na_daily_history",
+            "status": "absent",
+            "message": "未发现该日期的本地输出",
+            "report_date": normalized_date,
+            "rows": [],
+            "report_files": [],
+            "report_signature": (),
+            "cache_file": NA_DAILY_CACHE_FILE,
+        }
+
+    state = str(entry.get("state") or "missing").strip()
+    report_files = list(entry.get("report_files") or [])
+    if state != "available":
+        return {
+            "job_key": "na_daily_history",
+            "status": state,
+            "message": str(entry.get("message") or "未发现战报文件").strip(),
+            "report_date": normalized_date,
+            "manifest_status": str(entry.get("manifest_status") or "").strip(),
+            "rows": [],
+            "report_files": [],
+            "report_signature": (),
+            "cache_file": NA_DAILY_CACHE_FILE,
+        }
+
+    # 同日多次运行时，以时间戳最新的文件作为该日期的最终战报，避免拼接重跑内容。
+    rows, resolved_files, report_signature = build_na_daily_rows(report_files[-1:])
+    return {
+        "job_key": "na_daily_history",
+        "status": "success",
+        "message": "",
+        "report_date": normalized_date,
         "rows": list(rows),
         "records": len(rows),
         "report_files": list(resolved_files),
@@ -308,7 +358,9 @@ __all__ = [
     "NA_DAILY_CACHE_FILE",
     "NADailyRefreshService",
     "build_na_daily_refresh_payload",
+    "build_na_daily_history_payload",
     "build_na_daily_rows",
+    "list_report_history",
     "list_recent_report_files",
     "load_report_payload",
     "na_daily_output_dir",

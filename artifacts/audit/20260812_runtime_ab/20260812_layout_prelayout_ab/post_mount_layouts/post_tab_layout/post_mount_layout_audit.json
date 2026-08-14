@@ -1,0 +1,314 @@
+{
+  "mode": "post_tab_layout",
+  "before_mount": {
+    "tab": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "wrapper": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "tabs": [
+      0,
+      0,
+      2048,
+      901
+    ],
+    "workspace": [
+      0,
+      0,
+      2048,
+      901
+    ],
+    "frame": [
+      0,
+      0,
+      2048,
+      979
+    ],
+    "window": [
+      256,
+      210,
+      2048,
+      979
+    ],
+    "table": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "viewport": [
+      0,
+      41,
+      640,
+      429
+    ],
+    "header": [
+      0,
+      0,
+      640,
+      41
+    ],
+    "vbar": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "hbar": [
+      0,
+      0,
+      640,
+      10
+    ],
+    "vmax": 0,
+    "vpage": 429
+  },
+  "after_mount_before_action": {
+    "tab": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "wrapper": [
+      0,
+      57,
+      2046,
+      843
+    ],
+    "tabs": [
+      0,
+      0,
+      2048,
+      901
+    ],
+    "workspace": [
+      0,
+      0,
+      2048,
+      901
+    ],
+    "frame": [
+      0,
+      0,
+      2048,
+      979
+    ],
+    "window": [
+      256,
+      210,
+      2048,
+      979
+    ],
+    "table": [
+      0,
+      0,
+      2046,
+      843
+    ],
+    "viewport": [
+      0,
+      41,
+      2036,
+      802
+    ],
+    "header": [
+      0,
+      0,
+      2036,
+      41
+    ],
+    "vbar": [
+      0,
+      0,
+      10,
+      843
+    ],
+    "hbar": [
+      0,
+      0,
+      640,
+      10
+    ],
+    "vmax": 702,
+    "vpage": 802
+  },
+  "after_action": {
+    "tab": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "wrapper": [
+      0,
+      57,
+      2046,
+      843
+    ],
+    "tabs": [
+      0,
+      0,
+      2048,
+      901
+    ],
+    "workspace": [
+      0,
+      0,
+      2048,
+      901
+    ],
+    "frame": [
+      0,
+      0,
+      2048,
+      979
+    ],
+    "window": [
+      256,
+      210,
+      2048,
+      979
+    ],
+    "table": [
+      0,
+      0,
+      2046,
+      843
+    ],
+    "viewport": [
+      0,
+      41,
+      2036,
+      802
+    ],
+    "header": [
+      0,
+      0,
+      2036,
+      41
+    ],
+    "vbar": [
+      0,
+      0,
+      10,
+      843
+    ],
+    "hbar": [
+      0,
+      0,
+      640,
+      10
+    ],
+    "vmax": 702,
+    "vpage": 802
+  },
+  "actions": [
+    {
+      "label": "watchlist",
+      "layout_type": "QVBoxLayout",
+      "result": true
+    }
+  ],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "watchlist_final": {
+      "row_count": 47,
+      "visible": true,
+      "workspace_load_reason": "restore_last_tab",
+      "preload_staging_host": {
+        "exists": true,
+        "parent_type": "ClassicWorkspace",
+        "is_top_level": true,
+        "visible": false
+      },
+      "repaint_runtime": {
+        "watchlist_page_opaque_paint": false,
+        "table_opaque_paint": false,
+        "viewport_opaque_paint": false,
+        "watchlist_page_size": [
+          2046,
+          900
+        ],
+        "table_size": [
+          2046,
+          843
+        ],
+        "viewport_size": [
+          2036,
+          802
+        ],
+        "copy_hook_installed": true,
+        "ambient_pulse_property": false,
+        "ambient_timer_active": false,
+        "ambient_timer_interval_ms": 120,
+        "flash_timer_active": false,
+        "flash_timer_interval_ms": 500,
+        "coalesced_flash_repaint": true,
+        "targeted_flash_repaint": true
+      },
+      "model_signal_monitor": {
+        "attached": true,
+        "source_model": "StockTableModel",
+        "proxy_model": "RtSortFilterProxyModel",
+        "count": 0,
+        "counts": {},
+        "events": []
+      },
+      "quote_repaint_mode": "targeted_dirty_region",
+      "membership_reconcile_monitor": {
+        "count": 1,
+        "modes": {
+          "reset_fallback": 1
+        },
+        "samples": [
+          {
+            "mode": "reset_fallback",
+            "old_rows": "0",
+            "new_rows": "47",
+            "source": "initial_data"
+          }
+        ]
+      }
+    },
+    "reasons": [
+      "preload_reveal",
+      "other",
+      "other",
+      "other"
+    ],
+    "after_first": {
+      "durations": {
+        "count": 3,
+        "total_ms": 283.333,
+        "max_ms": 101.095,
+        "p50_ms": 93.663,
+        "p95_ms": 100.352,
+        "p99_ms": 100.946,
+        "over_50ms": 3,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 3,
+      "other_full_viewport_count": 3,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "durations": {
+      "count": 4,
+      "total_ms": 424.878,
+      "max_ms": 141.545,
+      "p50_ms": 97.379,
+      "p95_ms": 135.478,
+      "p99_ms": 140.332,
+      "over_50ms": 4,
+      "over_100ms": 2
+    }
+  }
+}

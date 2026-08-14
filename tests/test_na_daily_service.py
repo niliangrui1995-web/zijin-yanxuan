@@ -3,6 +3,8 @@ import json
 import os
 
 from ui.services.na_daily_service import (
+    build_na_daily_history_payload,
+    build_na_daily_refresh_payload,
     build_na_daily_rows,
     parse_battle_report,
     parse_recommendations,
@@ -115,3 +117,67 @@ def test_parse_report_identity_falls_back_to_mtime_for_date_only_name(tmp_path):
     assert report_date == "20260415"
     assert str(report_ts).startswith("20260415")
     assert basename == report_file.name
+
+
+def test_na_daily_history_payload_loads_requested_date_without_cross_day_overwrite(tmp_path):
+    def write_report(date, code, catalyst, timestamp="083002"):
+        report_dir = tmp_path / date
+        report_dir.mkdir(exist_ok=True)
+        report_file = report_dir / f"战报_{date}{timestamp}.md"
+        report_file.write_text("# structured sidecar\n", encoding="utf-8")
+        report_file.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "sniper_tables": [
+                        {
+                            "track_name": "历史测试",
+                            "targets": [
+                                {
+                                    "name": f"标的{code}",
+                                    "code": code,
+                                    "catalyst": catalyst,
+                                    "risk": "🟢",
+                                }
+                            ],
+                        }
+                    ],
+                    "today_advice": [{"code": code, "priority": "P1"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return report_file
+
+    write_report("20260810", "000003", "同日旧运行")
+    old_file = write_report("20260810", "000001", "旧日催化", timestamp="093002")
+    write_report("20260812", "000001", "新日催化")
+    latest_file = write_report("20260814", "000002", "最新催化")
+    missing_dir = tmp_path / "20260813"
+    missing_dir.mkdir()
+    (missing_dir / "run_manifest.json").write_text(
+        json.dumps({"status": "failed_exception", "status_reason": "no meaningful upstream evidence"}),
+        encoding="utf-8-sig",
+    )
+
+    history_payload = build_na_daily_history_payload(str(tmp_path), "20260810")
+    missing_payload = build_na_daily_history_payload(str(tmp_path), "20260813")
+    latest_payload = build_na_daily_refresh_payload(str(tmp_path), limit=2)
+
+    assert history_payload["status"] == "success"
+    assert history_payload["report_files"] == [str(old_file)]
+    assert [(row["代码"], row["日报时间"], row["催化剂"]) for row in history_payload["rows"]] == [
+        ("000001", "20260810", "旧日催化")
+    ]
+    assert missing_payload["status"] == "missing"
+    assert missing_payload["rows"] == []
+    assert missing_payload["message"] == "no meaningful upstream evidence"
+    assert [os.path.basename(path) for path in latest_payload["report_files"]] == [
+        "战报_20260812083002.md",
+        "战报_20260814083002.md",
+    ]
+    assert [(row["代码"], row["日报时间"]) for row in latest_payload["rows"]] == [
+        ("000002", "20260814"),
+        ("000001", "20260812"),
+    ]
+    assert latest_file.name in latest_payload["report_signature"][-1]

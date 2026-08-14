@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -159,6 +160,54 @@ def test_na_daily_repository_identity_listing_and_payload_fallbacks(monkeypatch,
     assert repo.load_report_payload(report) == ([{"text": "plain report"}], {"raw": "plain report"})
     report.unlink()
     assert repo.load_report_payload(report) == ([], {})
+
+
+def test_na_daily_repository_lists_full_history_and_marks_missing_report_days(tmp_path):
+    for date in ("20260804", "20260810", "20260811", "20260812", "20260814", "20260815"):
+        report_dir = tmp_path / date
+        report_dir.mkdir()
+        (report_dir / f"战报_{date}083002.md").write_text("plain report", encoding="utf-8")
+    (tmp_path / "20260815" / "战报_20260815093002.md").write_text("retry report", encoding="utf-8")
+
+    missing_dir = tmp_path / "20260813"
+    missing_dir.mkdir()
+    (missing_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "failed_exception",
+                "status_reason": "P6 mapping blocked: no meaningful upstream evidence",
+            }
+        ),
+        encoding="utf-8-sig",
+    )
+
+    non_trading_dir = tmp_path / "20260809"
+    non_trading_dir.mkdir()
+    (non_trading_dir / "run_manifest.json").write_text(
+        json.dumps({"status": "skipped_non_trading_day"}),
+        encoding="utf-8-sig",
+    )
+
+    history = na_repo.NADailyReportRepository(tmp_path).list_report_history()
+
+    assert [(entry["date"], entry["state"]) for entry in history] == [
+        ("20260815", "available"),
+        ("20260814", "available"),
+        ("20260813", "missing"),
+        ("20260812", "available"),
+        ("20260811", "available"),
+        ("20260810", "available"),
+        ("20260809", "non_trading"),
+        ("20260804", "available"),
+    ]
+    by_date = {entry["date"]: entry for entry in history}
+    assert [Path(path).name for path in by_date["20260804"]["report_files"]] == ["战报_20260804083002.md"]
+    assert [Path(path).name for path in by_date["20260815"]["report_files"]] == [
+        "战报_20260815083002.md",
+        "战报_20260815093002.md",
+    ]
+    assert by_date["20260813"]["manifest_status"] == "failed_exception"
+    assert by_date["20260813"]["message"] == "P6 mapping blocked: no meaningful upstream evidence"
 
 
 def test_asian_cache_repository_success_failure_and_cleanup(monkeypatch, tmp_path):

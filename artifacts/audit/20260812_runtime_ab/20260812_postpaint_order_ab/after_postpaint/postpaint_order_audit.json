@@ -1,0 +1,597 @@
+{
+  "mode": "after_postpaint",
+  "timeline": [
+    {
+      "at_ms": 1810.687,
+      "label": "profile_restore_requested",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": false,
+        "_post_paint_data_provider_initialized": false,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      }
+    },
+    {
+      "at_ms": 1841.325,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": false,
+        "_post_paint_data_provider_initialized": false,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 1
+    },
+    {
+      "at_ms": 1843.285,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": false,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 1
+    },
+    {
+      "at_ms": 1850.146,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": false,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 2
+    },
+    {
+      "at_ms": 1852.006,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": false,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 2
+    },
+    {
+      "at_ms": 2011.435,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": false,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 3
+    },
+    {
+      "at_ms": 2012.098,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 3
+    },
+    {
+      "at_ms": 2012.39,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": false,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 4
+    },
+    {
+      "at_ms": 2015.102,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 4
+    },
+    {
+      "at_ms": 2015.936,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": false,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 5
+    },
+    {
+      "at_ms": 2018.28,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 5
+    },
+    {
+      "at_ms": 2018.674,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": false,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 6
+    },
+    {
+      "at_ms": 2019.5,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 6
+    },
+    {
+      "at_ms": 2020.419,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": false,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 7
+    },
+    {
+      "at_ms": 2021.317,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 7
+    },
+    {
+      "at_ms": 2022.061,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": false,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 8
+    },
+    {
+      "at_ms": 2031.3,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 8
+    },
+    {
+      "at_ms": 2031.593,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": false,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 9
+    },
+    {
+      "at_ms": 2032.047,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 9
+    },
+    {
+      "at_ms": 2032.239,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": false,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 10
+    },
+    {
+      "at_ms": 2032.676,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 10
+    },
+    {
+      "at_ms": 2032.849,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": false,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 11
+    },
+    {
+      "at_ms": 2033.201,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": true,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 11
+    },
+    {
+      "at_ms": 2033.328,
+      "label": "postpaint_enter",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": true,
+        "_post_paint_kline_prewarm_scheduled": false,
+        "_post_paint_runtime_started": false
+      },
+      "call": 12
+    },
+    {
+      "at_ms": 2033.622,
+      "label": "postpaint_exit",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": true,
+        "_post_paint_kline_prewarm_scheduled": true,
+        "_post_paint_runtime_started": true
+      },
+      "call": 12
+    },
+    {
+      "at_ms": 2033.631,
+      "label": "postpaint_complete",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": true,
+        "_post_paint_kline_prewarm_scheduled": true,
+        "_post_paint_runtime_started": true
+      }
+    },
+    {
+      "at_ms": 2033.666,
+      "label": "restore_activate_after_postpaint",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": true,
+        "_post_paint_kline_prewarm_scheduled": true,
+        "_post_paint_runtime_started": true
+      }
+    },
+    {
+      "at_ms": 2137.776,
+      "label": "watchlist_loaded",
+      "postpaint_flags": {
+        "_post_paint_native_effects_applied": true,
+        "_post_paint_data_provider_initialized": true,
+        "_post_paint_startup_orchestrator_initialized": true,
+        "_post_paint_scan_engine_initialized": true,
+        "_post_paint_central_quotes_initialized": true,
+        "_post_paint_tab_activation_finished": true,
+        "_post_paint_f5_retention_scheduled": true,
+        "_post_paint_auto_refresh_initialized": true,
+        "_post_paint_startup_scheduled": true,
+        "_post_paint_scheduler_started": true,
+        "_post_paint_kline_prewarm_scheduled": true,
+        "_post_paint_runtime_started": true
+      },
+      "visible": false,
+      "load_reason": "background_prewarm"
+    }
+  ],
+  "frozen_qtimers": [],
+  "first_loaded_recorded": true,
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "watchlist": {
+      "row_count": 47,
+      "visible": true,
+      "load_reason": "restore_last_tab",
+      "page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 2,
+        "total_ms": 317.599,
+        "max_ms": 163.66,
+        "p50_ms": 158.799,
+        "p95_ms": 163.174,
+        "p99_ms": 163.563,
+        "over_50ms": 2,
+        "over_100ms": 2
+      },
+      "full_viewport_count": 2,
+      "other_full_viewport_count": 2,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 3,
+      "total_ms": 541.261,
+      "max_ms": 223.663,
+      "p50_ms": 163.66,
+      "p95_ms": 217.663,
+      "p99_ms": 222.463,
+      "over_50ms": 3,
+      "over_100ms": 3
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=2",
+        "watchlist_other_full_viewport_after_reveal=2"
+      ]
+    }
+  },
+  "postpaint_call_count": 12,
+  "postpaint_complete_at_ms": 2033.629
+}

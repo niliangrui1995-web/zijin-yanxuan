@@ -1,0 +1,311 @@
+{
+  "mode": "base",
+  "timeline": [
+    {
+      "at_ms": 2898.728,
+      "label": "before_viewport_background_variant",
+      "viewport": {
+        "exists": true,
+        "visible": false,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 2898.938,
+      "label": "after_viewport_background_variant",
+      "viewport": {
+        "exists": true,
+        "visible": false,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "auto_fill_background": true,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 4823.765,
+      "label": "before_terminal_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    },
+    {
+      "at_ms": 5022.597,
+      "label": "after_terminal_screen_capture",
+      "viewport": {
+        "exists": true,
+        "visible": true,
+        "updates_enabled": true,
+        "geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "auto_fill_background": false,
+        "background_role": "Base",
+        "foreground_role": "Text",
+        "base_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "window_colors": {
+          "active": "#ff000000",
+          "inactive": "#ff000000",
+          "disabled": "#ff000000"
+        },
+        "wa_opaque_paint_event": false,
+        "wa_styled_background": true
+      }
+    }
+  ],
+  "viewport": {
+    "before": {
+      "exists": true,
+      "visible": false,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        640,
+        435
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "after_apply": {
+      "exists": true,
+      "visible": false,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        640,
+        435
+      ],
+      "auto_fill_background": true,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "before_capture": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    },
+    "after_capture": {
+      "exists": true,
+      "visible": true,
+      "updates_enabled": true,
+      "geometry": [
+        0,
+        35,
+        2546,
+        1214
+      ],
+      "auto_fill_background": false,
+      "background_role": "Base",
+      "foreground_role": "Text",
+      "base_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "window_colors": {
+        "active": "#ff000000",
+        "inactive": "#ff000000",
+        "disabled": "#ff000000"
+      },
+      "wa_opaque_paint_event": false,
+      "wa_styled_background": true
+    }
+  },
+  "terminal_capture": {
+    "status": "saved",
+    "path": "D:\\vcp_hunter_runtime_ab\\20260812_viewport_background_ab\\base_run1\\final_viewport_visual.png",
+    "width": 2546,
+    "height": 1214,
+    "device_pixel_ratio": 1.0,
+    "sha256": "e5f34d86f866cf43d7532c386c5ac48059f21718bae3427f1bbe620777f2c99b",
+    "vcp_paint_events_during_capture": []
+  },
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final": {
+      "row_count": 47,
+      "visible": true,
+      "load_reason": "restore_last_tab",
+      "runtime": {
+        "watchlist_page_opaque_paint": false,
+        "table_opaque_paint": false,
+        "viewport_opaque_paint": false,
+        "watchlist_page_size": [
+          2556,
+          1296
+        ],
+        "table_size": [
+          2556,
+          1249
+        ],
+        "viewport_size": [
+          2546,
+          1214
+        ],
+        "copy_hook_installed": true,
+        "ambient_pulse_property": false,
+        "ambient_timer_active": false,
+        "ambient_timer_interval_ms": 120,
+        "flash_timer_active": false,
+        "flash_timer_interval_ms": 500,
+        "coalesced_flash_repaint": true,
+        "targeted_flash_repaint": true
+      }
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 2,
+        "total_ms": 320.501,
+        "max_ms": 166.347,
+        "p50_ms": 160.25,
+        "p95_ms": 165.737,
+        "p99_ms": 166.225,
+        "over_50ms": 2,
+        "over_100ms": 2
+      },
+      "full_viewport_count": 2,
+      "other_full_viewport_count": 2,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 3,
+      "total_ms": 545.195,
+      "max_ms": 224.694,
+      "p50_ms": 166.347,
+      "p95_ms": 218.86,
+      "p99_ms": 223.527,
+      "over_50ms": 3,
+      "over_100ms": 3
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=2",
+        "watchlist_other_full_viewport_after_reveal=2"
+      ]
+    }
+  }
+}

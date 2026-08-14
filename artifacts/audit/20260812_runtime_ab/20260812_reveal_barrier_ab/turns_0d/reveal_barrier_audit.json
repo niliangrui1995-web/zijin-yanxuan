@@ -1,0 +1,263 @@
+{
+  "turns_requested": 0,
+  "states": [
+    {
+      "label": "hidden_before",
+      "at_ms": 3309.039,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "visible": false,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ],
+          "visible": false,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ],
+          "visible": false,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "production_mount_return",
+      "at_ms": 3334.0,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "before_profile_finish",
+      "at_ms": 5235.546,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    }
+  ],
+  "actions": [],
+  "frozen_qtimers": [
+    {
+      "parent": "MainWindowQT",
+      "object_name": "",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "UiStallProbe",
+      "object_name": "",
+      "interval_ms": 25
+    },
+    {
+      "parent": "QuotePulseDot",
+      "object_name": "",
+      "interval_ms": 24
+    },
+    {
+      "parent": "MarketPulseStrip",
+      "object_name": "",
+      "interval_ms": 45
+    },
+    {
+      "parent": "MainWindowStatusBar",
+      "object_name": "",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "StatusFlowStrip",
+      "object_name": "",
+      "interval_ms": 42
+    }
+  ],
+  "captures": {},
+  "vcp_paint_events": [
+    {
+      "at_ms": 3348.587,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 0,
+      "after_reenable_ms": null
+    },
+    {
+      "at_ms": 3348.662,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 0,
+      "after_reenable_ms": null
+    },
+    {
+      "at_ms": 3584.356,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 0,
+      "after_reenable_ms": null
+    },
+    {
+      "at_ms": 3584.414,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 0,
+      "after_reenable_ms": null
+    },
+    {
+      "at_ms": 3764.829,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 0,
+      "after_reenable_ms": null
+    },
+    {
+      "at_ms": 3764.909,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 0,
+      "after_reenable_ms": null
+    }
+  ],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final_runtime": {
+      "row_count": 47,
+      "visible": true,
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 2,
+        "total_ms": 322.457,
+        "max_ms": 166.208,
+        "p50_ms": 161.228,
+        "p95_ms": 165.71,
+        "p99_ms": 166.109,
+        "over_50ms": 2,
+        "over_100ms": 2
+      },
+      "full_viewport_count": 2,
+      "other_full_viewport_count": 2,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 3,
+      "total_ms": 542.906,
+      "max_ms": 220.45,
+      "p50_ms": 166.208,
+      "p95_ms": 215.025,
+      "p99_ms": 219.365,
+      "over_50ms": 3,
+      "over_100ms": 3
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=2",
+        "watchlist_other_full_viewport_after_reveal=2"
+      ]
+    }
+  },
+  "timing": {
+    "mount_return_at_ms": 3333.992,
+    "reenable_at_ms": null,
+    "reveal_delay_ms": 0.0,
+    "turns_completed": 0
+  }
+}

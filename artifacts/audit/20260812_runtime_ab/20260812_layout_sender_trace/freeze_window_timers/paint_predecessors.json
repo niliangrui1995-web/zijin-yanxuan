@@ -1,0 +1,4961 @@
+[
+  {
+    "paint_at_ms": 1195.711,
+    "previous_45": [
+      {
+        "at_ms": 1183.462,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.498,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.664,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.708,
+        "event": "LayoutRequest",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.749,
+        "event": "LayoutRequest",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.791,
+        "event": "UpdateLater",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.828,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.873,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.911,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.946,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.983,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.02,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.057,
+        "event": "UpdateLater",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.092,
+        "event": "UpdateLater",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.138,
+        "event": "UpdateLater",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.172,
+        "event": "UpdateLater",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.206,
+        "event": "UpdateLater",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.24,
+        "event": "UpdateLater",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.274,
+        "event": "UpdateLater",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.307,
+        "event": "UpdateLater",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.339,
+        "event": "UpdateLater",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.371,
+        "event": "MetaCall",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.424,
+        "event": "MetaCall",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.477,
+        "event": "UpdateLater",
+        "path": "QWidget:qt_scrollarea_viewport/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            41,
+            2036,
+            802
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.547,
+        "event": "Timer",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "timer_interval_ms": null,
+        "timer_single_shot": null,
+        "timer_active": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.72,
+        "event": "LayoutRequest",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.773,
+        "event": "MetaCall",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.826,
+        "event": "UpdateLater",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.882,
+        "event": "UpdateLater",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.916,
+        "event": "LayoutRequest",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.955,
+        "event": "UpdateLater",
+        "path": "QScrollBar/QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.998,
+        "event": "UpdateLater",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1185.041,
+        "event": "UpdateLater",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1185.079,
+        "event": "UpdateLater",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1186.112,
+        "event": "UpdateLater",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1186.166,
+        "event": "DeferredDelete",
+        "path": "QWidget:lazyWorkspaceTabPlaceholder/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": false,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1186.412,
+        "event": "UpdateRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1187.534,
+        "event": "Paint",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.458,
+        "event": "Paint",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.806,
+        "event": "Paint",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.858,
+        "event": "Paint",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.891,
+        "event": "Paint",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.261,
+        "event": "Paint",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.345,
+        "event": "Paint",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.457,
+        "event": "Paint",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.568,
+        "event": "Paint",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.634,
+        "event": "Paint",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.833,
+        "event": "Paint",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.935,
+        "event": "Paint",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1190.121,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1191.35,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1192.468,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1192.654,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.032,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.145,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.755,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.819,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1194.293,
+        "event": "Paint",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1194.627,
+        "event": "Paint",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1194.941,
+        "event": "Paint",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1195.807,
+    "previous_45": [
+      {
+        "at_ms": 1183.498,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.664,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.708,
+        "event": "LayoutRequest",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.749,
+        "event": "LayoutRequest",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.791,
+        "event": "UpdateLater",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.828,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.873,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.911,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.946,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1183.983,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.02,
+        "event": "UpdateLater",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.057,
+        "event": "UpdateLater",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.092,
+        "event": "UpdateLater",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.138,
+        "event": "UpdateLater",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.172,
+        "event": "UpdateLater",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.206,
+        "event": "UpdateLater",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.24,
+        "event": "UpdateLater",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.274,
+        "event": "UpdateLater",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.307,
+        "event": "UpdateLater",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.339,
+        "event": "UpdateLater",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.371,
+        "event": "MetaCall",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.424,
+        "event": "MetaCall",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.477,
+        "event": "UpdateLater",
+        "path": "QWidget:qt_scrollarea_viewport/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            41,
+            2036,
+            802
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.547,
+        "event": "Timer",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "timer_interval_ms": null,
+        "timer_single_shot": null,
+        "timer_active": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.72,
+        "event": "LayoutRequest",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.773,
+        "event": "MetaCall",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.826,
+        "event": "UpdateLater",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.882,
+        "event": "UpdateLater",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.916,
+        "event": "LayoutRequest",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.955,
+        "event": "UpdateLater",
+        "path": "QScrollBar/QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1184.998,
+        "event": "UpdateLater",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1185.041,
+        "event": "UpdateLater",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1185.079,
+        "event": "UpdateLater",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1186.112,
+        "event": "UpdateLater",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1186.166,
+        "event": "DeferredDelete",
+        "path": "QWidget:lazyWorkspaceTabPlaceholder/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": false,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1186.412,
+        "event": "UpdateRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1187.534,
+        "event": "Paint",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.458,
+        "event": "Paint",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.806,
+        "event": "Paint",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.858,
+        "event": "Paint",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1188.891,
+        "event": "Paint",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.261,
+        "event": "Paint",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.345,
+        "event": "Paint",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.457,
+        "event": "Paint",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.568,
+        "event": "Paint",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.634,
+        "event": "Paint",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.833,
+        "event": "Paint",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1189.935,
+        "event": "Paint",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1190.121,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1191.35,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1192.468,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1192.654,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.032,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.145,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.755,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1193.819,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1194.293,
+        "event": "Paint",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1194.627,
+        "event": "Paint",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1194.941,
+        "event": "Paint",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1195.711,
+        "event": "Paint",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1333.395,
+    "previous_45": []
+  },
+  {
+    "paint_at_ms": 1334.166,
+    "previous_45": [
+      {
+        "at_ms": 1333.395,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1335.573,
+    "previous_45": [
+      {
+        "at_ms": 1333.395,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1334.166,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1335.653,
+    "previous_45": [
+      {
+        "at_ms": 1333.395,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1334.166,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1335.573,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1343.849,
+    "previous_45": [
+      {
+        "at_ms": 1333.395,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1334.166,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1335.573,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1335.653,
+        "event": "Paint",
+        "path": "QScrollBar/QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1336.76,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1336.941,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1336.98,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.021,
+        "event": "LayoutRequest",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.062,
+        "event": "LayoutRequest",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.12,
+        "event": "Timer",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "timer_interval_ms": null,
+        "timer_single_shot": null,
+        "timer_active": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.356,
+        "event": "LayoutRequest",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.398,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.426,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.47,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.508,
+        "event": "LayoutRequest",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.584,
+        "event": "LayoutRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.624,
+        "event": "ChildAdded",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.667,
+        "event": "LayoutRequest",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.696,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.736,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.774,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.805,
+        "event": "UpdateRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1338.813,
+        "event": "Paint",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.509,
+        "event": "Paint",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.783,
+        "event": "Paint",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.835,
+        "event": "Paint",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.874,
+        "event": "Paint",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.051,
+        "event": "Paint",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.211,
+        "event": "Paint",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.352,
+        "event": "Paint",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.475,
+        "event": "Paint",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.543,
+        "event": "Paint",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.709,
+        "event": "Paint",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.79,
+        "event": "Paint",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.913,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.057,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.176,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.288,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.413,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.46,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.659,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.71,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.923,
+        "event": "Paint",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1343.086,
+        "event": "Paint",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1343.242,
+        "event": "Paint",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1343.923,
+    "previous_45": [
+      {
+        "at_ms": 1333.395,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1334.166,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1335.573,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1335.653,
+        "event": "Paint",
+        "path": "QScrollBar/QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1336.76,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1336.941,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1336.98,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.021,
+        "event": "LayoutRequest",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.062,
+        "event": "LayoutRequest",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.12,
+        "event": "Timer",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "timer_interval_ms": null,
+        "timer_single_shot": null,
+        "timer_active": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.356,
+        "event": "LayoutRequest",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.398,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.426,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.47,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.508,
+        "event": "LayoutRequest",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.584,
+        "event": "LayoutRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.624,
+        "event": "ChildAdded",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.667,
+        "event": "LayoutRequest",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.696,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.736,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.774,
+        "event": "LayoutRequest",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1337.805,
+        "event": "UpdateRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1338.813,
+        "event": "Paint",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.509,
+        "event": "Paint",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.783,
+        "event": "Paint",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.835,
+        "event": "Paint",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1339.874,
+        "event": "Paint",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.051,
+        "event": "Paint",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.211,
+        "event": "Paint",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.352,
+        "event": "Paint",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.475,
+        "event": "Paint",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.543,
+        "event": "Paint",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.709,
+        "event": "Paint",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.79,
+        "event": "Paint",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1341.913,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.057,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.176,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.288,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.413,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.46,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.659,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.71,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1342.923,
+        "event": "Paint",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1343.086,
+        "event": "Paint",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1343.242,
+        "event": "Paint",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1343.849,
+        "event": "Paint",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1437.609,
+    "previous_45": []
+  },
+  {
+    "paint_at_ms": 1437.721,
+    "previous_45": [
+      {
+        "at_ms": 1437.609,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1438.651,
+    "previous_45": [
+      {
+        "at_ms": 1437.609,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1437.721,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1438.716,
+    "previous_45": [
+      {
+        "at_ms": 1437.609,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1437.721,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1438.651,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1448.242,
+    "previous_45": [
+      {
+        "at_ms": 1437.609,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1437.721,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1438.651,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1438.716,
+        "event": "Paint",
+        "path": "QScrollBar/QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1439.805,
+        "event": "DeferredDelete",
+        "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1439.885,
+        "event": "LayoutRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1439.952,
+        "event": "ChildAdded",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.021,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.091,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.122,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.374,
+        "event": "DeferredDelete",
+        "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.428,
+        "event": "LayoutRequest",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.489,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.517,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.57,
+        "event": "UpdateRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1442.303,
+        "event": "Paint",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.076,
+        "event": "Paint",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.84,
+        "event": "Paint",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.912,
+        "event": "Paint",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.952,
+        "event": "Paint",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.638,
+        "event": "Paint",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.736,
+        "event": "Paint",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.841,
+        "event": "Paint",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.953,
+        "event": "Paint",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.019,
+        "event": "Paint",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.16,
+        "event": "Paint",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.233,
+        "event": "Paint",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.355,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.495,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.641,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.757,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.882,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.929,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.126,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.177,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.387,
+        "event": "Paint",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.557,
+        "event": "Paint",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.716,
+        "event": "Paint",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1448.329,
+    "previous_45": [
+      {
+        "at_ms": 1437.609,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1437.721,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1438.651,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1438.716,
+        "event": "Paint",
+        "path": "QScrollBar/QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1439.805,
+        "event": "DeferredDelete",
+        "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1439.885,
+        "event": "LayoutRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1439.952,
+        "event": "ChildAdded",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.021,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.091,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.122,
+        "event": "LayoutRequest",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.374,
+        "event": "DeferredDelete",
+        "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": null,
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.428,
+        "event": "LayoutRequest",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.489,
+        "event": "LayoutRequest",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.517,
+        "event": "LayoutRequest",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1440.57,
+        "event": "UpdateRequest",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": false
+      },
+      {
+        "at_ms": 1442.303,
+        "event": "Paint",
+        "path": "MainWindowQT",
+        "widget": {
+          "geometry": [
+            256,
+            210,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": true
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.076,
+        "event": "Paint",
+        "path": "QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            979
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.84,
+        "event": "Paint",
+        "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            42,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.912,
+        "event": "Paint",
+        "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1444.952,
+        "event": "Paint",
+        "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2048,
+            901
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.638,
+        "event": "Paint",
+        "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.736,
+        "event": "Paint",
+        "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            900
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.841,
+        "event": "Paint",
+        "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            57
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1445.953,
+        "event": "Paint",
+        "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            12,
+            8,
+            636,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.019,
+        "event": "Paint",
+        "path": "QLabel:tabTitle/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            11,
+            11,
+            42,
+            18
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.16,
+        "event": "Paint",
+        "path": "ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            60,
+            7,
+            565,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.233,
+        "event": "Paint",
+        "path": "QLabel:tabStatusPrimaryChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            105,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.355,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            109,
+            0,
+            97,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.495,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            210,
+            0,
+            86,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.641,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            300,
+            0,
+            78,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.757,
+        "event": "Paint",
+        "path": "QLabel:tabStatusChip/ToolbarStatusChipBar:tabStatusChipBar/QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            382,
+            0,
+            183,
+            26
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.882,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            658,
+            8,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1446.929,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarFilters/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            150,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.126,
+        "event": "Paint",
+        "path": "QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            1656,
+            8,
+            378,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.177,
+        "event": "Paint",
+        "path": "QLineEdit/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            160,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.387,
+        "event": "Paint",
+        "path": "QPushButton:primaryButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            168,
+            1,
+            100,
+            38
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.557,
+        "event": "Paint",
+        "path": "QPushButton/QWidget:tabToolbarActions/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            276,
+            0,
+            102,
+            40
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1447.716,
+        "event": "Paint",
+        "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            57,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1448.242,
+        "event": "Paint",
+        "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2046,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1544.009,
+    "previous_45": []
+  },
+  {
+    "paint_at_ms": 1544.15,
+    "previous_45": [
+      {
+        "at_ms": 1544.009,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1545.145,
+    "previous_45": [
+      {
+        "at_ms": 1544.009,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1544.15,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  },
+  {
+    "paint_at_ms": 1545.21,
+    "previous_45": [
+      {
+        "at_ms": 1544.009,
+        "event": "Paint",
+        "path": "QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1544.15,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_viewport/QHeaderView/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame",
+        "widget": {
+          "geometry": [
+            0,
+            0,
+            2036,
+            41
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      },
+      {
+        "at_ms": 1545.145,
+        "event": "Paint",
+        "path": "QWidget:qt_scrollarea_vcontainer/VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+        "widget": {
+          "geometry": [
+            2036,
+            0,
+            10,
+            843
+          ],
+          "visible": true,
+          "is_window": false
+        },
+        "spontaneous": true
+      }
+    ]
+  }
+]

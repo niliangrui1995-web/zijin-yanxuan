@@ -7,10 +7,16 @@ ui/tabs/na_daily_tab.py
 import os
 from functools import partial
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PyQt6.QtCore import QSignalBlocker, Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services.na_daily_service import NADailyRefreshService, build_na_daily_refresh_payload, parse_report_identity
+from app.services.na_daily_service import (
+    NADailyRefreshService,
+    build_na_daily_history_payload,
+    build_na_daily_refresh_payload,
+    list_report_history,
+    parse_report_identity,
+)
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_lifecycle_service import invoke_with_cancellation, task_lifecycle_for
@@ -24,6 +30,8 @@ from ui.workspaces.background_preload_receipt import cancel_background_preload_t
 
 log = get_logger(__name__)
 _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
+_NA_DAILY_HISTORY_INDEX_TASK = task_registry.workspace("na_daily_history_index")
+_NA_DAILY_HISTORY_LOAD_TASK = task_registry.workspace("na_daily_history_load")
 
 
 def _build_refresh_payload(output_dir, cancellation_token):
@@ -33,6 +41,14 @@ def _build_refresh_payload(output_dir, cancellation_token):
         output_dir,
         limit=5,
     )
+
+
+def _build_history_index(output_dir, cancellation_token):
+    return invoke_with_cancellation(list_report_history, cancellation_token, output_dir)
+
+
+def _build_history_payload(output_dir, report_date, cancellation_token):
+    return invoke_with_cancellation(build_na_daily_history_payload, cancellation_token, output_dir, report_date)
 
 
 def _apply_refresh_if_current(owner, generation: int, payload) -> None:
@@ -59,6 +75,156 @@ def _run_scheduled_runtime_start(owner) -> None:
         return
     _cancel_scheduled_runtime_start(owner)
     owner._load_na_daily_report()
+
+
+class NADailyHistoryDialog(QDialog):
+    report_date_selected = pyqtSignal(str)
+    history_closed = pyqtSignal()
+
+    _COLUMNS = [
+        "代码",
+        "名称",
+        "现价",
+        "涨幅%",
+        "市值",
+        "日报时间",
+        "细分板块",
+        "股价弹性",
+        "催化剂",
+        "风控",
+        "评级",
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("北美战报历史")
+        self.setModal(False)
+        self.resize(1080, 620)
+
+        layout = QVBoxLayout(self)
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("战报日期"))
+        self.date_combo = QComboBox(self)
+        self.date_combo.setMinimumWidth(220)
+        self.date_combo.currentIndexChanged.connect(self._emit_selected_date)
+        controls.addWidget(self.date_combo)
+        controls.addStretch(1)
+        close_button = QPushButton("关闭", self)
+        close_button.clicked.connect(self.close)
+        controls.addWidget(close_button)
+        layout.addLayout(controls)
+
+        self.history_status_label = QLabel("正在发现可用历史日期…", self)
+        self.history_status_label.setWordWrap(True)
+        layout.addWidget(self.history_status_label)
+
+        self.history_table = VCPTableView(default_row_height=30)
+        self.table_state = TableStateWrapper(
+            self.history_table,
+            empty_title="暂无历史战报",
+            loading_title="加载中…",
+        )
+        self.model = StockTableModel(self._COLUMNS)
+        self.model.set_plain_style_headers(["日报时间"])
+        self.model.set_muted_text_headers(["日报时间"])
+        self.proxy_model = RtSortFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.model)
+        self.history_table.setModel(self.proxy_model)
+        self.history_table.setItemDelegate(StockItemDelegate(self.history_table))
+        header = self.history_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for index, width in enumerate([52, 60, 70, 60, 60, 70, 78, 100, 80, 120, 50, 60]):
+            if index < len(self.model.headers):
+                header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
+                self.history_table.setColumnWidth(index, width)
+        layout.addWidget(self.table_state, 1)
+
+    @staticmethod
+    def _display_date(report_date: str) -> str:
+        value = str(report_date or "").strip()
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}" if len(value) == 8 and value.isdigit() else value
+
+    @classmethod
+    def _entry_label(cls, entry: dict[str, object]) -> str:
+        date_text = cls._display_date(str(entry.get("date") or ""))
+        state = str(entry.get("state") or "missing")
+        if state == "available":
+            return date_text
+        if state == "non_trading":
+            return f"{date_text}（非交易日）"
+        return f"{date_text}（缺失）"
+
+    @staticmethod
+    def _entry_tooltip(entry: dict[str, object]) -> str:
+        state = str(entry.get("state") or "missing")
+        if state == "available":
+            return "可加载本地战报"
+        if state == "non_trading":
+            return "非交易日，未生成战报"
+        message = str(entry.get("message") or "未发现战报文件").strip()
+        return f"未生成战报：{message}"
+
+    def set_history_entries(self, entries) -> None:
+        normalized = [dict(entry) for entry in (entries or []) if isinstance(entry, dict) and entry.get("date")]
+        blocker = QSignalBlocker(self.date_combo)
+        try:
+            self.date_combo.clear()
+            self.date_combo.addItem("选择历史日期…", "")
+            for entry in normalized:
+                self.date_combo.addItem(self._entry_label(entry), str(entry["date"]))
+                index = self.date_combo.count() - 1
+                self.date_combo.setItemData(index, self._entry_tooltip(entry), Qt.ItemDataRole.ToolTipRole)
+        finally:
+            del blocker
+
+        available = sum(1 for entry in normalized if str(entry.get("state") or "") == "available")
+        missing = len(normalized) - available
+        self.history_status_label.setText(f"已发现 {available} 个可用日期；{missing} 个日期未生成战报。")
+        self.model.update_data([])
+        self.table_state.show_empty("请选择一个历史日期")
+
+    def _emit_selected_date(self, _index: int) -> None:
+        report_date = str(self.date_combo.currentData() or "").strip()
+        if report_date:
+            self.report_date_selected.emit(report_date)
+
+    def closeEvent(self, event) -> None:
+        self.history_closed.emit()
+        super().closeEvent(event)
+
+    def set_loading(self, report_date: str) -> None:
+        self.history_status_label.setText(f"正在读取 {self._display_date(report_date)} 的历史战报…")
+        self.table_state.show_loading("正在读取历史战报…", "请稍候")
+
+    def show_history_payload(self, payload: dict) -> None:
+        payload = dict(payload or {})
+        report_date = self._display_date(str(payload.get("report_date") or ""))
+        status = str(payload.get("status") or "missing").strip()
+        rows = list(payload.get("rows") or [])
+        if status != "success":
+            if status == "non_trading":
+                detail = "非交易日，未生成战报"
+            elif status == "absent":
+                detail = "未发现该日期的本地输出"
+            elif status == "error":
+                detail = "历史战报加载失败"
+            else:
+                detail = "未生成战报"
+            message = str(payload.get("message") or "").strip()
+            if message:
+                detail = f"{detail}：{message}"
+            self.history_status_label.setText(f"{report_date}：{detail}")
+            self.model.update_data([])
+            self.table_state.show_empty(detail)
+            return
+
+        self.model.update_data(rows)
+        if rows:
+            self.history_status_label.setText(f"{report_date}：已加载 {len(rows)} 只标的")
+            self.table_state.show_table()
+        else:
+            self.history_status_label.setText(f"{report_date}：战报存在，但未解析到标的")
+            self.table_state.show_empty("该日战报未解析到标的")
 
 
 class _NADailyBackgroundPreloadMixin:
@@ -94,8 +260,8 @@ class _NADailyBackgroundPreloadMixin:
 
         return cancel_background_preload_tasks(
             self,
-            lifecycle_names=("refresh",),
-            task_ids=(_NA_DAILY_REFRESH_TASK,),
+            lifecycle_names=("refresh", "history_index", "history_load"),
+            task_ids=(_NA_DAILY_REFRESH_TASK, _NA_DAILY_HISTORY_INDEX_TASK, _NA_DAILY_HISTORY_LOAD_TASK),
             reason=reason,
             reset_state=_reset,
             local_settled=lambda: not self._na_daily_refresh_task_active,
@@ -124,6 +290,9 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         self._na_daily_refresh_generation = 0
         self._closing = False
         self._runtime_start_pending = False
+        self._history_dialog: NADailyHistoryDialog | None = None
+        self._history_index_generation = 0
+        self._history_load_generation = 0
         self._runtime_start_timer = QTimer(self)
         self._runtime_start_timer.setSingleShot(True)
         self._runtime_start_timer.timeout.connect(partial(_run_scheduled_runtime_start, self))
@@ -179,6 +348,115 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             return
         self._render_service_cache()
 
+    def _show_history_browser(self):
+        dialog = self._history_dialog
+        if dialog is None:
+            dialog = NADailyHistoryDialog(self)
+            dialog.report_date_selected.connect(self._load_history_date)
+            dialog.history_closed.connect(partial(self._on_history_dialog_closed, dialog))
+            dialog.destroyed.connect(partial(self._clear_history_dialog, dialog))
+            self._history_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._refresh_history_index()
+        return dialog
+
+    def _clear_history_dialog(self, dialog, *_args) -> None:
+        if self._history_dialog is dialog:
+            self._history_dialog = None
+
+    def _invalidate_history_load(self, *, reason: str) -> None:
+        self._history_load_generation += 1
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        cancel = getattr(lifecycle, "cancel", None)
+        if callable(cancel):
+            cancel("history_load", reason=reason)
+
+    def _invalidate_history_tasks(self, *, reason: str) -> None:
+        self._history_index_generation += 1
+        self._invalidate_history_load(reason=reason)
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        cancel = getattr(lifecycle, "cancel", None)
+        if callable(cancel):
+            cancel("history_index", reason=reason)
+
+    def _on_history_dialog_closed(self, dialog) -> None:
+        if self._history_dialog is dialog:
+            self._invalidate_history_tasks(reason="history_dialog_closed")
+
+    def _refresh_history_index(self) -> None:
+        dialog = self._history_dialog
+        service = getattr(self, "_na_daily_service", None)
+        if self._closing or dialog is None or service is None:
+            return
+        self._invalidate_history_load(reason="history_index_refresh")
+        self._history_index_generation += 1
+        generation = self._history_index_generation
+        dialog.history_status_label.setText("正在发现可用历史日期…")
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            "history_index",
+            partial(_build_history_index, service._get_na_daily_output_dir()),
+            task_id=_NA_DAILY_HISTORY_INDEX_TASK,
+            timeout_sec=30,
+            on_success=partial(self._apply_history_index_payload, dialog, generation),
+            on_error=partial(self._on_history_index_failed, dialog, generation),
+        )
+
+    def _apply_history_index_payload(self, dialog, generation: int, history) -> None:
+        if self._closing or generation != self._history_index_generation or self._history_dialog is not dialog:
+            return
+        dialog.set_history_entries(history)
+
+    def _on_history_index_failed(self, dialog, generation: int, error_message: str) -> None:
+        if self._closing or generation != self._history_index_generation or self._history_dialog is not dialog:
+            return
+        detail = str(error_message or "历史日期发现失败").strip()
+        dialog.history_status_label.setText(f"历史日期发现失败：{detail}")
+        dialog.table_state.show_error("历史日期发现失败", detail)
+
+    def _load_history_date(self, report_date: str) -> None:
+        dialog = self._history_dialog
+        service = getattr(self, "_na_daily_service", None)
+        normalized_date = str(report_date or "").strip()
+        if self._closing or dialog is None or service is None or not normalized_date:
+            return
+        self._history_load_generation += 1
+        generation = self._history_load_generation
+        dialog.set_loading(normalized_date)
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            "history_load",
+            partial(_build_history_payload, service._get_na_daily_output_dir(), normalized_date),
+            task_id=_NA_DAILY_HISTORY_LOAD_TASK,
+            timeout_sec=30,
+            on_success=partial(self._apply_history_payload_if_current, dialog, generation),
+            on_error=partial(self._on_history_load_failed, dialog, generation, normalized_date),
+        )
+
+    def _apply_history_payload_if_current(self, dialog, generation: int, payload) -> None:
+        if self._closing or generation != self._history_load_generation or self._history_dialog is not dialog:
+            return
+        self._apply_history_payload(payload)
+
+    def _on_history_load_failed(self, dialog, generation: int, report_date: str, error_message: str) -> None:
+        if self._closing or generation != self._history_load_generation or self._history_dialog is not dialog:
+            return
+        self._apply_history_payload(
+            {
+                "status": "error",
+                "report_date": report_date,
+                "message": str(error_message or "历史战报加载失败").strip(),
+                "rows": [],
+                "report_files": [],
+            }
+        )
+
+    def _apply_history_payload(self, payload: dict) -> None:
+        dialog = self._history_dialog
+        if self._closing or dialog is None:
+            return
+        dialog.show_history_payload(payload)
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -193,9 +471,12 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         btn_refresh = QPushButton("刷新")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self._load_na_daily_report)
+        btn_history = QPushButton("历史")
+        btn_history.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_history.clicked.connect(self._show_history_browser)
 
         filter_widgets = [self.search_box]
-        action_widgets = [btn_refresh]
+        action_widgets = [btn_history, btn_refresh]
         toolbar = self.build_tab_toolbar("北美战报", self.na_daily_source_label, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
@@ -426,6 +707,11 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         _cancel_scheduled_runtime_start(self)
         self._na_daily_refresh_generation += 1
         self._na_daily_refresh_task_active = False
+        dialog = self._history_dialog
+        if dialog is not None:
+            dialog.close()
+        else:
+            self._invalidate_history_tasks(reason="owner_shutdown")
         lifecycle = getattr(self, "_task_lifecycle", None)
         if lifecycle is not None:
             lifecycle.shutdown(timeout_ms=750)

@@ -1,0 +1,1185 @@
+{
+  "schema_version": 1,
+  "report_type": "native_watchlist_profile",
+  "created_at": "2026-08-12T17:35:21+08:00",
+  "status": "error",
+  "environment": {
+    "system": "Windows-10-10.0.19045-SP0",
+    "python": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+    "qt": "6.11.0",
+    "pyqt": "6.11.0",
+    "pid": 16184,
+    "session_name": "",
+    "requested_qt_platform": "",
+    "actual_qt_platform": "windows",
+    "primary_screen": {
+      "name": "V2719Q",
+      "available_width": 2560,
+      "available_height": 1400,
+      "device_pixel_ratio": 1.0
+    },
+    "native_dataframe_runtime": {
+      "ready": true,
+      "initialization_ms": 871.533
+    }
+  },
+  "isolation": {
+    "database": {
+      "mode": "sqlite_backup_copy",
+      "source": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "target": "D:\\vcp_hunter_runtime_ab\\20260812_viewport_background_ab\\control_run1\\profile.db",
+      "source_size_bytes": 16519168,
+      "target_size_bytes": 16519168,
+      "cleanup_on_process_exit": true
+    },
+    "settings_application": "NativeWatchlistProfile_16184_1786527320692067300",
+    "log_dir": "D:\\vcp_hunter_runtime_ab\\20260812_viewport_background_ab\\control_run1\\logs",
+    "startup_orchestrator_suppressed": true,
+    "auto_refresh_suppressed": true,
+    "central_quotes_suppressed": true,
+    "background_prewarm_suppressed": false
+  },
+  "configuration": {
+    "warmup_ms": 300,
+    "settle_ms": 1900,
+    "load_timeout_ms": 15000,
+    "heartbeat_ms": 25,
+    "background_prewarm": true,
+    "restore_last_tab": true,
+    "prewarm_timeout_ms": 60000,
+    "quote_cycles": 0,
+    "quote_cycle_ms": 1000,
+    "quote_target_count": 6,
+    "shell_nav_cycles": 0,
+    "shell_nav_settle_ms": 1200,
+    "shell_nav_only": false,
+    "membership_delta_probe": false,
+    "disable_market_pulse": false,
+    "question_dialog_ms": 0,
+    "residual_repaint_cycles": 0,
+    "legacy_quote_repaint": false,
+    "cprofile_enabled": false
+  },
+  "timings": {
+    "main_window_import_ms": 25.472,
+    "window_construct_ms": 597.311,
+    "window_show_call_ms": 254.292,
+    "watchlist_activate_call_ms": 0.083,
+    "watchlist_loaded_ms": 859.82,
+    "profile_elapsed_ms": 4136.676
+  },
+  "profiles": {
+    "startup": null,
+    "watchlist_activation": null,
+    "watchlist_settle": null
+  },
+  "errors": [
+    "watchlist reveal repaint acceptance failed"
+  ],
+  "runtime_controls": {
+    "market_pulse_disabled": false,
+    "market_pulse_timer_active": true
+  },
+  "watchlist": {
+    "row_count": 47,
+    "visible": true,
+    "workspace_load_reason": "restore_last_tab",
+    "preload_staging_host": {
+      "exists": true,
+      "parent_type": "ClassicWorkspace",
+      "is_top_level": true,
+      "visible": false
+    },
+    "repaint_runtime": {
+      "watchlist_page_opaque_paint": false,
+      "table_opaque_paint": false,
+      "viewport_opaque_paint": false,
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ],
+      "copy_hook_installed": true,
+      "ambient_pulse_property": false,
+      "ambient_timer_active": false,
+      "ambient_timer_interval_ms": 120,
+      "flash_timer_active": false,
+      "flash_timer_interval_ms": 500,
+      "coalesced_flash_repaint": true,
+      "targeted_flash_repaint": true
+    },
+    "model_signal_monitor": {
+      "attached": true,
+      "source_model": "StockTableModel",
+      "proxy_model": "RtSortFilterProxyModel",
+      "count": 0,
+      "counts": {},
+      "events": []
+    },
+    "quote_repaint_mode": "targeted_dirty_region",
+    "membership_reconcile_monitor": {
+      "count": 1,
+      "modes": {
+        "reset_fallback": 1
+      },
+      "samples": [
+        {
+          "mode": "reset_fallback",
+          "old_rows": "0",
+          "new_rows": "47",
+          "source": "initial_data"
+        }
+      ]
+    }
+  },
+  "watchlist_reveal": {
+    "elapsed_ms": 2760.078,
+    "paint_region": {
+      "count": 3,
+      "full_viewport_count": 3,
+      "spontaneous_count": 3,
+      "max_dirty_bounding_area_ratio": 1.0,
+      "max_region_rect_count": 1,
+      "first": {
+        "dirty_bounding_area_ratio": 1.0,
+        "region_rect_count": 1,
+        "delivered_full_viewport": true
+      },
+      "after_first": {
+        "count": 2,
+        "full_viewport_count": 2,
+        "max_dirty_bounding_area_ratio": 1.0
+      },
+      "samples": [
+        {
+          "dirty_bounding_area_ratio": 1.0,
+          "region_rect_count": 1,
+          "delivered_full_viewport": true,
+          "paint_event_spontaneous": true,
+          "background_prewarm_active_key_at_paint": "",
+          "recorded_at_ms": 2064.852,
+          "last_update_request_type": "UpdateRequest",
+          "last_update_request_target": "ancestor_8:MainWindowQT",
+          "last_update_request_at_ms": 2041.231,
+          "update_request_to_paint_ms": 23.621
+        },
+        {
+          "dirty_bounding_area_ratio": 1.0,
+          "region_rect_count": 1,
+          "delivered_full_viewport": true,
+          "paint_event_spontaneous": true,
+          "background_prewarm_active_key_at_paint": "",
+          "recorded_at_ms": 2345.954,
+          "last_update_request_type": "UpdateRequest",
+          "last_update_request_target": "ancestor_8:MainWindowQT",
+          "last_update_request_at_ms": 2335.598,
+          "update_request_to_paint_ms": 10.356
+        },
+        {
+          "dirty_bounding_area_ratio": 1.0,
+          "region_rect_count": 1,
+          "delivered_full_viewport": true,
+          "paint_event_spontaneous": true,
+          "background_prewarm_active_key_at_paint": "",
+          "recorded_at_ms": 2526.629,
+          "last_update_request_type": "UpdateRequest",
+          "last_update_request_target": "ancestor_8:MainWindowQT",
+          "last_update_request_at_ms": 2518.333,
+          "update_request_to_paint_ms": 8.296
+        }
+      ]
+    },
+    "backing_store_update_requests": {
+      "count": 38,
+      "event_type_counts": {
+        "UpdateLater": 6,
+        "UpdateRequest": 32
+      },
+      "target_counts": {
+        "ancestor_1:LazyWatchlistTableStateWrapper": 1,
+        "ancestor_2:WatchlistTab": 1,
+        "ancestor_3:QStackedWidget": 2,
+        "ancestor_8:MainWindowQT": 32,
+        "table": 1,
+        "viewport": 1
+      },
+      "upstream_target_counts": {
+        "ancestor_1:LazyWatchlistTableStateWrapper": 1,
+        "ancestor_2:WatchlistTab": 1,
+        "ancestor_3:QStackedWidget": 2,
+        "ancestor_8:MainWindowQT": 32
+      },
+      "backing_store_update_request_count": 32,
+      "upstream_update_later_count": 4,
+      "samples": [
+        {
+          "event_type": "UpdateLater",
+          "target": "viewport",
+          "recorded_at_ms": 2039.702
+        },
+        {
+          "event_type": "UpdateLater",
+          "target": "ancestor_3:QStackedWidget",
+          "recorded_at_ms": 2039.816
+        },
+        {
+          "event_type": "UpdateLater",
+          "target": "ancestor_3:QStackedWidget",
+          "recorded_at_ms": 2039.872
+        },
+        {
+          "event_type": "UpdateLater",
+          "target": "table",
+          "recorded_at_ms": 2039.888
+        },
+        {
+          "event_type": "UpdateLater",
+          "target": "ancestor_1:LazyWatchlistTableStateWrapper",
+          "recorded_at_ms": 2039.899
+        },
+        {
+          "event_type": "UpdateLater",
+          "target": "ancestor_2:WatchlistTab",
+          "recorded_at_ms": 2040.949
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2041.231
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2330.163
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2335.598
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2518.333
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2689.782
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2730.401
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2776.514
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2814.563
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2826.802
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2877.29
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2927.603
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 2973.022
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3014.169
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3063.983
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3104.506
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3151.652
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3201.959
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3251.982
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3302.115
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3353.24
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3388.376
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3438.203
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3479.779
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3526.496
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3576.146
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3625.726
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3676.409
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3727.615
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3763.595
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3814.261
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3855.173
+        },
+        {
+          "event_type": "UpdateRequest",
+          "target": "ancestor_8:MainWindowQT",
+          "recorded_at_ms": 3900.403
+        }
+      ]
+    },
+    "metrics": {
+      "model_updates": [
+        {
+          "elapsed_ms": 2.44,
+          "changed_headers": "买点,市价,市值,涨幅,涨幅%,现价",
+          "mode": "direct",
+          "reason": "quote_snapshot"
+        }
+      ],
+      "paint": {
+        "durations": {
+          "count": 3,
+          "total_ms": 585.551,
+          "max_ms": 258.267,
+          "p50_ms": 168.903,
+          "p95_ms": 249.33,
+          "p99_ms": 256.479,
+          "over_50ms": 3,
+          "over_100ms": 3
+        },
+        "full_viewport_count": 3,
+        "other_full_viewport_count": 2,
+        "max_dirty_bounding_area_ratio": 1.0,
+        "reasons": [
+          "preload_reveal",
+          "other",
+          "other"
+        ],
+        "samples": [
+          {
+            "elapsed_ms": 258.267,
+            "reason": "preload_reveal",
+            "requested_dirty_bounding_area_ratio": null,
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "targeted_request_reason": "",
+            "region_expanded": "false",
+            "delivery_kind": "structural_full_viewport",
+            "delivered_full_viewport": "true",
+            "pending_reasons": "preload_reveal",
+            "structural_reason": "preload_reveal",
+            "targeted_request_coalesced_with_structural": "",
+            "paint_event_spontaneous": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "preload_staged": "false",
+            "background_preload_ready": "true"
+          },
+          {
+            "elapsed_ms": 168.903,
+            "reason": "other",
+            "requested_dirty_bounding_area_ratio": null,
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "targeted_request_reason": "",
+            "region_expanded": "false",
+            "delivery_kind": "full_viewport",
+            "delivered_full_viewport": "true",
+            "pending_reasons": "",
+            "structural_reason": "",
+            "targeted_request_coalesced_with_structural": "",
+            "paint_event_spontaneous": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "preload_staged": "false",
+            "background_preload_ready": "true"
+          },
+          {
+            "elapsed_ms": 158.382,
+            "reason": "other",
+            "requested_dirty_bounding_area_ratio": null,
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "targeted_request_reason": "",
+            "region_expanded": "false",
+            "delivery_kind": "full_viewport",
+            "delivered_full_viewport": "true",
+            "pending_reasons": "",
+            "structural_reason": "",
+            "targeted_request_coalesced_with_structural": "",
+            "paint_event_spontaneous": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "preload_staged": "false",
+            "background_preload_ready": "true"
+          }
+        ],
+        "first": {
+          "elapsed_ms": 258.267,
+          "dirty_bounding_area_ratio": 1.0,
+          "reason": "preload_reveal",
+          "delivered_full_viewport": true,
+          "delivery_kind": "structural_full_viewport"
+        },
+        "after_first": {
+          "durations": {
+            "count": 2,
+            "total_ms": 327.285,
+            "max_ms": 168.903,
+            "p50_ms": 163.642,
+            "p95_ms": 168.377,
+            "p99_ms": 168.798,
+            "over_50ms": 2,
+            "over_100ms": 2
+          },
+          "full_viewport_count": 2,
+          "other_full_viewport_count": 2,
+          "max_dirty_bounding_area_ratio": 1.0
+        }
+      },
+      "snapshot": {
+        "capture_count": 0,
+        "durations": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "skipped_count": 0,
+        "skipped_pairs": []
+      }
+    },
+    "event_loop_stalls": {
+      "count": 3,
+      "total_ms": 479.542,
+      "max_ms": 265.182,
+      "p50_ms": 146.081,
+      "p95_ms": 253.272,
+      "p99_ms": 262.8,
+      "over_50ms": 3,
+      "over_100ms": 2
+    },
+    "heartbeat_lateness": {
+      "count": 85,
+      "total_ms": 711.842,
+      "max_ms": 265.55,
+      "p50_ms": 0.0,
+      "p95_ms": 21.508,
+      "p99_ms": 179.692,
+      "over_50ms": 4,
+      "over_100ms": 3
+    },
+    "ui_stall_snapshot": {
+      "installed": true,
+      "total_count": 8,
+      "critical_count": 5,
+      "event_loop_count": 3,
+      "event_loop_critical_count": 2,
+      "method_count": 5,
+      "method_critical_count": 3,
+      "max_elapsed_ms": 265.182,
+      "warn_threshold_ms": 50.0,
+      "critical_threshold_ms": 100.0
+    },
+    "acceptance_metric_source": "watchlist_table_paint_ms",
+    "acceptance_scope": "actual_vcp_first_preload_reveal_plus_zero_later_full_viewport_paints",
+    "acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=2",
+        "watchlist_other_full_viewport_after_reveal=2"
+      ]
+    },
+    "acceptance_enforced": true
+  },
+  "background_prewarm": {
+    "elapsed_ms": 0.268,
+    "first_hidden_key": "",
+    "tab_count": 11,
+    "mounted_keys": [
+      "watchlist"
+    ],
+    "staged_keys": [],
+    "lazy_keys": [
+      "system_log",
+      "ai_industry_chain",
+      "na_daily",
+      "scan",
+      "foreign_block",
+      "earnings",
+      "fund_holdings",
+      "lhb",
+      "asian_market",
+      "stock_candidates"
+    ],
+    "completion_scope": "visible_watchlist_ready",
+    "status": {
+      "enabled": true,
+      "started": true,
+      "finished": true,
+      "completion_scope": "visible_watchlist_ready",
+      "startup_lazy_handoff_keys": [
+        "system_log",
+        "ai_industry_chain",
+        "na_daily",
+        "scan",
+        "foreign_block",
+        "earnings",
+        "fund_holdings",
+        "lhb",
+        "asian_market",
+        "stock_candidates"
+      ],
+      "startup_lazy_handoff_count": 10,
+      "interactive_handoff_targets": [],
+      "watchlist_resume_pause_requested": false,
+      "planned_order": [
+        "watchlist",
+        "system_log",
+        "ai_industry_chain",
+        "na_daily",
+        "scan",
+        "foreign_block",
+        "earnings",
+        "fund_holdings",
+        "lhb",
+        "asian_market",
+        "stock_candidates"
+      ],
+      "planned_count": 11,
+      "start_order": [
+        "watchlist"
+      ],
+      "completion_order": [
+        "watchlist"
+      ],
+      "ready_keys": [
+        "watchlist"
+      ],
+      "loaded_keys": [
+        "watchlist"
+      ],
+      "loaded_count": 1,
+      "active_key": "",
+      "remaining_keys": [],
+      "failures": {},
+      "timeouts": [],
+      "promoted_order": [
+        "watchlist"
+      ],
+      "pending_priority_keys": [],
+      "priority_closures": {},
+      "dependency_failures": {},
+      "cancelling_key": "",
+      "cancel_receipt": {},
+      "cancellation_settlement_timeout_ms": 5000,
+      "cancellation_blocked_poll_interval_ms": 500,
+      "cancellation_timeouts": {},
+      "cancellation_timeout_keys": [],
+      "cancellation_blocked": false,
+      "blocked_reason": "",
+      "active_step_count": 0,
+      "max_concurrent_steps": 1,
+      "timer_active": false,
+      "shutdown_cancel_receipts": [],
+      "shutdown_cancellation_settled": true,
+      "startup_cache_bootstrap_required": true,
+      "startup_cache_bootstrap_ready": true
+    },
+    "paint_region": {
+      "count": 0,
+      "full_viewport_count": 0,
+      "spontaneous_count": 0,
+      "max_dirty_bounding_area_ratio": 0.0,
+      "max_region_rect_count": 0,
+      "first": null,
+      "after_first": {
+        "count": 0,
+        "full_viewport_count": 0,
+        "max_dirty_bounding_area_ratio": 0.0
+      },
+      "samples": []
+    },
+    "metrics": {
+      "model_updates": [],
+      "paint": {
+        "durations": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "full_viewport_count": 0,
+        "other_full_viewport_count": 0,
+        "max_dirty_bounding_area_ratio": 0.0,
+        "reasons": [],
+        "samples": [],
+        "first": null,
+        "after_first": {
+          "durations": {
+            "count": 0,
+            "total_ms": 0,
+            "max_ms": 0.0,
+            "p50_ms": 0.0,
+            "p95_ms": 0.0,
+            "p99_ms": 0.0,
+            "over_50ms": 0,
+            "over_100ms": 0
+          },
+          "full_viewport_count": 0,
+          "other_full_viewport_count": 0,
+          "max_dirty_bounding_area_ratio": 0.0
+        }
+      },
+      "snapshot": {
+        "capture_count": 0,
+        "durations": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "skipped_count": 0,
+        "skipped_pairs": []
+      }
+    },
+    "heartbeat_lateness": {
+      "count": 0,
+      "total_ms": 0,
+      "max_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.0,
+      "over_50ms": 0,
+      "over_100ms": 0
+    },
+    "ui_stall_snapshot": {
+      "installed": true,
+      "total_count": 0,
+      "critical_count": 0,
+      "event_loop_count": 0,
+      "event_loop_critical_count": 0,
+      "method_count": 0,
+      "method_critical_count": 0,
+      "max_elapsed_ms": 0.0,
+      "warn_threshold_ms": 50.0,
+      "critical_threshold_ms": 100.0
+    },
+    "event_loop_observation": {
+      "status": "clear",
+      "part_of_repaint_acceptance": false,
+      "heartbeat_lateness": {
+        "count": 0,
+        "total_ms": 0,
+        "max_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "over_50ms": 0,
+        "over_100ms": 0
+      },
+      "ui_stall_snapshot": {
+        "installed": true,
+        "total_count": 0,
+        "critical_count": 0,
+        "event_loop_count": 0,
+        "event_loop_critical_count": 0,
+        "method_count": 0,
+        "method_critical_count": 0,
+        "max_elapsed_ms": 0.0,
+        "warn_threshold_ms": 50.0,
+        "critical_threshold_ms": 100.0
+      }
+    },
+    "acceptance_scope": "watchlist_repaint_and_11_tab_startup_lazy_handoff",
+    "acceptance": {
+      "status": "pass",
+      "violations": []
+    }
+  },
+  "heartbeat_lateness": {
+    "startup_idle": {
+      "count": 11,
+      "total_ms": 49.247,
+      "max_ms": 22.991,
+      "p50_ms": 0.025,
+      "p95_ms": 19.883,
+      "p99_ms": 22.37,
+      "over_50ms": 0,
+      "over_100ms": 0
+    },
+    "watchlist_reveal": {
+      "count": 85,
+      "total_ms": 711.842,
+      "max_ms": 265.55,
+      "p50_ms": 0.0,
+      "p95_ms": 21.508,
+      "p99_ms": 179.692,
+      "over_50ms": 4,
+      "over_100ms": 3
+    }
+  },
+  "quote_cycles": {
+    "completed": 0,
+    "payload_sizes": [],
+    "acceptance": {
+      "status": "not_run",
+      "violations": []
+    },
+    "acceptance_enforced": false,
+    "results": []
+  },
+  "shell_nav_cycles": {
+    "completed": 0,
+    "settle_ms": 1200,
+    "acceptance": {
+      "status": "not_run",
+      "violations": []
+    },
+    "acceptance_enforced": false,
+    "results": []
+  },
+  "residual_repaint": {
+    "acceptance": {
+      "status": "not_run",
+      "violations": []
+    },
+    "completed_cycles": 0,
+    "results": []
+  },
+  "background_tasks_at_finish": 0,
+  "ui_stall_snapshot": {
+    "installed": true,
+    "total_count": 0,
+    "critical_count": 0,
+    "event_loop_count": 0,
+    "event_loop_critical_count": 0,
+    "method_count": 0,
+    "method_critical_count": 0,
+    "max_elapsed_ms": 0.0,
+    "warn_threshold_ms": 50.0,
+    "critical_threshold_ms": 100.0
+  },
+  "dispatcher": {
+    "interpretation": {
+      "active_dispatch": "time between dispatcher awake and aboutToBlock; long spans indicate event handling work",
+      "blocked_wait": "time spent in the native dispatcher wait; this is sleep/wake time, not UI work"
+    },
+    "phases": {
+      "background_prewarm": {
+        "active_dispatch": {
+          "count": 1,
+          "total_ms": 196.476,
+          "max_ms": 196.476,
+          "p50_ms": 196.476,
+          "p95_ms": 196.476,
+          "p99_ms": 196.476,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "blocked_wait": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "profile_finalize": {
+        "active_dispatch": {
+          "count": 1,
+          "total_ms": 0.006,
+          "max_ms": 0.006,
+          "p50_ms": 0.006,
+          "p95_ms": 0.006,
+          "p99_ms": 0.006,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "startup_idle": {
+        "active_dispatch": {
+          "count": 41,
+          "total_ms": 203.459,
+          "max_ms": 41.487,
+          "p50_ms": 0.746,
+          "p95_ms": 21.838,
+          "p99_ms": 34.316,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 10,
+          "total_ms": 96.323,
+          "max_ms": 21.528,
+          "p50_ms": 6.178,
+          "p95_ms": 21.14,
+          "p99_ms": 21.45,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "watchlist_activation": {
+        "active_dispatch": {
+          "count": 1,
+          "total_ms": 0.047,
+          "max_ms": 0.047,
+          "p50_ms": 0.047,
+          "p95_ms": 0.047,
+          "p99_ms": 0.047,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "watchlist_reveal": {
+        "active_dispatch": {
+          "count": 489,
+          "total_ms": 1103.914,
+          "max_ms": 290.455,
+          "p50_ms": 0.09,
+          "p95_ms": 3.461,
+          "p99_ms": 30.108,
+          "over_50ms": 4,
+          "over_100ms": 3
+        },
+        "blocked_wait": {
+          "count": 206,
+          "total_ms": 1656.409,
+          "max_ms": 22.44,
+          "p50_ms": 5.46,
+          "p95_ms": 21.951,
+          "p99_ms": 22.252,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      }
+    },
+    "largest_active_dispatch_segments": [
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 290.455,
+        "ended_at_ms": 1449.955
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "background_prewarm",
+        "elapsed_ms": 196.476,
+        "ended_at_ms": 3256.777
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 182.673,
+        "ended_at_ms": 1639.055
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 171.142,
+        "ended_at_ms": 1810.197
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 90.107,
+        "ended_at_ms": 390.57
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "startup_idle",
+        "elapsed_ms": 41.487,
+        "ended_at_ms": 42.163
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 39.559,
+        "ended_at_ms": 430.129
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 28.819,
+        "ended_at_ms": 1159.499
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 27.816,
+        "ended_at_ms": 673.912
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "startup_idle",
+        "elapsed_ms": 23.56,
+        "ended_at_ms": 83.752
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "startup_idle",
+        "elapsed_ms": 21.838,
+        "ended_at_ms": 195.904
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "startup_idle",
+        "elapsed_ms": 20.378,
+        "ended_at_ms": 148.236
+      }
+    ],
+    "largest_blocked_wait_segments": [
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.44,
+        "ended_at_ms": 2847.521
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.286,
+        "ended_at_ms": 2347.159
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.253,
+        "ended_at_ms": 2922.028
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.227,
+        "ended_at_ms": 2446.828
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.07,
+        "ended_at_ms": 2596.852
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.058,
+        "ended_at_ms": 2672.049
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.051,
+        "ended_at_ms": 2646.97
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.046,
+        "ended_at_ms": 2296.839
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 22.029,
+        "ended_at_ms": 3047.015
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 21.967,
+        "ended_at_ms": 2271.792
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 21.956,
+        "ended_at_ms": 2321.872
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "watchlist_reveal",
+        "elapsed_ms": 21.937,
+        "ended_at_ms": 1896.658
+      }
+    ]
+  },
+  "paint_events": {
+    "watchlist_first_paint_at_ms": 2056.806,
+    "watchlist_show_at_ms": 2036.832,
+    "window_first_paint_at_ms": 898.427,
+    "window_show_at_ms": 821.277,
+    "watchlist_show_after_activation_ms": 857.894,
+    "watchlist_first_paint_after_activation_ms": 877.868,
+    "watchlist_viewport_by_phase": {
+      "watchlist_reveal": {
+        "count": 3,
+        "full_viewport_count": 3,
+        "spontaneous_count": 3,
+        "max_dirty_bounding_area_ratio": 1.0,
+        "max_region_rect_count": 1,
+        "first": {
+          "dirty_bounding_area_ratio": 1.0,
+          "region_rect_count": 1,
+          "delivered_full_viewport": true
+        },
+        "after_first": {
+          "count": 2,
+          "full_viewport_count": 2,
+          "max_dirty_bounding_area_ratio": 1.0
+        },
+        "samples": [
+          {
+            "dirty_bounding_area_ratio": 1.0,
+            "region_rect_count": 1,
+            "delivered_full_viewport": true,
+            "paint_event_spontaneous": true,
+            "background_prewarm_active_key_at_paint": "",
+            "recorded_at_ms": 2064.852,
+            "last_update_request_type": "UpdateRequest",
+            "last_update_request_target": "ancestor_8:MainWindowQT",
+            "last_update_request_at_ms": 2041.231,
+            "update_request_to_paint_ms": 23.621
+          },
+          {
+            "dirty_bounding_area_ratio": 1.0,
+            "region_rect_count": 1,
+            "delivered_full_viewport": true,
+            "paint_event_spontaneous": true,
+            "background_prewarm_active_key_at_paint": "",
+            "recorded_at_ms": 2345.954,
+            "last_update_request_type": "UpdateRequest",
+            "last_update_request_target": "ancestor_8:MainWindowQT",
+            "last_update_request_at_ms": 2335.598,
+            "update_request_to_paint_ms": 10.356
+          },
+          {
+            "dirty_bounding_area_ratio": 1.0,
+            "region_rect_count": 1,
+            "delivered_full_viewport": true,
+            "paint_event_spontaneous": true,
+            "background_prewarm_active_key_at_paint": "",
+            "recorded_at_ms": 2526.629,
+            "last_update_request_type": "UpdateRequest",
+            "last_update_request_target": "ancestor_8:MainWindowQT",
+            "last_update_request_at_ms": 2518.333,
+            "update_request_to_paint_ms": 8.296
+          }
+        ]
+      }
+    }
+  },
+  "qt_exit_code": 0
+}

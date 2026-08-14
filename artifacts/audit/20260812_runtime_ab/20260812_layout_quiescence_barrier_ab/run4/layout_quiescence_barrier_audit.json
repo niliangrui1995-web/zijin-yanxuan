@@ -1,0 +1,668 @@
+{
+  "policy": {
+    "max_elapsed_ms": 50.0,
+    "required_quiet_turns": 3
+  },
+  "timeline": [
+    {
+      "at_ms": 2826.65,
+      "label": "hidden_before",
+      "state": {
+        "tab_visible": false,
+        "tab_updates": true,
+        "tab_geometry": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "table_visible": false,
+        "table_updates": true,
+        "table_geometry": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport_visible": false,
+        "viewport_updates": true,
+        "viewport_geometry": [
+          0,
+          35,
+          640,
+          435
+        ]
+      }
+    },
+    {
+      "at_ms": 2827.096,
+      "label": "hidden_updates_disabled",
+      "state": {
+        "tab_visible": false,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "table_visible": false,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport_visible": false,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          640,
+          435
+        ]
+      }
+    },
+    {
+      "at_ms": 2846.845,
+      "label": "production_mount_return",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      }
+    },
+    {
+      "at_ms": 2849.655,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 1,
+      "upstream_layout_requests": 8,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 2.808
+    },
+    {
+      "at_ms": 2858.699,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 2,
+      "upstream_layout_requests": 4,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 11.851
+    },
+    {
+      "at_ms": 2860.002,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 3,
+      "upstream_layout_requests": 3,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 13.155
+    },
+    {
+      "at_ms": 2860.374,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 4,
+      "upstream_layout_requests": 3,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 13.528
+    },
+    {
+      "at_ms": 2867.295,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 5,
+      "upstream_layout_requests": 2,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 20.448
+    },
+    {
+      "at_ms": 2867.539,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 6,
+      "upstream_layout_requests": 1,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 20.693
+    },
+    {
+      "at_ms": 2876.829,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 7,
+      "upstream_layout_requests": 0,
+      "quiet_turns": 1,
+      "elapsed_since_mount_ms": 29.981
+    },
+    {
+      "at_ms": 2877.083,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 8,
+      "upstream_layout_requests": 0,
+      "quiet_turns": 2,
+      "elapsed_since_mount_ms": 30.237
+    },
+    {
+      "at_ms": 2877.282,
+      "label": "barrier_turn",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "turn": 9,
+      "upstream_layout_requests": 0,
+      "quiet_turns": 3,
+      "elapsed_since_mount_ms": 30.436
+    },
+    {
+      "at_ms": 2877.295,
+      "label": "before_reenable",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": false,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": false,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": false,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      },
+      "quiescence_reached": true,
+      "cap_reached": false
+    },
+    {
+      "at_ms": 2877.328,
+      "label": "after_reenable",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": true,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": true,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": true,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      }
+    },
+    {
+      "at_ms": 4748.729,
+      "label": "before_profile_finish",
+      "state": {
+        "tab_visible": true,
+        "tab_updates": true,
+        "tab_geometry": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "table_visible": true,
+        "table_updates": true,
+        "table_geometry": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport_visible": true,
+        "viewport_updates": true,
+        "viewport_geometry": [
+          0,
+          35,
+          2546,
+          1214
+        ]
+      }
+    }
+  ],
+  "frozen_qtimers": [
+    {
+      "parent": "MainWindowQT",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "UiStallProbe",
+      "interval_ms": 25
+    },
+    {
+      "parent": "QuotePulseDot",
+      "interval_ms": 24
+    },
+    {
+      "parent": "MarketPulseStrip",
+      "interval_ms": 45
+    },
+    {
+      "parent": "MainWindowStatusBar",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "StatusFlowStrip",
+      "interval_ms": 42
+    }
+  ],
+  "upstream_layout_requests": [
+    {
+      "at_ms": 2847.612,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 2847.681,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 2847.808,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 2847.836,
+      "object": "WatchlistTab"
+    },
+    {
+      "at_ms": 2847.868,
+      "object": "QWidget#tabToolbar"
+    },
+    {
+      "at_ms": 2847.908,
+      "object": "QFrame#tabToolbarTitleWrap"
+    },
+    {
+      "at_ms": 2848.161,
+      "object": "VCPTableView"
+    },
+    {
+      "at_ms": 2848.296,
+      "object": "LazyWatchlistTableStateWrapper"
+    },
+    {
+      "at_ms": 2858.501,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 2858.538,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 2858.569,
+      "object": "WatchlistTab"
+    },
+    {
+      "at_ms": 2858.598,
+      "object": "QWidget#tabToolbar"
+    },
+    {
+      "at_ms": 2859.848,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 2859.891,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 2859.922,
+      "object": "WatchlistTab"
+    },
+    {
+      "at_ms": 2860.261,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 2860.293,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 2860.322,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 2867.21,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 2867.234,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 2867.497,
+      "object": "ClassicWorkspace"
+    }
+  ],
+  "vcp_paint_events_while_barrier_active": [],
+  "result": {
+    "status": "ok",
+    "tab_count": 11,
+    "final": {
+      "row_count": 47,
+      "visible": true,
+      "page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 0,
+        "total_ms": 0,
+        "max_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "over_50ms": 0,
+        "over_100ms": 0
+      },
+      "full_viewport_count": 0,
+      "other_full_viewport_count": 0,
+      "max_dirty_bounding_area_ratio": 0.0
+    },
+    "paint_durations": {
+      "count": 1,
+      "total_ms": 223.362,
+      "max_ms": 223.362,
+      "p50_ms": 223.362,
+      "p95_ms": 223.362,
+      "p99_ms": 223.362,
+      "over_50ms": 1,
+      "over_100ms": 1
+    },
+    "reveal_acceptance": {
+      "status": "pass",
+      "violations": []
+    }
+  },
+  "barrier": {
+    "turns": 9,
+    "quiet_turns": 3,
+    "mount_at_ms": 2846.837,
+    "reenable_at_ms": 2877.325,
+    "delay_ms": 30.488
+  }
+}

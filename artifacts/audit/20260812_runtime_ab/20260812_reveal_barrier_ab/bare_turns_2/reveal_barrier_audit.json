@@ -1,0 +1,490 @@
+{
+  "turns_requested": 2,
+  "states": [
+    {
+      "label": "hidden_before",
+      "at_ms": 2779.278,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "visible": false,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ],
+          "visible": false,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ],
+          "visible": false,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "hidden_updates_disabled",
+      "at_ms": 2779.761,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "visible": false,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ],
+          "visible": false,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ],
+          "visible": false,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "production_mount_return",
+      "at_ms": 2801.389,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_event_loop_turn_1",
+      "at_ms": 2803.92,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_event_loop_turn_2",
+      "at_ms": 2812.137,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "before_reenable",
+      "at_ms": 2812.376,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": false
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": false,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_reenable",
+      "at_ms": 2812.416,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "after_reenable_settle",
+      "at_ms": 3051.304,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    },
+    {
+      "label": "before_profile_finish",
+      "at_ms": 4702.43,
+      "value": {
+        "tab": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "visible": true,
+          "updates_enabled": true
+        },
+        "table": {
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false
+        },
+        "viewport": {
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ],
+          "visible": true,
+          "updates_enabled": true,
+          "wa_opaque": false,
+          "wa_no_system_background": false
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "operation": "disable_watchlist_updates_before_production_mount"
+    },
+    {
+      "operation": "reenable_watchlist_updates",
+      "at_ms": 2812.412
+    }
+  ],
+  "frozen_qtimers": [
+    {
+      "parent": "MainWindowQT",
+      "object_name": "",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "UiStallProbe",
+      "object_name": "",
+      "interval_ms": 25
+    },
+    {
+      "parent": "QuotePulseDot",
+      "object_name": "",
+      "interval_ms": 24
+    },
+    {
+      "parent": "MarketPulseStrip",
+      "object_name": "",
+      "interval_ms": 45
+    },
+    {
+      "parent": "MainWindowStatusBar",
+      "object_name": "",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "StatusFlowStrip",
+      "object_name": "",
+      "interval_ms": 42
+    }
+  ],
+  "captures": {},
+  "vcp_paint_events": [
+    {
+      "at_ms": 2822.717,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 2,
+      "after_reenable_ms": 10.305
+    },
+    {
+      "at_ms": 2822.784,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 2,
+      "after_reenable_ms": 10.372
+    },
+    {
+      "at_ms": 3059.145,
+      "target": "table",
+      "barrier_active": false,
+      "turns_completed": 2,
+      "after_reenable_ms": 246.733
+    },
+    {
+      "at_ms": 3059.202,
+      "target": "viewport",
+      "barrier_active": false,
+      "turns_completed": 2,
+      "after_reenable_ms": 246.79
+    }
+  ],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final_runtime": {
+      "row_count": 47,
+      "visible": true,
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 1,
+        "total_ms": 164.974,
+        "max_ms": 164.974,
+        "p50_ms": 164.974,
+        "p95_ms": 164.974,
+        "p99_ms": 164.974,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "other_full_viewport_count": 1,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 2,
+      "total_ms": 388.989,
+      "max_ms": 224.015,
+      "p50_ms": 194.495,
+      "p95_ms": 221.063,
+      "p99_ms": 223.425,
+      "over_50ms": 2,
+      "over_100ms": 2
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=1",
+        "watchlist_other_full_viewport_after_reveal=1"
+      ]
+    }
+  },
+  "timing": {
+    "mount_return_at_ms": 2801.382,
+    "reenable_at_ms": 2812.412,
+    "reveal_delay_ms": 11.03,
+    "turns_completed": 2
+  }
+}

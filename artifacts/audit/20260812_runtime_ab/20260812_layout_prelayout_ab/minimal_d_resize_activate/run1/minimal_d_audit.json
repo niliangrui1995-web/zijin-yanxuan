@@ -1,0 +1,262 @@
+{
+  "mode": "resize_plus_tab_layout_activate",
+  "actions": [
+    {
+      "operation": "stop_active_qtimers",
+      "count": 6,
+      "timers": [
+        {
+          "parent": "MainWindowQT",
+          "object_name": "",
+          "interval_ms": 1000
+        },
+        {
+          "parent": "UiStallProbe",
+          "object_name": "",
+          "interval_ms": 25
+        },
+        {
+          "parent": "QuotePulseDot",
+          "object_name": "",
+          "interval_ms": 24
+        },
+        {
+          "parent": "MarketPulseStrip",
+          "object_name": "",
+          "interval_ms": 45
+        },
+        {
+          "parent": "MainWindowStatusBar",
+          "object_name": "",
+          "interval_ms": 1000
+        },
+        {
+          "parent": "StatusFlowStrip",
+          "object_name": "",
+          "interval_ms": 42
+        }
+      ]
+    },
+    {
+      "operation": "staging_host_and_watchlist_resize",
+      "target": [
+        2556,
+        1296
+      ]
+    },
+    {
+      "operation": "tab_layout_activate",
+      "result": true
+    }
+  ],
+  "seen": 1,
+  "hidden_before": {
+    "host": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "placeholder": [
+      0,
+      0,
+      2556,
+      1296
+    ],
+    "tab": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "wrapper": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "table": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "viewport": [
+      0,
+      35,
+      640,
+      435
+    ],
+    "hheader": [
+      0,
+      0,
+      640,
+      35
+    ],
+    "vheader": [
+      0,
+      35,
+      0,
+      435
+    ],
+    "hbar": {
+      "geometry": [
+        0,
+        0,
+        640,
+        10
+      ],
+      "min": 0,
+      "max": 1906,
+      "page": 640,
+      "value": 0,
+      "visible": false
+    },
+    "vbar": {
+      "geometry": [
+        0,
+        0,
+        100,
+        30
+      ],
+      "min": 0,
+      "max": 0,
+      "page": 435,
+      "value": 0,
+      "visible": false
+    }
+  },
+  "hidden_after_action": {
+    "host": [
+      0,
+      0,
+      2556,
+      1296
+    ],
+    "placeholder": [
+      0,
+      0,
+      2556,
+      1296
+    ],
+    "tab": [
+      0,
+      0,
+      2556,
+      1296
+    ],
+    "wrapper": [
+      0,
+      47,
+      2556,
+      1249
+    ],
+    "table": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "viewport": [
+      0,
+      35,
+      640,
+      435
+    ],
+    "hheader": [
+      0,
+      0,
+      640,
+      35
+    ],
+    "vheader": [
+      0,
+      35,
+      0,
+      435
+    ],
+    "hbar": {
+      "geometry": [
+        0,
+        0,
+        640,
+        10
+      ],
+      "min": 0,
+      "max": 1906,
+      "page": 640,
+      "value": 0,
+      "visible": false
+    },
+    "vbar": {
+      "geometry": [
+        0,
+        0,
+        100,
+        30
+      ],
+      "min": 0,
+      "max": 0,
+      "page": 435,
+      "value": 0,
+      "visible": false
+    }
+  },
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "watchlist_final": {
+      "row_count": 47,
+      "visible": true,
+      "workspace_load_reason": "restore_last_tab",
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 1,
+        "total_ms": 168.855,
+        "max_ms": 168.855,
+        "p50_ms": 168.855,
+        "p95_ms": 168.855,
+        "p99_ms": 168.855,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "other_full_viewport_count": 1,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 2,
+      "total_ms": 399.673,
+      "max_ms": 230.818,
+      "p50_ms": 199.836,
+      "p95_ms": 227.719,
+      "p99_ms": 230.198,
+      "over_50ms": 2,
+      "over_100ms": 2
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=1",
+        "watchlist_other_full_viewport_after_reveal=1"
+      ]
+    }
+  }
+}

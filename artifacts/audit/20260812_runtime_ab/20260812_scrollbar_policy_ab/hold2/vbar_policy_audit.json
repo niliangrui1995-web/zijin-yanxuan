@@ -1,0 +1,276 @@
+{
+  "mode": "hold",
+  "actions": [
+    {
+      "operation": "stop_active_qtimers",
+      "count": 6,
+      "timers": [
+        {
+          "parent": "MainWindowQT",
+          "object_name": "",
+          "interval_ms": 1000
+        },
+        {
+          "parent": "UiStallProbe",
+          "object_name": "",
+          "interval_ms": 25
+        },
+        {
+          "parent": "QuotePulseDot",
+          "object_name": "",
+          "interval_ms": 24
+        },
+        {
+          "parent": "MarketPulseStrip",
+          "object_name": "",
+          "interval_ms": 45
+        },
+        {
+          "parent": "MainWindowStatusBar",
+          "object_name": "",
+          "interval_ms": 1000
+        },
+        {
+          "parent": "StatusFlowStrip",
+          "object_name": "",
+          "interval_ms": 42
+        }
+      ]
+    },
+    {
+      "operation": "force_hidden_policy",
+      "from": "AsNeeded",
+      "to": "AlwaysOn"
+    },
+    {
+      "operation": "restore_after_initial_settle",
+      "to": "AsNeeded"
+    }
+  ],
+  "states": [
+    {
+      "label": "hidden_before",
+      "value": {
+        "at_monotonic_ms": 6358929.624,
+        "host": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "wrapper": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "table": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "vertical_policy": "AsNeeded",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "minimum": 0,
+          "maximum": 0,
+          "page_step": 435,
+          "visible": false
+        }
+      }
+    },
+    {
+      "label": "hidden_always_on",
+      "value": {
+        "at_monotonic_ms": 6358930.045,
+        "host": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "wrapper": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "table": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "vertical_policy": "AlwaysOn",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "minimum": 0,
+          "maximum": 0,
+          "page_step": 435,
+          "visible": false
+        }
+      }
+    },
+    {
+      "label": "before_settle_restore",
+      "value": {
+        "at_monotonic_ms": 6361147.293,
+        "host": [
+          1,
+          0,
+          2556,
+          1296
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "wrapper": [
+          0,
+          47,
+          2556,
+          1249
+        ],
+        "table": [
+          0,
+          0,
+          2556,
+          1249
+        ],
+        "viewport": [
+          0,
+          35,
+          2546,
+          1214
+        ],
+        "vertical_policy": "AlwaysOn",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            10,
+            1249
+          ],
+          "minimum": 0,
+          "maximum": 102,
+          "page_step": 1214,
+          "visible": true
+        }
+      }
+    }
+  ],
+  "initial_policy_events": [],
+  "hold_restore_started": true,
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final": {
+      "row_count": 47,
+      "visible": true,
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 2,
+        "total_ms": 321.577,
+        "max_ms": 166.493,
+        "p50_ms": 160.789,
+        "p95_ms": 165.923,
+        "p99_ms": 166.379,
+        "over_50ms": 2,
+        "over_100ms": 2
+      },
+      "full_viewport_count": 2,
+      "other_full_viewport_count": 2,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 3,
+      "total_ms": 549.576,
+      "max_ms": 227.998,
+      "p50_ms": 166.493,
+      "p95_ms": 221.848,
+      "p99_ms": 226.768,
+      "over_50ms": 3,
+      "over_100ms": 3
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=2",
+        "watchlist_other_full_viewport_after_reveal=2"
+      ]
+    }
+  }
+}

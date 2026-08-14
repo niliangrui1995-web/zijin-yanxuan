@@ -1,0 +1,287 @@
+{
+  "origin": 5343.052726,
+  "marker": 1160.487,
+  "creations": [],
+  "animation_events": [],
+  "smooth_calls": [
+    {
+      "at_ms": 1174.509,
+      "method": "prepare",
+      "target": 0,
+      "current": 1,
+      "visible": true,
+      "enabled": true,
+      "suspended_remaining_ms": 58174.542,
+      "pending": false
+    },
+    {
+      "at_ms": 1184.807,
+      "method": "prepare",
+      "target": 0,
+      "current": 0,
+      "visible": true,
+      "enabled": true,
+      "suspended_remaining_ms": 58164.249,
+      "pending": false
+    }
+  ],
+  "state_calls": [],
+  "filter_events": [
+    {
+      "at_ms": 1185.601,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1185.641,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1185.809,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1185.85,
+      "event": "76",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1185.885,
+      "event": "76",
+      "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1185.929,
+      "event": "76",
+      "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1186.245,
+      "event": "76",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1186.356,
+      "event": "76",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1187.497,
+      "event": "52",
+      "path": "QWidget:lazyWorkspaceTabPlaceholder/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1187.728,
+      "event": "77",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1333.034,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.344,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.388,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.428,
+      "event": "76",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.461,
+      "event": "76",
+      "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.844,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.9,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.927,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1333.97,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1334.011,
+      "event": "76",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1334.287,
+      "event": "76",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1334.374,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1334.401,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1334.439,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1334.477,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1334.503,
+      "event": "77",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1435.752,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "target_path": "QWidget:mainWindowFrame/MainWindowQT",
+      "property": "geometry",
+      "duration": 0,
+      "state": "State.Stopped",
+      "loop": 1
+    },
+    {
+      "at_ms": 1435.838,
+      "event": "76",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1435.915,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1435.967,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1435.992,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1436.187,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "target_path": "QWidget:mainWindowFrame/MainWindowQT",
+      "property": "geometry",
+      "duration": 0,
+      "state": "State.Stopped",
+      "loop": 1
+    },
+    {
+      "at_ms": 1436.243,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1436.416,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1436.451,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1436.503,
+      "event": "77",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1536.809,
+      "event": "76",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1537.09,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1537.128,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1537.599,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "target_path": "QWidget:mainWindowFrame/MainWindowQT",
+      "property": "geometry",
+      "duration": 0,
+      "state": "State.Stopped",
+      "loop": 1
+    },
+    {
+      "at_ms": 1537.665,
+      "event": "76",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1537.751,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT"
+    },
+    {
+      "at_ms": 1537.942,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "target_path": "QWidget:mainWindowFrame/MainWindowQT",
+      "property": "geometry",
+      "duration": 0,
+      "state": "State.Stopped",
+      "loop": 1
+    },
+    {
+      "at_ms": 1538.029,
+      "event": "76",
+      "path": "MainWindowQT"
+    },
+    {
+      "at_ms": 1538.231,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "target_path": "QWidget:mainWindowFrame/MainWindowQT",
+      "property": "geometry",
+      "duration": 0,
+      "state": "State.Stopped",
+      "loop": 1
+    },
+    {
+      "at_ms": 2719.129,
+      "event": "77",
+      "path": "MainWindowQT"
+    }
+  ],
+  "window": "<ui.main_window_qt.MainWindowQT object at 0x000002CD5095D090>"
+}

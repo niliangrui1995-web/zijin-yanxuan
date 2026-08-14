@@ -1,0 +1,995 @@
+{
+  "origin": 5504.1543225,
+  "marker": 1185.253,
+  "calls": [
+    {
+      "at_ms": 1205.007,
+      "label": "table.sizeHint",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        640,
+        480
+      ],
+      "result": [
+        256,
+        192
+      ],
+      "stack": [
+        "classic_workspace.py:960:_mount_preloaded_tab",
+        "classic_workspace.py:745:_mount_loaded_workspace_tab",
+        "classic_workspace.py:630:_replace_workspace_placeholder",
+        "smooth_tab_widget.py:106:setCurrentIndex",
+        "watchlist_table_state.py:44:sizeHint"
+      ]
+    },
+    {
+      "at_ms": 1206.825,
+      "label": "wrapper.sizeHint",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        640,
+        480
+      ],
+      "result": [
+        256,
+        192
+      ],
+      "stack": [
+        "background_tab_preload.py:908:_finish_step",
+        "classic_workspace.py:960:_mount_preloaded_tab",
+        "classic_workspace.py:745:_mount_loaded_workspace_tab",
+        "classic_workspace.py:630:_replace_workspace_placeholder",
+        "smooth_tab_widget.py:106:setCurrentIndex"
+      ]
+    },
+    {
+      "at_ms": 1207.333,
+      "label": "table.minimumSizeHint",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        640,
+        480
+      ],
+      "result": [
+        60,
+        60
+      ],
+      "stack": [
+        "classic_workspace.py:960:_mount_preloaded_tab",
+        "classic_workspace.py:745:_mount_loaded_workspace_tab",
+        "classic_workspace.py:630:_replace_workspace_placeholder",
+        "smooth_tab_widget.py:106:setCurrentIndex",
+        "watchlist_table_state.py:49:minimumSizeHint"
+      ]
+    },
+    {
+      "at_ms": 1207.841,
+      "label": "wrapper.minimumSizeHint",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        640,
+        480
+      ],
+      "result": [
+        60,
+        60
+      ],
+      "stack": [
+        "background_tab_preload.py:908:_finish_step",
+        "classic_workspace.py:960:_mount_preloaded_tab",
+        "classic_workspace.py:745:_mount_loaded_workspace_tab",
+        "classic_workspace.py:630:_replace_workspace_placeholder",
+        "smooth_tab_widget.py:106:setCurrentIndex"
+      ]
+    },
+    {
+      "at_ms": 1212.56,
+      "label": "table.sizeHint",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        843
+      ],
+      "result": [
+        256,
+        192
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile",
+        "watchlist_table_state.py:44:sizeHint"
+      ]
+    },
+    {
+      "at_ms": 1213.531,
+      "label": "wrapper.sizeHint",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        57,
+        2046,
+        843
+      ],
+      "result": [
+        256,
+        192
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1213.767,
+      "label": "table.minimumSizeHint",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        843
+      ],
+      "result": [
+        60,
+        60
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile",
+        "watchlist_table_state.py:49:minimumSizeHint"
+      ]
+    },
+    {
+      "at_ms": 1214.06,
+      "label": "wrapper.minimumSizeHint",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        57,
+        2046,
+        843
+      ],
+      "result": [
+        60,
+        60
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1214.247,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1214.438,
+      "label": "watchlist.minimumSizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1206,
+        117
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1214.617,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1361.653,
+      "label": "table.sizeHint",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        843
+      ],
+      "result": [
+        256,
+        192
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile",
+        "watchlist_table_state.py:44:sizeHint"
+      ]
+    },
+    {
+      "at_ms": 1362.112,
+      "label": "wrapper.sizeHint",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        57,
+        2046,
+        843
+      ],
+      "result": [
+        256,
+        192
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1362.346,
+      "label": "table.minimumSizeHint",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        843
+      ],
+      "result": [
+        60,
+        60
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile",
+        "watchlist_table_state.py:49:minimumSizeHint"
+      ]
+    },
+    {
+      "at_ms": 1362.639,
+      "label": "wrapper.minimumSizeHint",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        57,
+        2046,
+        843
+      ],
+      "result": [
+        60,
+        60
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1362.829,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1363.025,
+      "label": "watchlist.minimumSizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1206,
+        117
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1363.207,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1364.15,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1364.355,
+      "label": "watchlist.minimumSizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1206,
+        117
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1364.541,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1470.56,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1470.874,
+      "label": "watchlist.minimumSizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1206,
+        117
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1471.073,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1471.608,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1471.807,
+      "label": "watchlist.minimumSizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1206,
+        117
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    },
+    {
+      "at_ms": 1472.004,
+      "label": "watchlist.sizeHint",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "result": [
+        1208,
+        249
+      ],
+      "stack": [
+        "native_watchlist_profile.py:2770:run_profile"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "at_ms": 1212.436,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        1,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1212.488,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1214.887,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1214.939,
+      "event": "76",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1214.985,
+      "event": "76",
+      "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        57
+      ]
+    },
+    {
+      "at_ms": 1215.042,
+      "event": "76",
+      "path": "QFrame:tabToolbarTitleWrap/QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        12,
+        8,
+        636,
+        41
+      ]
+    },
+    {
+      "at_ms": 1215.361,
+      "event": "76",
+      "path": "VCPTableView/LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        843
+      ]
+    },
+    {
+      "at_ms": 1215.479,
+      "event": "76",
+      "path": "LazyWatchlistTableStateWrapper/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        57,
+        2046,
+        843
+      ]
+    },
+    {
+      "at_ms": 1216.531,
+      "event": "52",
+      "path": "QWidget:lazyWorkspaceTabPlaceholder/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1216.774,
+      "event": "77",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1361.557,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        42,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1363.463,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1363.508,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        1,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1363.55,
+      "event": "76",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1363.595,
+      "event": "76",
+      "path": "QWidget:tabToolbar/WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        57
+      ]
+    },
+    {
+      "at_ms": 1363.786,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1363.822,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        42,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1363.848,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1363.894,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        1,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1363.938,
+      "event": "76",
+      "path": "WatchlistTab/QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1364.019,
+      "event": "76",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1364.098,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1364.125,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1364.747,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1364.797,
+      "event": "76",
+      "path": "QStackedWidget:qt_tabwidget_stackedwidget/SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        1,
+        0,
+        2046,
+        900
+      ]
+    },
+    {
+      "at_ms": 1364.829,
+      "event": "77",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1470.36,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": null
+    },
+    {
+      "at_ms": 1470.434,
+      "event": "76",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1470.52,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        42,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1471.286,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1471.324,
+      "event": "76",
+      "path": "SmoothTabWidget/ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1471.527,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": null
+    },
+    {
+      "at_ms": 1471.579,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1472.222,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        42,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1472.255,
+      "event": "76",
+      "path": "ClassicWorkspace/QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1472.308,
+      "event": "77",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1575.928,
+      "event": "76",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1576.154,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1576.223,
+      "event": "76",
+      "path": "QFrame:tabsWrapperFrame/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        42,
+        2048,
+        901
+      ]
+    },
+    {
+      "at_ms": 1576.62,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": null
+    },
+    {
+      "at_ms": 1576.696,
+      "event": "76",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1576.795,
+      "event": "76",
+      "path": "QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": [
+        0,
+        0,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1577.115,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": null
+    },
+    {
+      "at_ms": 1577.176,
+      "event": "76",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    },
+    {
+      "at_ms": 1577.304,
+      "event": "52",
+      "path": "QPropertyAnimation/QWidget:mainWindowFrame/MainWindowQT",
+      "geometry": null
+    },
+    {
+      "at_ms": 2738.536,
+      "event": "77",
+      "path": "MainWindowQT",
+      "geometry": [
+        256,
+        210,
+        2048,
+        979
+      ]
+    }
+  ]
+}

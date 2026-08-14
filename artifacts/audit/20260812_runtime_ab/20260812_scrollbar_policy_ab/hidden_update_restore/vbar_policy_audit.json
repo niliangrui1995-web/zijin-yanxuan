@@ -1,0 +1,334 @@
+{
+  "mode": "hidden_update_restore",
+  "actions": [
+    {
+      "operation": "stop_active_qtimers",
+      "count": 6,
+      "timers": [
+        {
+          "parent": "MainWindowQT",
+          "object_name": "",
+          "interval_ms": 1000
+        },
+        {
+          "parent": "UiStallProbe",
+          "object_name": "",
+          "interval_ms": 25
+        },
+        {
+          "parent": "QuotePulseDot",
+          "object_name": "",
+          "interval_ms": 24
+        },
+        {
+          "parent": "MarketPulseStrip",
+          "object_name": "",
+          "interval_ms": 45
+        },
+        {
+          "parent": "MainWindowStatusBar",
+          "object_name": "",
+          "interval_ms": 1000
+        },
+        {
+          "parent": "StatusFlowStrip",
+          "object_name": "",
+          "interval_ms": 42
+        }
+      ]
+    },
+    {
+      "operation": "force_hidden_policy",
+      "from": "AsNeeded",
+      "to": "AlwaysOn"
+    },
+    {
+      "operation": "hidden_updateGeometries"
+    },
+    {
+      "operation": "restore_before_mount",
+      "to": "AsNeeded"
+    }
+  ],
+  "states": [
+    {
+      "label": "hidden_before",
+      "value": {
+        "at_monotonic_ms": 6383494.349,
+        "host": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "wrapper": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "table": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "vertical_policy": "AsNeeded",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "minimum": 0,
+          "maximum": 0,
+          "page_step": 435,
+          "visible": false
+        }
+      }
+    },
+    {
+      "label": "hidden_always_on",
+      "value": {
+        "at_monotonic_ms": 6383494.85,
+        "host": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "wrapper": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "table": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport": [
+          0,
+          35,
+          640,
+          435
+        ],
+        "vertical_policy": "AlwaysOn",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ],
+          "minimum": 0,
+          "maximum": 0,
+          "page_step": 435,
+          "visible": false
+        }
+      }
+    },
+    {
+      "label": "hidden_after_update_geometries",
+      "value": {
+        "at_monotonic_ms": 6383495.366,
+        "host": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "wrapper": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "table": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport": [
+          0,
+          35,
+          630,
+          435
+        ],
+        "vertical_policy": "AlwaysOn",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            10,
+            470
+          ],
+          "minimum": 0,
+          "maximum": 881,
+          "page_step": 435,
+          "visible": false
+        }
+      }
+    },
+    {
+      "label": "hidden_restored_before_mount",
+      "value": {
+        "at_monotonic_ms": 6383495.395,
+        "host": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "placeholder": [
+          0,
+          0,
+          2556,
+          1296
+        ],
+        "tab": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "wrapper": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "table": [
+          0,
+          0,
+          640,
+          480
+        ],
+        "viewport": [
+          0,
+          35,
+          630,
+          435
+        ],
+        "vertical_policy": "AsNeeded",
+        "vbar": {
+          "geometry": [
+            0,
+            0,
+            10,
+            470
+          ],
+          "minimum": 0,
+          "maximum": 881,
+          "page_step": 435,
+          "visible": false
+        }
+      }
+    }
+  ],
+  "initial_policy_events": [],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final": {
+      "row_count": 47,
+      "visible": true,
+      "watchlist_page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other",
+      "other",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 3,
+        "total_ms": 532.674,
+        "max_ms": 189.049,
+        "p50_ms": 179.265,
+        "p95_ms": 188.07,
+        "p99_ms": 188.853,
+        "over_50ms": 3,
+        "over_100ms": 3
+      },
+      "full_viewport_count": 3,
+      "other_full_viewport_count": 3,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 4,
+      "total_ms": 786.678,
+      "max_ms": 254.004,
+      "p50_ms": 184.157,
+      "p95_ms": 244.261,
+      "p99_ms": 252.055,
+      "over_50ms": 4,
+      "over_100ms": 4
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=3",
+        "watchlist_other_full_viewport_after_reveal=3"
+      ]
+    }
+  }
+}

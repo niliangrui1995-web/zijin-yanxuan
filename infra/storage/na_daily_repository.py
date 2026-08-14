@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -54,10 +55,69 @@ class NADailyReportRepository:
     def signature_for(paths: Sequence[str | Path]) -> tuple[str, ...]:
         return tuple(f"{Path(path).name}:{int(Path(path).stat().st_mtime)}" for path in paths)
 
+    def _report_files(self) -> list[Path]:
+        if not self.output_dir.is_dir():
+            return []
+        try:
+            return [path for path in self.output_dir.rglob("战报_*.md") if path.is_file()]
+        except OSError:
+            return []
+
     def list_recent_report_files(self, *, limit: int = 5) -> list[str]:
-        files = [path for path in self.output_dir.rglob("战报_*.md") if path.is_file()]
+        files = self._report_files()
         files.sort(key=lambda path: (self.parse_report_identity(path)[1], str(path)))
         return [str(path) for path in files[-limit:]]
+
+    @staticmethod
+    def _manifest_status(day_dir: Path) -> tuple[str, str]:
+        manifest_path = day_dir / "run_manifest.json"
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return "", ""
+        if not isinstance(payload, dict):
+            return "", ""
+        return (
+            str(payload.get("status") or "").strip(),
+            str(payload.get("status_reason") or "").strip(),
+        )
+
+    def list_report_history(self) -> list[dict[str, object]]:
+        files_by_date: dict[str, list[Path]] = {}
+        for path in self._report_files():
+            try:
+                report_date, _, _ = self.parse_report_identity(path)
+            except (OSError, ValueError):
+                continue
+            files_by_date.setdefault(report_date, []).append(path)
+
+        day_dirs: dict[str, Path] = {}
+        if self.output_dir.is_dir():
+            try:
+                day_dirs = {
+                    path.name: path
+                    for path in self.output_dir.iterdir()
+                    if path.is_dir() and re.fullmatch(r"\d{8}", path.name)
+                }
+            except OSError:
+                day_dirs = {}
+
+        history: list[dict[str, object]] = []
+        for report_date in sorted(set(files_by_date) | set(day_dirs), reverse=True):
+            files = files_by_date.get(report_date, [])
+            files.sort(key=lambda path: (self.parse_report_identity(path)[1], str(path)))
+            manifest_status, message = self._manifest_status(day_dirs[report_date]) if report_date in day_dirs else ("", "")
+            state = "available" if files else ("non_trading" if manifest_status == "skipped_non_trading_day" else "missing")
+            history.append(
+                {
+                    "date": report_date,
+                    "state": state,
+                    "report_files": [str(path) for path in files],
+                    "manifest_status": manifest_status,
+                    "message": message,
+                }
+            )
+        return history
 
     @staticmethod
     def _load_structured_payload(json_path: Path) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]] | None:

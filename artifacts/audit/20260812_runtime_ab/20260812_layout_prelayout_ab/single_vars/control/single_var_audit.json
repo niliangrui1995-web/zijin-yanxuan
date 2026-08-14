@@ -1,0 +1,336 @@
+{
+  "mode": "control",
+  "hidden_before": {
+    "host": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "placeholder": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "tab": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "wrapper": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "table": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "viewport": [
+      0,
+      41,
+      640,
+      429
+    ],
+    "hheader": [
+      0,
+      0,
+      640,
+      41
+    ],
+    "vheader": [
+      0,
+      41,
+      0,
+      429
+    ],
+    "hbar": {
+      "geometry": [
+        0,
+        0,
+        640,
+        10
+      ],
+      "min": 0,
+      "max": 394,
+      "page": 640,
+      "value": 0,
+      "visible": false
+    },
+    "vbar": {
+      "geometry": [
+        0,
+        0,
+        100,
+        30
+      ],
+      "min": 0,
+      "max": 0,
+      "page": 429,
+      "value": 0,
+      "visible": false
+    }
+  },
+  "hidden_after_action": {
+    "host": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "placeholder": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "tab": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "wrapper": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "table": [
+      0,
+      0,
+      640,
+      480
+    ],
+    "viewport": [
+      0,
+      41,
+      640,
+      429
+    ],
+    "hheader": [
+      0,
+      0,
+      640,
+      41
+    ],
+    "vheader": [
+      0,
+      41,
+      0,
+      429
+    ],
+    "hbar": {
+      "geometry": [
+        0,
+        0,
+        640,
+        10
+      ],
+      "min": 0,
+      "max": 394,
+      "page": 640,
+      "value": 0,
+      "visible": false
+    },
+    "vbar": {
+      "geometry": [
+        0,
+        0,
+        100,
+        30
+      ],
+      "min": 0,
+      "max": 0,
+      "page": 429,
+      "value": 0,
+      "visible": false
+    }
+  },
+  "immediate_after_mount": {
+    "host": [
+      0,
+      0,
+      100,
+      30
+    ],
+    "placeholder": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "tab": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "wrapper": [
+      0,
+      57,
+      2046,
+      843
+    ],
+    "table": [
+      0,
+      0,
+      2046,
+      843
+    ],
+    "viewport": [
+      0,
+      41,
+      2036,
+      802
+    ],
+    "hheader": [
+      0,
+      0,
+      2036,
+      41
+    ],
+    "vheader": [
+      0,
+      41,
+      0,
+      802
+    ],
+    "hbar": {
+      "geometry": [
+        0,
+        0,
+        640,
+        10
+      ],
+      "min": 0,
+      "max": 0,
+      "page": 2036,
+      "value": 0,
+      "visible": false
+    },
+    "vbar": {
+      "geometry": [
+        0,
+        0,
+        10,
+        843
+      ],
+      "min": 0,
+      "max": 702,
+      "page": 802,
+      "value": 0,
+      "visible": true
+    }
+  },
+  "actions": [
+    {
+      "operation": "none"
+    }
+  ],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "watchlist_final": {
+      "row_count": 47,
+      "visible": true,
+      "workspace_load_reason": "restore_last_tab",
+      "preload_staging_host": {
+        "exists": true,
+        "parent_type": "ClassicWorkspace",
+        "is_top_level": true,
+        "visible": false
+      },
+      "repaint_runtime": {
+        "watchlist_page_opaque_paint": false,
+        "table_opaque_paint": false,
+        "viewport_opaque_paint": false,
+        "watchlist_page_size": [
+          2046,
+          900
+        ],
+        "table_size": [
+          2046,
+          843
+        ],
+        "viewport_size": [
+          2036,
+          802
+        ],
+        "copy_hook_installed": true,
+        "ambient_pulse_property": false,
+        "ambient_timer_active": false,
+        "ambient_timer_interval_ms": 120,
+        "flash_timer_active": false,
+        "flash_timer_interval_ms": 500,
+        "coalesced_flash_repaint": true,
+        "targeted_flash_repaint": true
+      },
+      "model_signal_monitor": {
+        "attached": true,
+        "source_model": "StockTableModel",
+        "proxy_model": "RtSortFilterProxyModel",
+        "count": 0,
+        "counts": {},
+        "events": []
+      },
+      "quote_repaint_mode": "targeted_dirty_region",
+      "membership_reconcile_monitor": {
+        "count": 1,
+        "modes": {
+          "reset_fallback": 1
+        },
+        "samples": [
+          {
+            "mode": "reset_fallback",
+            "old_rows": "0",
+            "new_rows": "47",
+            "source": "initial_data"
+          }
+        ]
+      }
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 2,
+        "total_ms": 191.337,
+        "max_ms": 95.691,
+        "p50_ms": 95.668,
+        "p95_ms": 95.689,
+        "p99_ms": 95.69,
+        "over_50ms": 2,
+        "over_100ms": 0
+      },
+      "full_viewport_count": 2,
+      "other_full_viewport_count": 2,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 3,
+      "total_ms": 332.9,
+      "max_ms": 141.563,
+      "p50_ms": 95.691,
+      "p95_ms": 136.976,
+      "p99_ms": 140.646,
+      "over_50ms": 3,
+      "over_100ms": 1
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=2",
+        "watchlist_other_full_viewport_after_reveal=2"
+      ]
+    }
+  }
+}

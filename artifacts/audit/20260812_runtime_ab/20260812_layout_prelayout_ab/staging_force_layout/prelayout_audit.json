@@ -1,0 +1,368 @@
+{
+  "pre": {
+    "staging": {
+      "table": [
+        0,
+        0,
+        640,
+        480
+      ],
+      "viewport": [
+        0,
+        41,
+        640,
+        429
+      ],
+      "hheader": [
+        0,
+        0,
+        640,
+        41
+      ],
+      "vheader": [
+        0,
+        41,
+        0,
+        429
+      ],
+      "hbar": {
+        "geometry": [
+          0,
+          0,
+          640,
+          10
+        ],
+        "min": 0,
+        "max": 394,
+        "page": 640,
+        "value": 0,
+        "visible": false,
+        "policy": "<PyQt6.QtWidgets.QSizePolicy object at 0x00000179FC7C11D0>"
+      },
+      "vbar": {
+        "geometry": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "min": 0,
+        "max": 0,
+        "page": 429,
+        "value": 0,
+        "visible": false,
+        "policy": "<PyQt6.QtWidgets.QSizePolicy object at 0x00000179FC7C11D0>"
+      },
+      "corner": null,
+      "tab": [
+        0,
+        0,
+        100,
+        30
+      ],
+      "wrapper": [
+        0,
+        0,
+        640,
+        480
+      ]
+    },
+    "placeholder": [
+      0,
+      0,
+      2046,
+      900
+    ],
+    "after_hidden_settle": {
+      "table": [
+        0,
+        0,
+        640,
+        480
+      ],
+      "viewport": [
+        0,
+        41,
+        630,
+        429
+      ],
+      "hheader": [
+        0,
+        0,
+        630,
+        41
+      ],
+      "vheader": [
+        0,
+        41,
+        0,
+        429
+      ],
+      "hbar": {
+        "geometry": [
+          0,
+          0,
+          640,
+          10
+        ],
+        "min": 0,
+        "max": 404,
+        "page": 630,
+        "value": 0,
+        "visible": false,
+        "policy": "<PyQt6.QtWidgets.QSizePolicy object at 0x00000179FC7C1250>"
+      },
+      "vbar": {
+        "geometry": [
+          0,
+          0,
+          10,
+          30
+        ],
+        "min": 0,
+        "max": 1075,
+        "page": 429,
+        "value": 0,
+        "visible": false,
+        "policy": "<PyQt6.QtWidgets.QSizePolicy object at 0x00000179FC7C1250>"
+      },
+      "corner": null,
+      "tab": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "wrapper": [
+        0,
+        57,
+        2046,
+        843
+      ]
+    }
+  },
+  "post": {
+    "immediate": {
+      "table": [
+        0,
+        0,
+        2046,
+        843
+      ],
+      "viewport": [
+        0,
+        41,
+        2036,
+        802
+      ],
+      "hheader": [
+        0,
+        0,
+        2036,
+        41
+      ],
+      "vheader": [
+        0,
+        41,
+        0,
+        802
+      ],
+      "hbar": {
+        "geometry": [
+          0,
+          0,
+          640,
+          10
+        ],
+        "min": 0,
+        "max": 0,
+        "page": 2036,
+        "value": 0,
+        "visible": false,
+        "policy": "<PyQt6.QtWidgets.QSizePolicy object at 0x00000179FC7C1350>"
+      },
+      "vbar": {
+        "geometry": [
+          0,
+          0,
+          10,
+          843
+        ],
+        "min": 0,
+        "max": 702,
+        "page": 802,
+        "value": 0,
+        "visible": true,
+        "policy": "<PyQt6.QtWidgets.QSizePolicy object at 0x00000179FC7C1350>"
+      },
+      "corner": null,
+      "tab": [
+        0,
+        0,
+        2046,
+        900
+      ],
+      "wrapper": [
+        0,
+        57,
+        2046,
+        843
+      ]
+    }
+  },
+  "steps": [
+    {
+      "name": "target",
+      "size": [
+        2046,
+        900
+      ],
+      "host_geometry": [
+        0,
+        0,
+        100,
+        30
+      ]
+    }
+  ],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "watchlist": {
+      "row_count": 47,
+      "visible": true,
+      "workspace_load_reason": "restore_last_tab",
+      "preload_staging_host": {
+        "exists": true,
+        "parent_type": "ClassicWorkspace",
+        "is_top_level": true,
+        "visible": false
+      },
+      "repaint_runtime": {
+        "watchlist_page_opaque_paint": false,
+        "table_opaque_paint": false,
+        "viewport_opaque_paint": false,
+        "watchlist_page_size": [
+          2046,
+          900
+        ],
+        "table_size": [
+          2046,
+          843
+        ],
+        "viewport_size": [
+          2036,
+          802
+        ],
+        "copy_hook_installed": true,
+        "ambient_pulse_property": false,
+        "ambient_timer_active": false,
+        "ambient_timer_interval_ms": 120,
+        "flash_timer_active": false,
+        "flash_timer_interval_ms": 500,
+        "coalesced_flash_repaint": true,
+        "targeted_flash_repaint": true
+      },
+      "model_signal_monitor": {
+        "attached": true,
+        "source_model": "StockTableModel",
+        "proxy_model": "RtSortFilterProxyModel",
+        "count": 0,
+        "counts": {},
+        "events": []
+      },
+      "quote_repaint_mode": "targeted_dirty_region",
+      "membership_reconcile_monitor": {
+        "count": 1,
+        "modes": {
+          "reset_fallback": 1
+        },
+        "samples": [
+          {
+            "mode": "reset_fallback",
+            "old_rows": "0",
+            "new_rows": "47",
+            "source": "initial_data"
+          }
+        ]
+      }
+    },
+    "paint": {
+      "durations": {
+        "count": 2,
+        "total_ms": 258.213,
+        "max_ms": 154.05,
+        "p50_ms": 129.106,
+        "p95_ms": 151.555,
+        "p99_ms": 153.551,
+        "over_50ms": 2,
+        "over_100ms": 2
+      },
+      "full_viewport_count": 2,
+      "other_full_viewport_count": 1,
+      "max_dirty_bounding_area_ratio": 1.0,
+      "reasons": [
+        "preload_reveal",
+        "other"
+      ],
+      "samples": [
+        {
+          "elapsed_ms": 154.05,
+          "reason": "preload_reveal",
+          "requested_dirty_bounding_area_ratio": null,
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "targeted_request_reason": "",
+          "region_expanded": "false",
+          "delivery_kind": "structural_full_viewport",
+          "delivered_full_viewport": "true",
+          "pending_reasons": "preload_reveal",
+          "structural_reason": "preload_reveal",
+          "targeted_request_coalesced_with_structural": "",
+          "paint_event_spontaneous": "true",
+          "background_prewarm_active_key_at_paint": "",
+          "preload_staged": "false",
+          "background_preload_ready": "true"
+        },
+        {
+          "elapsed_ms": 104.163,
+          "reason": "other",
+          "requested_dirty_bounding_area_ratio": null,
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "targeted_request_reason": "",
+          "region_expanded": "false",
+          "delivery_kind": "full_viewport",
+          "delivered_full_viewport": "true",
+          "pending_reasons": "",
+          "structural_reason": "",
+          "targeted_request_coalesced_with_structural": "",
+          "paint_event_spontaneous": "true",
+          "background_prewarm_active_key_at_paint": "",
+          "preload_staged": "false",
+          "background_preload_ready": "true"
+        }
+      ],
+      "first": {
+        "elapsed_ms": 154.05,
+        "dirty_bounding_area_ratio": 1.0,
+        "reason": "preload_reveal",
+        "delivered_full_viewport": true,
+        "delivery_kind": "structural_full_viewport"
+      },
+      "after_first": {
+        "durations": {
+          "count": 1,
+          "total_ms": 104.163,
+          "max_ms": 104.163,
+          "p50_ms": 104.163,
+          "p95_ms": 104.163,
+          "p99_ms": 104.163,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "full_viewport_count": 1,
+        "other_full_viewport_count": 1,
+        "max_dirty_bounding_area_ratio": 1.0
+      }
+    }
+  }
+}

@@ -1,0 +1,1024 @@
+{
+  "policy": {
+    "max_elapsed_ms": 50.0,
+    "required_quiet_turns": 3
+  },
+  "timeline": [
+    {
+      "at_ms": 3187.619,
+      "label": "hidden_before",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": false,
+        "tab": {
+          "visible": false,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ]
+        },
+        "table": {
+          "visible": false,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ]
+        },
+        "viewport": {
+          "visible": false,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": false
+        }
+      }
+    },
+    {
+      "at_ms": 3188.13,
+      "label": "hidden_updates_disabled",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": false,
+        "tab": {
+          "visible": false,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            100,
+            30
+          ]
+        },
+        "table": {
+          "visible": false,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            640,
+            480
+          ]
+        },
+        "viewport": {
+          "visible": false,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            640,
+            435
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": false
+        }
+      }
+    },
+    {
+      "at_ms": 3209.294,
+      "label": "production_mount_with_placeholder_overlay",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      }
+    },
+    {
+      "at_ms": 3212.155,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 1,
+      "upstream_layout_requests": 8,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 2.865
+    },
+    {
+      "at_ms": 3220.144,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 2,
+      "upstream_layout_requests": 4,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 10.855
+    },
+    {
+      "at_ms": 3220.396,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 3,
+      "upstream_layout_requests": 3,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 11.109
+    },
+    {
+      "at_ms": 3220.714,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 4,
+      "upstream_layout_requests": 3,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 11.426
+    },
+    {
+      "at_ms": 3227.865,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 5,
+      "upstream_layout_requests": 2,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 18.574
+    },
+    {
+      "at_ms": 3228.371,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 6,
+      "upstream_layout_requests": 1,
+      "quiet_turns": 0,
+      "elapsed_since_mount_ms": 19.081
+    },
+    {
+      "at_ms": 3236.992,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 7,
+      "upstream_layout_requests": 0,
+      "quiet_turns": 1,
+      "elapsed_since_mount_ms": 27.702
+    },
+    {
+      "at_ms": 3237.8,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 8,
+      "upstream_layout_requests": 0,
+      "quiet_turns": 2,
+      "elapsed_since_mount_ms": 28.511
+    },
+    {
+      "at_ms": 3238.09,
+      "label": "barrier_turn",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      },
+      "turn": 9,
+      "upstream_layout_requests": 0,
+      "quiet_turns": 3,
+      "elapsed_since_mount_ms": 28.803
+    },
+    {
+      "at_ms": 3238.126,
+      "label": "before_atomic_reveal",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": false,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": true,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      }
+    },
+    {
+      "at_ms": 3238.231,
+      "label": "after_atomic_reveal",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": false,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      }
+    },
+    {
+      "at_ms": 3238.411,
+      "label": "overlay_delete_later_queued",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": true,
+          "visible": false,
+          "enabled": false,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ],
+          "parent_class": "QStackedWidget",
+          "parent_object_name": "qt_tabwidget_stackedwidget"
+        }
+      }
+    },
+    {
+      "at_ms": 5110.445,
+      "label": "before_profile_finish",
+      "state": {
+        "tab_count": 11,
+        "current_index": 0,
+        "current_is_watchlist": true,
+        "tab": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1296
+          ]
+        },
+        "table": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            0,
+            2556,
+            1249
+          ]
+        },
+        "viewport": {
+          "visible": true,
+          "updates_enabled": true,
+          "geometry": [
+            0,
+            35,
+            2546,
+            1214
+          ]
+        },
+        "placeholder_overlay": {
+          "exists": false,
+          "deleted": true
+        }
+      }
+    }
+  ],
+  "frozen_qtimers": [
+    {
+      "parent": "MainWindowQT",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "UiStallProbe",
+      "interval_ms": 25
+    },
+    {
+      "parent": "QuotePulseDot",
+      "interval_ms": 24
+    },
+    {
+      "parent": "MarketPulseStrip",
+      "interval_ms": 45
+    },
+    {
+      "parent": "MainWindowStatusBar",
+      "interval_ms": 1000
+    },
+    {
+      "parent": "StatusFlowStrip",
+      "interval_ms": 42
+    }
+  ],
+  "upstream_layout_requests": [
+    {
+      "at_ms": 3210.144,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 3210.176,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 3210.32,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 3210.347,
+      "object": "WatchlistTab"
+    },
+    {
+      "at_ms": 3210.378,
+      "object": "QWidget#tabToolbar"
+    },
+    {
+      "at_ms": 3210.422,
+      "object": "QFrame#tabToolbarTitleWrap"
+    },
+    {
+      "at_ms": 3210.7,
+      "object": "VCPTableView"
+    },
+    {
+      "at_ms": 3210.855,
+      "object": "LazyWatchlistTableStateWrapper"
+    },
+    {
+      "at_ms": 3219.982,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 3220.011,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 3220.04,
+      "object": "WatchlistTab"
+    },
+    {
+      "at_ms": 3220.066,
+      "object": "QWidget#tabToolbar"
+    },
+    {
+      "at_ms": 3220.285,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 3220.322,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 3220.347,
+      "object": "WatchlistTab"
+    },
+    {
+      "at_ms": 3220.565,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 3220.61,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 3220.642,
+      "object": "QStackedWidget#qt_tabwidget_stackedwidget"
+    },
+    {
+      "at_ms": 3227.757,
+      "object": "ClassicWorkspace"
+    },
+    {
+      "at_ms": 3227.786,
+      "object": "SmoothTabWidget"
+    },
+    {
+      "at_ms": 3228.29,
+      "object": "ClassicWorkspace"
+    }
+  ],
+  "vcp_paint_events_while_barrier_active": [],
+  "result": {
+    "status": "error",
+    "tab_count": 11,
+    "final": {
+      "row_count": 47,
+      "visible": true,
+      "load_reason": "restore_last_tab",
+      "page_size": [
+        2556,
+        1296
+      ],
+      "table_size": [
+        2556,
+        1249
+      ],
+      "viewport_size": [
+        2546,
+        1214
+      ]
+    },
+    "paint_reasons": [
+      "preload_reveal",
+      "other"
+    ],
+    "paint_after_first": {
+      "durations": {
+        "count": 1,
+        "total_ms": 165.166,
+        "max_ms": 165.166,
+        "p50_ms": 165.166,
+        "p95_ms": 165.166,
+        "p99_ms": 165.166,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "other_full_viewport_count": 1,
+      "max_dirty_bounding_area_ratio": 1.0
+    },
+    "paint_durations": {
+      "count": 2,
+      "total_ms": 391.817,
+      "max_ms": 226.652,
+      "p50_ms": 195.909,
+      "p95_ms": 223.577,
+      "p99_ms": 226.037,
+      "over_50ms": 2,
+      "over_100ms": 2
+    },
+    "reveal_acceptance": {
+      "status": "fail",
+      "violations": [
+        "watchlist_full_viewport_after_reveal=1",
+        "watchlist_other_full_viewport_after_reveal=1"
+      ]
+    }
+  },
+  "barrier": {
+    "turns": 9,
+    "quiet_turns": 3,
+    "mount_at_ms": 3209.286,
+    "reveal_at_ms": 3238.228,
+    "delay_ms": 28.942
+  }
+}
