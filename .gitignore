@@ -75,6 +75,7 @@ rewrite_*.py
 _migrate_*.py
 
 # Tool caches
+.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .superpowers/
