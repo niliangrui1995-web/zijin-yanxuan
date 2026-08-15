@@ -28,9 +28,9 @@ from PyQt6.QtGui import (
     QFont,
     QFontMetrics,
     QLinearGradient,
-    QPalette,
     QPainter,
     QPainterPath,
+    QPalette,
     QPen,
     QPolygonF,
     QRegion,
@@ -1246,6 +1246,7 @@ class VCPTableView(QTableView):
         else:
             tags["delivery_kind"] = "partial_region"
 
+        paint_transition_metadata = {}
         parent = self.parentWidget()
         while parent is not None:
             if hasattr(parent, "_workspace_load_reason"):
@@ -1258,17 +1259,43 @@ class VCPTableView(QTableView):
                 tags["background_prewarm_active_key_at_paint"] = str(
                     getattr(parent, "_background_prewarm_active_key", "") or ""
                 )
+            transition_context = getattr(parent, "_workspace_tab_transition_context", None)
+            if (
+                isinstance(transition_context, dict)
+                and str(transition_context.get("target_tab") or "").strip() == scope
+            ):
+                paint_transition_metadata = {
+                    "transition_id": str(transition_context.get("transition_id") or ""),
+                    "source_tab": str(transition_context.get("source_tab") or ""),
+                    "target_tab": str(transition_context.get("target_tab") or ""),
+                    "transition_reason": str(transition_context.get("reason") or ""),
+                    "preload_state": str(transition_context.get("preload_state") or ""),
+                    "mounted_before": str(bool(transition_context.get("mounted_before"))).lower(),
+                    "transition_phase": "paint",
+                }
+                tags.update(
+                    {
+                        key: value
+                        for key, value in paint_transition_metadata.items()
+                        if key != "transition_id"
+                    }
+                )
             parent = parent.parentWidget()
 
         started_at = time.perf_counter()
         from infra.diagnostics.ui_stall_probe import ui_stall_span
 
+        stall_transition_metadata = {
+            **paint_transition_metadata,
+            "reason": str((paint_transition_metadata or {}).get("transition_reason") or ""),
+        }
         with ui_stall_span(
             "VCPTableView.paintEvent",
             tab=scope,
             signal=reason,
             dirty_bounding_area_ratio=tags["dirty_bounding_area_ratio"],
             delivered_full_viewport=tags["delivered_full_viewport"],
+            **stall_transition_metadata,
         ):
             super().paintEvent(event)
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0

@@ -18,11 +18,13 @@ from domains.industry_chain.pool_service import (
     filter_rows_to_ai_chain_codes as _filter_rows,
 )
 from infra.storage.industry_chain_repository import (
+    AI_CHAIN_CANDIDATE_PATHS,
     AI_CHAIN_CODES_CACHE_FILE,
     AI_CHAIN_CONTEXT_CACHE_FILE,
     AI_CHAIN_FILE,
     AI_CHAIN_ROWS_CACHE_FILE,
     IndustryChainRepository,
+    resolve_ai_chain_file,
 )
 
 
@@ -100,6 +102,7 @@ def filter_rows_to_ai_chain_codes(
 
 
 __all__ = [
+    "AI_CHAIN_CANDIDATE_PATHS",
     "AI_CHAIN_CODES_CACHE_FILE",
     "AI_CHAIN_CONTEXT_CACHE_FILE",
     "AI_CHAIN_FILE",
@@ -118,4 +121,5 @@ __all__ = [
     "normalize_ai_chain_code",
     "normalize_stock_code_from_row",
     "refresh_ai_industry_chain_rows",
+    "resolve_ai_chain_file",
 ]

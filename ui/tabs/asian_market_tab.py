@@ -73,6 +73,7 @@ from ui.tabs.asian_market_runtime import (
 )
 from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index, mark_runtime_network_activity
 from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.tab_transition_observability import tab_transition_stage
 
 log = get_logger(__name__)
 
@@ -615,21 +616,28 @@ class _AsianBackgroundPreloadMixin:
         if generation is not None and generation != int(getattr(self, "_local_cache_generation", 0)):
             return
         try:
-            if getattr(self, "_runtime_cleanup_done", False):
-                return
-            self.update_table_ui()
-            if self.row_data:
-                self._last_asian_success_at = datetime.datetime.now()
-                self._set_asian_status(
-                    "已载入本地缓存",
-                    self._status_metric("标的 ", len(self.row_data), "只"),
-                    "等待最新报价同步",
-                    freshness="本地缓存",
-                )
-            else:
-                self._set_asian_status(
-                    "本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价"
-                )
+            with tab_transition_stage(
+                self,
+                tab="asian_market",
+                method="AsianMarketTab._finish_apply_local_cache_payload",
+                stage="background_result_apply",
+                callback_kind="local_cache",
+            ):
+                if getattr(self, "_runtime_cleanup_done", False):
+                    return
+                self.update_table_ui()
+                if self.row_data:
+                    self._last_asian_success_at = datetime.datetime.now()
+                    self._set_asian_status(
+                        "已载入本地缓存",
+                        self._status_metric("标的 ", len(self.row_data), "只"),
+                        "等待最新报价同步",
+                        freshness="本地缓存",
+                    )
+                else:
+                    self._set_asian_status(
+                        "本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价"
+                    )
         finally:
             self._finish_local_cache_load()
 
@@ -906,8 +914,15 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
                 if not changed:
                     break
 
-        for column, width in enumerate(scaled_widths):
-            self.asian_table.setColumnWidth(column, width)
+        with tab_transition_stage(
+            self,
+            tab="asian_market",
+            method="AsianMarketTab._fit_asian_columns_to_viewport",
+            stage="layout_flush",
+            layout_signal="fit_columns",
+        ):
+            for column, width in enumerate(scaled_widths):
+                self.asian_table.setColumnWidth(column, width)
 
         # 仅在首次无历史配置时铺满一次，后续尊重用户手动调整/已恢复的列宽。
         self._auto_fit_columns_pending = False
@@ -1056,13 +1071,20 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
         self._set_asian_status(text)
 
     def showEvent(self, event):
-        super().showEvent(event)
-        if self._should_start_runtime_on_show():
-            self._ensure_runtime_started()
-        if getattr(self, "_pending_hidden_rt_update", False):
-            self._pending_hidden_rt_update = False
-            self.update_table_ui()
-        self._schedule_fit_columns()
+        with tab_transition_stage(
+            self,
+            tab="asian_market",
+            method="AsianMarketTab.showEvent",
+            stage="reveal_or_mount",
+            layout_signal="showEvent",
+        ):
+            super().showEvent(event)
+            if self._should_start_runtime_on_show():
+                self._ensure_runtime_started()
+            if getattr(self, "_pending_hidden_rt_update", False):
+                self._pending_hidden_rt_update = False
+                self.update_table_ui()
+            self._schedule_fit_columns()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1181,6 +1203,9 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
         self.asian_table.setProperty("suppressLeftRails", True)
         self.asian_table.setProperty("simpleCellPaint", True)
         self.asian_table.set_ambient_repaint_enabled(False)
+        self.asian_table.set_targeted_flash_repaint_enabled(False, metric_scope="asian_market")
+        self.asian_table.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.asian_table.set_viewport_base_background_enabled(True)
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
 
@@ -1301,7 +1326,14 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
                 log.warning(f"[亚洲页] 同步 worker 股票池失败: {e}")
 
     def update_table_ui(self):
-        self.model.update_data(self._ordered_asian_rows())
+        with tab_transition_stage(
+            self,
+            tab="asian_market",
+            method="AsianMarketTab.update_table_ui",
+            stage="layout_flush",
+            layout_signal="model_update",
+        ):
+            self.model.update_data(self._ordered_asian_rows())
         if hasattr(self, "table_state"):
             if self.row_data:
                 self.table_state.show_table()

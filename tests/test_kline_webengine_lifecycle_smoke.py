@@ -221,6 +221,56 @@ def test_observe_cycle_subscribes_after_browser_ready_before_chart_ready(monkeyp
     assert calls == ["browser_ready", "subscribed", "first_interaction"]
 
 
+def test_observe_cold_warmup_records_prewarmed_page_identity_after_browser_ready(monkeypatch):
+    calls: list[str] = []
+    prewarmed_page = object()
+    browser = SimpleNamespace(
+        page=lambda: calls.append("page_identity") or prewarmed_page,
+    )
+    chart = SimpleNamespace(
+        browser=browser,
+        _browser_epoch=1,
+        _last_shell_load_epoch=1,
+        _last_shell_load_ok=True,
+        _open_stages=SimpleNamespace(
+            recorded_stages={"chart_ready"},
+            stage_diagnostics=lambda: {},
+        ),
+    )
+    cycle = {
+        "measurement_role": "cold_warmup",
+        "samples": [],
+        "load_status": {},
+    }
+    monkeypatch.setattr(
+        lifecycle_smoke,
+        "_kline_browser_ready",
+        lambda _chart: calls.append("browser_ready") or True,
+    )
+    monkeypatch.setattr(
+        lifecycle_smoke,
+        "_wait_until",
+        lambda _app, predicate, **_kwargs: bool(predicate()),
+    )
+    monkeypatch.setattr(lifecycle_smoke, "_finish_ui_stall_scope", lambda *_args: _stall_snapshot())
+    monkeypatch.setattr(lifecycle_smoke, "_wait_for_first_interaction", lambda *_args, **_kwargs: (True, True))
+    monkeypatch.setattr(lifecycle_smoke, "_sample", lambda *_args, **_kwargs: {})
+
+    observed = lifecycle_smoke._observe_cycle_chart(
+        object(),
+        object(),
+        SimpleNamespace(open_timeout_ms=100),
+        cycle,
+        chart,
+        [],
+        prewarmed_page=prewarmed_page,
+    )
+
+    assert observed["browser_ready"] is True
+    assert cycle["prewarmed_page_reused"] is True
+    assert calls[:2] == ["browser_ready", "page_identity"]
+
+
 def test_cycle_ui_stall_scope_is_reset_and_captured_before_resource_sampling(monkeypatch):
     calls: list[str] = []
 
@@ -626,15 +676,27 @@ def test_resource_growth_fails_closed_without_exact_warmup_and_measured_close_sa
 
 
 def test_smoke_runner_keeps_two_explicit_warmups_outside_measured_cycles(monkeypatch):
-    calls: list[tuple[int, bool, str]] = []
+    import ui.components.kline_window_manager as manager_module
+
+    calls: list[tuple[int, bool, str, object | None]] = []
+    monkeypatch.setattr(manager_module, "kline_manager", SimpleNamespace(_prewarm_view=None))
     monkeypatch.setattr(
         lifecycle_smoke,
         "_prepare_smoke_runtime",
         lambda *_args, **_kwargs: {"status": "ok"},
     )
 
-    def fake_cycle(_app, _window, _args, cycle_index, *, measure_cached_switch, measurement_role):
-        calls.append((cycle_index, measure_cached_switch, measurement_role))
+    def fake_cycle(
+        _app,
+        _window,
+        _args,
+        cycle_index,
+        *,
+        measure_cached_switch,
+        measurement_role,
+        prewarmed_page=None,
+    ):
+        calls.append((cycle_index, measure_cached_switch, measurement_role, prewarmed_page))
         return {
             "cycle_index": 0 if measurement_role != "measured" else cycle_index + 1,
             "measurement_role": measurement_role,
@@ -647,11 +709,68 @@ def test_smoke_runner_keeps_two_explicit_warmups_outside_measured_cycles(monkeyp
 
     lifecycle_smoke._run_smoke_cycles(object(), object(), SimpleNamespace(open_timeout_ms=1), report, 10)
 
-    assert calls[:2] == [(-2, True, "cold_warmup"), (-1, True, "warmup")]
-    assert calls[2:] == [(index, True, "measured") for index in range(10)]
+    assert calls[:2] == [(-2, True, "cold_warmup", None), (-1, True, "warmup", None)]
+    assert calls[2:] == [(index, True, "measured", None) for index in range(10)]
     assert report["cold_warmup_cycle"]["measurement_role"] == "cold_warmup"
     assert report["warmup_cycle"]["measurement_role"] == "warmup"
     assert len(report["cycles"]) == 10
+
+
+def test_smoke_runner_passes_prewarmed_page_only_to_cold_warmup(monkeypatch):
+    import ui.components.kline_window_manager as manager_module
+
+    prewarmed_page = object()
+    manager = SimpleNamespace(_prewarm_view=prewarmed_page)
+    calls: list[tuple[str, object | None]] = []
+    monkeypatch.setattr(manager_module, "kline_manager", manager)
+    monkeypatch.setattr(
+        lifecycle_smoke,
+        "_prepare_smoke_runtime",
+        lambda *_args, **_kwargs: {"status": "ok"},
+    )
+
+    def fake_cycle(
+        _app,
+        _window,
+        _args,
+        _cycle_index,
+        *,
+        measure_cached_switch,
+        measurement_role,
+        prewarmed_page=None,
+    ):
+        assert measure_cached_switch is True
+        calls.append((measurement_role, prewarmed_page))
+        return {
+            "cycle_index": 0,
+            "measurement_role": measurement_role,
+            "samples": [],
+            "summary": {"status": "ok"},
+        }
+
+    monkeypatch.setattr(lifecycle_smoke, "_run_one_cycle", fake_cycle)
+    report = {"cycles": [], "samples": []}
+
+    lifecycle_smoke._run_smoke_cycles(object(), object(), SimpleNamespace(open_timeout_ms=1), report, 1)
+
+    assert calls == [
+        ("cold_warmup", prewarmed_page),
+        ("warmup", None),
+        ("measured", None),
+    ]
+
+
+def test_cold_warmup_status_requires_prewarmed_page_reuse_receipt():
+    report = {
+        "warmup_cycle": {"summary": {"status": "ok"}},
+        "cold_warmup_cycle": {
+            "measurement_role": "cold_warmup",
+            "prewarmed_page_reused": False,
+            "summary": {"status": "ok"},
+        },
+    }
+
+    assert lifecycle_smoke._warmup_statuses(report) == ("ok", "fail")
 
 
 def test_smoke_setup_report_exposes_preflight_failure_and_pending_state():
@@ -682,6 +801,77 @@ def test_smoke_setup_report_exposes_preflight_failure_and_pending_state():
     assert report["preflight_attempt_count"] == 2
     assert report["preflight_attempts"] == [{"attempt": 1}, {"attempt": 2}]
     assert report["timeout_ms"] == 40_000
+
+
+def test_smoke_setup_uses_page_only_keeper_and_reports_keeper_shape(monkeypatch):
+    import ui.components.kline_window_manager as manager_module
+
+    calls = []
+    manager = SimpleNamespace(
+        managed_webengine_keeper_count=1,
+        managed_webengine_keeper_ready=True,
+        _webengine_available=True,
+        _webengine_preflight_started=False,
+        _webengine_failure="",
+        _webengine_preflight_diagnostics={},
+        _prewarm_started=False,
+        _prewarm_failure="",
+        _prewarm_main_window=None,
+        runtime_health_snapshot=lambda: {"browser_count": 0, "page_count": 1},
+    )
+    manager.prewarm = lambda **kwargs: calls.append(kwargs) or True
+    window = SimpleNamespace(
+        _first_paint_recorded=True,
+        data_provider=object(),
+        show=lambda: None,
+    )
+    monkeypatch.setattr(manager_module, "kline_manager", manager)
+    monkeypatch.setattr(
+        lifecycle_smoke,
+        "_wait_until",
+        lambda _app, predicate, **_kwargs: bool(predicate()),
+    )
+
+    report = lifecycle_smoke._prepare_smoke_runtime(object(), window, timeout_ms=321)
+
+    assert calls == [{"delay_ms": 0, "hidden_view": True}]
+    assert report["status"] == "ok"
+    assert report["keeper_shape"] == {
+        "mode": "page_only",
+        "browser_count": 0,
+        "page_count": 1,
+        "main_window_retained": False,
+        "verified": True,
+    }
+
+
+def test_smoke_setup_rejects_a_full_window_keeper_shape():
+    manager = SimpleNamespace(
+        managed_webengine_keeper_count=1,
+        managed_webengine_keeper_ready=True,
+        _webengine_available=True,
+        _webengine_preflight_started=False,
+        _webengine_failure="",
+        _webengine_preflight_diagnostics={},
+        _prewarm_started=False,
+        _prewarm_failure="",
+        _prewarm_main_window=object(),
+        runtime_health_snapshot=lambda: {"browser_count": 1, "page_count": 1},
+    )
+    window = SimpleNamespace(_first_paint_recorded=True, data_provider=object())
+
+    assert lifecycle_smoke._smoke_runtime_ready(window, manager) is False
+    report = lifecycle_smoke._smoke_setup_report(
+        window,
+        manager,
+        ready=True,
+        scheduled=True,
+        timeout_ms=321,
+    )
+
+    assert report["status"] == "fail"
+    assert report["keeper_shape"]["mode"] == "unexpected"
+    assert report["keeper_shape"]["verified"] is False
 
 
 def test_cached_switch_measurement_uses_real_navigation_and_frame_commit(monkeypatch):
@@ -1131,6 +1321,7 @@ def test_finalized_smoke_report_matches_exact_kline_performance_gate_contract():
             "cycle_index": 0,
             "label": "cold_warmup",
             "measurement_role": "cold_warmup",
+            "prewarmed_page_reused": True,
             "samples": [cold_before, cold_ready, cold_after],
             "summary": {"status": "ok"},
             "ui_stalls": _stall_snapshot(),

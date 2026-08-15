@@ -27,6 +27,7 @@ from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index
 from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
+from ui.workspaces.tab_transition_observability import tab_transition_stage
 
 log = get_logger(__name__)
 _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
@@ -74,7 +75,14 @@ def _run_scheduled_runtime_start(owner) -> None:
     if getattr(owner, "_closing", False) or not getattr(owner, "_runtime_start_pending", False):
         return
     _cancel_scheduled_runtime_start(owner)
-    owner._load_na_daily_report()
+    with tab_transition_stage(
+        owner,
+        tab="na_daily",
+        method="NADailyTab._run_scheduled_runtime_start",
+        stage="activation_callback",
+        callback_kind="runtime_start",
+    ):
+        owner._load_na_daily_report()
 
 
 class NADailyHistoryDialog(QDialog):
@@ -313,9 +321,16 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         self._runtime_start_timer.start(self._runtime_start_delay_ms)
 
     def showEvent(self, event):
-        super().showEvent(event)
-        if self._should_start_runtime_on_show():
-            self._ensure_runtime_started()
+        with tab_transition_stage(
+            self,
+            tab="na_daily",
+            method="NADailyTab.showEvent",
+            stage="reveal_or_mount",
+            layout_signal="showEvent",
+        ):
+            super().showEvent(event)
+            if self._should_start_runtime_on_show():
+                self._ensure_runtime_started()
 
     def _resolve_na_daily_service(self):
         parent = self.parent()
@@ -347,6 +362,13 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         if self._handling_na_daily_event:
             return
         self._render_service_cache()
+
+    def _emit_na_daily_updated(self) -> None:
+        self._handling_na_daily_event = True
+        try:
+            event_bus.sig_na_daily_updated.emit()
+        finally:
+            self._handling_na_daily_event = False
 
     def _show_history_browser(self):
         dialog = self._history_dialog
@@ -494,6 +516,9 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             "评级",
         ]
         self.na_daily_table = VCPTableView(default_row_height=30)
+        self.na_daily_table.set_targeted_flash_repaint_enabled(False, metric_scope="na_daily")
+        self.na_daily_table.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.na_daily_table.set_viewport_base_background_enabled(True)
         self.table_state = TableStateWrapper(self.na_daily_table, empty_title="暂无战报数据", loading_title="加载中...")
 
         self.model = StockTableModel(columns)
@@ -582,10 +607,17 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             self._set_report_status(
                 "等待北美战报", "最近窗口为空", freshness="待加载", next_step="点击刷新载入最新战报"
             )
-            self.model.update_data([])
+            with tab_transition_stage(
+                self,
+                tab="na_daily",
+                method="NADailyTab._apply_na_daily_rows",
+                stage="layout_flush",
+                layout_signal="model_update",
+            ):
+                self.model.update_data([])
             self._na_daily_codes = set()
             if emit_event:
-                event_bus.sig_na_daily_updated.emit()
+                self._emit_na_daily_updated()
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无战报数据")
             return
@@ -612,7 +644,14 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             )
 
         self._na_daily_codes = {row.get("代码", "") for row in final_list if row.get("代码")}
-        self.model.update_data(final_list)
+        with tab_transition_stage(
+            self,
+            tab="na_daily",
+            method="NADailyTab._apply_na_daily_rows",
+            stage="layout_flush",
+            layout_signal="model_update",
+        ):
+            self.model.update_data(final_list)
         if hasattr(self, "table_state"):
             if final_list:
                 self.table_state.show_table()
@@ -623,12 +662,12 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             if self._background_prime_loading or not refresh_quotes:
                 self._apply_quote_store_snapshot()
                 if emit_event:
-                    event_bus.sig_na_daily_updated.emit()
+                    self._emit_na_daily_updated()
                 return
             self.refresh_table_quotes_and_market_caps(quote_task_id=task_registry.quote_refresh("na_daily").task_id)
 
         if emit_event:
-            event_bus.sig_na_daily_updated.emit()
+            self._emit_na_daily_updated()
 
     def _apply_na_daily_refresh_payload(self, payload: dict):
         self._na_daily_refresh_task_active = False
@@ -638,13 +677,20 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             self._background_prime_done = True
             return
         try:
-            service.apply_refresh_payload(payload or {}, emit_event=False)
-            self._apply_na_daily_rows(
-                service.rows,
-                service.report_files,
-                service.report_signature,
-                emit_event=not self._background_prime_loading,
-            )
+            with tab_transition_stage(
+                self,
+                tab="na_daily",
+                method="NADailyTab._apply_na_daily_refresh_payload",
+                stage="background_result_apply",
+                callback_kind="refresh_payload",
+            ):
+                service.apply_refresh_payload(payload or {}, emit_event=False)
+                self._apply_na_daily_rows(
+                    service.rows,
+                    service.report_files,
+                    service.report_signature,
+                    emit_event=not self._background_prime_loading,
+                )
         finally:
             if self._background_prime_loading:
                 self._background_prime_loading = False

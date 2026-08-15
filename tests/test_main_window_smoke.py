@@ -94,7 +94,7 @@ def test_main_window_schedules_default_kline_preflight_only_after_post_paint(mon
         window.show()
         _process_events(rounds=24)
 
-        assert prewarm_calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
+        assert prewarm_calls == [{"delay_ms": 0, "hidden_view": True}]
     finally:
         if not window._is_closing:
             window.close()

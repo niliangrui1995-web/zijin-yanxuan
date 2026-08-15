@@ -17,7 +17,25 @@ from domains.industry_chain.pool_service import (
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_PARENT = Path(__file__).resolve().parents[3]
-AI_CHAIN_FILE = _PROJECT_PARENT / "产业链投研" / "AI产业链.xlsx"
+
+AI_CHAIN_CANDIDATE_PATHS = (
+    _PROJECT_PARENT / "产业链投研" / "watchlists" / "AI产业链.xlsx",
+    _PROJECT_PARENT / "产业链投研" / "AI产业链.xlsx",
+    _PROJECT_ROOT / "data" / "AI产业链.xlsx",
+)
+
+
+def resolve_ai_chain_file() -> Path:
+    for candidate in AI_CHAIN_CANDIDATE_PATHS:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return AI_CHAIN_CANDIDATE_PATHS[0]
+
+
+AI_CHAIN_FILE = resolve_ai_chain_file()
 AI_CHAIN_ROWS_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_rows.json"
 AI_CHAIN_CODES_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_stock_codes.json"
 AI_CHAIN_CONTEXT_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_context_map.json"
@@ -47,27 +65,59 @@ class IndustryChainRepository:
         except OSError:
             return left == right
 
+    def _resolve_source_path(self, source_path: str | Path | None = None) -> Path:
+        if source_path is not None:
+            path = Path(source_path)
+            if path.exists():
+                return path
+            if path.name == "AI产业链.xlsx":
+                resolved = resolve_ai_chain_file()
+                if resolved.exists():
+                    return resolved
+            return path
+        if self.workbook_path.exists():
+            return self.workbook_path
+        resolved = resolve_ai_chain_file()
+        if resolved.exists():
+            return resolved
+        return self.workbook_path
+
     def is_default_source(self, source_path: str | Path) -> bool:
-        return self._same_path(Path(source_path), self.workbook_path)
+        path = Path(source_path)
+        if self._same_path(path, self.workbook_path):
+            return True
+        for candidate in AI_CHAIN_CANDIDATE_PATHS:
+            if self._same_path(path, candidate):
+                return True
+        return False
 
     @staticmethod
     def source_signature(source_path: str | Path) -> dict[str, object]:
         path = Path(source_path)
+        if not path.exists() and path.name == "AI产业链.xlsx":
+            resolved = resolve_ai_chain_file()
+            if resolved.exists():
+                path = resolved
         stat = path.stat()
         try:
-            resolved = path.resolve()
+            resolved_path = path.resolve()
         except OSError:
-            resolved = path
+            resolved_path = path
         return {
-            "path": str(resolved),
+            "path": str(resolved_path),
             "size": int(stat.st_size),
             "mtime_ns": int(stat.st_mtime_ns),
         }
 
     @staticmethod
     def source_mtime(source_path: str | Path) -> float:
+        path = Path(source_path)
+        if not path.exists() and path.name == "AI产业链.xlsx":
+            resolved = resolve_ai_chain_file()
+            if resolved.exists():
+                path = resolved
         try:
-            return float(Path(source_path).stat().st_mtime)
+            return float(path.stat().st_mtime)
         except (FileNotFoundError, OSError, TypeError, ValueError):
             return 0.0
 
@@ -109,7 +159,7 @@ class IndustryChainRepository:
             return
 
     def read_rows(self, source_path: str | Path | None = None) -> list[dict]:
-        path = Path(source_path) if source_path is not None else self.workbook_path
+        path = self._resolve_source_path(source_path)
         if not path.exists():
             raise FileNotFoundError(str(path))
         try:
@@ -125,7 +175,7 @@ class IndustryChainRepository:
         return build_ai_industry_chain_rows(raw_rows)
 
     def load_cached_rows(self, source_path: str | Path | None = None) -> list[dict]:
-        path = Path(source_path) if source_path is not None else self.workbook_path
+        path = self._resolve_source_path(source_path)
         if not self.is_default_source(path) or not path.exists():
             return []
         cached = self._read_signature_cache(self.rows_cache_path, path, "rows")
@@ -134,7 +184,7 @@ class IndustryChainRepository:
         return [dict(row) for row in cached if isinstance(row, dict)]
 
     def load_cached_stock_codes(self, source_path: str | Path | None = None) -> set[str]:
-        path = Path(source_path) if source_path is not None else self.workbook_path
+        path = self._resolve_source_path(source_path)
         if not self.is_default_source(path) or not path.exists():
             return set()
         cached = self._read_signature_cache(self.codes_cache_path, path, "stock_codes")
@@ -143,7 +193,7 @@ class IndustryChainRepository:
         return {code for value in cached if (code := normalize_ai_chain_code(value))}
 
     def load_cached_context_map(self, source_path: str | Path | None = None) -> dict[str, str]:
-        path = Path(source_path) if source_path is not None else self.workbook_path
+        path = self._resolve_source_path(source_path)
         if not self.is_default_source(path) or not path.exists():
             return {}
         cached = self._read_signature_cache(self.context_cache_path, path, "context_map")
@@ -156,7 +206,7 @@ class IndustryChainRepository:
         }
 
     def write_caches(self, rows: list[dict], source_path: str | Path | None = None) -> None:
-        path = Path(source_path) if source_path is not None else self.workbook_path
+        path = self._resolve_source_path(source_path)
         if not self.is_default_source(path):
             return
         stock_codes = sorted({code for row in rows if (code := normalize_ai_chain_code(row.get("代码")))})
@@ -167,9 +217,11 @@ class IndustryChainRepository:
 
 
 __all__ = [
+    "AI_CHAIN_CANDIDATE_PATHS",
     "AI_CHAIN_CODES_CACHE_FILE",
     "AI_CHAIN_CONTEXT_CACHE_FILE",
     "AI_CHAIN_FILE",
     "AI_CHAIN_ROWS_CACHE_FILE",
     "IndustryChainRepository",
+    "resolve_ai_chain_file",
 ]

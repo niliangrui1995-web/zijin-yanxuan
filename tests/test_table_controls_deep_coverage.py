@@ -7,8 +7,9 @@ from types import SimpleNamespace
 from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import QFont, QHelpEvent, QPalette, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QTableView
+from PyQt6.QtWidgets import QTableView, QWidget
 
+from core.observability import metric_history
 from ui.components import table_controls as controls
 
 
@@ -283,6 +284,44 @@ def test_vcp_table_view_keeps_opt_in_base_viewport_background_after_theme_restyl
     finally:
         table.close()
         table.deleteLater()
+
+
+def test_vcp_table_view_passive_metrics_keep_transition_context(qt_application):
+    owner = QWidget()
+    owner._workspace_tab_transition_context = {
+        "transition_id": "7",
+        "source_tab": "watchlist",
+        "target_tab": "na_daily",
+        "reason": "shell_nav",
+        "mounted_before": True,
+        "preload_state": "ready",
+    }
+    table = controls.VCPTableView(owner)
+    table.set_targeted_flash_repaint_enabled(False, metric_scope="na_daily")
+    metric_cursor = len(metric_history("na_daily_table_paint_ms"))
+    try:
+        owner.resize(360, 180)
+        table.resize(360, 180)
+        table._mark_pending_paint_metric("preload_reveal")
+        owner.show()
+        table.show()
+        qt_application.processEvents()
+        _render_widget(table, qt_application, width=360, height=180)
+
+        samples = metric_history("na_daily_table_paint_ms")[metric_cursor:]
+        assert any(
+            sample.tags.get("source_tab") == "watchlist"
+            and sample.tags.get("target_tab") == "na_daily"
+            and sample.tags.get("reason") == "preload_reveal"
+            and sample.tags.get("transition_reason") == "shell_nav"
+            and sample.tags.get("transition_phase") == "paint"
+            for sample in samples
+        )
+    finally:
+        table.close()
+        owner.close()
+        table.deleteLater()
+        owner.deleteLater()
 
 
 def test_vcp_table_tooltip_decision_and_event_error_paths(monkeypatch, qt_application):

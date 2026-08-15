@@ -2072,6 +2072,17 @@ def test_runtime_health_tab_interaction_to_stable_includes_actual_settle(monkeyp
     monkeypatch.setattr(runtime_suite, "_active_background_task_ids", lambda: ())
     monkeypatch.setattr(runtime_suite, "_wait_until", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(runtime_suite, "_settle", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runtime_suite,
+        "_begin_stall_phase",
+        lambda _app, **kwargs: {"stall_snapshot_reset": True, **kwargs},
+    )
+    monkeypatch.setattr(
+        runtime_suite,
+        "_capture_scoped_ui_stalls",
+        lambda _app, **kwargs: {"installed": False, **kwargs},
+    )
+    monkeypatch.setattr(runtime_suite, "metric_history", lambda: [])
 
     result = _cycle_tabs(
         type("Window", (), {"_workspace": _Workspace()})(),
@@ -2085,6 +2096,196 @@ def test_runtime_health_tab_interaction_to_stable_includes_actual_settle(monkeyp
     assert timing["elapsed_ms"] == 20.0
     assert timing["interaction_to_stable_ms"] == 150.0
     assert timing["settle_elapsed_ms"] == 130.0
+
+
+def test_runtime_health_tab_cycle_records_scored_transition_receipts(monkeypatch):
+    calls = []
+    loaded = {key: object() for key in ("watchlist", "asian_market", "na_daily")}
+    metric_samples = []
+
+    class _Tabs:
+        def __init__(self):
+            self.current_index = 0
+
+        def currentIndex(self):
+            return self.current_index
+
+        def count(self):
+            return 11
+
+    class _Workspace:
+        tabs = _Tabs()
+
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "watchlist", "loaded": True, "mounted": True},
+                {"key": "asian_market", "loaded": True, "mounted": True},
+                {"key": "na_daily", "loaded": True, "mounted": True},
+                *({"key": f"extra_{index}", "loaded": True, "mounted": True} for index in range(8)),
+            ]
+
+        @staticmethod
+        def get_loaded_tab(key):
+            return loaded.get(key)
+
+        def activate_tab(self, index, reason="user"):
+            assert reason == "shell_nav"
+            self.tabs.current_index = index
+            calls.append(index)
+            if index == 1:
+                metric_samples.extend(
+                    [
+                        SimpleNamespace(
+                            name="tab_transition_snapshot_skipped",
+                            value=1.0,
+                            unit="count",
+                            tags={"source": "watchlist", "target": "asian_market"},
+                        ),
+                        SimpleNamespace(
+                            name="tab_transition_stage_ms",
+                            value=3.0,
+                            unit="ms",
+                            tags={"stage": "reveal_or_mount", "target_tab": "asian_market"},
+                        ),
+                        SimpleNamespace(
+                            name="ui_method_stall_ms",
+                            value=120.0,
+                            unit="ms",
+                            tags={
+                                "severity": "critical",
+                                "source_tab": "watchlist",
+                                "target_tab": "asian_market",
+                                "reason": "shell_nav",
+                                "transition_phase": "paint",
+                            },
+                        ),
+                        SimpleNamespace(
+                            name="ui_event_loop_stall_ms",
+                            value=80.0,
+                            unit="ms",
+                            tags={"severity": "warn"},
+                        ),
+                    ]
+                )
+            return True
+
+        @staticmethod
+        def background_preload_status():
+            return {"enabled": True, "started": True, "finished": True, "active_key": "", "active_step_count": 0}
+
+    monkeypatch.setattr(runtime_suite, "_active_background_task_ids", lambda: ())
+    monkeypatch.setattr(runtime_suite, "_wait_until", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime_suite, "_settle", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runtime_suite,
+        "_begin_stall_phase",
+        lambda _app, **kwargs: {"stall_snapshot_reset": True, **kwargs},
+    )
+    monkeypatch.setattr(
+        runtime_suite,
+        "_capture_scoped_ui_stalls",
+        lambda _app, **kwargs: {"installed": True, **kwargs},
+    )
+    monkeypatch.setattr(runtime_suite, "metric_history", lambda: list(metric_samples))
+
+    result = _cycle_tabs(
+        type("Window", (), {"_workspace": _Workspace()})(),
+        object(),
+        ("watchlist", "asian_market", "na_daily"),
+        cycles=1,
+        settle_ms=0,
+    )
+
+    assert calls == [0, 1, 2]
+    first, watch_to_asian, asian_to_na = result["tabs"]
+    assert first["transition_receipt"]["scored"] is False
+    assert watch_to_asian["transition_receipt"]["source_tab"] == "watchlist"
+    assert watch_to_asian["transition_receipt"]["target_tab"] == "asian_market"
+    assert watch_to_asian["transition_receipt"]["scored"] is True
+    assert watch_to_asian["transition_receipt"]["snapshot_metrics"] == {
+        "status": "observed",
+        "captured": [],
+        "skipped": [
+            {
+                "name": "tab_transition_snapshot_skipped",
+                "value": 1.0,
+                "unit": "count",
+                "tags": {"source": "watchlist", "target": "asian_market"},
+            }
+        ],
+    }
+    assert watch_to_asian["transition_receipt"]["stage_metrics"] == [
+        {
+            "name": "tab_transition_stage_ms",
+            "value": 3.0,
+            "unit": "ms",
+            "tags": {"stage": "reveal_or_mount", "target_tab": "asian_market"},
+        }
+    ]
+    assert watch_to_asian["transition_receipt"]["attributed_stalls"] == {
+        "count": 1,
+        "critical_count": 1,
+        "method_count": 1,
+        "event_loop_count": 0,
+        "max_elapsed_ms": 120.0,
+        "samples": [
+            {
+                "name": "ui_method_stall_ms",
+                "value": 120.0,
+                "unit": "ms",
+                "tags": {
+                    "severity": "critical",
+                    "source_tab": "watchlist",
+                    "target_tab": "asian_market",
+                    "reason": "shell_nav",
+                    "transition_phase": "paint",
+                },
+            }
+        ],
+    }
+    assert watch_to_asian["transition_receipt"]["unattributed_stalls"] == {
+        "count": 1,
+        "critical_count": 0,
+        "method_count": 0,
+        "event_loop_count": 1,
+        "max_elapsed_ms": 80.0,
+        "samples": [
+            {
+                "name": "ui_event_loop_stall_ms",
+                "value": 80.0,
+                "unit": "ms",
+                "tags": {"severity": "warn"},
+            }
+        ],
+    }
+    assert asian_to_na["transition_receipt"]["snapshot_metrics"]["status"] == "not_observed"
+    assert asian_to_na["transition_receipt"]["source_tab"] == "asian_market"
+    assert asian_to_na["transition_receipt"]["target_tab"] == "na_daily"
+    assert asian_to_na["transition_receipt"]["tab_count_before"] == 11
+    assert asian_to_na["transition_receipt"]["tab_count_after"] == 11
+    assert asian_to_na["transition_receipt"]["topology_unchanged"] is True
+
+
+def test_transition_preload_snapshot_distinguishes_global_ready_from_cold_target():
+    snapshot = runtime_suite._transition_preload_snapshot(
+        {
+            "enabled": True,
+            "started": True,
+            "finished": True,
+            "active_key": "",
+            "ready_keys": ["watchlist"],
+            "loaded_keys": ["watchlist"],
+            "pending_priority_keys": [],
+            "active_step_count": 0,
+        },
+        target_key="asian_market",
+        target_spec={"loaded": False, "mounted": False},
+    )
+
+    assert snapshot["target_preload_state"] == "cold"
+    assert snapshot["target_in_ready_keys"] is False
+    assert snapshot["target_in_loaded_keys"] is False
 
 
 def test_runtime_health_tab_cycle_skips_controlled_probe_tabs():

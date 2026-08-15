@@ -224,6 +224,8 @@ def test_prewarm_schedules_once_and_handles_timer_failure(monkeypatch):
 
 
 def test_shutdown_closes_charts_and_cancels_delayed_prewarm():
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+
     manager = _manager()
     charts = [_Chart(), _Chart()]
     view = _Page()
@@ -240,6 +242,9 @@ def test_shutdown_closes_charts_and_cancels_delayed_prewarm():
     assert manager._prewarm_cancelled is True
     assert manager._prewarm_started is False
     assert view.deleted
+    assert view.trigger_actions == [QWebEnginePage.WebAction.Stop]
+    assert manager.shutdown_diagnostics["prewarm_dispose_clean"] is True
+    assert manager.shutdown_diagnostics["clean"] is True
     assert not manager.prewarm(delay_ms=0)
     manager._shutting_down = False
 
@@ -606,7 +611,7 @@ class _Page:
         self.loadFinished = _Signal()
         self.renderProcessTerminated = _Signal()
         self._properties = {}
-        self.stopped = False
+        self.trigger_actions = []
 
     def setObjectName(self, name):
         self.object_name = name
@@ -623,8 +628,8 @@ class _Page:
     def setParent(self, parent):
         self._parent = parent
 
-    def stop(self):
-        self.stopped = True
+    def triggerAction(self, action):
+        self.trigger_actions.append(action)
 
     def parent(self):
         return self._parent
@@ -637,7 +642,7 @@ def test_prewarm_keeper_is_bounded_and_disposed_at_shutdown(monkeypatch):
     metrics = []
     monkeypatch.setattr(manager_module, "record_metric", lambda *args, **kwargs: metrics.append((args, kwargs)))
     manager = _manager()
-    view = _View()
+    view = _Page()
     manager._prewarm_view = view
     manager._prewarm_started = True
     manager._prewarm_ready = True
@@ -721,6 +726,29 @@ def test_run_prewarm_preflight_skip_cancel_and_success(monkeypatch):
     manager._prewarm_started = True
     manager._run_prewarm()
     assert manager._prewarm_started is False
+
+
+def test_run_prewarm_records_page_only_mode(monkeypatch):
+    manager = _manager()
+    manager._webengine_available = True
+    manager._prewarm_started = True
+    manager._prewarm_hidden_view_enabled = True
+    manager._prewarm_main_window = None
+    metrics = []
+    created = []
+    monkeypatch.setattr(manager_module, "record_metric", lambda *args, **kwargs: metrics.append((args, kwargs)))
+    monkeypatch.setattr(
+        manager_module,
+        "_create_hidden_prewarm_view",
+        lambda target, _started_at: created.append(target),
+    )
+
+    manager._run_prewarm()
+
+    assert created == [manager]
+    assert metrics == [
+        (("kline_webengine_prewarm_mode", 1), {"unit": "count", "tags": {"mode": "page_only"}})
+    ]
 
 
 def test_hidden_prewarm_defers_html_load_to_next_event_turn(monkeypatch):

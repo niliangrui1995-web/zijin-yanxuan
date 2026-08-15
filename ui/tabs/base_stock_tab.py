@@ -425,6 +425,18 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
                 tables.append(table)
         return tables
 
+    def prepare_workspace_preload_reveal(self) -> None:
+        for table in self.iter_tables():
+            prepare = getattr(table, "prepare_background_preload_reveal", None)
+            if callable(prepare):
+                prepare()
+
+    def sync_workspace_viewport_background(self) -> None:
+        for table in self.iter_tables():
+            sync = getattr(table, "sync_viewport_base_background", None)
+            if callable(sync):
+                sync()
+
     def get_primary_table(self):
         tables = self.iter_tables()
         return tables[0] if tables else None

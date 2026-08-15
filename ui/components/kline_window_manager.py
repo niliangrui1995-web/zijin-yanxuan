@@ -30,6 +30,7 @@ from ui.kline_pool_state import (
     kline_pool_state_of,
 )
 from ui.kline_typing import KLineManagedWindowProtocol, KLinePoolParticipantProtocol
+from ui.kline_webengine_page import stop_webengine_page
 
 log = get_logger(__name__)
 
@@ -953,7 +954,7 @@ def _dispose_detached_prewarm_page(manager, page, callback) -> bool:
     clean = _disconnect_prewarm_load_callback(page, callback)
     clean = _disconnect_keeper_termination(manager, page) and clean
     _set_browser_property(page, KLINE_SHELL_READY_PROPERTY, False)
-    clean = _try_prewarm_page_action(page, "stop") and clean
+    clean = stop_webengine_page(page) and clean
     clean = _try_prewarm_page_action(page, "setParent", None) and clean
     clean = _try_prewarm_page_action(page, "deleteLater") and clean
     manager._prewarm_termination_callback = None
@@ -1324,8 +1325,7 @@ def _activate_warm_chart(warm_chart, arguments: _ChartOpenArguments):
 
 
 def _discard_unreturned_prewarm_page(page) -> None:
-    with suppress(AttributeError, RuntimeError, TypeError):
-        page.stop()
+    stop_webengine_page(page)
     with suppress(AttributeError, RuntimeError, TypeError):
         page.setUpdatesEnabled(False)
         page.hide()
@@ -2104,8 +2104,10 @@ class _KLineManagerWindowPoolLifecycle(_KLineManagerPrewarmLifecycle):
             record_metric("kline_webengine_prewarm_preflight_only", 1, unit="count")
             return
         if getattr(self, "_prewarm_main_window", None) is not None:
+            record_metric("kline_webengine_prewarm_mode", 1, unit="count", tags={"mode": "full_window"})
             _create_hidden_full_window_keeper(self, started_at)
         else:
+            record_metric("kline_webengine_prewarm_mode", 1, unit="count", tags={"mode": "page_only"})
             _create_hidden_prewarm_view(self, started_at)
 
 

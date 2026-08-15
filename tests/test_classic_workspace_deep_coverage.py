@@ -187,6 +187,63 @@ def test_classic_workspace_activate_tab_all_invalid_and_current_paths():
     assert notified == [("b", widget)]
 
 
+def test_classic_workspace_activate_tab_attaches_bounded_transition_context():
+    tabs = _Tabs(count=2, current=0)
+    source = SimpleNamespace(_workspace_tab_transition_context={"stale": "value"})
+    target = SimpleNamespace()
+    specs = {
+        0: {"key": "watchlist", "loaded": True, "mounted": True, "widget": source},
+        1: {"key": "asian_market", "loaded": True, "mounted": True, "widget": target},
+    }
+    fake = SimpleNamespace(
+        tabs=tabs,
+        _tab_transition_sequence=0,
+        _pending_tab_activation_reasons={},
+        _startup_last_allowed_index=-1,
+        _background_prewarm_active_key="",
+        _background_prewarm_finished=True,
+        _spec_for_key_or_index=lambda index: specs.get(index),
+        _defer_interactive_activation_until_preload_ready=lambda *_args: False,
+        _mark_system_log_shell_nav=lambda *_args: None,
+        _notify_tab_activated=lambda *_args: None,
+    )
+
+    assert workspace_module.ClassicWorkspace.activate_tab(fake, 1, reason="shell_nav")
+
+    assert source._workspace_tab_transition_context == {}
+    assert target._workspace_tab_transition_context == {
+        "transition_id": "1",
+        "source_tab": "watchlist",
+        "target_tab": "asian_market",
+        "reason": "shell_nav",
+        "mounted_before": True,
+        "preload_active_key": "",
+        "preload_state": "interactive_warm",
+    }
+
+
+def test_classic_workspace_reactivating_current_tab_does_not_create_transition_context():
+    tabs = _Tabs(count=2, current=1)
+    target = SimpleNamespace(_workspace_tab_transition_context={})
+    spec = {"key": "asian_market", "loaded": True, "mounted": True, "widget": target}
+    fake = SimpleNamespace(
+        tabs=tabs,
+        _tab_transition_sequence=0,
+        _pending_tab_activation_reasons={},
+        _startup_last_allowed_index=-1,
+        _spec_for_key_or_index=lambda _index: spec,
+        _defer_interactive_activation_until_preload_ready=lambda *_args: False,
+        _mark_system_log_shell_nav=lambda *_args: None,
+        _notify_tab_activated=lambda *_args: None,
+    )
+
+    assert workspace_module.ClassicWorkspace.activate_tab(fake, 1, reason="shell_nav") is True
+
+    assert fake._tab_transition_sequence == 0
+    assert fake._pending_tab_activation_reasons == {}
+    assert target._workspace_tab_transition_context == {}
+
+
 def test_classic_workspace_arms_loaded_watchlist_guard_before_shell_nav_switch():
     tabs = _Tabs(count=2, current=0)
     calls = []

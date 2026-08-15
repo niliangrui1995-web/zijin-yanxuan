@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
@@ -69,6 +70,21 @@ def test_na_daily_show_runtime_skips_non_interactive_load_reason():
     assert dummy._workspace_noninteractive_loaded is False
 
 
+def test_na_daily_table_exposes_passive_paint_metrics(monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    try:
+        assert tab.na_daily_table._paint_metric_scope == "na_daily"
+        assert tab.na_daily_table._targeted_flash_repaint is False
+        viewport = tab.na_daily_table.viewport()
+        assert tab.na_daily_table.property("vcpViewportBaseBackground") is True
+        assert viewport.autoFillBackground() is True
+        assert viewport.backgroundRole() == QPalette.ColorRole.Base
+        assert not viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
 def test_na_daily_service_uses_sibling_daily_report_output_dir():
     service = NADailyRefreshService()
     expected = Path(service._project_root()).parent / "每日战报" / "每日热点输出"
@@ -91,6 +107,38 @@ def test_na_daily_service_no_report_files_preserves_existing_cache(monkeypatch, 
     assert result["records"] == 1
     assert service.rows == [{"代码": "000001", "日报时间": "20260415"}]
     assert not cache_file.exists()
+
+
+def test_na_daily_refresh_callback_records_background_apply_stage(monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    stages = []
+
+    @contextmanager
+    def _capture_stage(owner, **kwargs):
+        stages.append((owner, kwargs))
+        yield
+
+    monkeypatch.setattr(na_daily_tab_module, "tab_transition_stage", _capture_stage)
+    monkeypatch.setattr(tab._na_daily_service, "apply_refresh_payload", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(tab, "_apply_na_daily_rows", lambda *_args, **_kwargs: None)
+
+    try:
+        tab._apply_na_daily_refresh_payload({"status": "success"})
+
+        assert stages == [
+            (
+                tab,
+                {
+                    "tab": "na_daily",
+                    "method": "NADailyTab._apply_na_daily_refresh_payload",
+                    "stage": "background_result_apply",
+                    "callback_kind": "refresh_payload",
+                },
+            )
+        ]
+    finally:
+        tab.close()
+        tab.deleteLater()
 
 
 def test_na_daily_tab_refresh_table_market_data_only_fetches_blank_quotes(monkeypatch):
@@ -181,6 +229,34 @@ def test_na_daily_tab_apply_rows_triggers_cap_and_quote_refresh(monkeypatch, tmp
 
         assert tab._na_daily_codes == {"000001"}
         assert refresh_calls == [{"quote_task_id": "na_daily_quotes"}]
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_na_daily_tab_self_update_signal_skips_self_reload_but_accepts_external_reload(monkeypatch, tmp_path):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    rerenders = []
+    monkeypatch.setattr(tab, "_render_service_cache", lambda: rerenders.append("reload"))
+    report_file = Path(tmp_path) / "战报_202604150930.md"
+    report_file.write_text("# test\n", encoding="utf-8")
+    spy = QSignalSpy(event_bus.sig_na_daily_updated)
+
+    try:
+        tab._apply_na_daily_rows(
+            [{"代码": "000001", "名称": "A", "日报时间": "20260415"}],
+            [str(report_file)],
+            ("sig",),
+            refresh_quotes=False,
+        )
+
+        assert len(spy) == 1
+        assert rerenders == []
+
+        event_bus.sig_na_daily_updated.emit()
+
+        assert len(spy) == 2
+        assert rerenders == ["reload"]
     finally:
         tab.close()
         tab.deleteLater()

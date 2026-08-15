@@ -559,6 +559,43 @@ def _ui_stall_snapshot_valid(snapshot) -> bool:
     )
 
 
+def _page_only_keeper_shape(kline_manager) -> dict[str, Any]:
+    try:
+        reader = getattr(kline_manager, "runtime_health_snapshot", None)
+        snapshot = dict(reader()) if callable(reader) else {}
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        snapshot = {}
+    browser_count = _nonnegative_integer(snapshot.get("browser_count"))
+    page_count = _nonnegative_integer(snapshot.get("page_count"))
+    main_window_retained = bool(getattr(kline_manager, "_prewarm_main_window", None))
+    verified = bool(browser_count == 0 and page_count == 1 and not main_window_retained)
+    return {
+        "mode": "page_only" if verified else "unexpected",
+        "browser_count": browser_count,
+        "page_count": page_count,
+        "main_window_retained": main_window_retained,
+        "verified": verified,
+    }
+
+
+def _capture_prewarmed_page(kline_manager):
+    try:
+        return getattr(kline_manager, "_prewarm_view", None)
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+
+
+def _prewarmed_page_reused(chart, prewarmed_page) -> bool:
+    if chart is None or prewarmed_page is None:
+        return False
+    try:
+        browser = getattr(chart, "browser", None)
+        page_reader = getattr(browser, "page", None)
+        return bool(callable(page_reader) and page_reader() is prewarmed_page)
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+
+
 def _smoke_runtime_ready(window: MainWindowQT, kline_manager) -> bool:
     keeper_count = int(getattr(kline_manager, "managed_webengine_keeper_count", 0) or 0)
     return (
@@ -568,16 +605,18 @@ def _smoke_runtime_ready(window: MainWindowQT, kline_manager) -> bool:
         and not bool(getattr(kline_manager, "_prewarm_started", False))
         and keeper_count == 1
         and bool(getattr(kline_manager, "managed_webengine_keeper_ready", False))
+        and _page_only_keeper_shape(kline_manager)["verified"]
     )
 
 
 def _smoke_setup_report(window, kline_manager, *, ready: bool, scheduled: bool, timeout_ms: int) -> dict:
     keeper_count = int(getattr(kline_manager, "managed_webengine_keeper_count", 0) or 0)
+    keeper_shape = _page_only_keeper_shape(kline_manager)
     preflight = getattr(kline_manager, "_webengine_preflight_diagnostics", {})
     if not isinstance(preflight, dict):
         preflight = {}
     return {
-        "status": "ok" if ready and keeper_count == 1 else "fail",
+        "status": "ok" if ready and keeper_count == 1 and keeper_shape["verified"] else "fail",
         "timeout_ms": int(timeout_ms),
         "first_paint_recorded": bool(getattr(window, "_first_paint_recorded", False)),
         "data_provider_ready": getattr(window, "data_provider", None) is not None,
@@ -596,6 +635,7 @@ def _smoke_setup_report(window, kline_manager, *, ready: bool, scheduled: bool, 
         "managed_webengine_keeper_ready": bool(
             getattr(kline_manager, "managed_webengine_keeper_ready", False)
         ),
+        "keeper_shape": keeper_shape,
         "prewarm_failure": str(getattr(kline_manager, "_prewarm_failure", "") or ""),
     }
 
@@ -605,7 +645,6 @@ def _prepare_smoke_runtime(app: QApplication, window: MainWindowQT, *, timeout_m
 
     window.show()
     preflight_scheduled = kline_manager.prewarm(
-        main_window=window,
         delay_ms=0,
         hidden_view=True,
     )
@@ -1376,12 +1415,24 @@ def _wait_for_first_interaction(app, chart, args, *, chart_ready: bool) -> tuple
 
 
 def _observe_cycle_chart(
-    app, window, args, cycle: dict, chart, load_events: list[bool], *, stall_scope=None
+    app,
+    window,
+    args,
+    cycle: dict,
+    chart,
+    load_events: list[bool],
+    *,
+    stall_scope=None,
+    prewarmed_page=None,
 ) -> dict:
     browser_ready = bool(
         chart is not None
         and _wait_until(app, lambda: _kline_browser_ready(chart), timeout_ms=args.open_timeout_ms, step_ms=25)
     )
+    if cycle.get("measurement_role") == "cold_warmup":
+        cycle["prewarmed_page_reused"] = bool(
+            browser_ready and _prewarmed_page_reused(chart, prewarmed_page)
+        )
     load_signal, load_callback = (None, None)
     if browser_ready:
         load_signal, load_callback = _connect_chart_load_signal(chart, load_events)
@@ -1729,12 +1780,17 @@ def _finalize_cycle(cycle: dict, observation: dict, closed: bool, load_events: l
     cycle["summary"]["cached_switch_ok"] = cached_switch_ok
     stage_contract_complete = _cycle_stage_contract_complete(cycle)
     cycle["summary"]["stage_contract_complete"] = stage_contract_complete
+    cold_warmup_page_reused = bool(
+        cycle.get("measurement_role") != "cold_warmup"
+        or cycle.get("prewarmed_page_reused") is True
+    )
     if (
         not keeper_stable
         or not active_views_released
         or not stalls_valid
         or not cached_switch_ok
         or not stage_contract_complete
+        or not cold_warmup_page_reused
     ):
         cycle["summary"]["status"] = "fail"
     cycle["status"] = cycle["summary"]["status"]
@@ -1749,6 +1805,7 @@ def _run_one_cycle(
     *,
     measure_cached_switch: bool = True,
     measurement_role: str = "measured",
+    prewarmed_page=None,
 ) -> dict:
     from ui.components.kline_window_manager import kline_manager
 
@@ -1782,6 +1839,7 @@ def _run_one_cycle(
             chart,
             load_events,
             stall_scope=stall_scope,
+            prewarmed_page=prewarmed_page,
         )
         stall_scope = None
         if measure_cached_switch:
@@ -2306,6 +2364,9 @@ def _run_smoke_cycles(app, window, args, report: dict, cycles: int) -> None:
     )
     if report["setup"]["status"] != "ok":
         return
+    from ui.components.kline_window_manager import kline_manager
+
+    prewarmed_page = _capture_prewarmed_page(kline_manager)
     report["cold_warmup_cycle"] = _run_one_cycle(
         app,
         window,
@@ -2313,6 +2374,7 @@ def _run_smoke_cycles(app, window, args, report: dict, cycles: int) -> None:
         -2,
         measure_cached_switch=True,
         measurement_role="cold_warmup",
+        prewarmed_page=prewarmed_page,
     )
     report["warmup_cycle"] = _run_one_cycle(
         app,
@@ -2359,9 +2421,12 @@ def _smoke_load_events(cycles: list[dict[str, Any]]) -> list[Any]:
 
 def _warmup_statuses(report: dict) -> tuple[Any, Any]:
     warmup_status = ((report.get("warmup_cycle") or {}).get("summary") or {}).get("status")
-    cold_warmup_status = ((report.get("cold_warmup_cycle") or {}).get("summary") or {}).get("status")
-    if report.get("cold_warmup_cycle") is None:
+    cold_warmup_cycle = report.get("cold_warmup_cycle")
+    cold_warmup_status = ((cold_warmup_cycle or {}).get("summary") or {}).get("status")
+    if cold_warmup_cycle is None:
         cold_warmup_status = warmup_status
+    elif not isinstance(cold_warmup_cycle, dict) or cold_warmup_cycle.get("prewarmed_page_reused") is not True:
+        cold_warmup_status = "fail"
     return warmup_status, cold_warmup_status
 
 

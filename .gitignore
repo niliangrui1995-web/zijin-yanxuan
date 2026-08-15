@@ -70,6 +70,7 @@ Desktop.ini
 diff.txt
 out.csv
 ui_backup_*/
+backups/
 fix_*.py
 rewrite_*.py
 _migrate_*.py

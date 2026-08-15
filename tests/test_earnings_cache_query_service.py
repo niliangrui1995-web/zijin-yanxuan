@@ -124,6 +124,7 @@ print(json.dumps({
         text=True,
         encoding="utf-8",
     )
-    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    json_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip().startswith("{")]
+    payload = json.loads(json_lines[-1])
 
     assert payload == {"emitted": [[1, "warm_cache"]], "heavy": []}

@@ -498,20 +498,35 @@ def test_earnings_date_filters_and_candidate_builders(monkeypatch):
     assert EarningsEngine._resolve_allowed_publish_dates("2026-04-16", "财报") == {"2026-04-16", "2026-04-17"}
     assert EarningsEngine._resolve_allowed_publish_dates("2026-04-15", "财报") == {"2026-04-15", "2026-04-16"}
     assert EarningsEngine._resolve_allowed_publish_dates("2026-04-16", "预告") == {"2026-04-16", "2026-04-17"}
+    # 2026-04-17 是周五，下一个交易日为 2026-04-20（周一），覆盖周五到周一的所有日期
+    assert EarningsEngine._resolve_allowed_publish_dates("2026-04-17", "财报") == {
+        "2026-04-17",
+        "2026-04-18",
+        "2026-04-19",
+        "2026-04-20",
+    }
+    # 2026-04-18 是周六，覆盖周六到周一的所有日期
+    assert EarningsEngine._resolve_allowed_publish_dates("2026-04-18", "预告") == {
+        "2026-04-18",
+        "2026-04-19",
+        "2026-04-20",
+    }
+    assert EarningsEngine._resolve_allowed_publish_dates("invalid-date", "财报") == {"invalid-date"}
 
     df = pd.DataFrame({"公告日期": ["2026-04-16 19:00:00", "2026-04-18"], "股票代码": ["000001", "000002"]})
     filtered = EarningsEngine._filter_candidates_by_publish_date(df, "公告日期", "2026-04-16", "预告")
     assert filtered["股票代码"].tolist() == ["000001"]
     assert EarningsEngine._filter_candidates_by_publish_date(df, "missing", "2026-04-16", "预告").empty
 
-    guidance_df = pd.DataFrame({"公告日期": ["2026-04-17"], "股票代码": ["000003"]})
-    guidance_filtered = EarningsEngine._filter_candidates_by_publish_date(
-        guidance_df,
+    # 周五扫描目标日 2026-04-17，公告落款写 2026-04-20（下周一）
+    friday_df = pd.DataFrame({"公告日期": ["2026-04-20"], "股票代码": ["000003"]})
+    friday_filtered = EarningsEngine._filter_candidates_by_publish_date(
+        friday_df,
         "公告日期",
-        "2026-04-16",
+        "2026-04-17",
         "预告",
     )
-    assert guidance_filtered["股票代码"].tolist() == ["000003"]
+    assert friday_filtered["股票代码"].tolist() == ["000003"]
 
     assert EarningsEngine._resolve_guidance_est_profit({"预测数值": 12.0, "预测指标": "扣非净利润"}) == (12.0, "扣非净利润")
     fallback_profit, fallback_metric = EarningsEngine._resolve_guidance_est_profit(
@@ -1167,3 +1182,67 @@ def test_fetch_daily_surprises_does_not_accept_two_days_later_financial_report_o
 
     assert result.empty
     assert engine.seen_fingerprints == set()
+
+
+def test_fetch_daily_surprises_accepts_friday_post_market_announcement_dated_next_monday(monkeypatch):
+    engine = _build_engine()
+
+    # 周五 2026-04-17 盘后发布的公告，落款写 2026-04-20（下周一）
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "300308",
+                "股票简称": "中际旭创",
+                "最新公告日期": "2026-04-20",
+                "净利润-净利润": 1000000,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20260331"])
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "today",
+        classmethod(lambda cls, market="CN": pd.Timestamp("2026-04-17").date()),
+    )
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": pd.Timestamp("2026-04-17 19:30:00").to_pydatetime()),
+    )
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "get_recent_trade_dates",
+        classmethod(lambda cls, n=20, ref_date=None: ["20260420", "20260417", "20260416"]),
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+    monkeypatch.setattr(
+        engine,
+        "compute_single_quarter_qoq",
+        lambda *args, **kwargs: {
+            "单季净利润_新增": 1.0,
+            "单季净利润_上期": 1.0,
+            "环比增速_百分比": 57.69,
+            "同比增速_百分比": 264.67,
+            "error": None,
+        },
+    )
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-17")
+
+    assert len(result) == 1
+    row = result.iloc[0].to_dict()
+    assert row["股票代码"] == "300308"
+    assert row["公告日期"] == "2026-04-17"
+    assert row["源公告日期"] == "2026-04-20"
+    assert row["揭晓日"] == "2026-04-17"
+    assert "SHOCK_300308_20260331_财报" in engine.seen_fingerprints
+

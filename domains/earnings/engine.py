@@ -1000,14 +1000,42 @@ class EarningsEngine:
         return (cursor + timedelta(days=1)).strftime("%Y-%m-%d")
 
     @classmethod
+    def _get_next_trade_date(cls, target_date: datetime.date) -> datetime.date:
+        cursor = target_date + timedelta(days=1)
+        for _ in range(40):
+            if cursor.weekday() >= 5:
+                cursor += timedelta(days=1)
+                continue
+            # 若日历已就绪，精准校验是否为节假日；若未就绪，普通工作日即为交易日
+            try:
+                trade_dates = getattr(MarketCalendar, "_trade_dates", None)
+                if trade_dates:
+                    if cursor.isoformat() in trade_dates:
+                        return cursor
+                else:
+                    return cursor
+            except Exception:
+                return cursor
+            cursor += timedelta(days=1)
+        return target_date + timedelta(days=1)
+
+    @classmethod
     def _resolve_allowed_publish_dates(cls, target_publish_date: str, data_type: str) -> set[str]:
         allowed_dates = {target_publish_date}
         if data_type not in {"预告", "财报", "快报"}:
             return allowed_dates
 
-        next_calendar_date = cls._next_calendar_date(target_publish_date)
-        if next_calendar_date:
-            allowed_dates.add(next_calendar_date)
+        try:
+            cur_dt = datetime.strptime(target_publish_date, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return allowed_dates
+
+        next_trade_dt = cls._get_next_trade_date(cur_dt)
+        step = cur_dt
+        while step <= next_trade_dt:
+            allowed_dates.add(step.strftime("%Y-%m-%d"))
+            step += timedelta(days=1)
+
         return allowed_dates
 
     @classmethod

@@ -49,6 +49,7 @@ from ui.window_flags import (
 log = get_logger(__name__)
 POST_PAINT_TAB_ACTIVATION_DELAY_MS = 120
 KLINE_PREWARM_SHELL_NAV_QUIET_SEC = 8.0
+KLINE_PREWARM_USER_INPUT_QUIET_SEC = 8.0
 KLINE_PREWARM_BUSY_RETRY_DELAY_MS = 1000
 
 __all__ = ["DraggableTitleBar", "MainWindowQT"]
@@ -465,6 +466,13 @@ def _kline_prewarm_runtime_busy(main_window) -> bool:
         shell_nav_age = KLINE_PREWARM_SHELL_NAV_QUIET_SEC
     if last_shell_nav_at and 0.0 <= shell_nav_age < KLINE_PREWARM_SHELL_NAV_QUIET_SEC:
         return True
+    last_user_input_at = getattr(main_window, "_last_user_interaction_at", 0.0)
+    try:
+        user_input_age = now - float(last_user_input_at or 0.0)
+    except (TypeError, ValueError):
+        user_input_age = KLINE_PREWARM_USER_INPUT_QUIET_SEC
+    if last_user_input_at and 0.0 <= user_input_age < KLINE_PREWARM_USER_INPUT_QUIET_SEC:
+        return True
     if bool(
         getattr(main_window, "_pending_f5_request", False)
         or getattr(main_window, "_f5_precompute_start_pending", False)
@@ -489,7 +497,7 @@ def _try_post_paint_kline_prewarm(main_window) -> None:
             lambda: _try_post_paint_kline_prewarm(main_window),
         )
         return
-    kline_manager.prewarm(main_window=main_window, delay_ms=0, hidden_view=True)
+    kline_manager.prewarm(delay_ms=0, hidden_view=True)
 
 
 def _schedule_post_paint_kline_prewarm(main_window) -> bool:
@@ -672,6 +680,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         self.cache_manager = CacheManager()
         self._f5_cancelled = self._pending_f5_request = False
         self._f5_precompute_ui_grace_until = 0.0
+        self._last_user_interaction_at = 0.0
         self._titlebar_sync_state = "idle"
         self._last_sync_freshness = ""
         self._command_palette = None
@@ -1111,6 +1120,12 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             getattr(self, "_theme_menu", None),
         )
         event_type = event.type()
+        if event_type in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.Wheel,
+            QEvent.Type.KeyPress,
+        ):
+            self._last_user_interaction_at = time.perf_counter()
         if event_type == QEvent.Type.ToolTip:
             tooltip_text = self._tooltip_text_for_event(obj, event)
             if tooltip_text and hasattr(event, "globalPos"):

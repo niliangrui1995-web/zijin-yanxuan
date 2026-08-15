@@ -34,6 +34,7 @@ from ui.kline_chart_payload import (
 )
 from ui.kline_js_readiness import begin_js_readiness_probe, set_shell_ready
 from ui.kline_render_bridge import build_reset_lease_script
+from ui.kline_webengine_page import stop_webengine_page
 from ui.kline_window_header import (
     apply_browser_surface_theme,
     apply_header_badges,
@@ -187,11 +188,7 @@ def _shutdown_kline_window_tasks(window) -> bool:
 def _dispose_unowned_page(page) -> bool:
     if page is None:
         return True
-    clean = True
-    try:
-        page.stop()
-    except (AttributeError, RuntimeError, TypeError):
-        clean = False
+    clean = stop_webengine_page(page)
     try:
         page.deleteLater()
     except (AttributeError, RuntimeError, TypeError):

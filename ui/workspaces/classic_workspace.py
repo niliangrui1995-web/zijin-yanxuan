@@ -33,6 +33,12 @@ from ui.workspaces.tab_registry import (
     startup_tab_keys,
     widget_prewarm_tab_keys,
 )
+from ui.workspaces.tab_transition_observability import (
+    attach_tab_transition_context,
+    begin_tab_transition,
+    clear_tab_transition_context,
+    tab_transition_stage,
+)
 from ui.workspaces.workspace_facade import WorkspaceFacade
 
 log = get_logger(__name__)
@@ -416,6 +422,9 @@ def _initialize_workspace_runtime_state(workspace, *, controlled_startup_probe_g
     workspace._startup_last_allowed_index = -1
     workspace._startup_suppressed_tab_switch_keys = set()
     workspace._pending_tab_activation_reasons = {}
+    workspace._pending_tab_transition_contexts = {}
+    workspace._tab_transition_sequence = 0
+    workspace._last_observed_tab_key = ""
     workspace._shell_group_rebuild_quiet_until = 0.0
     workspace._tabs_by_key, workspace._runtime_pending_tab_loads = {}, {}
     workspace._lazy_loading_keys = set()
@@ -513,7 +522,12 @@ def _show_stock_detail_dialog(dialog) -> None:
 
 
 def _clear_workspace_pending_state(workspace) -> None:
-    for attr in ("_background_prewarm_queue", "_lazy_loading_keys", "_pending_tab_activation_reasons"):
+    for attr in (
+        "_background_prewarm_queue",
+        "_lazy_loading_keys",
+        "_pending_tab_activation_reasons",
+        "_pending_tab_transition_contexts",
+    ):
         value = getattr(workspace, attr, None)
         if value is not None:
             value.clear()
@@ -638,10 +652,9 @@ def _replace_workspace_placeholder(
     spec["mounted"] = True
     if old_widget is not None and old_widget is not widget:
         old_widget.deleteLater()
-    if key == "watchlist":
-        sync_viewport_background = getattr(widget, "sync_workspace_viewport_background", None)
-        if callable(sync_viewport_background):
-            sync_viewport_background()
+    sync_viewport_background = getattr(widget, "sync_workspace_viewport_background", None)
+    if callable(sync_viewport_background):
+        sync_viewport_background()
 
 
 def _register_loaded_workspace_tab(
@@ -659,6 +672,7 @@ def _register_loaded_workspace_tab(
     spec["mounted"] = bool(mounted)
     workspace._tabs_by_key[key] = widget
     setattr(workspace, spec["attr"], widget)
+    _attach_workspace_tab_transition_context(workspace, index=index, spec=spec, key=key, widget=widget)
     workspace._mark_system_log_shell_nav(key, load_reason)
     workspace._lazy_loading_keys.discard(key)
     QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
@@ -681,12 +695,98 @@ def _register_loaded_workspace_tab(
                 callback()
 
 
+_BACKGROUND_PREWARM_STAGED_TAB_KEYS = frozenset({"watchlist", "asian_market", "na_daily"})
+
+
 def _should_stage_background_tab_mount(workspace, key: str, load_reason: str) -> bool:
     return bool(
         load_reason == TabLoadReason.BACKGROUND_PREWARM.value
-        and key == "watchlist"
+        and key in _BACKGROUND_PREWARM_STAGED_TAB_KEYS
         and key == str(getattr(workspace, "_background_prewarm_active_key", "") or "")
     )
+
+
+def _workspace_tab_spec(workspace, index: int):
+    resolver = getattr(workspace, "_spec_for_key_or_index", None)
+    if not callable(resolver):
+        return None
+    try:
+        return resolver(index)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _workspace_current_tab_index(workspace) -> int:
+    tabs = getattr(workspace, "tabs", None)
+    current_index = getattr(tabs, "currentIndex", None)
+    if not callable(current_index):
+        return -1
+    try:
+        return int(current_index())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return -1
+
+
+def _clear_workspace_tab_transition_contexts(workspace) -> None:
+    contexts = getattr(workspace, "_pending_tab_transition_contexts", None)
+    if isinstance(contexts, dict):
+        contexts.clear()
+    for spec in tuple(getattr(workspace, "_tab_specs", ()) or ()):
+        if isinstance(spec, dict):
+            clear_tab_transition_context(spec.get("widget"))
+
+
+def _workspace_target_preload_state(workspace, spec: dict, key: str) -> str:
+    if bool((spec or {}).get("loaded")) and bool((spec or {}).get("mounted")):
+        return "interactive_warm"
+    active_key = str(getattr(workspace, "_background_prewarm_active_key", "") or "").strip()
+    if key and key == active_key:
+        return "background_active"
+    status_reader = getattr(workspace, "background_preload_status", None)
+    if callable(status_reader):
+        try:
+            status = status_reader() or {}
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            status = {}
+        ready_keys = {str(item or "").strip() for item in (status.get("ready_keys") or ())}
+        if key and key in ready_keys:
+            return "background_ready"
+    return "cold"
+
+
+def _begin_workspace_tab_transition(workspace, *, target_index: int, spec: dict, key: str, reason: str) -> dict[str, object]:
+    source_index = _workspace_current_tab_index(workspace)
+    source_spec = _workspace_tab_spec(workspace, source_index)
+    source_key = str((source_spec or {}).get("key") or getattr(workspace, "_last_observed_tab_key", "") or "").strip()
+    _clear_workspace_tab_transition_contexts(workspace)
+    clear_tab_transition_context((source_spec or {}).get("widget"))
+    clear_tab_transition_context((spec or {}).get("widget"))
+
+    contexts = getattr(workspace, "_pending_tab_transition_contexts", None)
+    if not isinstance(contexts, dict):
+        contexts = {}
+        setattr(workspace, "_pending_tab_transition_contexts", contexts)
+    context = begin_tab_transition(
+        workspace,
+        source_tab=source_key,
+        target_tab=key,
+        reason=reason,
+        mounted_before=bool((spec or {}).get("mounted", False)),
+        preload_active_key=str(getattr(workspace, "_background_prewarm_active_key", "") or ""),
+        preload_ready=bool(getattr(workspace, "_background_prewarm_finished", False)),
+        target_preload_state=_workspace_target_preload_state(workspace, spec or {}, key),
+    )
+    contexts[int(target_index)] = context
+    attach_tab_transition_context((spec or {}).get("widget"), context)
+    return context
+
+
+def _attach_workspace_tab_transition_context(workspace, *, index: int, spec: dict, key: str, widget) -> None:
+    contexts = getattr(workspace, "_pending_tab_transition_contexts", None)
+    context = contexts.get(int(index)) if isinstance(contexts, dict) else None
+    if not isinstance(context, dict) or str(context.get("target_tab") or "").strip() != key:
+        return
+    attach_tab_transition_context(widget, context)
 
 
 def _ensure_background_preload_staging_host(workspace):
@@ -742,14 +842,21 @@ def _mount_loaded_workspace_tab(workspace, spec: dict, key: str, index: int):
     widget = spec.get("widget")
     if widget is None or spec.get("mounted", True) is not False:
         return widget
-    copy_hooks_ready = _install_staged_tab_copy_hooks(workspace, widget)
-    prepare_reveal = getattr(widget, "prepare_workspace_preload_reveal", None)
-    if callable(prepare_reveal):
-        prepare_reveal()
-    _replace_workspace_placeholder(workspace, spec, key, index, widget)
-    if not copy_hooks_ready:
-        workspace._schedule_workspace_table_copy_hooks(delay_ms=0)
-    setattr(widget, "_workspace_preload_staged", False)
+    with tab_transition_stage(
+        widget,
+        tab=key,
+        method="ClassicWorkspace._mount_loaded_workspace_tab",
+        stage="reveal_or_mount",
+        layout_signal="placeholder_replace",
+    ):
+        copy_hooks_ready = _install_staged_tab_copy_hooks(workspace, widget)
+        prepare_reveal = getattr(widget, "prepare_workspace_preload_reveal", None)
+        if callable(prepare_reveal):
+            prepare_reveal()
+        _replace_workspace_placeholder(workspace, spec, key, index, widget)
+        if not copy_hooks_ready:
+            workspace._schedule_workspace_table_copy_hooks(delay_ms=0)
+        setattr(widget, "_workspace_preload_staged", False)
     return widget
 
 
@@ -1074,7 +1181,27 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     def _on_current_tab_changed(self, index: int) -> None:
         spec = self._spec_for_key_or_index(index)
         key = str((spec or {}).get("key") or "").strip()
-        with ui_stall_span("ClassicWorkspace._on_current_tab_changed", tab=key, signal="currentChanged"):
+        widget = (spec or {}).get("widget")
+        contexts = getattr(self, "_pending_tab_transition_contexts", None)
+        context = contexts.get(int(index)) if isinstance(contexts, dict) else None
+        if spec is not None and key and not isinstance(context, dict):
+            context = _begin_workspace_tab_transition(
+                self,
+                target_index=index,
+                spec=spec,
+                key=key,
+                reason=TabLoadReason.TAB_SWITCH.value,
+            )
+        if spec is not None and key:
+            _attach_workspace_tab_transition_context(self, index=index, spec=spec, key=key, widget=widget)
+            self._last_observed_tab_key = key
+        with tab_transition_stage(
+            widget,
+            tab=key,
+            method="ClassicWorkspace._on_current_tab_changed",
+            stage="current_changed",
+            callback_kind="currentChanged",
+        ):
             if spec is None:
                 return
             reason = self._take_tab_activation_reason(index)
@@ -1247,6 +1374,14 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             self._request_interactive_tab_load(spec, key, reason=reason_text, index=target_index)
             return True
 
+        if spec is not None and key:
+            _begin_workspace_tab_transition(
+                self,
+                target_index=target_index,
+                spec=spec,
+                key=key,
+                reason=reason_text,
+            )
         if spec is not None and key and spec.get("loaded") and spec.get("mounted", True) is False:
             if not self._defer_interactive_activation_until_preload_ready(key, reason_text):
                 _mount_loaded_workspace_tab(self, spec, key, target_index)
@@ -1263,7 +1398,13 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
                 except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                     log.debug("skip %s shell-nav repaint guard: %s", key, exc)
         self._pending_tab_activation_reasons[target_index] = reason_text
-        self.tabs.setCurrentIndex(target_index)
+        with tab_transition_stage(
+            (spec or {}).get("widget"),
+            tab=key,
+            method="ClassicWorkspace.activate_tab",
+            stage="switch_call",
+        ):
+            self.tabs.setCurrentIndex(target_index)
         return True
 
     def _connect_workspace_events(self) -> None:
@@ -1392,7 +1533,14 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
                             return
                     except (AttributeError, RuntimeError, TypeError, ValueError):
                         return
-                callback()
+                with tab_transition_stage(
+                    widget,
+                    tab=_key,
+                    method="ClassicWorkspace._notify_tab_activated",
+                    stage="activation_callback",
+                    callback_kind="on_workspace_tab_activated",
+                ):
+                    callback()
 
             QTimer.singleShot(self._activation_callback_delay_ms(), _run_if_current)
 

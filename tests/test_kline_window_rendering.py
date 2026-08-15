@@ -40,6 +40,18 @@ class _ShellBrowser:
         self.calls.append((html, base_url))
 
 
+class _ReadyShellBrowser(_ShellBrowser):
+    def __init__(self):
+        super().__init__()
+        self._properties = {
+            "klineShellReady": True,
+            "klineShellHtmlBytes": 321,
+        }
+
+    def property(self, name):
+        return self._properties.get(name)
+
+
 class _FailingPage:
     def runJavaScript(self, _script, _callback=None):
         raise RuntimeError("script submission failed")
@@ -148,6 +160,31 @@ def test_static_shell_is_built_once_and_reused_for_recovery_reload():
     assert len(browser.calls) == 2
     assert window._last_chart_html_bytes == len("<html>static-shell</html>".encode("utf-8"))
     assert window._shell_loaded is False
+
+
+def test_prewarmed_shell_reuses_page_without_rebuilding_html(qt_application):
+    browser = _ReadyShellBrowser()
+    built = []
+    load_finished = []
+    window = SimpleNamespace(
+        _closing=False,
+        browser=browser,
+        _browser_epoch=7,
+        _on_chart_load_finished=lambda ok: load_finished.append(ok),
+    )
+
+    assert load_chart_shell(
+        window,
+        echarts_js_path=r"D:\assets\echarts.min.js",
+        shell_builder=lambda **kwargs: built.append(kwargs) or "<html>unexpected</html>",
+        theme_colors={"bg": "black"},
+    ) is True
+
+    assert built == []
+    assert browser.calls == []
+    assert window._last_chart_html_bytes == 321
+    qt_application.processEvents()
+    assert load_finished == [True]
 
 
 def test_js_submission_failure_builds_only_one_controlled_fallback_page(monkeypatch):

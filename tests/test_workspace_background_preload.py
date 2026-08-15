@@ -1261,9 +1261,7 @@ def test_visible_watchlist_prewarm_finishes_before_runtime_consumers(
 
         main_window_qt_module._try_post_paint_kline_prewarm(main_window)
 
-        assert prewarm_calls == [
-            {"main_window": main_window, "delay_ms": 0, "hidden_view": True}
-        ]
+        assert prewarm_calls == [{"delay_ms": 0, "hidden_view": True}]
         assert scheduled == []
 
         target_key = "stock_candidates"
@@ -1356,8 +1354,129 @@ def test_background_prewarm_placeholder_replacement_arms_current_ai_repaint_guar
         )
 
         assert na_tab is workspace.get_loaded_tab("na_daily")
-        assert ai_tab.guard_load_reasons == [TabLoadReason.BACKGROUND_PREWARM.value]
+        # 北美表在隐藏 staging host 预载，不再通过 live QTabWidget 替换占位页，
+        # 因而不会给当前 AI 页制造额外的 preload-repaint guard。
+        assert ai_tab.guard_load_reasons == []
+        assert workspace._spec_for_key_or_index("na_daily")["mounted"] is False
+        assert na_tab.parentWidget() is workspace._background_preload_staging_host
         assert workspace.tabs.currentWidget() is ai_tab
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+@pytest.mark.parametrize("target_key", ("asian_market", "na_daily"))
+def test_transition_tables_stay_staged_during_background_prewarm_until_activation(
+    qt_application,
+    target_key,
+):
+    class _TransitionTable(_ControlledPreloadTab):
+        def __init__(self, key, events, parent=None):
+            super().__init__(key, events, parent)
+            self.viewport_background_sync_calls = 0
+
+        def sync_workspace_viewport_background(self) -> None:
+            self.viewport_background_sync_calls += 1
+
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        target_index = workspace._tab_index_for_key(target_key)
+        placeholder = workspace.tabs.widget(target_index)
+        workspace._background_prewarm_active_key = target_key
+        target_spec = workspace._spec_for_key_or_index(target_key)
+        target_spec["factory"] = lambda **runtime_kwargs: _TransitionTable(
+            target_key,
+            events,
+            runtime_kwargs.get("_workspace_parent_override", workspace),
+        )
+
+        target = workspace.ensure_tab_loaded(
+            target_key,
+            reason=TabLoadReason.BACKGROUND_PREWARM.value,
+        )
+
+        assert target is target_spec["widget"]
+        assert target_spec["loaded"] is True
+        assert target_spec["mounted"] is False
+        assert workspace.tabs.widget(target_index) is placeholder
+        assert target.parentWidget() is workspace._background_preload_staging_host
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.SHELL_NAV.value) is True
+
+        assert target_spec["mounted"] is True
+        assert workspace.tabs.currentWidget() is target
+        assert workspace.tabs.indexOf(target) == target_index
+        assert target.parentWidget() is not workspace._background_preload_staging_host
+        assert target.viewport_background_sync_calls == 1
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+@pytest.mark.parametrize("target_key", ("asian_market", "na_daily"))
+def test_active_transition_table_keeps_placeholder_until_background_step_is_ready(
+    qt_application,
+    target_key,
+):
+    """点击正在隐藏预载的交易表时，不能把未完成的表提前揭示到可见页。"""
+
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._background_preload_coordinator.start()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_queue[:] = [target_key]
+
+        target_index = workspace._tab_index_for_key(target_key)
+        placeholder = workspace.tabs.widget(target_index)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        target_spec = workspace._spec_for_key_or_index(target_key)
+        target = target_spec["widget"]
+        assert workspace._background_prewarm_active_key == target_key
+        assert target_spec["loaded"] is True
+        assert target_spec["mounted"] is False
+        assert target.parentWidget() is workspace._background_preload_staging_host
+
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.SHELL_NAV.value) is True
+        _stop_preload_timer(workspace)
+
+        deferred_status = workspace.background_preload_status()
+        assert workspace.tabs.currentWidget() is placeholder
+        assert target_spec["mounted"] is False
+        assert target.parentWidget() is workspace._background_preload_staging_host
+        assert target_key in deferred_status["pending_priority_keys"]
+        assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+
+        target.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        assert workspace._background_prewarm_active_key == ""
+        assert workspace.tabs.currentWidget() is target
+        assert target_spec["mounted"] is True
+        assert target.parentWidget() is not workspace._background_preload_staging_host
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
     finally:
         workspace.shutdown()

@@ -35,6 +35,7 @@ from app.bootstrap.startup_orchestrator import ASIAN_DATA_SYNC_START_DELAY_MS, A
 from app.services.f5_retention_service import inspect_f5_runtime
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_service import background_job_runner as task_manager
+from core.observability import metric_history
 from core.runtime_paths import CACHE_DIR
 from infra.diagnostics.runtime_health import (
     build_runtime_health_trend,
@@ -770,14 +771,19 @@ def _reset_ui_stall_snapshot() -> bool:
     return True
 
 
-def _capture_kline_open_ui_stalls(app: QApplication, *, reset_succeeded: bool) -> dict:
-    """Flush one probe tick and freeze the actual-open-only stall receipt."""
+def _capture_scoped_ui_stalls(
+    app: QApplication,
+    *,
+    scope: str,
+    reset_succeeded: bool,
+) -> dict:
+    """Flush one probe boundary and freeze its stall receipt."""
 
     stall_probe = get_ui_stall_probe()
     if stall_probe is None:
         return {
             "installed": False,
-            "scope": KLINE_OPEN_UI_STALL_SCOPE,
+            "scope": str(scope or ""),
             "reset_succeeded": bool(reset_succeeded),
             "error": "stall_probe_not_installed",
         }
@@ -788,16 +794,26 @@ def _capture_kline_open_ui_stalls(app: QApplication, *, reset_succeeded: bool) -
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "installed": False,
-            "scope": KLINE_OPEN_UI_STALL_SCOPE,
+            "scope": str(scope or ""),
             "reset_succeeded": bool(reset_succeeded),
             "error": "stall_snapshot_capture_failed",
             "exception": str(exc),
         }
     return {
         **dict(snapshot),
-        "scope": KLINE_OPEN_UI_STALL_SCOPE,
+        "scope": str(scope or ""),
         "reset_succeeded": bool(reset_succeeded),
     }
+
+
+def _capture_kline_open_ui_stalls(app: QApplication, *, reset_succeeded: bool) -> dict:
+    """Flush one probe tick and freeze the actual-open-only stall receipt."""
+
+    return _capture_scoped_ui_stalls(
+        app,
+        scope=KLINE_OPEN_UI_STALL_SCOPE,
+        reset_succeeded=reset_succeeded,
+    )
 
 
 def _begin_stall_phase(app: QApplication, *, phase: str, settle_ms: int) -> dict:
@@ -1094,6 +1110,173 @@ def _tab_index(workspace, key: str) -> int:
 def _loaded_tab(workspace, key: str):
     getter = getattr(workspace, "get_loaded_tab", None)
     return getter(key) if callable(getter) else None
+
+
+def _current_tab_key(workspace, tab_widget) -> str:
+    current_index = -1
+    reader = getattr(tab_widget, "currentIndex", None)
+    if callable(reader):
+        try:
+            current_index = int(reader())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            current_index = -1
+    specs = _tab_specs(workspace)
+    if 0 <= current_index < len(specs):
+        return str(specs[current_index].get("key") or "").strip()
+    return ""
+
+
+def _tab_spec(workspace, key: str) -> dict:
+    target = str(key or "").strip()
+    return next(
+        (
+            dict(spec)
+            for spec in _tab_specs(workspace)
+            if str(spec.get("key") or "").strip() == target
+        ),
+        {},
+    )
+
+
+def _target_preload_state(status: dict | None, *, target_key: str, target_spec: dict | None) -> str:
+    spec = target_spec or {}
+    if bool(spec.get("loaded")) and bool(spec.get("mounted")):
+        return "interactive_warm"
+    status = status if isinstance(status, dict) else {}
+    target = str(target_key or "").strip()
+    active_key = str(status.get("active_key") or "").strip()
+    if target and target == active_key:
+        return "background_active"
+    ready_keys = {str(item or "").strip() for item in (status.get("ready_keys") or ())}
+    if target and target in ready_keys:
+        return "background_ready"
+    return "cold"
+
+
+def _transition_preload_snapshot(
+    status: dict | None,
+    *,
+    target_key: str = "",
+    target_spec: dict | None = None,
+) -> dict:
+    if not isinstance(status, dict):
+        return {
+            "available": False,
+            "target_preload_state": _target_preload_state(
+                None,
+                target_key=target_key,
+                target_spec=target_spec,
+            ),
+        }
+    fields = (
+        "enabled",
+        "started",
+        "finished",
+        "active_key",
+        "ready_keys",
+        "loaded_keys",
+        "pending_priority_keys",
+        "active_step_count",
+    )
+    snapshot = {"available": True}
+    for field in fields:
+        value = status.get(field)
+        snapshot[field] = list(value) if isinstance(value, (list, tuple)) else value
+    target = str(target_key or "").strip()
+    ready_keys = {str(item or "").strip() for item in (snapshot.get("ready_keys") or ())}
+    loaded_keys = {str(item or "").strip() for item in (snapshot.get("loaded_keys") or ())}
+    snapshot.update(
+        {
+            "target_key": target,
+            "target_in_ready_keys": bool(target and target in ready_keys),
+            "target_in_loaded_keys": bool(target and target in loaded_keys),
+            "target_preload_state": _target_preload_state(
+                status,
+                target_key=target,
+                target_spec=target_spec,
+            ),
+        }
+    )
+    return snapshot
+
+
+def _tab_count(tab_widget, workspace) -> int:
+    counter = getattr(tab_widget, "count", None)
+    if callable(counter):
+        try:
+            return int(counter())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+    return len(_tab_specs(workspace))
+
+
+def _metric_receipt(samples, *names: str) -> list[dict]:
+    accepted = {str(name or "").strip() for name in names}
+    return [
+        {
+            "name": str(sample.name),
+            "value": round(float(sample.value), 3),
+            "unit": str(sample.unit),
+            "tags": dict(sample.tags),
+        }
+        for sample in samples
+        if str(getattr(sample, "name", "") or "").strip() in accepted
+    ]
+
+
+def _snapshot_metric_receipt(samples) -> dict:
+    captured = _metric_receipt(samples, "tab_transition_snapshot_ms")
+    skipped = _metric_receipt(samples, "tab_transition_snapshot_skipped")
+    return {
+        "status": "observed" if captured or skipped else "not_observed",
+        "captured": captured,
+        "skipped": skipped,
+    }
+
+
+def _is_attributed_transition_stall(sample: dict, *, source_key: str, target_key: str) -> bool:
+    tags = dict(sample.get("tags") or {})
+    return bool(
+        str(tags.get("source_tab") or "") == str(source_key or "")
+        and str(tags.get("target_tab") or "") == str(target_key or "")
+        and str(tags.get("reason") or "") == "shell_nav"
+        and str(tags.get("transition_phase") or "")
+    )
+
+
+def _stall_metric_summary(samples: list[dict]) -> dict:
+    values = [float(sample.get("value") or 0.0) for sample in samples]
+    return {
+        "count": len(samples),
+        "critical_count": sum(
+            1
+            for sample in samples
+            if str((sample.get("tags") or {}).get("severity") or "") == "critical"
+        ),
+        "method_count": sum(1 for sample in samples if sample.get("name") == "ui_method_stall_ms"),
+        "event_loop_count": sum(1 for sample in samples if sample.get("name") == "ui_event_loop_stall_ms"),
+        "max_elapsed_ms": round(max(values, default=0.0), 3),
+        "samples": samples,
+    }
+
+
+def _table_paint_receipt(tab, key: str, samples) -> dict:
+    table = getattr(tab, f"{key}_table", None)
+    if table is None and key == "asian_market":
+        table = getattr(tab, "asian_table", None)
+    scope = str(getattr(table, "_paint_metric_scope", "") or "").strip()
+    if scope != key:
+        return {"status": "unavailable"}
+    paint_samples = _metric_receipt(samples, f"{key}_table_paint_ms")
+    return {
+        "status": "observed",
+        "samples": paint_samples,
+        "actual_full_viewport_paint_count": sum(
+            1
+            for sample in paint_samples
+            if str((sample.get("tags") or {}).get("delivered_full_viewport") or "").lower() == "true"
+        ),
+    }
 
 
 def _should_defer_probe_tab_load(workspace, key: str, *, reason: str = "perf_memory_probe") -> bool:
@@ -1428,7 +1611,15 @@ def _observe_active_task_ids(observed_task_ids: set[str]) -> bool:
 
 
 def _cycle_one_tab(
-    workspace, tab_widget, app, key: str, cycle: int, settle_ms: int, observed_task_ids: set[str]
+    workspace,
+    tab_widget,
+    app,
+    key: str,
+    cycle: int,
+    settle_ms: int,
+    observed_task_ids: set[str],
+    *,
+    sequence_index: int,
 ) -> tuple[dict, bool]:
     index = _tab_index(workspace, key)
     if index < 0:
@@ -1442,12 +1633,33 @@ def _cycle_one_tab(
             "reason": "controlled_startup_probe_deferred",
         }, False
 
+    source_key = _current_tab_key(workspace, tab_widget)
+    pre_spec = _tab_spec(workspace, key)
+    preloaded_tab = _loaded_tab(workspace, key)
+    preload_status = _transition_preload_snapshot(
+        _read_background_preload_status(workspace),
+        target_key=key,
+        target_spec=pre_spec,
+    )
+    tab_count_before = _tab_count(tab_widget, workspace)
+    pre_transition_quarantine = _capture_scoped_ui_stalls(
+        app,
+        scope=f"tab_transition:{source_key}->{key}:pre_transition_quarantine",
+        reset_succeeded=False,
+    )
+    stall_boundary = _begin_stall_phase(
+        app,
+        phase=f"tab_transition:{source_key}->{key}",
+        settle_ms=0,
+    )
+    metric_cursor = len(metric_history())
     started = time.perf_counter()
     _observe_active_task_ids(observed_task_ids)
-    loaded_before = _loaded_tab(workspace, key) is not None
+    loaded_before = preloaded_tab is not None
     activate_tab = getattr(workspace, "activate_tab", None)
+    accepted = True
     if callable(activate_tab):
-        activate_tab(index, reason="shell_nav")
+        accepted = activate_tab(index, reason="shell_nav") is not False
     else:
         tab_widget.setCurrentIndex(index)
     _observe_active_task_ids(observed_task_ids)
@@ -1463,6 +1675,80 @@ def _cycle_one_tab(
     _settle(app, settle_ms)
     _observe_active_task_ids(observed_task_ids)
     interaction_to_stable_ms = round((time.perf_counter() - started) * 1000.0, 3)
+    loaded_tab = _loaded_tab(workspace, key)
+    post_spec = _tab_spec(workspace, key)
+    ui_stalls = _capture_scoped_ui_stalls(
+        app,
+        scope=f"tab_transition:{source_key}->{key}",
+        reset_succeeded=stall_boundary.get("stall_snapshot_reset") is True,
+    )
+    metric_samples = metric_history()[metric_cursor:]
+    stall_samples = _metric_receipt(
+        metric_samples,
+        "ui_method_stall_ms",
+        "ui_event_loop_stall_ms",
+    )
+    attributed_stalls = [
+        sample
+        for sample in stall_samples
+        if _is_attributed_transition_stall(
+            sample,
+            source_key=source_key,
+            target_key=key,
+        )
+    ]
+    attributed_ids = {id(sample) for sample in attributed_stalls}
+    unattributed_stalls = [sample for sample in stall_samples if id(sample) not in attributed_ids]
+    stage_metrics = _metric_receipt(metric_samples, "tab_transition_stage_ms")
+    scored = (source_key, key) in {
+        ("watchlist", "asian_market"),
+        ("asian_market", "na_daily"),
+    }
+    transition_receipt = {
+        "scope": "tab_transition",
+        "transition_id": f"{cycle}:{sequence_index}",
+        "cycle": int(cycle),
+        "sequence_index": int(sequence_index),
+        "source_tab": source_key,
+        "target_tab": key,
+        "reason": "shell_nav",
+        "scored": scored,
+        "tab_count_before": tab_count_before,
+        "tab_count_after": _tab_count(tab_widget, workspace),
+        "topology_unchanged": tab_count_before == _tab_count(tab_widget, workspace),
+        "pre_state": {
+            "target_loaded": bool(pre_spec.get("loaded", loaded_before)),
+            "target_mounted": bool(pre_spec.get("mounted", False)),
+            "target_widget": preloaded_tab.__class__.__name__ if preloaded_tab is not None else "",
+            "workspace_load_reason": str(getattr(preloaded_tab, "_workspace_load_reason", "") or ""),
+            "preload": preload_status,
+        },
+        "activation": {
+            "accepted": bool(accepted),
+            "activation_request_ms": round(activation_request_ms, 3),
+            "runtime_ready": bool(ready),
+            "runtime_wait_ms": round(max(0.0, elapsed_ms - activation_request_ms), 3),
+            "settle_elapsed_ms": round(max(0.0, interaction_to_stable_ms - elapsed_ms), 3),
+        },
+        "snapshot_metrics": _snapshot_metric_receipt(metric_samples),
+        "stage_metrics": stage_metrics,
+        "background_result_metrics": [
+            sample
+            for sample in stage_metrics
+            if str((sample.get("tags") or {}).get("stage") or "") == "background_result_apply"
+        ],
+        "paint_observation": _table_paint_receipt(loaded_tab, key, metric_samples),
+        "attributed_stalls": _stall_metric_summary(attributed_stalls),
+        "unattributed_stalls": _stall_metric_summary(unattributed_stalls),
+        "pre_transition_quarantine": pre_transition_quarantine,
+        "ui_stall_boundary": stall_boundary,
+        "ui_stalls": ui_stalls,
+        "post_state": {
+            "target_loaded": bool(post_spec.get("loaded", loaded_tab is not None)),
+            "target_mounted": bool(post_spec.get("mounted", False)),
+            "workspace_load_reason": str(getattr(loaded_tab, "_workspace_load_reason", "") or ""),
+        },
+    }
     return {
         "cycle": cycle,
         "key": key,
@@ -1476,6 +1762,7 @@ def _cycle_one_tab(
         "loaded_before": loaded_before,
         "loaded_after": loaded,
         "runtime_probe_ready": ready,
+        "transition_receipt": transition_receipt,
     }, True
 
 
@@ -1488,11 +1775,20 @@ def _cycle_tab_with_evidence(
     settle_ms: int,
     observed_task_ids: set[str],
     evidence: _SuiteEvidence | None,
+    *,
+    sequence_index: int,
 ) -> tuple[dict, bool]:
     _record_evidence(evidence, "tab_start", key, cycle)
     try:
         timing, counted = _cycle_one_tab(
-            workspace, tab_widget, app, key, cycle, settle_ms, observed_task_ids
+            workspace,
+            tab_widget,
+            app,
+            key,
+            cycle,
+            settle_ms,
+            observed_task_ids,
+            sequence_index=sequence_index,
         )
     except Exception as exc:
         _record_evidence(evidence, "error", exc)
@@ -1520,9 +1816,11 @@ def _cycle_tabs(
     visited = 0
     observed = observed_task_ids if observed_task_ids is not None else set()
     diagnostics_available = _observe_active_task_ids(observed)
+    sequence_index = 0
     for cycle_index in range(max(0, int(cycles))):
         for key in tabs:
             cycle_number = cycle_index + 1
+            sequence_index += 1
             timing, counted = _cycle_tab_with_evidence(
                 workspace,
                 tab_widget,
@@ -1532,6 +1830,7 @@ def _cycle_tabs(
                 settle_ms,
                 observed,
                 evidence,
+                sequence_index=sequence_index,
             )
             timings.append(timing)
             visited += int(counted)

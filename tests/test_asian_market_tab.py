@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
 import json
+from contextlib import contextmanager
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from core.market_calendar import MarketCalendar
@@ -167,6 +168,38 @@ def test_asian_market_show_runtime_skips_non_interactive_load_reason():
     assert dummy._workspace_noninteractive_loaded is False
 
 
+def test_asian_local_cache_callback_records_background_apply_stage(monkeypatch):
+    tab = _build_empty_asian_tab(monkeypatch)
+    stages = []
+
+    @contextmanager
+    def _capture_stage(owner, **kwargs):
+        stages.append((owner, kwargs))
+        yield
+
+    monkeypatch.setattr(asian_module, "tab_transition_stage", _capture_stage)
+    monkeypatch.setattr(tab, "update_table_ui", lambda: None)
+    monkeypatch.setattr(tab, "_finish_local_cache_load", lambda: None)
+
+    try:
+        tab._finish_apply_local_cache_payload()
+
+        assert stages == [
+            (
+                tab,
+                {
+                    "tab": "asian_market",
+                    "method": "AsianMarketTab._finish_apply_local_cache_payload",
+                    "stage": "background_result_apply",
+                    "callback_kind": "local_cache",
+                },
+            )
+        ]
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
 def test_asian_quote_refresh_uses_tracked_market_union(monkeypatch):
     monkeypatch.setattr(
         MarketCalendar,
@@ -258,6 +291,20 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
         initial_ratio = initial_widths[9] / initial_widths[1]
         assert abs(scaled_ratio - initial_ratio) < 0.2
         assert total_scaled != total_initial
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_table_exposes_passive_paint_metrics(monkeypatch):
+    tab = _build_empty_asian_tab(monkeypatch)
+    try:
+        assert tab.asian_table._paint_metric_scope == "asian_market"
+        assert tab.asian_table._targeted_flash_repaint is False
+        viewport = tab.asian_table.viewport()
+        assert tab.asian_table.property("vcpViewportBaseBackground") is True
+        assert viewport.autoFillBackground() is True
+        assert viewport.backgroundRole() == QPalette.ColorRole.Base
+        assert not viewport.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
     finally:
         tab.deleteLater()
 

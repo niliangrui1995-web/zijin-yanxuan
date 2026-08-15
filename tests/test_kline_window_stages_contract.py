@@ -1120,6 +1120,7 @@ def test_prewarmed_page_handoff_keeps_browser_in_final_host(qt_application):
     assert window.browser is browser
     assert browser.parentWidget() is window.chart_host
     assert browser.reparent_calls == []
+    assert browser.page() is page
     assert page._parent is None
     assert browser.property("klineShellReady") is True
     assert window._browser_attach_diagnostics["page_reused"] is True

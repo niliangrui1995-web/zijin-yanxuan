@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ui.kline_load_controller import KLINE_OPEN_STAGE_ORDER
+from ui.kline_webengine_page import stop_webengine_page
 from ui.kline_window_recovery import install_render_process_recovery, uninstall_render_process_recovery
 
 _STAGE_METRICS = {
@@ -308,11 +309,7 @@ def _emit_browser_attached(coordinator, window, browser) -> None:
 def _dispose_deferred_page(page) -> bool:
     if page is None:
         return True
-    clean = True
-    try:
-        page.stop()
-    except _EXPECTED_STAGE_ERRORS:
-        clean = False
+    clean = stop_webengine_page(page)
     try:
         page.deleteLater()
     except _EXPECTED_STAGE_ERRORS:

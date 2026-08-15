@@ -286,7 +286,7 @@ def test_kline_prewarm_is_a_post_paint_stage_after_tab_activation(monkeypatch):
     assert calls == []
     assert scheduled[0][0] == main.WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS
     scheduled.pop(0)[1]()
-    assert calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
+    assert calls == [{"delay_ms": 0, "hidden_view": True}]
 
     window._kline_prewarm_enabled = False
     assert main._schedule_post_paint_kline_prewarm(window) is True
@@ -315,7 +315,33 @@ def test_kline_prewarm_waits_for_shell_navigation_quiet_window(monkeypatch):
     assert scheduled[0][0] == main.KLINE_PREWARM_BUSY_RETRY_DELAY_MS
     workspace._last_shell_nav_load_at = 0.0
     scheduled.pop(0)[1]()
-    assert calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
+    assert calls == [{"delay_ms": 0, "hidden_view": True}]
+
+
+def test_kline_prewarm_waits_for_real_user_input_quiet_window(monkeypatch):
+    calls = []
+    scheduled = []
+    workspace = SimpleNamespace(_last_shell_nav_load_at=0.0)
+    window = SimpleNamespace(
+        _workspace=workspace,
+        _kline_prewarm_enabled=True,
+        _is_closing=False,
+        _pending_f5_request=False,
+        _f5_precompute_start_pending=False,
+        _f5_job_controller=None,
+        _last_user_interaction_at=99.5,
+    )
+    monkeypatch.setattr(main.time, "perf_counter", lambda: 100.0)
+    monkeypatch.setattr(main.kline_manager, "prewarm", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr(main.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+
+    main._try_post_paint_kline_prewarm(window)
+
+    assert calls == []
+    assert scheduled[0][0] == main.KLINE_PREWARM_BUSY_RETRY_DELAY_MS
+    window._last_user_interaction_at = 90.0
+    scheduled.pop(0)[1]()
+    assert calls == [{"delay_ms": 0, "hidden_view": True}]
 
 
 def test_kline_prewarm_waits_until_tab_preload_and_quiet_tail_finish(monkeypatch):
@@ -348,7 +374,7 @@ def test_kline_prewarm_waits_until_tab_preload_and_quiet_tail_finish(monkeypatch
     workspace._background_prewarm_finished_at = 90.0
     scheduled.pop(0)[1]()
 
-    assert calls == [{"main_window": window, "delay_ms": 0, "hidden_view": True}]
+    assert calls == [{"delay_ms": 0, "hidden_view": True}]
 
 
 def test_central_broadcaster_and_code_count_paths():

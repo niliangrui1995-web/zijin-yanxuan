@@ -157,6 +157,49 @@ def test_ui_stall_probe_demotes_f5_background_system_log_event_loop(monkeypatch,
     probe.deleteLater()
 
 
+def test_ui_stall_probe_keeps_bounded_transition_tags(monkeypatch, qt_application):
+    metrics = []
+    monkeypatch.setattr(probe_module, "emit_structured_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        probe_module,
+        "record_metric",
+        lambda _metric, _value, **kwargs: metrics.append(kwargs),
+    )
+    probe = UiStallProbe(thresholds=StallThresholds(warn_ms=50, critical_ms=100), auto_start=False)
+
+    probe._record_stall(
+        "ui.stall.event_loop",
+        120,
+        context={
+            "tab": "asian_market",
+            "transition_phase": "layout_flush",
+            "callback_kind": "background_result_apply",
+            "preload_state": "ready",
+            "layout_signal": "model_reset",
+            "source_tab": "watchlist",
+            "target_tab": "asian_market",
+            "reason": "shell_nav",
+            "transition_id": "42",
+        },
+        metric_name="ui_event_loop_stall_ms",
+    )
+
+    assert metrics[0]["tags"] == {
+        "severity": "critical",
+        "tab": "asian_market",
+        "method": "",
+        "signal": "",
+        "transition_phase": "layout_flush",
+        "callback_kind": "background_result_apply",
+        "preload_state": "ready",
+        "layout_signal": "model_reset",
+        "source_tab": "watchlist",
+        "target_tab": "asian_market",
+        "reason": "shell_nav",
+    }
+    probe.deleteLater()
+
+
 def test_ui_stall_probe_keeps_foreground_system_log_event_loop_critical(monkeypatch, qt_application):
     logs = []
     monkeypatch.setattr(probe_module, "emit_structured_log", lambda event, **kwargs: logs.append((event, kwargs)))

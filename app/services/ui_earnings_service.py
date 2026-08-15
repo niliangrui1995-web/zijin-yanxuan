@@ -254,8 +254,10 @@ class EarningsRefreshService(QObject):
         self.sig_scan_degraded.emit(dict(scan_result), str(mode or "routine"))
 
     def _emit_cached_scan_degradation(self) -> None:
+        if self._engine is None:
+            return
         try:
-            scan_result = _degraded_scan_result(self.engine)
+            scan_result = _degraded_scan_result(self._engine)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[业绩调度] 读取已缓存扫描状态失败: {exc}")
             return
