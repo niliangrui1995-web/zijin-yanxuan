@@ -19,12 +19,15 @@ import logging
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta
 from functools import partial
+from urllib.parse import urlencode
 
-from infra.http_safety import requests_get_https
+from domains.market_calendar import MarketCalendar
+from infra.http_safety import ensure_https_request, requests_get_https
 from infra.tasks.lifecycle import (
     bounded_io_timeout,
     raise_if_cancelled,
@@ -162,6 +165,8 @@ _MARKET_CURRENCY_MAP = {
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "N/A", "n/a", "null", "None"}
 _JP_HISTORY_PAGE_SIZE = 20
 _KR_HISTORY_PAGE_SIZE = 20
+_SYSTEM_CURL_PATH = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "curl.exe")
+_SYSTEM_CURL_MAX_OUTPUT_BYTES = 1024 * 1024
 
 
 def _history_request_timeout(cancellation_token=None, default_seconds: float = 20.0) -> float:
@@ -178,6 +183,114 @@ def _response_text(response, cancellation_token=None) -> str:
     text = response.text
     raise_if_cancelled(cancellation_token)
     return text
+
+
+def _system_curl_timeout_seconds(timeout) -> int:
+    if isinstance(timeout, tuple):
+        timeout = max(timeout)
+    try:
+        seconds = float(timeout)
+    except (TypeError, ValueError):
+        seconds = 20.0
+    return max(1, min(30, math.ceil(seconds)))
+
+
+def _fetch_official_json_via_system_curl(
+    url: str,
+    *,
+    allowed_hosts,
+    headers: dict[str, str] | None,
+    timeout,
+    cancellation_token=None,
+) -> dict | None:
+    """经 Windows Schannel 严格验签请求交易所官方 JSON，失败时不降级证书校验。"""
+    ensure_https_request(url, allowed_hosts=allowed_hosts)
+    raise_if_cancelled(cancellation_token)
+    if not os.path.isfile(_SYSTEM_CURL_PATH):
+        return None
+
+    header_args: list[str] = []
+    for name, value in (headers or {}).items():
+        header_name = str(name)
+        header_value = str(value)
+        if any(marker in header_name or marker in header_value for marker in ("\r", "\n", "\x00")):
+            raise ValueError("system curl headers must not contain control characters")
+        header_args.extend(("--header", f"{header_name}: {header_value}"))
+
+    timeout_seconds = _system_curl_timeout_seconds(timeout)
+    command = [
+        _SYSTEM_CURL_PATH,
+        "--disable",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--proto",
+        "=https",
+        "--tlsv1.2",
+        "--max-time",
+        str(timeout_seconds),
+        "--max-filesize",
+        str(_SYSTEM_CURL_MAX_OUTPUT_BYTES),
+        *header_args,
+        url,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds + 2,
+            check=False,
+            shell=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logging.warning("Official system curl request failed: %s", exc)
+        return None
+    raise_if_cancelled(cancellation_token)
+    if completed.returncode != 0:
+        logging.warning("Official system curl request failed with exit code %s", completed.returncode)
+        return None
+    try:
+        payload = json.loads(completed.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        logging.warning("Official system curl response was not valid JSON")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+class _SystemCurlJsonResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+        self.status_code = 200
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _SystemCurlJsonSession:
+    def __init__(self, allowed_hosts, cancellation_token=None):
+        self._allowed_hosts = allowed_hosts
+        self._cancellation_token = cancellation_token
+
+    def get(self, url, *, params=None, headers=None, timeout=20, **_kwargs):
+        request_url = str(url)
+        if params:
+            separator = "&" if "?" in request_url else "?"
+            request_url = f"{request_url}{separator}{urlencode(params, doseq=True)}"
+        payload = _fetch_official_json_via_system_curl(
+            request_url,
+            allowed_hosts=self._allowed_hosts,
+            headers=headers,
+            timeout=timeout,
+            cancellation_token=self._cancellation_token,
+        )
+        if payload is None:
+            raise OSError("official system curl history request failed")
+        return _SystemCurlJsonResponse(payload)
 
 
 def _deadline_from_time_budget(time_budget_sec: float | int | None) -> float | None:
@@ -208,15 +321,20 @@ def _remaining_time_budget(deadline: float | None) -> float | None:
     return max(0.0, deadline - time.monotonic())
 
 
-def _time_budget_exhausted_result(target_tickers: set[str], output_dir: str) -> tuple[bool, str, dict]:
+def _time_budget_exhausted_result(
+    target_tickers: set[str],
+    output_dir: str,
+    expected_latest_dates: dict[str, date] | None = None,
+) -> tuple[bool, str, dict]:
     try:
         old_map = _load_cached_row_map(output_dir)
     except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         logging.warning("Asian kline cache preserve failed after time budget: %s", exc)
         old_map = {}
 
-    preserved = sorted(target_tickers & set(old_map.keys()))
-    missing = sorted(target_tickers - set(old_map.keys()))
+    stale_tickers = _find_stale_kline_tickers(old_map, target_tickers, expected_latest_dates)
+    preserved = sorted((target_tickers & set(old_map.keys())) - set(stale_tickers))
+    missing = sorted(target_tickers - set(preserved))
     if preserved and not missing:
         return (
             True,
@@ -226,6 +344,7 @@ def _time_budget_exhausted_result(target_tickers: set[str], output_dir: str) -> 
                 "written_count": len(preserved),
                 "single_recovered": [],
                 "reused": preserved,
+                "stale": [],
                 "missing": [],
                 "cache_preserved": True,
                 "time_budget_exhausted": True,
@@ -240,7 +359,8 @@ def _time_budget_exhausted_result(target_tickers: set[str], output_dir: str) -> 
             "written_count": 0,
             "single_recovered": [],
             "reused": preserved,
-            "missing": missing or sorted(target_tickers),
+            "stale": stale_tickers,
+            "missing": missing,
             "cache_preserved": False,
             "time_budget_exhausted": True,
         },
@@ -471,18 +591,31 @@ def _market_latest_dates(row_map: dict[str, dict]) -> dict[str, date]:
     return latest_by_market
 
 
+def _expected_market_latest_dates(target_tickers: set[str]) -> dict[str, date]:
+    markets = {MarketCalendar.infer_market(ticker) for ticker in target_tickers}
+    return {
+        market: MarketCalendar.get_latest_completed_trade_date(market)
+        for market in sorted(markets & {"TW", "HK", "T", "KS"})
+    }
+
+
 def _find_stale_kline_tickers(
     row_map: dict[str, dict],
     target_tickers: set[str],
+    expected_latest_dates: dict[str, date] | None = None,
 ) -> list[str]:
     latest_by_market = _market_latest_dates(row_map)
+    expected_latest_dates = expected_latest_dates or {}
     stale: list[str] = []
     for ticker in sorted(target_tickers & set(row_map.keys())):
         row = row_map.get(ticker) or {}
         market = str(row.get("market") or "").strip()
         last_date = _last_kline_date(row)
         latest_date = latest_by_market.get(market)
-        if last_date is None or (latest_date is not None and last_date < latest_date):
+        expected_date = expected_latest_dates.get(MarketCalendar.infer_market(ticker))
+        if last_date is None or (latest_date is not None and last_date < latest_date) or (
+            expected_date is not None and last_date < expected_date
+        ):
             stale.append(ticker)
     return stale
 
@@ -490,11 +623,187 @@ def _find_stale_kline_tickers(
 def _drop_stale_kline_rows(
     row_map: dict[str, dict],
     target_tickers: set[str],
+    expected_latest_dates: dict[str, date] | None = None,
 ) -> list[str]:
-    stale = _find_stale_kline_tickers(row_map, target_tickers)
+    stale = _find_stale_kline_tickers(row_map, target_tickers, expected_latest_dates)
     for ticker in stale:
         row_map.pop(ticker, None)
     return stale
+
+
+def _load_sync_cache_snapshot(output_dir: str) -> tuple[dict[str, dict], str | None]:
+    try:
+        return _load_cached_row_map(output_dir), None
+    except FileNotFoundError:
+        return {}, None
+    except (PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logging.warning("Asian kline cache snapshot read failed: %s", exc)
+        return {}, str(exc)
+
+
+def _merge_kline_history(fetched_row: dict, cached_row: dict | None) -> dict:
+    """用最新源覆盖同日记录，同时保留旧快照中未被本次短窗口返回的历史。"""
+    fetched_klines = list((fetched_row or {}).get("klines") or [])
+    cached_klines = list((cached_row or {}).get("klines") or [])
+    if not cached_klines:
+        return dict(fetched_row)
+    if not fetched_klines:
+        return dict(cached_row)
+
+    merged_klines: dict[str, dict] = {}
+    for kline in [*cached_klines, *fetched_klines]:
+        kline_date = str((kline or {}).get("date") or "").strip()
+        if _date_from_iso(kline_date) is not None:
+            merged_klines[kline_date] = dict(kline)
+    if not merged_klines:
+        return dict(cached_row)
+
+    merged_row = dict(cached_row)
+    merged_row.update(fetched_row)
+    merged_row["klines"] = [merged_klines[kline_date] for kline_date in sorted(merged_klines)]
+    merged_row["kline_count"] = len(merged_row["klines"])
+    return merged_row
+
+
+def _merge_rows_with_cached_history(row_map: dict[str, dict], cached_map: dict[str, dict]) -> dict[str, dict]:
+    return {
+        ticker: _merge_kline_history(row, cached_map.get(ticker))
+        for ticker, row in row_map.items()
+    }
+
+
+def _final_sync_rows(
+    row_map: dict[str, dict],
+    cached_map: dict[str, dict],
+    target_tickers: set[str],
+    *,
+    scoped_sync: bool,
+) -> list[dict]:
+    final_map = dict(row_map)
+    if scoped_sync:
+        final_map = {ticker: row for ticker, row in cached_map.items() if ticker not in target_tickers}
+        final_map.update(row_map)
+    final_data = list(final_map.values())
+    final_data.sort(key=lambda item: (item.get("market", ""), item.get("name", "")))
+    return final_data
+
+
+def _empty_fetch_sync_result(
+    target_tickers: set[str],
+    cached_map: dict[str, dict],
+    expected_latest_dates: dict[str, date],
+) -> tuple[bool, str, dict]:
+    stale_tickers = _find_stale_kline_tickers(cached_map, target_tickers, expected_latest_dates)
+    preserved = sorted((target_tickers & set(cached_map.keys())) - set(stale_tickers))
+    missing = sorted(target_tickers - set(preserved))
+    if preserved and not missing:
+        return (
+            True,
+            "亚洲 K 线远端拉取失败，已保留现有缓存",
+            {
+                "target_count": len(target_tickers),
+                "written_count": len(preserved),
+                "single_recovered": [],
+                "reused": preserved,
+                "missing": [],
+                "cache_preserved": True,
+            },
+        )
+    return (
+        False,
+        f"亚洲 K 线缓存全量拉取失败，仍缺失 {len(missing)} 只，未覆盖现有缓存",
+        {
+            "target_count": len(target_tickers),
+            "written_count": 0,
+            "single_recovered": [],
+            "reused": preserved,
+            "stale": stale_tickers,
+            "missing": missing,
+            "cache_preserved": False,
+        },
+    )
+
+
+def _find_market_wide_missing_tail_sessions(
+    row_map: dict[str, dict],
+    cached_map: dict[str, dict],
+    target_tickers: set[str],
+    expected_latest_dates: dict[str, date],
+) -> list[str]:
+    """识别所有同市场标的共同缺失的近期交易日，防止尾日存在却中间断柱。"""
+    tickers_by_market: dict[str, list[str]] = {}
+    for ticker in target_tickers:
+        market = MarketCalendar.infer_market(ticker)
+        if market in expected_latest_dates:
+            tickers_by_market.setdefault(market, []).append(ticker)
+
+    missing_sessions: list[str] = []
+    for market, tickers in tickers_by_market.items():
+        if len(tickers) < 2:
+            continue
+        cached_dates = [_last_kline_date(cached_map.get(ticker)) for ticker in tickers]
+        latest_cached_date = max((item for item in cached_dates if item is not None), default=None)
+        expected_date = expected_latest_dates[market]
+        if latest_cached_date is None or latest_cached_date >= expected_date:
+            continue
+        available_dates = {
+            _date_from_iso(str((kline or {}).get("date") or ""))
+            for ticker in tickers
+            for kline in (row_map.get(ticker) or {}).get("klines") or []
+        }
+        cursor = latest_cached_date + timedelta(days=1)
+        while cursor <= expected_date:
+            try:
+                is_trade_day = MarketCalendar.is_trade_day(cursor, market=market)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                logging.warning("Asian market calendar check failed for %s: %s", market, exc)
+                break
+            if is_trade_day and cursor not in available_dates:
+                missing_sessions.append(f"{market}:{cursor.isoformat()}")
+            cursor += timedelta(days=1)
+    return missing_sessions
+
+
+def _rescue_missing_kline_rows(
+    row_map: dict[str, dict],
+    missing: list[str],
+    ticker_to_name: dict[str, str],
+    *,
+    period: str,
+    deadline: float | None,
+    cancellation_checkpoint,
+    cancellation_token,
+) -> list[str]:
+    recovered: list[str] = []
+    rescue_session = build_yf_session()
+    for ticker in missing:
+        _check_cancellation(cancellation_checkpoint)
+        raise_if_cancelled(cancellation_token)
+        if _deadline_exceeded(deadline, cancellation_checkpoint):
+            logging.warning("Asian kline sync time budget exhausted; stop single-symbol rescue")
+            break
+        try:
+            one = invoke_with_cancellation(
+                fetch_single_kline,
+                cancellation_token,
+                ticker_to_name.get(ticker, ticker),
+                ticker,
+                period=period,
+                session=rescue_session,
+            )
+            if one:
+                row_map[ticker] = one
+                recovered.append(ticker)
+        except Exception as exc:
+            reraise_task_cancellation(exc)
+            if is_yf_rate_limit_error(exc):
+                logging.warning("单票补抓遇到上游限流 %s: %s", ticker, exc)
+                continue
+            if isinstance(exc, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
+                logging.warning("单票补抓失败 %s: %s", ticker, exc)
+                continue
+            raise
+    return recovered
 
 
 def _resolve_period_window(period: str) -> tuple[date, date, int]:
@@ -672,6 +981,42 @@ def _fetch_tw_history_tpex(
                 }
             )
     return rows
+
+
+def _fetch_tw_history_twse_system_curl(
+    ticker: str,
+    _http_session,
+    *,
+    start_date: date,
+    end_date: date,
+    cancellation_token=None,
+) -> list[dict]:
+    session = _SystemCurlJsonSession({"www.twse.com.tw"}, cancellation_token)
+    return _fetch_tw_history_twse(
+        ticker,
+        session,
+        start_date=start_date,
+        end_date=end_date,
+        cancellation_token=cancellation_token,
+    )
+
+
+def _fetch_tw_history_tpex_system_curl(
+    ticker: str,
+    _http_session,
+    *,
+    start_date: date,
+    end_date: date,
+    cancellation_token=None,
+) -> list[dict]:
+    session = _SystemCurlJsonSession({"www.tpex.org.tw"}, cancellation_token)
+    return _fetch_tw_history_tpex(
+        ticker,
+        session,
+        start_date=start_date,
+        end_date=end_date,
+        cancellation_token=cancellation_token,
+    )
 
 
 def _fetch_kr_history_naver(
@@ -909,6 +1254,17 @@ def _call_history_source(cancellation_token, fetcher, *args, **kwargs):
     return invoke_with_cancellation(fetcher, cancellation_token, *args, **kwargs)
 
 
+def _taiwan_history_source_or_empty(call, source_name: str, fetcher, *args, **kwargs) -> list[dict]:
+    try:
+        return call(fetcher, *args, **kwargs)
+    except Exception as exc:
+        reraise_task_cancellation(exc)
+        if _is_tls_verification_error(exc) or isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+            logging.warning("%s history source failed for %s: %s", source_name, args[0], exc)
+            return []
+        raise
+
+
 def _fetch_market_history_rows(
     ticker: str,
     http_session,
@@ -923,13 +1279,29 @@ def _fetch_market_history_rows(
     window = {"start_date": start_date, "end_date": end_date}
     suffix = _get_market_suffix(ticker)
     if suffix == ".TW":
-        rows = call(_fetch_tw_history_twse, *args, **window)
-        return (rows, "twse_stock_day") if rows else (
-            call(_fetch_yfinance_history_rows, *args, **window),
-            "yfinance_history",
+        rows = _taiwan_history_source_or_empty(call, "TWSE", _fetch_tw_history_twse, *args, **window)
+        if rows:
+            return rows, "twse_stock_day"
+        rows = _taiwan_history_source_or_empty(
+            call,
+            "TWSE system curl",
+            _fetch_tw_history_twse_system_curl,
+            *args,
+            **window,
         )
+        return (rows, "twse_stock_day_system_curl") if rows else (call(_fetch_yfinance_history_rows, *args, **window), "yfinance_history")
     if suffix == ".TWO":
-        return call(_fetch_tw_history_tpex, *args, **window), "tpex_trading_stock"
+        rows = _taiwan_history_source_or_empty(call, "TPEX", _fetch_tw_history_tpex, *args, **window)
+        if rows:
+            return rows, "tpex_trading_stock"
+        rows = _taiwan_history_source_or_empty(
+            call,
+            "TPEX system curl",
+            _fetch_tw_history_tpex_system_curl,
+            *args,
+            **window,
+        )
+        return (rows, "tpex_trading_stock_system_curl") if rows else (call(_fetch_yfinance_history_rows, *args, **window), "yfinance_history")
     if suffix == ".KS":
         return call(_fetch_kr_history_naver, *args, **window), "naver_history"
     if suffix == ".T":
@@ -1121,7 +1493,23 @@ def sync_asian_kline_cache(
 
     ticker_to_name = {ticker: name for name, ticker in target_map.items()}
     target_tickers = set(target_map.values())
+    expected_latest_dates = _expected_market_latest_dates(target_tickers)
     output_dir = _resolve_cache_output_dir(output_dir)
+    cached_map, cache_read_error = _load_sync_cache_snapshot(output_dir)
+    scoped_sync = market_filter is not None or single_ticker is not None
+    if scoped_sync and (cache_read_error is not None or not cached_map):
+        return (
+            False,
+            "亚洲 K 线局部同步缺少可保留的共享缓存，未执行覆盖写入",
+            {
+                "target_count": len(target_tickers),
+                "written_count": 0,
+                "single_recovered": [],
+                "reused": [],
+                "missing": sorted(target_tickers),
+                "cache_preserved": False,
+            },
+        )
     deadline = _deadline_from_time_budget(time_budget_sec)
     _check_cancellation(cancellation_checkpoint)
     raise_if_cancelled(cancellation_token)
@@ -1136,47 +1524,12 @@ def sync_asian_kline_cache(
         cancellation_token=cancellation_token,
     )
     if _deadline_exceeded(deadline, cancellation_checkpoint):
-        return _time_budget_exhausted_result(target_tickers, output_dir)
+        return _time_budget_exhausted_result(target_tickers, output_dir, expected_latest_dates)
     if not data:
-        try:
-            old_map = _load_cached_row_map(output_dir)
-        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            logging.warning(f"⚠️ 旧缓存回填失败: {exc}")
-            old_map = {}
+        return _empty_fetch_sync_result(target_tickers, cached_map, expected_latest_dates)
 
-        preserved = sorted(target_tickers & set(old_map.keys()))
-        missing = sorted(target_tickers - set(old_map.keys()))
-        if preserved and not missing:
-            message = "亚洲 K 线远端拉取失败，已保留现有缓存"
-            return (
-                True,
-                message,
-                {
-                    "target_count": len(target_tickers),
-                    "written_count": len(preserved),
-                    "single_recovered": [],
-                    "reused": preserved,
-                    "missing": [],
-                    "cache_preserved": True,
-                },
-            )
-
-        message = "亚洲 K 线缓存全量拉取失败"
-        return (
-            False,
-            message,
-            {
-                "target_count": len(target_tickers),
-                "written_count": 0,
-                "single_recovered": [],
-                "reused": preserved,
-                "missing": missing or sorted(target_tickers),
-                "cache_preserved": False,
-            },
-        )
-
-    row_map = _rows_to_map(data)
-    stale_tickers = _drop_stale_kline_rows(row_map, target_tickers)
+    row_map = _merge_rows_with_cached_history(_rows_to_map(data), cached_map)
+    stale_tickers = _drop_stale_kline_rows(row_map, target_tickers, expected_latest_dates)
     if stale_tickers:
         logging.warning(f"⚠️ 全量抓取发现 K 线日期落后 {len(stale_tickers)} 只，按缺失处理: {stale_tickers}")
     missing = sorted(target_tickers - set(row_map.keys()))
@@ -1184,37 +1537,20 @@ def sync_asian_kline_cache(
 
     if missing:
         logging.warning(f"⚠️ 全量抓取缺失 {len(missing)} 只，开始单票补抓: {missing}")
-        rescue_session = build_yf_session()
-        for ticker in list(missing):
-            _check_cancellation(cancellation_checkpoint)
-            raise_if_cancelled(cancellation_token)
-            if _deadline_exceeded(deadline, cancellation_checkpoint):
-                logging.warning("Asian kline sync time budget exhausted; stop single-symbol rescue")
-                break
-            name = ticker_to_name.get(ticker, ticker)
-            try:
-                one = invoke_with_cancellation(
-                    fetch_single_kline,
-                    cancellation_token,
-                    name,
-                    ticker,
-                    period=period,
-                    session=rescue_session,
-                )
-                if one:
-                    row_map[ticker] = one
-                    single_recovered.append(ticker)
-            except Exception as exc:
-                reraise_task_cancellation(exc)
-                if is_yf_rate_limit_error(exc):
-                    logging.warning(f"⚠️ 单票补抓遇到上游限流 {ticker}: {exc}")
-                    continue
-                if isinstance(exc, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
-                    logging.warning(f"⚠️ 单票补抓失败 {ticker}: {exc}")
-                    continue
-                raise
+        single_recovered = _rescue_missing_kline_rows(
+            row_map,
+            missing,
+            ticker_to_name,
+            period=period,
+            deadline=deadline,
+            cancellation_checkpoint=cancellation_checkpoint,
+            cancellation_token=cancellation_token,
+        )
+        if _deadline_exceeded(deadline, cancellation_checkpoint):
+            return _time_budget_exhausted_result(target_tickers, output_dir, expected_latest_dates)
+        row_map = _merge_rows_with_cached_history(row_map, cached_map)
         missing = sorted(target_tickers - set(row_map.keys()))
-        rescue_stale = _drop_stale_kline_rows(row_map, target_tickers)
+        rescue_stale = _drop_stale_kline_rows(row_map, target_tickers, expected_latest_dates)
         if rescue_stale:
             stale_tickers = sorted(set(stale_tickers) | set(rescue_stale))
             logging.warning(f"⚠️ 单票补抓后仍有 K 线日期落后，拒绝写入: {rescue_stale}")
@@ -1222,23 +1558,21 @@ def sync_asian_kline_cache(
 
     reused: list[str] = []
     if missing:
-        try:
-            old_map = _load_cached_row_map(output_dir)
-            for ticker in list(missing):
-                _check_cancellation(cancellation_checkpoint)
-                if ticker in old_map:
-                    row_map[ticker] = old_map[ticker]
-                    reused.append(ticker)
-            reused_stale = _drop_stale_kline_rows(row_map, target_tickers)
-            if reused_stale:
-                stale_tickers = sorted(set(stale_tickers) | set(reused_stale))
-                reused = [ticker for ticker in reused if ticker not in set(reused_stale)]
-                logging.warning(f"⚠️ 旧缓存回填包含落后 K 线，已拒绝: {reused_stale}")
-            if reused:
-                logging.warning(f"⚠️ 已从旧缓存回填 {len(reused)} 只: {sorted(reused)}")
-            missing = sorted(target_tickers - set(row_map.keys()))
-        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            logging.warning(f"⚠️ 旧缓存回填失败: {exc}")
+        for ticker in missing:
+            _check_cancellation(cancellation_checkpoint)
+            if ticker in cached_map:
+                row_map[ticker] = cached_map[ticker]
+                reused.append(ticker)
+        reused_stale = _drop_stale_kline_rows(row_map, target_tickers, expected_latest_dates)
+        if reused_stale:
+            stale_tickers = sorted(set(stale_tickers) | set(reused_stale))
+            reused = [ticker for ticker in reused if ticker not in set(reused_stale)]
+            logging.warning(f"⚠️ 旧缓存回填包含落后 K 线，已拒绝: {reused_stale}")
+        if reused:
+            logging.warning(f"⚠️ 已从旧缓存回填 {len(reused)} 只: {sorted(reused)}")
+        missing = sorted(target_tickers - set(row_map.keys()))
+        if _deadline_exceeded(deadline, cancellation_checkpoint):
+            return _time_budget_exhausted_result(target_tickers, output_dir, expected_latest_dates)
 
     if missing:
         message = f"亚洲 K 线缓存同步失败，仍缺失 {len(missing)} 只({', '.join(missing)})，未覆盖现有缓存"
@@ -1255,9 +1589,30 @@ def sync_asian_kline_cache(
             },
         )
 
+    missing_tail_sessions = _find_market_wide_missing_tail_sessions(
+        row_map,
+        cached_map,
+        target_tickers,
+        expected_latest_dates,
+    )
+    if missing_tail_sessions:
+        return (
+            False,
+            f"亚洲 K 线缓存同步失败，检测到市场级中间缺柱 {', '.join(missing_tail_sessions)}，未覆盖现有缓存",
+            {
+                "target_count": len(target_tickers),
+                "written_count": 0,
+                "single_recovered": single_recovered,
+                "reused": reused,
+                "stale": stale_tickers,
+                "missing": [],
+                "market_wide_missing_sessions": missing_tail_sessions,
+            },
+        )
+    if _deadline_exceeded(deadline, cancellation_checkpoint):
+        return _time_budget_exhausted_result(target_tickers, output_dir, expected_latest_dates)
     _check_cancellation(cancellation_checkpoint)
-    final_data = list(row_map.values())
-    final_data.sort(key=lambda item: (item.get("market", ""), item.get("name", "")))
+    final_data = _final_sync_rows(row_map, cached_map, target_tickers, scoped_sync=scoped_sync)
     save_kline_data(final_data, output_dir)
 
     parts = [f"亚洲 K 线缓存同步完成，共 {len(final_data)} 只"]

@@ -803,7 +803,7 @@ def test_load_and_draw_asian_uses_same_background_snapshot_pipeline(monkeypatch,
     )
     monkeypatch.setattr(asian_tab, "JSON_CACHE", str(cache_path))
     asian_tab.GLOBAL_ASIAN_RT_CACHE.pop("2330.TW", None)
-    monkeypatch.setattr(runtime.MarketCalendar, "get_latest_trade_date", lambda market: dt.date(2026, 7, 14))
+    monkeypatch.setattr(runtime.MarketCalendar, "get_latest_completed_trade_date", lambda market: dt.date(2026, 7, 14))
     fixture = _runtime_window(
         _Provider(),
         code="2330.TW",
@@ -824,6 +824,73 @@ def test_load_and_draw_asian_uses_same_background_snapshot_pipeline(monkeypatch,
 
     assert queued[-1].prepared is result.prepared
     assert _payload(result.prepared)["data"]["klines"][-1][1] == 129.0
+
+
+def test_apply_history_load_result_backfills_degraded_asian_history(monkeypatch):
+    queued = _capture_queue(monkeypatch)
+    fixture = _runtime_window(_Provider(), code="2330.TW", name="台积电", market="TW")
+    backfills = []
+    monkeypatch.setattr(runtime, "_schedule_missing_asian_history", lambda window: backfills.append(window))
+    prepared = SimpleNamespace(display_frame=_frame("2026-08-14"))
+    result = runtime._PreparedHistoryLoad(
+        runtime.KlineDataResult(
+            code="2330.TW",
+            market="TW",
+            data=_frame("2026-08-14"),
+            source="asian_json_cache",
+            degraded=True,
+            degradation_reason="asian_history_stale",
+            latest_trade_date=dt.date(2026, 8, 14),
+        ),
+        _frame("2026-08-14"),
+        prepared,
+    )
+    request = SimpleNamespace(identity=fixture.identity, market="TW")
+
+    runtime._apply_history_load_result(result, window=fixture.window, request=request)
+
+    assert queued == []
+    assert backfills == [fixture.window]
+
+
+def test_prepare_history_load_skips_realtime_quote_for_stale_asian_history(monkeypatch):
+    fixture = _runtime_window(_Provider(), code="2330.TW", name="台积电", market="TW")
+    frame = _frame("2026-08-14")
+    stale_result = runtime.KlineDataResult(
+        code="2330.TW",
+        market="TW",
+        data=frame,
+        source="asian_json_cache",
+        degraded=True,
+        degradation_reason="asian_history_stale",
+        latest_trade_date=dt.date(2026, 8, 14),
+    )
+
+    class _StaleService:
+        def __init__(self, _provider):
+            return None
+
+        def load(self, *_args, **_kwargs):
+            return stale_result
+
+    monkeypatch.setattr(runtime, "KlineDataService", _StaleService)
+    quote_calls = []
+    result = runtime._prepare_history_load(
+        context=fixture.window._open_context,
+        identity=fixture.identity,
+        snapshot_version=1,
+        data_provider=fixture.window.data_provider,
+        target_trade_date=dt.date(2026, 8, 19),
+        asian_cache_path="cache.json",
+        cached_asian_quote=None,
+        asian_quote_fetcher=lambda code: quote_calls.append(code) or {"close": 100},
+        chart_theme={},
+        cancellation_token=None,
+    )
+
+    pd.testing.assert_frame_equal(result.frame, frame)
+    assert result.prepared is None
+    assert quote_calls == []
 
 
 def test_prepare_and_render_frame_uses_owned_render_task_and_drops_stale_result(monkeypatch):

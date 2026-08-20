@@ -3,7 +3,9 @@ import importlib
 import os
 import sys
 import types
+from datetime import date
 
+import pytest
 from yfinance.exceptions import YFRateLimitError
 
 
@@ -26,7 +28,9 @@ def _load_fetcher_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "vcp.fetchers.yf_session", fake_session)
 
     sys.modules.pop("vcp.fetchers.asian_kline_fetcher", None)
-    return importlib.import_module("vcp.fetchers.asian_kline_fetcher")
+    fetcher = importlib.import_module("vcp.fetchers.asian_kline_fetcher")
+    monkeypatch.setattr(fetcher, "_expected_market_latest_dates", lambda _tickers: {})
+    return fetcher
 
 
 def test_fetcher_imports_without_external_industry_dict(monkeypatch):
@@ -451,6 +455,133 @@ def test_tw_history_falls_back_to_yfinance_when_twse_empty(monkeypatch):
     assert rows[0]["close"] == 810.0
 
 
+def test_tw_history_falls_back_to_yfinance_when_twse_transport_fails(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_tw_history_twse",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("unexpected EOF from transport stream")),
+    )
+    monkeypatch.setattr(fetcher, "_fetch_tw_history_twse_system_curl", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_yfinance_history_rows",
+        lambda *args, **kwargs: [{"date": "2026-08-19", "close": 1200.0}],
+    )
+
+    rows, source = fetcher._fetch_market_history_rows(
+        "2330.TW",
+        object(),
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 20),
+        target_rows=260,
+    )
+
+    assert source == "yfinance_history"
+    assert rows == [{"date": "2026-08-19", "close": 1200.0}]
+
+
+def test_system_curl_official_transport_uses_strict_https_controls(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    commands = []
+
+    def _run(command, **kwargs):
+        commands.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout='{"stat": "OK"}', stderr="")
+
+    fake_subprocess = types.SimpleNamespace(
+        run=_run,
+        DEVNULL=object(),
+        CREATE_NO_WINDOW=0,
+        TimeoutExpired=TimeoutError,
+    )
+    monkeypatch.setattr(fetcher, "subprocess", fake_subprocess, raising=False)
+    monkeypatch.setattr(fetcher, "_SYSTEM_CURL_PATH", "C:\\Windows\\System32\\curl.exe", raising=False)
+    monkeypatch.setattr(fetcher.os.path, "isfile", lambda _path: True)
+
+    payload = fetcher._fetch_official_json_via_system_curl(
+        "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20260801&stockNo=2330",
+        allowed_hosts={"www.twse.com.tw"},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20,
+    )
+
+    assert payload == {"stat": "OK"}
+    command, kwargs = commands[-1]
+    assert command[0] == "C:\\Windows\\System32\\curl.exe"
+    assert "--disable" in command
+    assert command[command.index("--proto") + 1] == "=https"
+    assert "--tlsv1.2" in command
+    assert "--insecure" not in command
+    assert "-k" not in command
+    assert "--location" not in command
+    assert kwargs["shell"] is False
+
+    with pytest.raises(ValueError, match="not allowed"):
+        fetcher._fetch_official_json_via_system_curl(
+            "https://example.com/data.json",
+            allowed_hosts={"www.twse.com.tw"},
+            headers={},
+            timeout=20,
+        )
+
+
+@pytest.mark.parametrize(
+    ("ticker", "primary_name", "system_name", "source"),
+    [
+        ("2330.TW", "_fetch_tw_history_twse", "_fetch_tw_history_twse_system_curl", "twse_stock_day_system_curl"),
+        ("6274.TWO", "_fetch_tw_history_tpex", "_fetch_tw_history_tpex_system_curl", "tpex_trading_stock_system_curl"),
+    ],
+)
+def test_taiwan_history_uses_system_curl_before_yfinance_fallback(monkeypatch, ticker, primary_name, system_name, source):
+    fetcher = _load_fetcher_module(monkeypatch)
+    expected_rows = [{"date": "2026-08-19", "close": 700.0}]
+    monkeypatch.setattr(fetcher, primary_name, lambda *args, **kwargs: [])
+    monkeypatch.setattr(fetcher, system_name, lambda *args, **kwargs: expected_rows, raising=False)
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_yfinance_history_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Yahoo fallback should not run")),
+    )
+
+    rows, resolved_source = fetcher._fetch_market_history_rows(
+        ticker,
+        object(),
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 20),
+        target_rows=260,
+    )
+
+    assert rows == expected_rows
+    assert resolved_source == source
+
+
+def test_two_history_falls_back_to_yfinance_when_tpex_transport_fails(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_tw_history_tpex",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("unexpected EOF from transport stream")),
+    )
+    monkeypatch.setattr(fetcher, "_fetch_tw_history_tpex_system_curl", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_yfinance_history_rows",
+        lambda *args, **kwargs: [{"date": "2026-08-19", "close": 700.0}],
+    )
+
+    rows, source = fetcher._fetch_market_history_rows(
+        "6274.TWO",
+        object(),
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 20),
+        target_rows=260,
+    )
+
+    assert source == "yfinance_history"
+    assert rows == [{"date": "2026-08-19", "close": 700.0}]
+
+
 def test_jp_history_falls_back_to_yfinance_when_yahoo_japan_empty(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(fetcher, "_fetch_jp_history_yahoo_japan", lambda *args, **kwargs: [])
@@ -587,6 +718,122 @@ def test_sync_asian_kline_cache_reuses_previous_snapshot_before_write(monkeypatc
     assert sorted(row["ticker"] for row in written_rows) == ["2330.TW", "3711.TW"]
 
 
+def test_scoped_sync_preserves_other_markets_and_cached_history(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    cached_tsmc = {
+        "name": "TSMC",
+        "ticker": "2330.TW",
+        "market": "台湾",
+        "track": "晶圆代工",
+        "currency": "TWD",
+        "kline_count": 2,
+        "klines": [
+            {"date": "2026-08-14", "close": 2400},
+            {"date": "2026-08-15", "close": 2410},
+        ],
+    }
+    cached_japan = {
+        "name": "Tokyo Electron",
+        "ticker": "8035.T",
+        "market": "日本",
+        "track": "设备",
+        "currency": "JPY",
+        "kline_count": 1,
+        "klines": [{"date": "2026-08-19", "close": 30000}],
+    }
+    fresh_tsmc = {
+        "name": "TSMC",
+        "ticker": "2330.TW",
+        "market": "台湾",
+        "track": "晶圆代工",
+        "currency": "TWD",
+        "kline_count": 1,
+        "klines": [{"date": "2026-08-19", "close": 2350}],
+    }
+    monkeypatch.setattr(fetcher, "filter_asian_tickers", lambda _market=None: {"TSMC": "2330.TW"})
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **_kwargs: [fresh_tsmc])
+    monkeypatch.setattr(
+        fetcher,
+        "_load_cached_row_map",
+        lambda _output_dir=None: {"2330.TW": cached_tsmc, "8035.T": cached_japan},
+    )
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)),
+    )
+
+    success, _message, report = fetcher.sync_asian_kline_cache(market_filter="TW", output_dir="cache-dir")
+
+    assert success is True
+    assert report["written_count"] == 2
+    written = {row["ticker"]: row for row in saved_payloads[0][0]}
+    assert set(written) == {"2330.TW", "8035.T"}
+    assert [bar["date"] for bar in written["2330.TW"]["klines"]] == [
+        "2026-08-14",
+        "2026-08-15",
+        "2026-08-19",
+    ]
+
+
+def test_scoped_sync_refuses_to_create_partial_shared_snapshot(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "filter_asian_tickers", lambda _market=None: {"TSMC": "2330.TW"})
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda _output_dir=None: {})
+    fetch_calls = []
+    save_calls = []
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **kwargs: fetch_calls.append(kwargs) or [])
+    monkeypatch.setattr(fetcher, "save_kline_data", lambda *args, **kwargs: save_calls.append(args))
+
+    success, message, report = fetcher.sync_asian_kline_cache(market_filter="TW", output_dir="cache-dir")
+
+    assert success is False
+    assert "未执行覆盖写入" in message
+    assert report["cache_preserved"] is False
+    assert fetch_calls == []
+    assert save_calls == []
+
+
+def test_sync_does_not_write_when_budget_expires_during_rescue(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    now = [0.0]
+    cached_rows = {
+        "2330.TW": {
+            "name": "TSMC",
+            "ticker": "2330.TW",
+            "market": "台湾",
+            "kline_count": 1,
+            "klines": [{"date": "2026-08-19", "close": 2350}],
+        },
+        "3711.TW": {
+            "name": "ASE",
+            "ticker": "3711.TW",
+            "market": "台湾",
+            "kline_count": 1,
+            "klines": [{"date": "2026-08-19", "close": 100}],
+        },
+    }
+    monkeypatch.setattr(fetcher.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(fetcher, "filter_asian_tickers", lambda _market=None: {"TSMC": "2330.TW", "ASE": "3711.TW"})
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **_kwargs: [cached_rows["2330.TW"]])
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda _output_dir=None: cached_rows)
+
+    def _rescue(_name, _ticker, **_kwargs):
+        now[0] = 11.0
+        return cached_rows["3711.TW"]
+
+    monkeypatch.setattr(fetcher, "fetch_single_kline", _rescue)
+    saved_payloads = []
+    monkeypatch.setattr(fetcher, "save_kline_data", lambda *args, **kwargs: saved_payloads.append(args))
+
+    success, _message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir", time_budget_sec=10)
+
+    assert success is True
+    assert report["time_budget_exhausted"] is True
+    assert saved_payloads == []
+
+
 def test_sync_asian_kline_cache_rescues_stale_symbol_before_write(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
@@ -662,6 +909,148 @@ def test_sync_asian_kline_cache_rescues_stale_symbol_before_write(monkeypatch):
     assert len(saved_payloads) == 1
     written = {row["ticker"]: row for row in saved_payloads[0][0]}
     assert written["2454.TW"]["klines"][-1]["date"] == "2026-04-27"
+
+
+def test_sync_asian_kline_cache_rejects_market_wide_stale_snapshot(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    target = {"TSMC": "2330.TW", "TUC": "6274.TWO"}
+    stale_rows = [
+        {
+            "name": name,
+            "ticker": ticker,
+            "market": "台湾",
+            "track": "测试",
+            "currency": "TWD",
+            "kline_count": 1,
+            "klines": [{"date": "2026-08-14", "close": 100.0}],
+        }
+        for name, ticker in target.items()
+    ]
+    monkeypatch.setattr(fetcher, "filter_asian_tickers", lambda market_filter=None: target)
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **kwargs: stale_rows)
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda: object())
+    monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {row["ticker"]: row for row in stale_rows})
+    monkeypatch.setattr(
+        fetcher,
+        "_expected_market_latest_dates",
+        lambda tickers: {"TW": date(2026, 8, 19)},
+        raising=False,
+    )
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)),
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is False
+    assert report["stale"] == ["2330.TW", "6274.TWO"]
+    assert report["missing"] == ["2330.TW", "6274.TWO"]
+    assert "2330.TW" in message
+    assert saved_payloads == []
+
+
+def test_sync_rejects_market_wide_interior_tail_gap(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    target = {"TSMC": "2330.TW", "TUC": "6274.TWO"}
+    cached_rows = [
+        {
+            "name": name,
+            "ticker": ticker,
+            "market": "台湾",
+            "track": "测试",
+            "currency": "TWD",
+            "kline_count": 1,
+            "klines": [{"date": "2026-08-14", "close": 100.0}],
+        }
+        for name, ticker in target.items()
+    ]
+    fresh_rows = [
+        {
+            **row,
+            "kline_count": 2,
+            "klines": [
+                {"date": "2026-08-17", "close": 101.0},
+                {"date": "2026-08-19", "close": 102.0},
+            ],
+        }
+        for row in cached_rows
+    ]
+    monkeypatch.setattr(fetcher, "filter_asian_tickers", lambda _market=None: target)
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **_kwargs: fresh_rows)
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda _output_dir=None: {row["ticker"]: row for row in cached_rows})
+    monkeypatch.setattr(fetcher, "_expected_market_latest_dates", lambda _tickers: {"TW": date(2026, 8, 19)})
+    monkeypatch.setattr(
+        fetcher.MarketCalendar,
+        "is_trade_day",
+        lambda day, market: day in {date(2026, 8, 17), date(2026, 8, 18), date(2026, 8, 19)},
+    )
+    saved_payloads = []
+    monkeypatch.setattr(fetcher, "save_kline_data", lambda *args, **kwargs: saved_payloads.append(args))
+
+    success, _message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is False
+    assert report["market_wide_missing_sessions"] == ["TW:2026-08-18"]
+    assert saved_payloads == []
+
+
+def test_sync_asian_kline_cache_rejects_stale_existing_snapshot_when_fetch_is_empty(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    target = {"TSMC": "2330.TW"}
+    stale_row = {
+        "name": "TSMC",
+        "ticker": "2330.TW",
+        "market": "台湾",
+        "track": "测试",
+        "currency": "TWD",
+        "kline_count": 1,
+        "klines": [{"date": "2026-08-14", "close": 100.0}],
+    }
+    monkeypatch.setattr(fetcher, "filter_asian_tickers", lambda market_filter=None: target)
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **kwargs: [])
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {"2330.TW": stale_row})
+    monkeypatch.setattr(
+        fetcher,
+        "_expected_market_latest_dates",
+        lambda tickers: {"TW": date(2026, 8, 19)},
+        raising=False,
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is False
+    assert report["stale"] == ["2330.TW"]
+    assert report["missing"] == ["2330.TW"]
+    assert "未覆盖现有缓存" in message
+
+
+def test_time_budget_exhaustion_rejects_stale_existing_snapshot(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    stale_row = {
+        "name": "TSMC",
+        "ticker": "2330.TW",
+        "market": "台湾",
+        "track": "测试",
+        "currency": "TWD",
+        "kline_count": 1,
+        "klines": [{"date": "2026-08-14", "close": 100.0}],
+    }
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {"2330.TW": stale_row})
+
+    success, message, report = fetcher._time_budget_exhausted_result(
+        {"2330.TW"},
+        "cache-dir",
+        {"TW": date(2026, 8, 19)},
+    )
+
+    assert success is False
+    assert report["stale"] == ["2330.TW"]
+    assert report["missing"] == ["2330.TW"]
+    assert "before cache was complete" in message
 
 
 def test_sync_asian_kline_cache_rejects_stale_old_cache_reuse(monkeypatch):

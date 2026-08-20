@@ -311,11 +311,10 @@ def test_asian_runtime_expected_trade_dates_and_staleness(monkeypatch):
     }
     monkeypatch.setattr(runtime_module.MarketCalendar, "normalize_market", lambda value: value)
     monkeypatch.setattr(runtime_module.MarketCalendar, "now", lambda market: now_values[market])
-    monkeypatch.setattr(runtime_module.MarketCalendar, "is_trade_day", lambda date_value, market: True)
     monkeypatch.setattr(
         runtime_module.MarketCalendar,
-        "get_latest_trade_date",
-        lambda market, ref_date: ref_date if market == "TW" else None,
+        "get_latest_completed_trade_date",
+        lambda market: dt.date(2026, 7, 14) if market == "TW" else None,
     )
     expected = service._expected_latest_trade_dates()
     assert expected == {"TW": dt.date(2026, 7, 14)}
@@ -325,8 +324,11 @@ def test_asian_runtime_expected_trade_dates_and_staleness(monkeypatch):
     monkeypatch.setattr(runtime_module, "filter_asian_tickers", lambda: {})
     default_now = dt.datetime(2026, 7, 15, 18, 0)
     monkeypatch.setattr(runtime_module.MarketCalendar, "now", lambda _market: default_now)
-    monkeypatch.setattr(runtime_module.MarketCalendar, "is_trade_day", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(runtime_module.MarketCalendar, "get_latest_trade_date", lambda market, ref_date: ref_date)
+    monkeypatch.setattr(
+        runtime_module.MarketCalendar,
+        "get_latest_completed_trade_date",
+        lambda _market: dt.date(2026, 7, 15),
+    )
     assert set(service._expected_latest_trade_dates()) == {"TW", "HK", "T", "KS"}
 
     cn_now = dt.datetime(2026, 7, 13, 15, 0)

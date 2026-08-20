@@ -462,6 +462,8 @@ def _prepare_history_load(
     frame = result.frame
     if not result.has_data or frame is None:
         return _PreparedHistoryLoad(result, frame, None)
+    if result.market != "CN" and result.degraded:
+        return _PreparedHistoryLoad(result, frame, None)
     raise_if_cancelled(cancellation_token)
     frame, fetched_quote, quote_error = _merge_initial_quote(
         frame,
@@ -525,7 +527,7 @@ def _build_history_load_request(window, identity: KlineLoadIdentity) -> _History
     target_trade_date = (
         window._get_cn_target_trade_date()
         if market == "CN"
-        else MarketCalendar.get_latest_trade_date(market)
+        else MarketCalendar.get_latest_completed_trade_date(market)
     )
     asian_cache_path = ""
     cached_asian_quote = None
@@ -591,6 +593,9 @@ def _apply_history_load_result(result, *, window, request: _HistoryLoadRequest) 
         GLOBAL_ASIAN_RT_CACHE[identity.code] = result.fetched_asian_quote
     if result.quote_error is not None:
         _handle_asian_quote_error(window, identity.code, result.quote_error)
+    if request.market != "CN" and result.data_result.degraded:
+        _schedule_missing_asian_history(window)
+        return
     if result.prepared is not None and result.frame is not None:
         queue_prepared_render(window, result.prepared, loading=False)
         return

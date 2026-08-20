@@ -265,6 +265,13 @@ class _MarketCalendarState:
         }
     )
     _MARKET_QUOTE_REFRESH_STATUSES = frozenset(_MARKET_ACTIVE_STATUSES | {"午休"})
+    _MARKET_HISTORY_CLOSE_CUTOFF_HHMM = {
+        # 台湾官方历史接口盘后落库存在延迟，16:30 前仍以最近一个已可验收交易日为准。
+        "TW": 1630,
+        "HK": 1630,
+        "T": 1530,
+        "KS": 1600,
+    }
     _NAGER_COUNTRY = {
         "HK": "HK",
         "T": "JP",
@@ -773,6 +780,26 @@ class MarketCalendar(_MarketCalendarState):
                 return cursor
             cursor -= datetime.timedelta(days=1)
         return cursor
+
+    @classmethod
+    def get_latest_completed_trade_date(
+        cls,
+        market: str = "CN",
+        *,
+        allow_refresh: bool = True,
+    ) -> datetime.date:
+        """返回已可用于历史缓存验收的交易日，避免盘中或结算延迟误报缺失。"""
+        market = cls.normalize_market(market)
+        now = cls.now(market)
+        ref_date = now.date()
+        cutoff = cls._MARKET_HISTORY_CLOSE_CUTOFF_HHMM.get(market)
+        if (
+            cutoff is not None
+            and now.hour * 100 + now.minute < cutoff
+            and cls.is_trade_day(ref_date, market=market, allow_refresh=allow_refresh)
+        ):
+            ref_date -= datetime.timedelta(days=1)
+        return cls.get_latest_trade_date(market, ref_date=ref_date, allow_refresh=allow_refresh)
 
     @classmethod
     def get_recent_trade_dates(

@@ -350,8 +350,6 @@ class AsianMarketRuntimeService(QObject):
             log.error(f"[亚洲市场] 持久化 RT 缓存失败: {exc}")
 
     def _expected_latest_trade_dates(self) -> dict:
-        from datetime import timedelta
-
         markets = set()
         for code in self.target_codes():
             code = str(code or "").strip()
@@ -360,25 +358,9 @@ class AsianMarketRuntimeService(QObject):
         if not markets:
             markets = {"TW", "HK", "T", "KS"}
 
-        close_cutoff_hhmm = {
-            "TW": 1400,
-            "HK": 1630,
-            "T": 1530,
-            "KS": 1600,
-        }
         latest_expected = {}
         for market in markets:
-            now_market = MarketCalendar.now(market)
-            today_market = now_market.date()
-            hhmm = now_market.hour * 100 + now_market.minute
-            cutoff = close_cutoff_hhmm.get(market, 1630)
-
-            if MarketCalendar.is_trade_day(today_market, market=market) and hhmm < cutoff:
-                ref_date = today_market - timedelta(days=1)
-            else:
-                ref_date = today_market
-
-            trade_date = MarketCalendar.get_latest_trade_date(market=market, ref_date=ref_date)
+            trade_date = MarketCalendar.get_latest_completed_trade_date(market)
             if trade_date is not None:
                 latest_expected[market] = trade_date
         return latest_expected

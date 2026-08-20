@@ -80,7 +80,7 @@ class _CapturedOwnedTask:
         }
 
 
-def test_schedule_asian_backfill_success_error_and_stale():
+def test_schedule_asian_backfill_success_error_and_stale(monkeypatch):
     submission = _CapturedOwnedTask()
     statuses = []
     rendered = []
@@ -100,6 +100,7 @@ def test_schedule_asian_backfill_success_error_and_stale():
     def fetch(name, code, period):
         return {"klines": [{"date": "2026-07-15", "open": 1, "high": 2, "low": 1, "close": 2}]}
 
+    monkeypatch.setattr(asian.MarketCalendar, "get_latest_completed_trade_date", lambda _market: dt.date(2026, 7, 15))
     asian.schedule_asian_history_backfill(
         window,
         task_manager=object(),
@@ -107,12 +108,13 @@ def test_schedule_asian_backfill_success_error_and_stale():
         submit_owned_task=submission,
     )
     assert submission.name == "asian_history_backfill"
-    stock_payload, frame = submission.fn(None)
+    stock_payload, data_result = submission.fn(None)
+    frame = data_result.frame
     assert stock_payload["klines"]
     assert frame.iloc[-1]["close"] == 2
     assert submission.kwargs["timeout_sec"] == 120.0
     assert str(submission.kwargs["task_id"]) == "kline:asian-branch-window:1:asian-history"
-    submission.kwargs["on_success"]((stock_payload, frame))
+    submission.kwargs["on_success"]((stock_payload, data_result))
     assert rendered
     submission.kwargs["on_error"]("network")
     assert statuses[-1][1]["tone"] == "error"
@@ -126,6 +128,40 @@ def test_schedule_asian_backfill_success_error_and_stale():
     asian.schedule_asian_history_backfill(
         SimpleNamespace(_closing=True), task_manager=object(), fetch_single_kline=fetch
     )
+
+
+def test_asian_backfill_does_not_render_stale_history(monkeypatch):
+    controller = KlineLoadController(window_id="asian-stale-backfill-window")
+    identity = controller.begin("2330.TW")
+    statuses = []
+    rendered = []
+    window = SimpleNamespace(
+        _load_controller=controller,
+        vcp_data={},
+        _refresh_header_context=lambda: None,
+        _set_status_message=lambda message, **kwargs: statuses.append((message, kwargs)),
+        _render_chart=lambda frame, **kwargs: rendered.append(frame),
+    )
+    monkeypatch.setattr(asian.MarketCalendar, "get_latest_completed_trade_date", lambda _market: dt.date(2026, 8, 19))
+    result = asian._load_asian_backfill(
+        None,
+        request_name="TSMC",
+        request_code="2330.TW",
+        context=SimpleNamespace(code="2330.TW"),
+        fetch_single_kline=lambda *_args, **_kwargs: {
+            "klines": [{"date": "2026-08-14", "open": 1, "high": 2, "low": 1, "close": 2}]
+        },
+    )
+
+    asian._apply_asian_backfill_result(
+        result,
+        window=window,
+        request_code="2330.TW",
+        request_generation=identity.generation,
+    )
+
+    assert rendered == []
+    assert "source_gap" in statuses[-1][0]
 
 
 def test_build_asian_rt_df_and_coerce_trade_date():

@@ -11,6 +11,11 @@ import pytest
 from vcp.fetchers import asian_kline_fetcher as fetcher
 
 
+@pytest.fixture(autouse=True)
+def _freeze_sync_expected_dates(monkeypatch):
+    monkeypatch.setattr(fetcher, "_expected_market_latest_dates", lambda _tickers: {})
+
+
 class _Response:
     def __init__(self, *, payload=None, text=""):
         self.payload = payload
@@ -574,7 +579,7 @@ def test_sync_rescue_rate_known_stale_deadline_and_cache_load_failure(monkeypatc
         fetcher, "_time_budget_exhausted_result", lambda *_args: (False, "exhausted", {"time_budget_exhausted": True})
     )
     result = fetcher.sync_asian_kline_cache(output_dir="cache", cancellation_checkpoint=lambda: None)
-    assert result[2]["missing"] == ["B.T", "C.T"]
+    assert result[2]["time_budget_exhausted"] is True
 
     monkeypatch.setattr(fetcher, "_deadline_exceeded", lambda _deadline, _checkpoint=None: True)
     result = fetcher.sync_asian_kline_cache(output_dir="cache", cancellation_checkpoint=lambda: None)

@@ -125,6 +125,7 @@ def test_asian_history_backfill_is_latest_only_and_ignores_stale_callbacks(monke
         }
 
     monkeypatch.setattr(runtime, "task_manager", runner)
+    monkeypatch.setattr(asian.MarketCalendar, "get_latest_completed_trade_date", lambda _market: dt.date(2026, 7, 15))
 
     asian.schedule_asian_history_backfill(
         window,
@@ -203,8 +204,8 @@ def test_kline_asian_cache_file_is_read_and_prepared_inside_background_task(monk
     )
     monkeypatch.setattr(
         runtime.MarketCalendar,
-        "get_latest_trade_date",
-        classmethod(lambda cls, market="CN", ref_date=None: dt.date(2026, 7, 10)),
+        "get_latest_completed_trade_date",
+        classmethod(lambda cls, market="CN": dt.date(2026, 7, 10)),
     )
 
     controller = KlineLoadController(window_id="async-cache-window")

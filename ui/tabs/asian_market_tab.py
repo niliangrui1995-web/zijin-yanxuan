@@ -1099,8 +1099,6 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
 
     def _get_expected_latest_trade_dates(self):
         try:
-            from datetime import timedelta
-
             from app.services.ui_market_calendar_service import MarketCalendar
 
             markets = set()
@@ -1111,26 +1109,9 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
             if not markets:
                 markets = {"TW", "HK", "T", "KS"}
 
-            close_cutoff_hhmm = {
-                "TW": 1400,
-                "HK": 1630,
-                "T": 1530,
-                "KS": 1600,
-            }
-
             latest_expected = {}
             for mkt in markets:
-                now_mkt = MarketCalendar.now(mkt)
-                today_mkt = now_mkt.date()
-                hhmm = now_mkt.hour * 100 + now_mkt.minute
-                cutoff = close_cutoff_hhmm.get(mkt, 1630)
-
-                if MarketCalendar.is_trade_day(today_mkt, market=mkt) and hhmm < cutoff:
-                    ref_date = today_mkt - timedelta(days=1)
-                else:
-                    ref_date = today_mkt
-
-                trade_date = MarketCalendar.get_latest_trade_date(market=mkt, ref_date=ref_date)
+                trade_date = MarketCalendar.get_latest_completed_trade_date(mkt)
                 if trade_date is not None:
                     latest_expected[mkt] = trade_date
             return latest_expected

@@ -115,7 +115,13 @@ class KlineDataService:
         market = MarketCalendar.infer_market(context.code)
         raise_if_cancelled(cancellation_token)
         if market in _ASIAN_MARKETS:
-            return self._load_asian(context, market, asian_cache_path, cancellation_token)
+            return self._load_asian(
+                context,
+                market,
+                asian_cache_path,
+                _date_value(target_trade_date),
+                cancellation_token,
+            )
         return self._load_cn(
             context,
             market,
@@ -124,7 +130,7 @@ class KlineDataService:
             cancellation_token,
         )
 
-    def _load_asian(self, context, market, cache_path, cancellation_token) -> KlineDataResult:
+    def _load_asian(self, context, market, cache_path, target_date, cancellation_token) -> KlineDataResult:
         stock = invoke_with_cancellation(
             self._asian_stock_loader,
             cancellation_token,
@@ -134,15 +140,17 @@ class KlineDataService:
         klines = stock.get("klines") if isinstance(stock, dict) else None
         frame = _as_history_frame(klines, cancellation_token)
         raise_if_cancelled(cancellation_token)
-        reason = "" if frame is not None else "asian_history_unavailable"
+        latest_trade_date = _latest_trade_date(frame)
+        stale = target_date is not None and (latest_trade_date or dt.date.min) < target_date
+        reason = "asian_history_unavailable" if frame is None else "asian_history_stale" if stale else ""
         return KlineDataResult(
             code=context.code,
             market=market,
             data=frame,
             source="asian_json_cache",
-            degraded=frame is None,
+            degraded=frame is None or stale,
             degradation_reason=reason,
-            latest_trade_date=_latest_trade_date(frame),
+            latest_trade_date=latest_trade_date,
         )
 
     def _load_cn(self, context, market, target_date, refresh_if_stale, cancellation_token) -> KlineDataResult:

@@ -161,6 +161,31 @@ def test_tw_pre_and_post_close_sessions_are_refreshable(monkeypatch):
     assert MarketCalendar.is_market_active("TW") is True
     assert MarketCalendar.is_quote_refresh_time("TW") is True
 
+
+def test_tw_completed_history_date_respects_close_and_weekend(monkeypatch):
+    current = [datetime.datetime(2026, 8, 19, 16, 29)]
+    monkeypatch.setattr(MarketCalendar, "now", classmethod(lambda cls, market="CN": current[0]))
+    monkeypatch.setattr(
+        MarketCalendar,
+        "is_trade_day",
+        classmethod(lambda cls, day=None, market="CN", **_kwargs: day.weekday() < 5),
+    )
+
+    def _latest_trade_date(cls, market="CN", ref_date=None, **_kwargs):
+        while ref_date.weekday() >= 5:
+            ref_date -= datetime.timedelta(days=1)
+        return ref_date
+
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", classmethod(_latest_trade_date))
+
+    assert MarketCalendar.get_latest_completed_trade_date("TW") == datetime.date(2026, 8, 18)
+
+    current[0] = datetime.datetime(2026, 8, 19, 16, 30)
+    assert MarketCalendar.get_latest_completed_trade_date("TW") == datetime.date(2026, 8, 19)
+
+    current[0] = datetime.datetime(2026, 8, 16, 10, 0)
+    assert MarketCalendar.get_latest_completed_trade_date("TW") == datetime.date(2026, 8, 14)
+
     monkeypatch.setattr(
         MarketCalendar,
         "_get_market_now",

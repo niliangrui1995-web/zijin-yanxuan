@@ -60,20 +60,26 @@ def _load_asian_backfill(
     def loader(_path, _code):
         return stock_payload
 
+    market = MarketCalendar.infer_market(request_code)
     data_result = KlineDataService(None, asian_stock_loader=loader).load(
         context,
+        target_trade_date=MarketCalendar.get_latest_completed_trade_date(market),
         cancellation_token=cancellation_token,
     )
-    return stock_payload, data_result.frame
+    return stock_payload, data_result
 
 
 def _apply_asian_backfill_result(result, *, window, request_code: str, request_generation: int) -> None:
     with suppress(RuntimeError):
         if not _is_current_request(window, request_code, request_generation):
             return
-        stock_payload, frame = result or (None, None)
+        stock_payload, data_result = result or (None, None)
+        frame = getattr(data_result, "frame", None)
         if not stock_payload or frame is None or frame.empty:
             window._set_status_message("当前标的暂无历史日线数据", tone="warning")
+            return
+        if getattr(data_result, "degraded", False):
+            window._set_status_message("历史日线仍不完整（source_gap），未显示缺失 K 线", tone="warning")
             return
         merge_asian_context_payload(window.vcp_data, stock_payload, window._refresh_header_context)
         window._set_status_message(f"已回源载入 · {len(frame)} 条日线", tone="success")
@@ -111,7 +117,7 @@ def schedule_asian_history_backfill(
     request_generation = identity.generation
     context = current_kline_open_context(window)
 
-    window._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
+    window._set_status_message("本地缓存缺少或已过期，正在单独补拉历史日线...", tone="loading")
     if submit_owned_task is None:
         from ui.kline_window_runtime import _submit_owned_window_task
 

@@ -54,7 +54,7 @@ def test_asian_http_applies_deadline_to_real_request_and_stops_retry_after_cance
     assert 0 < observed_timeouts[0] <= 0.75
 
 
-def test_asian_history_backfill_forwards_token_into_fetcher():
+def test_asian_history_backfill_forwards_token_into_fetcher(monkeypatch):
     token = CancellationToken.with_timeout(30)
     seen = []
 
@@ -67,7 +67,12 @@ def test_asian_history_backfill_forwards_token_into_fetcher():
         }
 
     context = SimpleNamespace(code="2330.TW")
-    _payload, frame = kline_window_asian._load_asian_backfill(
+    monkeypatch.setattr(
+        kline_window_asian.MarketCalendar,
+        "get_latest_completed_trade_date",
+        lambda _market: dt.date(2026, 7, 15),
+    )
+    _payload, data_result = kline_window_asian._load_asian_backfill(
         token,
         request_name="台积电",
         request_code="2330.TW",
@@ -76,7 +81,7 @@ def test_asian_history_backfill_forwards_token_into_fetcher():
     )
 
     assert seen == [("台积电", "2330.TW", "1y", token)]
-    assert frame is not None and not frame.empty
+    assert data_result.frame is not None and not data_result.frame.empty
 
 
 def test_kline_initial_and_realtime_quotes_forward_token_to_provider():

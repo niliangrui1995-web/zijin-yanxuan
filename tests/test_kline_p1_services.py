@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 from contextlib import nullcontext
@@ -367,6 +368,27 @@ def test_kline_data_service_loads_asian_cache_with_degradation_metadata(tmp_path
     assert missing.data is None
     assert missing.degraded is True
     assert missing.degradation_reason == "asian_history_unavailable"
+
+
+def test_kline_data_service_marks_nonempty_asian_cache_stale(tmp_path):
+    def _loader(_path, _code, *, cancellation_token=None):
+        return {
+            "ticker": "2330.TW",
+            "klines": [
+                {"date": "2026-08-14", "open": 99, "high": 102, "low": 98, "close": 101, "volume": 80}
+            ],
+        }
+
+    result = KlineDataService(None, asian_stock_loader=_loader).load(
+        KlineOpenContext(code="2330.TW", name="台积电"),
+        asian_cache_path=str(tmp_path / "asian.json"),
+        target_trade_date=dt.date(2026, 8, 19),
+    )
+
+    assert result.data is not None
+    assert result.latest_trade_date == dt.date(2026, 8, 14)
+    assert result.degraded is True
+    assert result.degradation_reason == "asian_history_stale"
 
 
 def test_chart_history_refresh_propagates_token_and_skips_full_scan_indicators(monkeypatch):
