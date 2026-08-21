@@ -74,6 +74,35 @@ def _build_startup_scan_dates(last_sync_date: str, has_cached_records: bool) -> 
     return [trade_date for trade_date in recent_trade_dates if trade_date > last_sync_date]
 
 
+def _build_ai_chain_bse_backfill_dates(stock_codes: set[str]) -> list[str]:
+    if not stock_codes:
+        return []
+    from domains.market_calendar import MarketCalendar
+
+    return _normalize_trade_dates(MarketCalendar.get_recent_trade_dates(STARTUP_BACKFILL_TRADE_DAYS))
+
+
+def _pending_ai_chain_bse_backfill_codes(engine, cancellation_token=None) -> set[str]:
+    getter = getattr(engine, "get_pending_ai_chain_bse_backfill_codes", None)
+    if not callable(getter):
+        return set()
+    values = invoke_with_cancellation(getter, cancellation_token)
+    from domains.industry_chain import normalize_ai_chain_code
+
+    return {
+        code
+        for raw_code in values or set()
+        if (code := normalize_ai_chain_code(raw_code))
+    }
+
+
+def _mark_ai_chain_bse_backfill_completed(engine, stock_codes: set[str], cancellation_token=None) -> bool:
+    marker = getattr(engine, "mark_ai_chain_bse_backfill_completed", None)
+    if not callable(marker) or not stock_codes:
+        return False
+    return bool(invoke_with_cancellation(marker, cancellation_token, stock_codes))
+
+
 @dataclass(frozen=True)
 class _ActiveEarningsJob:
     mode: str
@@ -92,15 +121,48 @@ def _load_startup_cache(service, cancellation_token=None):
 def _load_startup_gap(service, cancellation_token=None):
     engine = service.engine
     service._last_gap_fill_scan_result = {}
-    missing_dates = service._build_startup_scan_dates(
+    regular_dates = service._build_startup_scan_dates(
         engine.last_sync_date,
         has_cached_records=bool(engine.local_records),
     )
+    bse_backfill_codes = _pending_ai_chain_bse_backfill_codes(engine, cancellation_token)
+    bse_backfill_dates = service._build_ai_chain_bse_backfill_dates(bse_backfill_codes)
+    bse_only_dates = [date for date in bse_backfill_dates if date not in regular_dates]
+    missing_dates = sorted(set(regular_dates) | set(bse_backfill_dates))
     if not missing_dates:
         log.info("[业绩调度] 启动窗口已完整，无需补抓")
-        return missing_dates, None, 0
-    combined = service._run_gap_fill_frames(missing_dates, cancellation_token=cancellation_token)
-    return missing_dates, combined, len(combined)
+        return missing_dates, None, 0, [], []
+
+    frames = []
+    scan_results = []
+    if regular_dates:
+        frames.append(service._run_gap_fill_frames(regular_dates, cancellation_token=cancellation_token))
+        if service._last_gap_fill_scan_result:
+            scan_results.append(service._last_gap_fill_scan_result)
+    if bse_only_dates:
+        frames.append(
+            service._run_gap_fill_frames(
+                bse_only_dates,
+                stock_codes=bse_backfill_codes,
+                cancellation_token=cancellation_token,
+            )
+        )
+        if service._last_gap_fill_scan_result:
+            scan_results.append(service._last_gap_fill_scan_result)
+
+    service._last_gap_fill_scan_result = _merge_degraded_scan_results(scan_results)
+    if bse_backfill_codes and bse_backfill_dates and not service._last_gap_fill_scan_result:
+        _mark_ai_chain_bse_backfill_completed(engine, bse_backfill_codes, cancellation_token)
+
+    nonempty_frames = [frame for frame in frames if frame is not None and not frame.empty]
+    combined = _pandas_module().concat(nonempty_frames, ignore_index=True) if nonempty_frames else _empty_frame()
+    return (
+        missing_dates,
+        combined,
+        len(combined),
+        sorted(bse_backfill_codes),
+        list(bse_backfill_dates),
+    )
 
 
 def _emit_startup_payloads(service, cached_payload, cached_rows_mode, combined) -> None:
@@ -161,7 +223,10 @@ def _run_startup_gap_fill(service, cancellation_token=None) -> dict:
     service._raise_if_cancelled(cancellation_token)
     cached_payload, cached_records, cached_rows_mode = _load_startup_cache(service, cancellation_token)
     service._raise_if_cancelled(cancellation_token)
-    missing_dates, combined, gap_records = _load_startup_gap(service, cancellation_token)
+    missing_dates, combined, gap_records, bse_backfill_codes, bse_backfill_dates = _load_startup_gap(
+        service,
+        cancellation_token,
+    )
     service._raise_if_cancelled(cancellation_token)
     _emit_startup_payloads(service, cached_payload, cached_rows_mode, combined)
     result = {
@@ -170,6 +235,8 @@ def _run_startup_gap_fill(service, cancellation_token=None) -> dict:
         "cached_records": int(cached_records),
         "gap_records": int(gap_records),
         "missing_dates": list(missing_dates or []),
+        "ai_chain_bse_backfill_codes": list(bse_backfill_codes),
+        "ai_chain_bse_backfill_dates": list(bse_backfill_dates),
     }
     scan_result = service._last_gap_fill_scan_result
     if scan_result:
@@ -186,10 +253,12 @@ class EarningsRefreshService(QObject):
     STARTUP_GAP_TIMEOUT_SECONDS = 10 * 60.0
     WARM_CACHE_TIMEOUT_SECONDS = 60.0
     ROUTINE_TIMEOUT_SECONDS = 10 * 60.0
+    AI_CHAIN_BSE_BACKFILL_TIMEOUT_SECONDS = 10 * 60.0
     SHUTDOWN_WAIT_TIMEOUT_MS = 1000
 
     _normalize_trade_dates = staticmethod(_normalize_trade_dates)
     _build_startup_scan_dates = staticmethod(_build_startup_scan_dates)
+    _build_ai_chain_bse_backfill_dates = staticmethod(_build_ai_chain_bse_backfill_dates)
     _raise_if_cancelled = staticmethod(shared_raise_if_cancelled)
 
     def __init__(
@@ -210,6 +279,12 @@ class EarningsRefreshService(QObject):
         self._shutdown = False
         self._last_gap_fill_scan_result: dict[str, object] = {}
         self.active_workers: set[_ActiveEarningsJob] = set()
+        self._ai_chain_event_connected = False
+        try:
+            event_bus.sig_ai_industry_chain_updated.connect(self._on_ai_industry_chain_updated)
+            self._ai_chain_event_connected = True
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[业绩调度] AI产业链更新事件订阅失败: {exc}")
 
     @property
     def engine(self) -> EarningsEngine:
@@ -274,18 +349,27 @@ class EarningsRefreshService(QObject):
             self._emit_failure_unless_cancelled("startup_gap_fill", exc, cancellation_token)
             raise
 
-    def _run_gap_fill_frames(self, date_list: list[str], *, cancellation_token=None) -> pd.DataFrame:
+    def _run_gap_fill_frames(
+        self,
+        date_list: list[str],
+        *,
+        stock_codes: set[str] | None = None,
+        cancellation_token=None,
+    ) -> pd.DataFrame:
         frames = []
         scan_results: list[Mapping[str, object]] = []
         for target_date in date_list or []:
             self._raise_if_cancelled(cancellation_token)
+            fetch_kwargs = {"target_publish_date": target_date}
+            if stock_codes is not None:
+                fetch_kwargs["stock_codes"] = set(stock_codes)
             if cancellation_token is None:
-                df = self.engine.fetch_daily_surprises(target_publish_date=target_date)
+                df = self.engine.fetch_daily_surprises(**fetch_kwargs)
             else:
                 df = invoke_with_cancellation(
                     self.engine.fetch_daily_surprises,
                     cancellation_token,
-                    target_publish_date=target_date,
+                    **fetch_kwargs,
                 )
             scan_result = _degraded_scan_result(self.engine)
             if scan_result:
@@ -298,19 +382,33 @@ class EarningsRefreshService(QObject):
             return _pandas_module().concat(frames, ignore_index=True)
         return _empty_frame()
 
-    def run_gap_fill(self, date_list: list[str], *, mode: str = "gap_fill", cancellation_token=None) -> dict:
+    def run_gap_fill(
+        self,
+        date_list: list[str],
+        *,
+        mode: str = "gap_fill",
+        stock_codes: set[str] | None = None,
+        completed_ai_chain_bse_codes: set[str] | None = None,
+        cancellation_token=None,
+    ) -> dict:
         def _run():
             df = self._run_gap_fill_frames(
                 list(date_list or []),
+                stock_codes=stock_codes,
                 cancellation_token=cancellation_token,
             )
             self._raise_if_cancelled(cancellation_token)
+            completed_codes = set(completed_ai_chain_bse_codes or set())
+            if completed_codes and not self._last_gap_fill_scan_result:
+                _mark_ai_chain_bse_backfill_completed(self.engine, completed_codes, cancellation_token)
             self._emit_success(df, mode)
             result = {
                 "job_key": "earnings_gap_fill",
                 "records": int(len(df)),
                 "dates": list(date_list or []),
             }
+            if completed_codes:
+                result["ai_chain_bse_backfill_codes"] = sorted(completed_codes)
             scan_result = self._last_gap_fill_scan_result
             if scan_result:
                 self._emit_scan_degraded(scan_result, mode)
@@ -322,6 +420,36 @@ class EarningsRefreshService(QObject):
         except Exception as exc:
             self._emit_failure_unless_cancelled(mode, exc, cancellation_token)
             raise
+
+    def trigger_ai_chain_bse_backfill(self) -> bool:
+        if self._shutdown or self.active_workers:
+            return False
+        stock_codes = _pending_ai_chain_bse_backfill_codes(self.engine)
+        date_list = self._build_ai_chain_bse_backfill_dates(stock_codes)
+        if not stock_codes or not date_list:
+            return False
+        task_id = task_registry.workspace("earnings_ai_chain_bse_backfill").task_id
+        if self._job_runner.is_active_task(task_id):
+            return False
+
+        self._task_lifecycle.run_background(
+            "ai-chain-bse-backfill",
+            lambda cancellation_token: self.run_gap_fill(
+                date_list,
+                mode="ai_chain_bse_backfill",
+                stock_codes=stock_codes,
+                completed_ai_chain_bse_codes=stock_codes,
+                cancellation_token=cancellation_token,
+            ),
+            on_error=lambda error_message: self._emit_failure("ai_chain_bse_backfill", error_message),
+            task_id=task_id,
+            timeout_sec=self.AI_CHAIN_BSE_BACKFILL_TIMEOUT_SECONDS,
+        )
+        return True
+
+    def _on_ai_industry_chain_updated(self) -> None:
+        if not self._shutdown:
+            self.trigger_ai_chain_bse_backfill()
 
     def run_routine_scan(self, *, reason: str = "scheduled", cancellation_token=None) -> dict:
         def _run():
@@ -458,9 +586,16 @@ class EarningsRefreshService(QObject):
     def stop_patrol(self) -> None:
         self._task_lifecycle.cancel("startup-gap-fill", reason="patrol_stopped")
         self._task_lifecycle.cancel("routine", reason="patrol_stopped")
+        self._task_lifecycle.cancel("ai-chain-bse-backfill", reason="patrol_stopped")
 
     def shutdown(self, *, timeout_ms: int | None = None) -> bool:
         self._shutdown = True
+        if self._ai_chain_event_connected:
+            try:
+                event_bus.sig_ai_industry_chain_updated.disconnect(self._on_ai_industry_chain_updated)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+            self._ai_chain_event_connected = False
         return self._task_lifecycle.shutdown(
             timeout_ms=self.SHUTDOWN_WAIT_TIMEOUT_MS if timeout_ms is None else timeout_ms,
         )

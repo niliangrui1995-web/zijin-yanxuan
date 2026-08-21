@@ -638,6 +638,24 @@ def test_pending_surprise_candidates_allows_ai_chain_920045_only():
     assert [candidate["股票代码"] for candidate in pending] == ["920045"]
 
 
+def test_new_ai_chain_bse_code_requires_one_bounded_backfill_then_is_marked(monkeypatch):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"920045", "920046"}
+    engine.ai_chain_bse_backfilled_codes = set()
+    saved_states = []
+    monkeypatch.setattr(
+        engine,
+        "_save_cache",
+        lambda: saved_states.append(set(engine.ai_chain_bse_backfilled_codes)),
+    )
+
+    assert engine.get_pending_ai_chain_bse_backfill_codes() == {"920045"}
+
+    assert engine.mark_ai_chain_bse_backfill_completed({"920045", "920046"}) is True
+    assert engine.get_pending_ai_chain_bse_backfill_codes() == set()
+    assert saved_states == [{"920045"}]
+
+
 def test_collect_quick_pool_supplements_enabled_ai_chain_bse_candidate(monkeypatch):
     engine = _build_engine()
     engine.stock_universe_provider = lambda: {"920045", "920046"}
@@ -1176,6 +1194,59 @@ def test_fetch_daily_surprises_filters_candidates_to_ai_industry_chain_pool(monk
     assert checked_codes == ["300308"]
     assert result["股票代码"].tolist() == ["300308"]
     assert "SHOCK_600000_20251231_财报" not in engine.seen_fingerprints
+
+
+def test_fetch_daily_surprises_scopes_historical_bse_backfill_without_rewinding_sync(monkeypatch):
+    engine = _build_engine()
+    engine.last_sync_date = "2026-08-22"
+    engine.stock_universe_provider = lambda: {"920045", "300308"}
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "920045",
+                "股票简称": "蘅东光",
+                "最新公告日期": "2026-08-21",
+                "净利润-净利润": 304643830.2,
+            },
+            {
+                "股票代码": "300308",
+                "股票简称": "中际旭创",
+                "最新公告日期": "2026-08-21",
+                "净利润-净利润": 1000000,
+            },
+        ]
+    )
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20260630"])
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+    monkeypatch.setattr(
+        engine,
+        "compute_single_quarter_qoq",
+        lambda *args, **kwargs: {
+            "单季净利润_新增": 1.0,
+            "单季净利润_上期": 1.0,
+            "环比增速_百分比": 167.62,
+            "同比增速_百分比": 163.45,
+            "error": None,
+        },
+    )
+
+    result = engine.fetch_daily_surprises(
+        target_publish_date="2026-08-21",
+        stock_codes={"920045"},
+    )
+
+    assert result["股票代码"].tolist() == ["920045"]
+    assert "SHOCK_920045_20260630_财报" in engine.seen_fingerprints
+    assert engine.last_sync_date == "2026-08-22"
 
 
 def test_get_cached_records_filters_to_ai_industry_chain_pool(monkeypatch):

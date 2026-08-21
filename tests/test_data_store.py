@@ -113,6 +113,7 @@ class TestDataStore:
                 last_sync_date="2026-04-06",
                 seen=["fp1", "fp2"],
                 records=[{"代码": "000001", "名称": "平安银行"}],
+                ai_chain_bse_backfilled_codes=["920045"],
                 last_scan_result={
                     "status": "degraded",
                     "retryable": True,
@@ -130,6 +131,7 @@ class TestDataStore:
             assert len(result["seen"]) == 2
             assert len(result["records"]) == 1
             assert result["records"][0]["代码"] == "000001"
+            assert result["ai_chain_bse_backfilled_codes"] == ["920045"]
             assert result["last_scan_result"]["status"] == "degraded"
             assert result["last_scan_result"]["source_gaps"][0]["symbol"] == "300738"
         finally:

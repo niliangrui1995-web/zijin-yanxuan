@@ -225,6 +225,7 @@ class DataStore:
         seen: list,
         records: list,
         *,
+        ai_chain_bse_backfilled_codes: list[str] | None = None,
         last_scan_result: dict | None = None,
     ) -> None:
         """持久化业绩异动引擎的全部状态"""
@@ -233,6 +234,8 @@ class DataStore:
             "seen": seen,
             "records": records,
         }
+        if isinstance(ai_chain_bse_backfilled_codes, list):
+            payload["ai_chain_bse_backfilled_codes"] = list(ai_chain_bse_backfilled_codes)
         if isinstance(last_scan_result, dict):
             payload["last_scan_result"] = dict(last_scan_result)
         self.save_json(

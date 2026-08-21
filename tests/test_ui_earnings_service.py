@@ -6,6 +6,7 @@ import pytest
 
 from app.services import ui_earnings_service
 from app.services.ui_earnings_service import EarningsRefreshService, EarningsScheduler
+from domains.market_calendar import MarketCalendar
 
 
 class _FakeEarningsEngine:
@@ -133,6 +134,188 @@ def test_earnings_refresh_startup_gap_fill_emits_cached_then_gap_rows(monkeypatc
     assert engine.fetch_calls == ["2026-04-15", "2026-04-16"]
     assert emitted == [(1, "warm_cache"), (2, "gap_fill")]
     assert service.active_workers == set()
+
+
+def test_earnings_refresh_targeted_bse_gap_fill_marks_code_after_clean_scan(qt_application):
+    class BseBackfillEngine(_FakeEarningsEngine):
+        def __init__(self):
+            super().__init__(daily=pd.DataFrame([{"code": "920045"}]))
+            self.completed_codes = []
+
+        def fetch_daily_surprises(self, *, target_publish_date=None, stock_codes=None):
+            self.fetch_calls.append((target_publish_date, set(stock_codes or set())))
+            return self.daily.assign(target_publish_date=target_publish_date)
+
+        def mark_ai_chain_bse_backfill_completed(self, stock_codes):
+            self.completed_codes.append(set(stock_codes))
+            return True
+
+    engine = BseBackfillEngine()
+    service = EarningsRefreshService(engine=engine, job_runner=_FakeJobRunner())
+
+    result = service.run_gap_fill(
+        ["2026-08-21"],
+        mode="bse_manual_backfill",
+        stock_codes={"920045"},
+        completed_ai_chain_bse_codes={"920045"},
+    )
+
+    assert result["dates"] == ["2026-08-21"]
+    assert engine.fetch_calls == [("2026-08-21", {"920045"})]
+    assert engine.completed_codes == [{"920045"}]
+
+
+def test_earnings_refresh_startup_backfills_new_bse_code_in_bounded_window(monkeypatch, qt_application):
+    class BseBackfillEngine(_FakeEarningsEngine):
+        def __init__(self):
+            super().__init__(daily=pd.DataFrame([{"code": "920045"}]))
+            self.completed_codes = []
+
+        def get_pending_ai_chain_bse_backfill_codes(self):
+            return set() if self.completed_codes else {"920045"}
+
+        def fetch_daily_surprises(self, *, target_publish_date=None, stock_codes=None):
+            self.fetch_calls.append((target_publish_date, set(stock_codes or set())))
+            return self.daily.assign(target_publish_date=target_publish_date)
+
+        def mark_ai_chain_bse_backfill_completed(self, stock_codes):
+            self.completed_codes.append(set(stock_codes))
+            return True
+
+    monkeypatch.setattr(
+        EarningsScheduler,
+        "_build_startup_scan_dates",
+        staticmethod(lambda last_sync_date, has_cached_records: []),
+    )
+    requested_window_sizes = []
+
+    def _recent_trade_dates(_cls, n=20, ref_date=None):
+        requested_window_sizes.append(n)
+        return ["20260821", "20260820"]
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_recent_trade_dates",
+        classmethod(_recent_trade_dates),
+    )
+    engine = BseBackfillEngine()
+    service = EarningsRefreshService(engine=engine, job_runner=_FakeJobRunner())
+
+    result = service.run_startup_gap_fill()
+
+    assert result["missing_dates"] == ["2026-08-20", "2026-08-21"]
+    assert result["ai_chain_bse_backfill_codes"] == ["920045"]
+    assert result["ai_chain_bse_backfill_dates"] == ["2026-08-20", "2026-08-21"]
+    assert engine.fetch_calls == [
+        ("2026-08-20", {"920045"}),
+        ("2026-08-21", {"920045"}),
+    ]
+    assert engine.completed_codes == [{"920045"}]
+    assert requested_window_sizes == [10]
+
+    repeat_result = service.run_startup_gap_fill()
+
+    assert repeat_result["missing_dates"] == []
+    assert engine.fetch_calls == [
+        ("2026-08-20", {"920045"}),
+        ("2026-08-21", {"920045"}),
+    ]
+
+
+def test_earnings_refresh_ai_chain_update_retries_bse_backfill_after_degraded_scan(monkeypatch, qt_application):
+    class DegradedBseBackfillEngine(_FakeEarningsEngine):
+        def __init__(self):
+            super().__init__(daily=pd.DataFrame())
+            self.completed_codes = []
+            self.last_scan_result = {}
+
+        def get_pending_ai_chain_bse_backfill_codes(self):
+            return set() if self.completed_codes else {"920045"}
+
+        def fetch_daily_surprises(self, *, target_publish_date=None, stock_codes=None):
+            self.fetch_calls.append((target_publish_date, set(stock_codes or set())))
+            self.last_scan_result = {
+                "status": "degraded",
+                "retryable": True,
+                "error": "同花顺历史底稿数据源缺口",
+            }
+            return self.daily
+
+        def mark_ai_chain_bse_backfill_completed(self, stock_codes):
+            self.completed_codes.append(set(stock_codes))
+            return True
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_recent_trade_dates",
+        classmethod(lambda cls, n=20, ref_date=None: ["20260821"]),
+    )
+    engine = DegradedBseBackfillEngine()
+    service = EarningsRefreshService(engine=engine, job_runner=_FakeJobRunner())
+
+    assert service.trigger_ai_chain_bse_backfill() is True
+    assert engine.completed_codes == []
+    assert engine.fetch_calls == [("2026-08-21", {"920045"})]
+
+    assert service.trigger_ai_chain_bse_backfill() is True
+    assert engine.fetch_calls == [
+        ("2026-08-21", {"920045"}),
+        ("2026-08-21", {"920045"}),
+    ]
+
+
+def test_earnings_refresh_ai_chain_event_runs_new_bse_backfill_once(monkeypatch, qt_application):
+    class EventSignal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+        def disconnect(self, callback):
+            self.callbacks.remove(callback)
+
+        def emit(self):
+            for callback in list(self.callbacks):
+                callback()
+
+    class EventBus:
+        sig_ai_industry_chain_updated = EventSignal()
+
+    class BseBackfillEngine(_FakeEarningsEngine):
+        def __init__(self):
+            super().__init__(daily=pd.DataFrame([{"code": "920045"}]))
+            self.completed_codes = []
+
+        def get_pending_ai_chain_bse_backfill_codes(self):
+            return set() if self.completed_codes else {"920045"}
+
+        def fetch_daily_surprises(self, *, target_publish_date=None, stock_codes=None):
+            self.fetch_calls.append((target_publish_date, set(stock_codes or set())))
+            return self.daily.assign(target_publish_date=target_publish_date)
+
+        def mark_ai_chain_bse_backfill_completed(self, stock_codes):
+            self.completed_codes.append(set(stock_codes))
+            return True
+
+    event_bus = EventBus()
+    monkeypatch.setattr(ui_earnings_service, "event_bus", event_bus)
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_recent_trade_dates",
+        classmethod(lambda cls, n=20, ref_date=None: ["20260821"]),
+    )
+    engine = BseBackfillEngine()
+    service = EarningsRefreshService(engine=engine, job_runner=_FakeJobRunner())
+
+    event_bus.sig_ai_industry_chain_updated.emit()
+    event_bus.sig_ai_industry_chain_updated.emit()
+
+    assert engine.fetch_calls == [("2026-08-21", {"920045"})]
+    assert engine.completed_codes == [{"920045"}]
+
+    service.shutdown()
+    assert event_bus.sig_ai_industry_chain_updated.callbacks == []
 
 
 def test_earnings_refresh_gap_fill_failure_emits_failure_and_clears_active(qt_application):

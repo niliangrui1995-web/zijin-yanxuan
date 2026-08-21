@@ -981,7 +981,7 @@ def _process_pending_candidates_pipeline(engine, candidates, cancellation_token=
     return valid_records, bool(valid_records), source_gaps
 
 
-def _prepare_daily_scan(engine, target_date, cancellation_token=None):
+def _prepare_daily_scan(engine, target_date, cancellation_token=None, stock_codes: set[str] | None = None):
     report_dates = current_active_report_dates()
     candidates, critical, degradations = engine._collect_daily_surprise_candidates(
         report_dates,
@@ -990,6 +990,13 @@ def _prepare_daily_scan(engine, target_date, cancellation_token=None):
     )
     candidates.sort(key=lambda item: not item["is_koufei"])
     universe_codes = engine._resolve_stock_universe_codes(cancellation_token=cancellation_token)
+    if stock_codes is not None:
+        requested_codes = {
+            code
+            for raw_code in stock_codes
+            if (code := normalize_ai_chain_code(raw_code))
+        }
+        universe_codes = requested_codes if universe_codes is None else universe_codes & requested_codes
     pending = engine._pending_surprise_candidates(
         candidates,
         universe_codes,
@@ -1061,13 +1068,23 @@ def _finish_daily_scan_state(engine, target_date, started_at, valid_records, cri
     }
 
 
-def _fetch_daily_surprises_pipeline(engine, target_publish_date=None, cancellation_token=None):
+def _fetch_daily_surprises_pipeline(
+    engine,
+    target_publish_date=None,
+    cancellation_token=None,
+    stock_codes: set[str] | None = None,
+):
     _raise_if_cancelled(cancellation_token)
     target_date = target_publish_date or MarketCalendar.today("CN").strftime("%Y-%m-%d")
     started_at = MarketCalendar.now("CN").isoformat(timespec="seconds")
     engine.last_scan_result = {"status": "running", "target_publish_date": target_date, "started_at": started_at}
     logger.info(f"[业绩引擎] 扫描目标日期: {target_date}")
-    pending, critical, degradations = _prepare_daily_scan(engine, target_date, cancellation_token)
+    pending, critical, degradations = _prepare_daily_scan(
+        engine,
+        target_date,
+        cancellation_token,
+        stock_codes=stock_codes,
+    )
     valid_records, new_found, source_gaps = engine._process_pending_surprise_candidates(
         pending,
         cancellation_token=cancellation_token,
@@ -1099,6 +1116,7 @@ class EarningsEngine:
         self.local_records = []
         self.last_sync_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
         self.last_scan_result: dict[str, object] = {}
+        self.ai_chain_bse_backfilled_codes: set[str] = set()
         self._quick_report_profit_cache = {}
         self._load_cache()
 
@@ -1253,6 +1271,7 @@ class EarningsEngine:
                     data.get("last_sync_date", ""),
                     data.get("seen", []),
                     data.get("records", []),
+                    ai_chain_bse_backfilled_codes=data.get("ai_chain_bse_backfilled_codes", []),
                     last_scan_result=data.get("last_scan_result", {}),
                 )
                 # 旧文件重命名为 .migrated 保留 30 天后由 DataStore 自动清理
@@ -1270,6 +1289,13 @@ class EarningsEngine:
             self.seen_fingerprints = set(data.get("seen", []))
             raw_last_scan_result = data.get("last_scan_result")
             self.last_scan_result = dict(raw_last_scan_result) if isinstance(raw_last_scan_result, Mapping) else {}
+            raw_backfilled_codes = data.get("ai_chain_bse_backfilled_codes", [])
+            if isinstance(raw_backfilled_codes, (list, tuple, set)):
+                self.ai_chain_bse_backfilled_codes = {
+                    code
+                    for raw_code in raw_backfilled_codes
+                    if (code := normalize_ai_chain_code(raw_code)) in AI_CHAIN_BSE_EARNINGS_ENABLED_CODES
+                }
             all_records = data.get("records", [])
 
             # 清理过期数据保障性能（只保留距离今天内 N 天的数据）
@@ -1316,6 +1342,7 @@ class EarningsEngine:
                 self.last_sync_date,
                 list(self.seen_fingerprints),
                 self.local_records,
+                ai_chain_bse_backfilled_codes=sorted(self.ai_chain_bse_backfilled_codes),
                 last_scan_result=getattr(self, "last_scan_result", {}),
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
@@ -1395,6 +1422,41 @@ class EarningsEngine:
         if universe_codes is None:
             return set()
         return set(AI_CHAIN_BSE_EARNINGS_ENABLED_CODES & universe_codes)
+
+    def get_pending_ai_chain_bse_backfill_codes(self, *, cancellation_token=None) -> set[str]:
+        """Return newly eligible AI-chain BSE codes that need one bounded historical scan."""
+        enabled_codes = self._enabled_ai_chain_bse_quick_report_codes(cancellation_token=cancellation_token)
+        persisted_codes = {
+            code
+            for raw_code in getattr(self, "ai_chain_bse_backfilled_codes", set())
+            if (code := normalize_ai_chain_code(raw_code)) in AI_CHAIN_BSE_EARNINGS_ENABLED_CODES
+        }
+        active_completed_codes = persisted_codes & enabled_codes
+        if active_completed_codes != persisted_codes:
+            self.ai_chain_bse_backfilled_codes = active_completed_codes
+            self._save_cache()
+        return enabled_codes - active_completed_codes
+
+    def mark_ai_chain_bse_backfill_completed(self, stock_codes, *, cancellation_token=None) -> bool:
+        """Persist successful bounded-backfill completion for currently eligible BSE codes."""
+        _raise_if_cancelled(cancellation_token)
+        enabled_codes = self._enabled_ai_chain_bse_quick_report_codes(cancellation_token=cancellation_token)
+        existing_codes = {
+            code
+            for raw_code in getattr(self, "ai_chain_bse_backfilled_codes", set())
+            if (code := normalize_ai_chain_code(raw_code)) in enabled_codes
+        }
+        completed_codes = {
+            code
+            for raw_code in stock_codes or set()
+            if (code := normalize_ai_chain_code(raw_code)) in enabled_codes
+        }
+        updated_codes = existing_codes | completed_codes
+        if updated_codes == existing_codes:
+            return False
+        self.ai_chain_bse_backfilled_codes = updated_codes
+        self._save_cache()
+        return True
 
     @staticmethod
     def _record_stock_code(record: dict) -> str:
@@ -1709,11 +1771,18 @@ class EarningsEngine:
             cancellation_token,
         )
 
-    def fetch_daily_surprises(self, target_publish_date: str = None, *, cancellation_token=None) -> pd.DataFrame:
+    def fetch_daily_surprises(
+        self,
+        target_publish_date: str = None,
+        *,
+        cancellation_token=None,
+        stock_codes: set[str] | None = None,
+    ) -> pd.DataFrame:
         return _fetch_daily_surprises_pipeline(
             self,
             target_publish_date,
             cancellation_token,
+            stock_codes=stock_codes,
         )
 
     def compute_single_quarter_qoq(
