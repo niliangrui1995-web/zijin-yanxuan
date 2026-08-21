@@ -1431,6 +1431,31 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self._a_share_name_map = normalized_map
         return self._a_share_name_map
 
+    def _resolve_missing_a_share_name(self, code: str) -> str:
+        provider = self.data_provider
+        ensure_name_map = getattr(provider, "ensure_code_name_map", None)
+        if not callable(ensure_name_map):
+            return ""
+
+        try:
+            refreshed_map = ensure_name_map([code], refresh_missing=True) or {}
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[关注池] 补齐股票名称失败({code}): {exc}")
+            return ""
+
+        for raw_code, raw_name in dict(refreshed_map).items():
+            refreshed_code = self._normalize_quote_code(raw_code).zfill(6)
+            if refreshed_code != code:
+                continue
+            name = str(raw_name or "").strip()
+            if not name:
+                return ""
+            current_map = dict(getattr(self, "_a_share_name_map", {}) or {})
+            current_map[code] = name
+            self._a_share_name_map = current_map
+            return name
+        return ""
+
     def _add_custom_stock(self):
         raw_code = self.add_stock_input.text() if hasattr(self, "add_stock_input") else ""
         code = self._normalize_quote_code(raw_code).zfill(6)
@@ -1443,6 +1468,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
         name_map = self._get_a_share_name_map()
         name = str(name_map.get(code, "") or "").strip()
+        if not name:
+            name = self._resolve_missing_a_share_name(code)
         if not name:
             show_toast(f"{code} 不在当前 A 股股票列表中", "warning", self)
             if hasattr(self, "add_stock_input"):

@@ -91,6 +91,11 @@ pd = _LazyModule("pandas")
 
 EARNINGS_QOQ_MIN_PCT = 30.0
 EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS = 60.0
+AI_CHAIN_BSE_EARNINGS_ENABLED_CODES = frozenset({"920045"})
+_EASTMONEY_BSE_QUICK_REPORT_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+_EASTMONEY_BSE_QUICK_REPORT_ALLOWED_HOSTS = frozenset({"datacenter.eastmoney.com"})
+_EASTMONEY_BSE_QUICK_REPORT_TIMEOUT = (5, 15)
+_BSE_QUICK_REPORT_COLUMNS = ["股票代码", "股票简称", "公告日期", "净利润-净利润"]
 
 _POOL_CACHE = {}
 _THS_FINANCIAL_BENEFIT_CACHE = {}
@@ -115,6 +120,7 @@ _AKSHARE_FETCH_ERRORS = (
     ValueError,
     IndexError,
 )
+_BSE_QUICK_REPORT_FETCH_ERRORS = _AKSHARE_FETCH_ERRORS + (json.JSONDecodeError, requests.RequestException)
 _EARNINGS_CACHE_ERRORS = (
     AttributeError,
     ImportError,
@@ -204,6 +210,101 @@ def _parse_amount(value):
         return float(digits) * multiplier
     except (ValueError, TypeError):
         return np.nan
+
+
+def _fetch_enabled_ai_chain_bse_quick_report_rows(report_date: str, stock_codes: set[str]) -> pd.DataFrame:
+    """Fetch the allowlisted AI-chain BSE quick-report rows outside AkShare's BSE exclusion."""
+    enabled_codes = sorted(
+        {
+            normalize_ai_chain_code(code)
+            for code in stock_codes or set()
+            if normalize_ai_chain_code(code) in AI_CHAIN_BSE_EARNINGS_ENABLED_CODES
+        }
+    )
+    if not enabled_codes:
+        return pd.DataFrame(columns=_BSE_QUICK_REPORT_COLUMNS)
+
+    report_date_text = str(report_date or "").strip()
+    if len(report_date_text) != 8 or not report_date_text.isdigit():
+        raise ValueError(f"业绩快报报告期格式错误: {report_date!r}")
+    report_date_ymd = f"{report_date_text[:4]}-{report_date_text[4:6]}-{report_date_text[6:]}"
+
+    rows = []
+    for code in enabled_codes:
+        params = {
+            "sortColumns": "UPDATE_DATE,SECURITY_CODE",
+            "sortTypes": "-1,-1",
+            "pageSize": "10",
+            "pageNumber": "1",
+            "reportName": "RPT_FCI_PERFORMANCEE",
+            "columns": "ALL",
+            "filter": (
+                f'(SECURITY_CODE="{code}")(TRADE_MARKET_CODE="069001017")'
+                f"(REPORT_DATE='{report_date_ymd}')"
+            ),
+        }
+        response = requests_get_https(
+            _EASTMONEY_BSE_QUICK_REPORT_URL,
+            params=params,
+            timeout=_EASTMONEY_BSE_QUICK_REPORT_TIMEOUT,
+            allowed_hosts=_EASTMONEY_BSE_QUICK_REPORT_ALLOWED_HOSTS,
+        )
+        if int(getattr(response, "status_code", 0) or 0) != 200:
+            raise RuntimeError(f"东财北交所业绩快报 HTTP 状态异常: {getattr(response, 'status_code', None)}")
+        payload = response.json()
+        if (
+            isinstance(payload, Mapping)
+            and payload.get("success") is False
+            and str(payload.get("code") or "").strip() == "9201"
+        ):
+            continue
+        result = payload.get("result") if isinstance(payload, Mapping) else None
+        source_rows = result.get("data") if isinstance(result, Mapping) else None
+        if not isinstance(source_rows, list):
+            raise ValueError("东财北交所业绩快报返回结构异常")
+
+        for source_row in source_rows:
+            if not isinstance(source_row, Mapping):
+                continue
+            row_code = normalize_ai_chain_code(source_row.get("SECURITY_CODE"))
+            if row_code != code:
+                continue
+            if str(source_row.get("TRADE_MARKET_CODE") or "").strip() != "069001017":
+                continue
+            if str(source_row.get("REPORT_DATE") or "").strip()[:10] != report_date_ymd:
+                continue
+            rows.append(
+                {
+                    "股票代码": row_code,
+                    "股票简称": str(source_row.get("SECURITY_NAME_ABBR") or "").strip(),
+                    "公告日期": source_row.get("NOTICE_DATE") or source_row.get("UPDATE_DATE"),
+                    "净利润-净利润": source_row.get("PARENT_NETPROFIT"),
+                }
+            )
+
+    return pd.DataFrame(rows, columns=_BSE_QUICK_REPORT_COLUMNS)
+
+
+def _merge_quick_report_profit_rows(quick_profit_map: dict[str, float], df_quick_report: pd.DataFrame) -> None:
+    if (
+        df_quick_report.empty
+        or "股票代码" not in df_quick_report.columns
+        or "净利润-净利润" not in df_quick_report.columns
+    ):
+        return
+
+    df_work = df_quick_report.copy()
+    if "公告日期" in df_work.columns:
+        df_work["公告日期"] = pd.to_datetime(df_work["公告日期"], errors="coerce")
+        df_work = df_work.sort_values(by="公告日期", ascending=True, na_position="first")
+    for _, row in df_work.iterrows():
+        code = normalize_ai_chain_code(row.get("股票代码"))
+        if not code:
+            continue
+        profit = _parse_amount(row.get("净利润-净利润", np.nan))
+        if pd.notna(profit):
+            # 同一只股票若存在多次快报修订，保留最新一次公告的净利润。
+            quick_profit_map[code] = float(profit)
 
 
 def _select_profit_columns(columns, is_koufei: bool) -> list:
@@ -734,23 +835,42 @@ def _collect_formal_pool(engine, report_date, target_date, degraded, cancellatio
 
 
 def _collect_quick_pool(engine, report_date, target_date, cancellation_token=None):
+    rows = []
+    critical = False
     try:
-        rows = _call_engine_stage(
-            engine,
-            "_collect_report_candidates",
-            cancellation_token,
-            report_date,
-            target_date,
-            fetch_func=ak.stock_yjkb_em,
-            date_col="公告日期",
-            data_type="快报",
-            tone="快报速递",
+        rows.extend(
+            _call_engine_stage(
+                engine,
+                "_collect_report_candidates",
+                cancellation_token,
+                report_date,
+                target_date,
+                fetch_func=ak.stock_yjkb_em,
+                date_col="公告日期",
+                data_type="快报",
+                tone="快报速递",
+            )
         )
-        return rows, False
     except _AKSHARE_FETCH_ERRORS as exc:
         _raise_if_cancelled(cancellation_token)
         logger.error(f"[业绩引擎] 业绩快报({report_date})拉取失败: {exc}")
-        return [], True
+        critical = True
+
+    try:
+        rows.extend(
+            _call_engine_stage(
+                engine,
+                "_collect_enabled_ai_chain_bse_quick_report_candidates",
+                cancellation_token,
+                report_date,
+                target_date,
+            )
+        )
+    except _BSE_QUICK_REPORT_FETCH_ERRORS as exc:
+        _raise_if_cancelled(cancellation_token)
+        logger.error(f"[业绩引擎] 北交所业绩快报补充({report_date})拉取失败: {exc}")
+        critical = True
+    return rows, critical
 
 
 def _collect_daily_candidates_pipeline(engine, report_dates, target_date, cancellation_token=None):
@@ -1218,23 +1338,20 @@ class EarningsEngine:
             except _AKSHARE_FETCH_ERRORS as _e:
                 logger.debug(f"[业绩引擎] 快报回填抓取失败({report_date}): {_e}")
                 df_kb = pd.DataFrame()
-
-            if not df_kb.empty and "股票代码" in df_kb.columns and "净利润-净利润" in df_kb.columns:
-                df_work = df_kb.copy()
-                if "公告日期" in df_work.columns:
-                    df_work["公告日期"] = pd.to_datetime(df_work["公告日期"], errors="coerce")
-                    df_work = df_work.sort_values(by="公告日期", ascending=True, na_position="first")
-                for _, row in df_work.iterrows():
-                    code = str(row.get("股票代码", "")).zfill(6)
-                    if not code:
-                        continue
-                    profit = _parse_amount(row.get("净利润-净利润", np.nan))
-                    if pd.notna(profit):
-                        # 同一只股票若存在多次快报修订，保留最新一次公告的净利润。
-                        quick_profit_map[code] = float(profit)
+            _merge_quick_report_profit_rows(quick_profit_map, df_kb)
             cache[report_date] = quick_profit_map
 
-        return cache[report_date].get(str(target_code).zfill(6), np.nan)
+        normalized_target_code = normalize_ai_chain_code(target_code)
+        enabled_codes = self._enabled_ai_chain_bse_quick_report_codes()
+        if normalized_target_code in enabled_codes and normalized_target_code not in cache[report_date]:
+            try:
+                df_bse = _fetch_enabled_ai_chain_bse_quick_report_rows(report_date, {normalized_target_code})
+            except _BSE_QUICK_REPORT_FETCH_ERRORS as exc:
+                logger.debug(f"[业绩引擎] 北交所快报回填抓取失败({report_date}): {exc}")
+            else:
+                _merge_quick_report_profit_rows(cache[report_date], df_bse)
+
+        return cache[report_date].get(normalized_target_code, np.nan)
 
     def _inject_sectors(self, records: list, *, cancellation_token=None) -> list:
         _raise_if_cancelled(cancellation_token)
@@ -1272,6 +1389,12 @@ class EarningsEngine:
             if code:
                 codes.add(code)
         return codes
+
+    def _enabled_ai_chain_bse_quick_report_codes(self, *, cancellation_token=None) -> set[str]:
+        universe_codes = self._resolve_stock_universe_codes(cancellation_token=cancellation_token)
+        if universe_codes is None:
+            return set()
+        return set(AI_CHAIN_BSE_EARNINGS_ENABLED_CODES & universe_codes)
 
     @staticmethod
     def _record_stock_code(record: dict) -> str:
@@ -1466,6 +1589,44 @@ class EarningsEngine:
                 candidates.append(candidate)
         return candidates
 
+    def _collect_enabled_ai_chain_bse_quick_report_candidates(
+        self,
+        report_date: str,
+        target_publish_date: str,
+        *,
+        cancellation_token=None,
+    ) -> list[dict]:
+        _raise_if_cancelled(cancellation_token)
+        enabled_codes = self._enabled_ai_chain_bse_quick_report_codes(cancellation_token=cancellation_token)
+        if not enabled_codes:
+            return []
+
+        df_report = _fetch_enabled_ai_chain_bse_quick_report_rows(report_date, enabled_codes)
+        _raise_if_cancelled(cancellation_token)
+        if df_report.empty:
+            return []
+
+        df_target = self._filter_candidates_by_publish_date(
+            df_report,
+            "公告日期",
+            target_publish_date,
+            "快报",
+        )
+        candidates = []
+        for _, row in df_target.iterrows():
+            _raise_if_cancelled(cancellation_token)
+            candidate = self._build_report_candidate(
+                row,
+                report_date=report_date,
+                target_publish_date=target_publish_date,
+                data_type="快报",
+                date_col="公告日期",
+                tone="快报速递",
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        return candidates
+
     def _collect_daily_surprise_candidates(
         self,
         report_dates: list[str],
@@ -1491,7 +1652,13 @@ class EarningsEngine:
         for cand in candidates:
             _raise_if_cancelled(cancellation_token)
             code = cand["股票代码"]
-            if not (code.startswith("0") or code.startswith("3") or code.startswith("6")):
+            is_standard_a_share_code = code.startswith(("0", "3", "6"))
+            is_enabled_ai_chain_bse_code = (
+                stock_universe_codes is not None
+                and code in stock_universe_codes
+                and code in AI_CHAIN_BSE_EARNINGS_ENABLED_CODES
+            )
+            if not (is_standard_a_share_code or is_enabled_ai_chain_bse_code):
                 continue
             if stock_universe_codes is not None and code not in stock_universe_codes:
                 continue

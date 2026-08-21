@@ -66,6 +66,14 @@ def _offline_quotes(codes):
     }
 
 
+def test_quote_symbol_helpers_route_bse_code_to_bj_without_changing_shanghai_b_shares():
+    assert data_provider_quotes.to_eastmoney_secid("920045") == "0.920045"
+    assert data_provider_quotes.to_sina_symbol("920045") == "bj920045"
+    assert data_provider_quotes.to_tencent_symbol("920045") == "bj920045"
+    assert data_provider_quotes.to_eastmoney_secid("900001") == "1.900001"
+    assert data_provider_quotes.to_sina_symbol("900001") == "sh900001"
+
+
 def _make_sina_quote_fetcher(seen):
     def _fetch(batch, inferred_trade_date):
         seen.append(tuple(batch))

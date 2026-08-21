@@ -104,16 +104,19 @@ def register_eastmoney_success(provider) -> None:
 
 def to_eastmoney_secid(code: str) -> str:
     code = str(code).strip()
-    market = 1 if code.startswith(("6", "9")) else 0
+    if code.startswith("92"):
+        market = 0
+    else:
+        market = 1 if code.startswith(("6", "9")) else 0
     return f"{market}.{code}"
 
 
 def to_sina_symbol(code: str) -> str:
     code = str(code).strip()
-    if code.startswith(("5", "6", "9")):
-        prefix = "sh"
-    elif code.startswith(("4", "8")):
+    if code.startswith(("4", "8", "92")):
         prefix = "bj"
+    elif code.startswith(("5", "6", "9")):
+        prefix = "sh"
     else:
         prefix = "sz"
     return f"{prefix}{code}"

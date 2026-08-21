@@ -26,6 +26,7 @@ from core.logger import get_logger
 from core.observability import record_metric
 from domains.industry_chain.pool_service import normalize_ai_chain_code
 from domains.lhb.pool_service import (
+    AI_CHAIN_BSE_LHB_MISSING_RPS250_EXEMPT_CODES,
     POOL_WINDOW,
     build_full_foreign_display_from_tooltip,
     collect_qualifying_codes,
@@ -431,7 +432,7 @@ class LhbPoolManager:
         for code in qualifying_codes:
             rps_val = rps250_dict.get(code)
             if rps_val is None:
-                if disqualify_missing_rps:
+                if disqualify_missing_rps and code not in AI_CHAIN_BSE_LHB_MISSING_RPS250_EXEMPT_CODES:
                     disqualified_rps.add(code)
                 continue
             if rps_val < 85:
@@ -519,7 +520,7 @@ class LhbPoolManager:
 
         筛选逻辑：
         1. 遍历所有日期的所有记录
-        2. 剔除 ST 股、北交所股票（纯本地字符串判断）
+        2. 剔除 ST 股、未启用的北交所股票（纯本地字符串判断）
         3. 找出在任何一天同时满足 上榜净买额>0 AND 机构净买>=0 的股票代码
         4. 如果有 data_provider，剔除 K 线行数 < 250 的次新股
         5. 对符合条件的股票，提取最近一次上榜的详细数据

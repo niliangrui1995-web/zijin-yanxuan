@@ -273,11 +273,13 @@ def test_load_one_gbbq_code_covers_shortcuts_cache_success_and_fallbacks(tmp_pat
     )
 
 
-def test_market_code_and_day_paths_cover_shanghai_and_shenzhen():
+def test_market_code_and_day_paths_cover_shanghai_shenzhen_and_beijing():
     assert local.get_market_code("600000") == 1
     assert local.get_market_code("900001") == 1
     assert local.get_market_code("000001") == 0
+    assert local.get_market_code("920045") == 2
     assert local.tdx_day_path("D:\\HT\\vipdoc", "600000").endswith("sh600000.day")
+    assert local.tdx_day_path("D:\\HT\\vipdoc", "920045").endswith("bj920045.day")
     assert local.tdx_day_path(None, "000001").endswith("sz000001.day")
 
 

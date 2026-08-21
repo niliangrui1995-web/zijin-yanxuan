@@ -12,6 +12,7 @@ import pandas as pd
 
 from core.logger import get_logger
 from core.task_errors import UserFacingTaskError
+from domains.industry_chain.pool_service import normalize_ai_chain_code
 from infra.market_data.foreign_block_provider import fetch_block_trades, fetch_trade_calendar
 from infra.tasks import ProcessExecutionError, ProcessTimeoutError
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
@@ -105,6 +106,11 @@ def should_include_foreign_block_row(buyer, seller) -> bool:
     return any(keyword in buyer_text or keyword in seller_text for keyword in FOREIGN_KEYWORDS)
 
 
+def _display_security_code(value) -> str:
+    normalized = normalize_ai_chain_code(value)
+    return normalized or str(value).strip().zfill(6)
+
+
 def foreign_block_direction(buyer, seller) -> str:
     buyer_text = str(buyer) if pd.notna(buyer) else ""
     seller_text = str(seller) if pd.notna(seller) else ""
@@ -149,7 +155,7 @@ def build_foreign_block_trade_rows(records: list[dict]) -> tuple[list[dict], int
         seller = str(record.get("卖方营业部", ""))
         rows.append(
             {
-                "代码": str(record.get("证券代码", "")).zfill(6),
+                "代码": _display_security_code(record.get("证券代码", "")),
                 "名称": str(record.get("证券简称", "")),
                 "现价": "--",
                 "涨幅%": "--",
@@ -195,7 +201,7 @@ def _build_foreign_block_cache_row(record: pd.Series) -> dict:
     trade_price = _safe_float(record.get("成交价格", record.get("成交价", 0)))
     amount = _safe_float(record.get("成交金额", record.get("成交额", 0)))
     return {
-        "代码": str(record.get("证券代码", "")).zfill(6),
+        "代码": _display_security_code(record.get("证券代码", "")),
         "名称": str(record.get("证券简称", "")),
         "现价": "--",
         "涨幅%": "--",

@@ -175,6 +175,115 @@ def test_compute_pool_filters_to_ai_industry_chain_pool(monkeypatch):
     assert [row["代码"] for row in pool] == ["603738"]
 
 
+def test_compute_pool_allows_ai_chain_920045_but_keeps_other_bse_excluded(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    monkeypatch.setattr(
+        LhbPoolManager,
+        "_stock_universe_provider",
+        staticmethod(lambda: {"920045", "920046"}),
+    )
+    manager._data = {
+        "20260805": [
+            {
+                "代码": "920045",
+                "名称": "蘅东光",
+                "上榜日期": "20260805",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": 300,
+                "涨幅%": 5.0,
+            },
+            {
+                "代码": "920046",
+                "名称": "其他北交所股票",
+                "上榜日期": "20260805",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": 300,
+                "涨幅%": 5.0,
+            },
+        ]
+    }
+
+    pool = manager.compute_pool()
+
+    assert [row["代码"] for row in pool] == ["920045"]
+
+
+def test_compute_pool_keeps_ai_chain_920045_when_runtime_rps_is_eligible(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    monkeypatch.setattr(
+        LhbPoolManager,
+        "_stock_universe_provider",
+        staticmethod(lambda: {"920045"}),
+    )
+    manager._data = {
+        "20260805": [
+            {
+                "代码": "920045",
+                "名称": "蘅东光",
+                "上榜日期": "20260805",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": 300,
+                "涨幅%": 5.0,
+            }
+        ]
+    }
+
+    provider = _DummyProvider({"920045": _make_kline(20, list(range(1, 21)))})
+    engine = _DummyEngine({"rps250": {"920045": 90}})
+
+    pool = manager.compute_pool(data_provider=provider, engine=engine)
+
+    assert [row["代码"] for row in pool] == ["920045"]
+
+
+@pytest.mark.parametrize(
+    ("target_rps250", "expected_codes"),
+    [
+        ({}, ["920045"]),
+        ({"920045": None}, ["920045"]),
+        ({"920045": 84}, []),
+    ],
+    ids=["missing_rps_is_exempt", "none_rps_is_exempt", "below_threshold_is_not_exempt"],
+)
+def test_compute_pool_applies_920045_missing_rps_exception_only(monkeypatch, target_rps250, expected_codes):
+    manager = _build_manager(monkeypatch)
+    monkeypatch.setattr(
+        LhbPoolManager,
+        "_stock_universe_provider",
+        staticmethod(lambda: {"000001", "920045"}),
+    )
+    manager._data = {
+        "20260805": [
+            {
+                "代码": "920045",
+                "名称": "蘅东光",
+                "上榜日期": "20260805",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": 300,
+                "涨幅%": 5.0,
+            },
+            {
+                "代码": "000001",
+                "名称": "普通缺失RPS股",
+                "上榜日期": "20260805",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": 300,
+                "涨幅%": 5.0,
+            },
+        ]
+    }
+
+    complete_rps250 = {f"600{index:03d}": 90 for index in range(1000)}
+    complete_rps250.update(target_rps250)
+    provider = _DummyProvider(
+        {"920045": _make_kline(20, list(range(1, 21)))},
+        cache_data={code: range(250) for code in complete_rps250},
+    )
+    pool = manager.compute_pool(data_provider=provider, engine=_DummyEngine({"rps250": complete_rps250}))
+
+    assert [row["代码"] for row in pool] == expected_codes
+
+
 def test_compute_pool_prioritizes_buy_points_by_pct(monkeypatch):
     manager = _build_manager(monkeypatch)
     manager._data = {

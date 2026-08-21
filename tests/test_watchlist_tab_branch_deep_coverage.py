@@ -298,6 +298,7 @@ def test_name_map_and_add_custom_stock_all_outcomes(monkeypatch):
         add_stock_input=input_box,
         _normalize_quote_code=lambda code: str(code or ""),
         _get_a_share_name_map=lambda: {"000001": "One"},
+        _resolve_missing_a_share_name=lambda code: "",
         lbl_sp_status=SimpleNamespace(setText=lambda text: actions.append(text)),
         format_workspace_status=lambda *args, **kwargs: kwargs,
         model=SimpleNamespace(row_data=[]),

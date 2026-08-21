@@ -110,6 +110,46 @@ def test_fund_holdings_query_keeps_legacy_store_fallback():
     assert rows == [{"stock_code": "000001", "quarter_key": "2026Q1"}]
 
 
+def test_fund_holdings_payload_keeps_bse_code_when_subject_data_and_ai_pool_match():
+    class _Store:
+        def get_latest_quarter_map(self):
+            return {"QFII": "2026Q2"}
+
+        def get_latest_sync_map(self):
+            return {"QFII": {"resolved_quarter_key": "2026Q2"}}
+
+        def query_change_rows(self, *, quarter_keys, stock_codes):
+            assert quarter_keys == {"2026Q2"}
+            assert stock_codes == {"920045"}
+            return [
+                {
+                    "stock_code": "920045",
+                    "stock_name": "蘅东光",
+                    "subject_code": "QFII",
+                    "subject_name": "示例QFII",
+                    "quarter_key": "2026Q2",
+                    "change_type": "新进",
+                    "curr_hold_num_shares": 12_000,
+                    "curr_ratio_pct": 0.12,
+                }
+            ]
+
+    payload = payload_module.load_fund_holdings_view_payload(
+        quarter_scope="latest",
+        stock_universe_provider=lambda: {"920045"},
+        chain_context_provider=lambda: {"920045": "AI光模块"},
+        capital_attribute_labels={"未标注": "未标注"},
+        store=_Store(),
+    )
+
+    assert len(payload["view_rows"]) == 1
+    row = payload["view_rows"][0]
+    assert row["代码"] == "920045"
+    assert row["名称"] == "蘅东光"
+    assert row["主体代码"] == "QFII"
+    assert row["概念板块"] == "AI光模块"
+
+
 def test_qfii_sync_cancellation_before_store_does_not_commit(monkeypatch):
     from domains.fund_holdings import sync as sync_module
 

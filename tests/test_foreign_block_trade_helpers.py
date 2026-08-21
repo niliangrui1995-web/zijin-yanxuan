@@ -99,6 +99,61 @@ def test_build_foreign_block_trade_rows_groups_records_and_filters_ai_chain(monk
     ]
 
 
+def test_build_foreign_block_trade_rows_normalizes_numeric_bse_code_before_ai_pool_filter(monkeypatch):
+    monkeypatch.setattr(
+        foreign_market_service,
+        "_filter_rows_to_ai_chain_codes",
+        lambda rows, **_kwargs: [row for row in rows if row.get("代码") == "920045"],
+    )
+
+    rows, grouped_count = build_foreign_block_trade_rows(
+        [
+            {
+                "交易日期": "2026-08-05",
+                "证券代码": 920045.0,
+                "证券简称": "蘅东光",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+                "收盘价": 400.0,
+                "成交价": 398.0,
+                "折溢率": -0.005,
+                "成交量": 10_000,
+                "成交额": 3_980_000,
+            }
+        ]
+    )
+
+    assert grouped_count == 1
+    assert [row["代码"] for row in rows] == ["920045"]
+
+
+def test_foreign_block_cache_rows_normalize_numeric_bse_code_before_ai_pool_filter(monkeypatch):
+    monkeypatch.setattr(
+        foreign_market_service,
+        "_filter_rows_to_ai_chain_codes",
+        lambda rows, **_kwargs: [row for row in rows if row.get("代码") == "920045"],
+    )
+
+    rows = foreign_market_service.build_foreign_block_cache_rows(
+        [
+            {
+                "交易日期": "2026-08-05",
+                "证券代码": 920045.0,
+                "证券简称": "蘅东光",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+                "收盘价": 400.0,
+                "成交价": 398.0,
+                "折溢率": -0.005,
+                "成交量": 10_000,
+                "成交额": 3_980_000,
+            }
+        ]
+    )
+
+    assert [row["代码"] for row in rows] == ["920045"]
+
+
 def test_should_include_row_only_matches_foreign_branches():
     assert ForeignBlockTradeTab._should_include_row(None, "高盛上海营业部", "普通营业部")
     assert ForeignBlockTradeTab._should_include_row(None, "普通营业部", "瑞银证券上海浦东新区营业部")

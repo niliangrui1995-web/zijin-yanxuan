@@ -478,6 +478,42 @@ def test_fund_holdings_store_qfii_subject_names_show_holder_names_and_skip_hk(fu
     assert [row["stock_code"] for row in raw_rows] == ["000001", "000001"]
 
 
+def test_fund_holdings_store_keeps_bse_qfii_code_in_stock_filter(fund_store):
+    store = fund_store
+    repo = FundHoldingsStore(store=store)
+    q2_rows = [
+        _qfii_raw_row(
+            "示例QFII",
+            secucode="920045.BJ",
+            SECURITY_CODE="920045",
+            SECURITY_NAME_ABBR="蘅东光",
+        )
+    ]
+    payloads = {
+        "2026Q2": {
+            "quarter_key": "2026Q2",
+            "end_date": "2026-06-30",
+            "raw_rows": q2_rows,
+            "snapshots": build_qfii_snapshots(q2_rows, SUBJECT_QFII, "2026Q2", "2026-06-30"),
+        },
+    }
+
+    repo.replace_qfii_quarters(
+        SUBJECT_QFII,
+        payloads,
+        sync_scope="specific",
+        requested_quarter_key="2026Q2",
+        resolved_quarter_key="2026Q2",
+        message="QFII 指定季度 2026Q2 已同步",
+    )
+
+    rows = repo.query_change_rows(quarter_keys={"2026Q2"}, stock_codes={"920045"})
+
+    assert len(rows) == 1
+    assert rows[0]["stock_code"] == "920045"
+    assert rows[0]["stock_name"] == "蘅东光"
+
+
 def test_fund_holdings_store_qfii_prefers_current_listed_code_over_old_nq_code(fund_store):
     store = fund_store
     repo = FundHoldingsStore(store=store)

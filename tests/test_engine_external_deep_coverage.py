@@ -27,6 +27,8 @@ class _Response:
 def test_finance_small_helpers_cover_normalization_and_local_fallback(monkeypatch):
     assert module._to_eastmoney_secid(" 600001 ") == "1.600001"
     assert module._to_eastmoney_secid("000001") == "0.000001"
+    assert module._to_eastmoney_secid("920045") == "0.920045"
+    assert module._to_eastmoney_secid("900001") == "1.900001"
     assert module._normalize_stock_codes([1, "1", " 600001 ", "", None, "abc", "1234567"]) == [
         "000001",
         "000001",

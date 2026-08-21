@@ -558,7 +558,11 @@ class TdxDataProviderHistoryMixin:
         # 防止因 pytdx 证券列表缓存不及时或本地 JSON 始终未刷新导致的名称滞后
         MANUAL_NAME_ALIASES = {"603196": "璞源材料"}
 
-        for sub, prefix in [("sh/lday", "sh"), ("sz/lday", "sz")]:
+        for sub, prefix, code_prefixes in [
+            ("sh/lday", "sh", ("60", "68")),
+            ("sz/lday", "sz", ("00", "30")),
+            ("bj/lday", "bj", ("92",)),
+        ]:
             lday_dir = os.path.join(tdx_vipdoc, sub.replace("/", os.sep))
             if not os.path.isdir(lday_dir):
                 continue
@@ -573,7 +577,7 @@ class TdxDataProviderHistoryMixin:
                 if code in MANUAL_NAME_ALIASES:
                     display_name = MANUAL_NAME_ALIASES[code]
 
-                if code.startswith(("60", "68") if prefix == "sh" else ("00", "30")):
+                if code.startswith(code_prefixes):
                     stocks[code] = display_name
         has_names = sum(1 for c, n in stocks.items() if c != n)
         _log.info(f"[离线模式] 已从 vipdoc 扫描 {len(stocks)} 只标的（其中 {has_names} 只有名称）")

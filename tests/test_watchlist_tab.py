@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import importlib
 import os
 from copy import deepcopy
 from types import SimpleNamespace
@@ -12,10 +13,14 @@ from PyQt6.QtWidgets import QApplication, QPushButton, QStyle, QStyleOptionViewI
 from app.services.stock_context_model_service import StockContextSnapshot
 from core.event_bus import event_bus
 from core.observability import clear_metric_history, metric_history
+from domains.quotes.tdx_name_map import TNF_CODE_OFFSET, TNF_NAME_OFFSET, TNF_RECORD_SIZE
 from domains.stock_context.signal_builders import RADAR_SOURCE_KEYS
+from infra.market_data.tdx_data_provider import TdxDataProvider
 from ui.tabs import watchlist_tab as watchlist_module
 from ui.theme import theme_manager
 from ui.viewmodels.watchlist_vm import watchlist_vm
+
+data_store_module = importlib.import_module("infra.storage.data_store")
 
 
 class _DummyProvider:
@@ -24,6 +29,14 @@ class _DummyProvider:
 
     def is_online(self):
         return False
+
+
+def _write_tnf_name_record(path, code: str, name: str) -> None:
+    record = bytearray(TNF_RECORD_SIZE)
+    record[TNF_CODE_OFFSET : TNF_CODE_OFFSET + 6] = code.encode("ascii")
+    name_bytes = name.encode("gbk")
+    record[TNF_NAME_OFFSET : TNF_NAME_OFFSET + len(name_bytes)] = name_bytes
+    path.write_bytes(bytes(record))
 
 
 class _PaintRegionProbe(QObject):
@@ -1873,6 +1886,64 @@ def test_watchlist_toolbar_uses_add_stock_button_and_accepts_a_share_code(monkey
             )
         ]
         assert tab.add_stock_input.text() == ""
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_toolbar_manually_adds_bse_stock_from_local_tdx_name_map(monkeypatch, tmp_path):
+    """A missing bjs.tnf/bj lday bridge must not reject a valid manual BSE code."""
+
+    class _Store:
+        def __init__(self):
+            self.saved = []
+
+        def load_json(self, _key, default=None):
+            return default if default is not None else {}
+
+        def save_json(self, key, payload):
+            self.saved.append((key, dict(payload)))
+
+    vipdoc = tmp_path / "vipdoc"
+    (vipdoc / "bj" / "lday").mkdir(parents=True)
+    (vipdoc / "bj" / "lday" / "bj920045.day").write_bytes(b"")
+    hq_cache = tmp_path / "T0002" / "hq_cache"
+    hq_cache.mkdir(parents=True)
+    _write_tnf_name_record(hq_cache / "bjs.tnf", "920045", "蘅东光")
+
+    store = _Store()
+    monkeypatch.setattr(data_store_module, "DataStore", lambda: store)
+    monkeypatch.setattr(TdxDataProvider, "_get_market_data_warehouse", lambda self: None)
+    _patch_watchlist_constructor(monkeypatch)
+    monkeypatch.setattr(watchlist_module, "show_toast", lambda *args, **kwargs: None)
+    monkeypatch.setattr(watchlist_vm, "is_in_watchlist", lambda code: False)
+
+    added_calls = []
+    monkeypatch.setattr(
+        watchlist_vm,
+        "add_stock",
+        lambda code, name, vcp_data=None, source_tags=None: added_calls.append(
+            (code, name, dict(vcp_data or {}), list(source_tags or []))
+        )
+        or True,
+    )
+
+    provider = TdxDataProvider(offline=True)
+    provider.tdx_vipdoc = str(vipdoc)
+    provider.code2name = {"000001": "平安银行"}
+    tab = watchlist_module.WatchlistTab(provider, startup_tasks_enabled=False)
+    try:
+        tab.add_stock_input.setText("920045")
+        tab._add_custom_stock()
+
+        assert provider.code2name["920045"] == "蘅东光"
+        assert added_calls == [
+            (
+                "920045",
+                "蘅东光",
+                {"代码": "920045", "名称": "蘅东光", "code": "920045", "name": "蘅东光"},
+                ["手动"],
+            )
+        ]
     finally:
         tab.deleteLater()
 

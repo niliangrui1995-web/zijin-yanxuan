@@ -7,7 +7,7 @@ TNF_RECORD_SIZE = 360
 TNF_CODE_OFFSET = 50
 TNF_NAME_OFFSET = 81
 TNF_NAME_FIELD_LEN = 45
-TNF_NAME_FILES = ("shs.tnf", "szs.tnf")
+TNF_NAME_FILES = ("shs.tnf", "szs.tnf", "bjs.tnf")
 
 
 def is_placeholder_name(code, name) -> bool:

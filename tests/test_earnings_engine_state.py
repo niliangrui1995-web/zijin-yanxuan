@@ -623,6 +623,139 @@ def test_earnings_universe_fingerprints_and_threshold_edges():
     ) is False
 
 
+def test_pending_surprise_candidates_allows_ai_chain_920045_only():
+    engine = _build_engine()
+
+    pending = engine._pending_surprise_candidates(
+        [
+            {"股票代码": "920045", "报告期": "20260331", "数据类型": "财报"},
+            {"股票代码": "920046", "报告期": "20260331", "数据类型": "财报"},
+            {"股票代码": "900001", "报告期": "20260331", "数据类型": "财报"},
+        ],
+        {"920045", "920046", "900001"},
+    )
+
+    assert [candidate["股票代码"] for candidate in pending] == ["920045"]
+
+
+def test_collect_quick_pool_supplements_enabled_ai_chain_bse_candidate(monkeypatch):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"920045", "920046"}
+    calls = []
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "success": True,
+                "result": {
+                    "data": [
+                        {
+                            "SECURITY_CODE": "920045",
+                            "SECURITY_NAME_ABBR": "蘅东光",
+                            "TRADE_MARKET_CODE": "069001017",
+                            "REPORT_DATE": "2025-12-31 00:00:00",
+                            "NOTICE_DATE": "2026-02-26 00:00:00",
+                            "PARENT_NETPROFIT": 301830206.91,
+                        },
+                        {
+                            "SECURITY_CODE": "920046",
+                            "SECURITY_NAME_ABBR": "非目标北交所股",
+                            "TRADE_MARKET_CODE": "069001017",
+                            "REPORT_DATE": "2025-12-31 00:00:00",
+                            "NOTICE_DATE": "2026-02-26 00:00:00",
+                            "PARENT_NETPROFIT": 1.0,
+                        },
+                    ]
+                },
+            }
+
+    def fake_request(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response()
+
+    monkeypatch.setattr(engine_module, "safe_ak_fetch", lambda *args, **kwargs: pd.DataFrame())
+    monkeypatch.setattr(engine_module, "requests_get_https", fake_request)
+
+    candidates, critical = engine_module._collect_quick_pool(engine, "20251231", "2026-02-26")
+
+    assert critical is False
+    assert [candidate["股票代码"] for candidate in candidates] == ["920045"]
+    assert candidates[0]["股票名称"] == "蘅东光"
+    assert candidates[0]["累计期末利润估算_元"] == 301830206.91
+    assert candidates[0]["源公告日期"] == "2026-02-26"
+    assert len(calls) == 1
+    assert calls[0][0] == "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+    assert "920045" in calls[0][1]["params"]["filter"]
+
+    engine.stock_universe_provider = lambda: {"920046"}
+    excluded_candidates, excluded_critical = engine_module._collect_quick_pool(engine, "20251231", "2026-02-26")
+    assert excluded_candidates == []
+    assert excluded_critical is False
+    assert len(calls) == 1
+
+
+def test_quick_report_cum_profit_supplements_enabled_ai_chain_bse_history(monkeypatch):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"920045"}
+    calls = []
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "success": True,
+                "result": {
+                    "data": [
+                        {
+                            "SECURITY_CODE": "920045",
+                            "SECURITY_NAME_ABBR": "蘅东光",
+                            "TRADE_MARKET_CODE": "069001017",
+                            "REPORT_DATE": "2025-12-31 00:00:00",
+                            "NOTICE_DATE": "2026-02-26 00:00:00",
+                            "PARENT_NETPROFIT": 301830206.91,
+                        }
+                    ]
+                },
+            }
+
+    def fake_request(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response()
+
+    monkeypatch.setattr(engine_module, "safe_ak_fetch", lambda *args, **kwargs: pd.DataFrame())
+    monkeypatch.setattr(engine_module, "requests_get_https", fake_request)
+
+    assert engine._get_quick_report_cum_profit("920045", "20251231") == 301830206.91
+    assert len(calls) == 1
+    assert "920045" in calls[0][1]["params"]["filter"]
+
+
+@pytest.mark.parametrize("empty_code", [9201, "9201"])
+def test_collect_quick_pool_treats_absent_enabled_bse_quick_report_as_empty(monkeypatch, empty_code):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"920045"}
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"success": False, "result": None, "message": "返回数据为空", "code": empty_code}
+
+    monkeypatch.setattr(engine_module, "safe_ak_fetch", lambda *args, **kwargs: pd.DataFrame())
+    monkeypatch.setattr(engine_module, "requests_get_https", lambda *args, **kwargs: _Response())
+
+    candidates, critical = engine_module._collect_quick_pool(engine, "20260331", "2026-04-30")
+
+    assert candidates == []
+    assert critical is False
+
+
 def test_quick_report_cum_profit_uses_latest_revision_and_cache(monkeypatch):
     engine = _build_engine()
     calls = []
@@ -1245,4 +1378,3 @@ def test_fetch_daily_surprises_accepts_friday_post_market_announcement_dated_nex
     assert row["源公告日期"] == "2026-04-20"
     assert row["揭晓日"] == "2026-04-17"
     assert "SHOCK_300308_20260331_财报" in engine.seen_fingerprints
-

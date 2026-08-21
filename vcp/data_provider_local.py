@@ -362,12 +362,18 @@ def load_local_gbbq_for_code(
 
 def get_market_code(stock_code) -> int:
     stock_code = str(stock_code)
+    # 920xxx 为北交所，通达信市场号为 2；900xxx 仍为沪市 B 股。
+    if stock_code.startswith("92"):
+        return 2
     return 1 if stock_code.startswith(("6", "9")) else 0
 
 
 def tdx_day_path(tdx_vipdoc: str | None, code) -> str:
     code = str(code).strip()
-    if code.startswith(("6", "9")):
+    # 920xxx 存在 vipdoc/bj；900xxx 仍使用 vipdoc/sh。
+    if code.startswith("92"):
+        sub = os.path.join("bj", "lday", f"bj{code}.day")
+    elif code.startswith(("6", "9")):
         sub = os.path.join("sh", "lday", f"sh{code}.day")
     else:
         sub = os.path.join("sz", "lday", f"sz{code}.day")

@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from domains.industry_chain.pool_service import normalize_ai_chain_code
 
 POOL_WINDOW = 30
+AI_CHAIN_BSE_LHB_ENABLED_CODES = frozenset({"920045"})
+AI_CHAIN_BSE_LHB_MISSING_RPS250_EXEMPT_CODES = frozenset({"920045"})
 
 
 def to_int(value: object, default: int = 0) -> int:
@@ -165,7 +167,10 @@ def collect_qualifying_codes(
             code = record_stock_code(record)
             if not code or code not in stock_universe_codes:
                 continue
-            if is_bse_code(code) or is_st_stock(record.get("名称", "")):
+            if (
+                (is_bse_code(code) and code not in AI_CHAIN_BSE_LHB_ENABLED_CODES)
+                or is_st_stock(record.get("名称", ""))
+            ):
                 continue
             net_buy = to_float(record.get("上榜净买额(万)"), 0.0)
             institution_net_buy = to_float(record.get("机构净买(万)"), 0.0)

@@ -29,7 +29,11 @@ _log = get_logger(__name__)
 
 def _to_eastmoney_secid(code: str) -> str:
     code = str(code).strip()
-    market = 1 if code.startswith(("5", "6", "9")) else 0
+    # 920xxx 为北交所；900xxx 仍为沪市 B 股。
+    if code.startswith("92"):
+        market = 0
+    else:
+        market = 1 if code.startswith(("5", "6", "9")) else 0
     return f"{market}.{code}"
 
 
