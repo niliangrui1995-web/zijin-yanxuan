@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, unquote_plus, urlparse
 from PyQt6.QtCore import QUrl, QUrlQuery
 
 from app.services import ui_navigation_service
+from infra.storage.file_integrity import fingerprint_file
 from ui.components import stock_context_menu
 from ui.components.stock_context_menu import (
     CODEX_CURRENT_STOCK_PROMPT,
@@ -213,7 +214,7 @@ def test_open_codex_desktop_thread_uses_navigation_service_fast_path(monkeypatch
 
 def test_navigation_service_open_codex_desktop_thread_uses_silent_launcher(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -223,13 +224,18 @@ def test_navigation_service_open_codex_desktop_thread_uses_silent_launcher(monke
 
     monkeypatch.setattr(ui_navigation_service, "_powershell_executable", lambda: "powershell.exe")
     monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+    fingerprint = fingerprint_file(launcher)
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "CODEX_LOCAL_LAUNCHER_FINGERPRINT",
+        fingerprint,
+        raising=False,
+    )
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
     assert captured["args"] == [
         "powershell.exe",
         "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
         "-File",
         str(launcher),
         "codex://new?path=/tmp/demo",

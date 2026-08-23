@@ -165,6 +165,39 @@ class VCPTableView(QTableView):
     # more than two redundant full paints inside one bounded native burst.
     # LHB retains its existing post-budget fail-open behavior.
     SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS = 2
+    NATIVE_WINDOW_PROVENANCE_MAX_AGE_MS = 10_000
+    # The guard below is intentionally much narrower than provenance retention:
+    # it applies only to the immediate WindowDeactivate -> UpdateRequest burst
+    # reproduced while opening an independent K-line window.
+    NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS = 250
+    _NATIVE_WINDOW_EVENT_SIGNALS = {
+        QEvent.Type.WindowActivate: "window_activate",
+        QEvent.Type.WindowDeactivate: "window_deactivate",
+        QEvent.Type.ActivationChange: "activation_change",
+        QEvent.Type.Expose: "window_expose",
+        QEvent.Type.UpdateRequest: "window_update_request",
+        QEvent.Type.UpdateLater: "window_update_later",
+        QEvent.Type.LayoutRequest: "window_layout_request",
+        QEvent.Type.Resize: "window_resize",
+        QEvent.Type.Show: "window_show",
+        QEvent.Type.Hide: "window_hide",
+        QEvent.Type.WindowStateChange: "window_state_change",
+        QEvent.Type.StyleChange: "window_style_change",
+        QEvent.Type.PaletteChange: "window_palette_change",
+    }
+    _NATIVE_WINDOW_STRUCTURAL_SIGNALS = frozenset(
+        {
+            "window_activate",
+            "window_expose",
+            "window_layout_request",
+            "window_resize",
+            "window_show",
+            "window_hide",
+            "window_state_change",
+            "window_style_change",
+            "window_palette_change",
+        }
+    )
 
     def __init__(self, parent=None, default_row_height: int = None):
         super().__init__(parent)
@@ -183,6 +216,11 @@ class VCPTableView(QTableView):
         self._flash_dirty_indexes: set[QPersistentModelIndex] = set()
         self._shell_nav_repaint_guard: dict[str, object] | None = None
         self._shell_nav_guard_selection_model = None
+        self._native_window_event_source = None
+        self._native_window_last_event: dict[str, object] | None = None
+        self._native_window_paint_event: dict[str, object] | None = None
+        self._native_window_inactive = False
+        self._native_window_requires_full_paint = False
         self._closing = False
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
@@ -600,6 +638,7 @@ class VCPTableView(QTableView):
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes.clear()
         self._clear_shell_nav_repaint_guard()
+        self._remove_native_window_event_filter()
         self._disconnect_shell_nav_guard_selection_model()
         self._disconnect_refresh_model()
         hide_floating_tooltip()
@@ -688,6 +727,163 @@ class VCPTableView(QTableView):
         self._pending_paint_metric = None
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes.clear()
+        if self._paint_metric_scope != "watchlist":
+            self._remove_native_window_event_filter()
+        elif self.isVisible():
+            self._native_window_requires_full_paint = True
+            self._native_window_inactive = False
+            self._native_window_paint_event = None
+            self._native_window_last_event = None
+            self._install_native_window_event_filter()
+
+    def _install_native_window_event_filter(self) -> None:
+        source = self.window()
+        if source is self._native_window_event_source:
+            return
+        self._remove_native_window_event_filter()
+        if source is None or source is self:
+            return
+        try:
+            source.installEventFilter(self)
+            self._native_window_event_source = source
+        except (AttributeError, RuntimeError, TypeError):
+            self._native_window_event_source = None
+
+    def _remove_native_window_event_filter(self) -> None:
+        source = self._native_window_event_source
+        self._native_window_event_source = None
+        if source is None:
+            return
+        with suppress(AttributeError, RuntimeError, TypeError):
+            source.removeEventFilter(self)
+
+    def _native_window_is_active(self) -> bool | None:
+        source = self._native_window_event_source
+        if source is None:
+            return None
+        try:
+            return bool(source.isActiveWindow())
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+
+    def _record_native_window_event(self, event) -> None:
+        event_type = event.type()
+        signal = self._NATIVE_WINDOW_EVENT_SIGNALS.get(event_type, "")
+        if event_type == QEvent.Type.ActivationChange:
+            active = self._native_window_is_active()
+            if active is not None:
+                signal = "window_activate" if active else "window_deactivate"
+        if not signal:
+            return
+        now = time.monotonic()
+        record = {
+            "signal": signal,
+            "recorded_at": now,
+            "spontaneous": bool(event.spontaneous()),
+        }
+        self._native_window_last_event = record
+        if signal == "window_deactivate":
+            self._native_window_inactive = True
+            # Do not discard a preceding Show/Resize/Expose requirement here.
+            # A deactivation may arrive while the first visible frame is still
+            # pending; only a completed full paint clears that requirement.
+            self._native_window_paint_event = record
+            return
+        if signal == "window_activate":
+            self._native_window_inactive = False
+            self._native_window_requires_full_paint = True
+            self._native_window_paint_event = record
+            return
+        if signal in self._NATIVE_WINDOW_STRUCTURAL_SIGNALS:
+            self._native_window_requires_full_paint = True
+            self._native_window_paint_event = record
+
+    def _native_window_paint_provenance(self) -> dict[str, str]:
+        now = time.monotonic()
+        paint_event = self._native_window_paint_event or {}
+        last_event = self._native_window_last_event or {}
+        paint_recorded_at = float(paint_event.get("recorded_at", 0.0) or 0.0)
+        last_recorded_at = float(last_event.get("recorded_at", 0.0) or 0.0)
+        paint_age_ms = max(0.0, (now - paint_recorded_at) * 1000.0) if paint_recorded_at else -1.0
+        last_age_ms = max(0.0, (now - last_recorded_at) * 1000.0) if last_recorded_at else -1.0
+        signal = str(paint_event.get("signal", "") or "")
+        if paint_age_ms > self.NATIVE_WINDOW_PROVENANCE_MAX_AGE_MS:
+            signal = ""
+        return {
+            "signal": signal,
+            "signal_age_ms": f"{paint_age_ms:.3f}" if paint_age_ms >= 0.0 else "",
+            "last_event": str(last_event.get("signal", "") or ""),
+            "last_event_age_ms": f"{last_age_ms:.3f}" if last_age_ms >= 0.0 else "",
+            "window_inactive": str(bool(self._native_window_inactive)).lower(),
+            "requires_full_paint": str(bool(self._native_window_requires_full_paint)).lower(),
+        }
+
+    def _maybe_defer_inactive_window_full_paint(self, event) -> bool:
+        """Skip only the known inactive-window full-paint burst; otherwise fail open."""
+        if self._closing or self._paint_metric_scope != "watchlist":
+            return False
+        if self._pending_paint_metric is not None:
+            # Quote/model and flash paints carry a business reason and must
+            # remain visible even while an independent window owns focus.
+            return False
+        try:
+            if event.type() != QEvent.Type.Paint:
+                return False
+            if not bool(event.spontaneous()):
+                return False
+            viewport = self.viewport()
+            if viewport is None or not viewport.isVisible() or not viewport.updatesEnabled():
+                return False
+            dirty_ratio, dirty_rects, full_viewport = _paint_region_metrics(
+                event.region(), viewport.rect()
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        if not full_viewport:
+            return False
+
+        provenance = self._native_window_paint_provenance()
+        try:
+            signal_age_ms = float(provenance["signal_age_ms"])
+            last_event_age_ms = float(provenance["last_event_age_ms"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if (
+            provenance["signal"] != "window_deactivate"
+            or provenance["last_event"] != "window_update_request"
+            or provenance["window_inactive"] != "true"
+            or provenance["requires_full_paint"] != "false"
+            or self._native_window_is_active() is not False
+            or not 0.0 <= signal_age_ms <= self.NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS
+            or not 0.0 <= last_event_age_ms <= self.NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS
+        ):
+            return False
+
+        try:
+            from core.observability import record_metric
+
+            record_metric(
+                "watchlist_inactive_window_full_paint_guard",
+                1,
+                unit="count",
+                tags={
+                    "decision": "defer_untracked_full",
+                    "tab": self._paint_metric_scope,
+                    "reason": "other",
+                    "signal": provenance["signal"],
+                    "signal_age_ms": provenance["signal_age_ms"],
+                    "last_event": provenance["last_event"],
+                    "last_event_age_ms": provenance["last_event_age_ms"],
+                    "window_inactive": provenance["window_inactive"],
+                    "requires_full_paint": provenance["requires_full_paint"],
+                    "dirty_bounding_area_ratio": f"{dirty_ratio:.4f}",
+                    "dirty_region_rects": str(dirty_rects),
+                    "paint_event_spontaneous": str(bool(event.spontaneous())).lower(),
+                },
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug("skip inactive-window repaint guard metric: %s", exc)
+        return True
 
     def prepare_shell_nav_repaint_guard(self) -> None:
         """Arm a short guard for redundant shell-nav full paints on data tables."""
@@ -1207,6 +1403,18 @@ class VCPTableView(QTableView):
             "reason": reason,
             "tab": scope,
         }
+        native_window_provenance = self._native_window_paint_provenance()
+        if metric is None and delivered_full:
+            tags.update(
+                {
+                    "native_window_signal": native_window_provenance["signal"],
+                    "native_window_signal_age_ms": native_window_provenance["signal_age_ms"],
+                    "native_window_last_event": native_window_provenance["last_event"],
+                    "native_window_last_event_age_ms": native_window_provenance["last_event_age_ms"],
+                    "native_window_inactive": native_window_provenance["window_inactive"],
+                    "native_window_requires_full_paint": native_window_provenance["requires_full_paint"],
+                }
+            )
         for key in (
             "changed_rows",
             "changed_columns",
@@ -1285,6 +1493,9 @@ class VCPTableView(QTableView):
         started_at = time.perf_counter()
         from infra.diagnostics.ui_stall_probe import ui_stall_span
 
+        stall_signal = reason
+        if reason == "other" and delivered_full:
+            stall_signal = native_window_provenance["signal"] or reason
         stall_transition_metadata = {
             **paint_transition_metadata,
             "reason": str((paint_transition_metadata or {}).get("transition_reason") or ""),
@@ -1292,12 +1503,17 @@ class VCPTableView(QTableView):
         with ui_stall_span(
             "VCPTableView.paintEvent",
             tab=scope,
-            signal=reason,
+            signal=stall_signal,
             dirty_bounding_area_ratio=tags["dirty_bounding_area_ratio"],
             delivered_full_viewport=tags["delivered_full_viewport"],
             **stall_transition_metadata,
         ):
             super().paintEvent(event)
+        if delivered_full:
+            # A real full viewport paint has restored the Base background and
+            # current table frame, so a later inactive-window burst can be
+            # considered for the narrow guard again.
+            self._native_window_requires_full_paint = False
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
 
         if metric is not None or elapsed_ms >= 25.0:
@@ -1319,12 +1535,26 @@ class VCPTableView(QTableView):
     def showEvent(self, event):
         if self._closing:
             return
+        if self._paint_metric_scope == "watchlist":
+            # A just-shown table must render one full frame before any native
+            # inactive-window suppression is considered.
+            self._native_window_requires_full_paint = True
+            self._native_window_inactive = False
+            self._native_window_paint_event = None
+            self._native_window_last_event = None
+            self._install_native_window_event_filter()
         self._apply_screen_width_limit()
         self._sync_ambient_repaint_timer()
         self._activate_shell_nav_repaint_guard()
         super().showEvent(event)
 
     def hideEvent(self, event):
+        if self._paint_metric_scope == "watchlist":
+            self._native_window_requires_full_paint = True
+            self._native_window_inactive = False
+            self._native_window_paint_event = None
+            self._native_window_last_event = None
+            self._remove_native_window_event_filter()
         self._ambient_repaint_timer.stop()
         self._clear_flash_repaint_state()
         self._clear_shell_nav_repaint_guard()
@@ -1351,6 +1581,14 @@ class VCPTableView(QTableView):
         else:
             self._ambient_repaint_timer.stop()
 
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt API naming
+        if watched is self._native_window_event_source:
+            try:
+                self._record_native_window_event(event)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+        return super().eventFilter(watched, event)
+
     def _display_font_for_index(self, index):
         font = index.data(Qt.ItemDataRole.FontRole)
         if isinstance(font, QFont):
@@ -1373,6 +1611,8 @@ class VCPTableView(QTableView):
         event_type = event.type()
         if event_type == QEvent.Type.Paint:
             if self._maybe_defer_shell_nav_full_paint(event):
+                return True
+            if self._maybe_defer_inactive_window_full_paint(event):
                 return True
         elif event_type in {
             QEvent.Type.Resize,

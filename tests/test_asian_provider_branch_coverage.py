@@ -13,6 +13,17 @@ from infra.market_data import asian_kline_provider as kline_provider
 from infra.market_data import asian_market_http as market_http
 from infra.market_data import asian_quote_provider as provider
 
+ASIAN_MARKET_PROVIDER_URLS = (
+    ("finance.naver.com", "https://finance.naver.com/item/main.naver?code=005930"),
+    ("finance.yahoo.co.jp", "https://finance.yahoo.co.jp/quote/7203.T"),
+    ("kabutan.jp", "https://kabutan.jp/stock/?code=7203"),
+    ("mis.twse.com.tw", "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_2330.tw&json=1"),
+    ("polling.finance.naver.com", "https://polling.finance.naver.com/api/realtime/domestic/stock/005930"),
+    ("qt.gtimg.cn", "https://qt.gtimg.cn/q=hk00700"),
+    ("www.tpex.org.tw", "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"),
+    ("www.twse.com.tw", "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?response=json"),
+)
+
 
 class _FakeResponse:
     def __init__(
@@ -1090,17 +1101,18 @@ def test_asian_http_transport_merges_headers_parses_status_and_retries(monkeypat
     assert not market_http.is_http_success(SimpleNamespace(status_code=400))
 
     response = object()
-    calls: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
 
     def _flaky(url, **kwargs):
-        calls.append(url)
+        calls.append((url, kwargs))
         if len(calls) == 1:
             raise requests.RequestException("temporary")
         return response
 
     monkeypatch.setattr(market_http, "requests_get_https", _flaky)
-    assert market_http.asian_market_get("https://example.com", retries=1) is response
+    assert market_http.asian_market_get("https://finance.yahoo.co.jp/quote/7203.T", retries=1) is response
     assert len(calls) == 2
+    assert all(kwargs["allowed_hosts"] == market_http.ASIAN_MARKET_ALLOWED_HOSTS for _, kwargs in calls)
 
     monkeypatch.setattr(
         market_http,
@@ -1108,7 +1120,59 @@ def test_asian_http_transport_merges_headers_parses_status_and_retries(monkeypat
         lambda *args, **kwargs: (_ for _ in ()).throw(requests.RequestException("down")),
     )
     with pytest.raises(requests.RequestException, match="down"):
-        market_http.asian_market_get("https://example.com", retries=2)
+        market_http.asian_market_get("https://finance.yahoo.co.jp/quote/7203.T", retries=2)
+
+
+def test_asian_http_transport_allowlist_matches_provider_urls():
+    assert market_http.ASIAN_MARKET_ALLOWED_HOSTS == frozenset(host for host, _ in ASIAN_MARKET_PROVIDER_URLS)
+
+
+@pytest.mark.parametrize("_host, url", ASIAN_MARKET_PROVIDER_URLS)
+def test_asian_http_transport_allows_known_provider_host(_host, url):
+    response = object()
+    session = _FakeSession(response)
+
+    assert market_http.asian_market_get(url, session=session) is response
+    assert session.calls == [
+        (
+            url,
+            {
+                "headers": market_http.ASIAN_MARKET_HTTP_HEADERS,
+                "timeout": market_http.ASIAN_MARKET_HTTP_TIMEOUT_SEC,
+                "allow_redirects": False,
+            },
+        )
+    ]
+
+
+def test_asian_http_transport_rejects_unknown_host_before_request():
+    session = _FakeSession(object())
+
+    with pytest.raises(ValueError, match="HTTPS host is not allowed"):
+        market_http.asian_market_get("https://example.com/quote", session=session)
+
+    assert session.calls == []
+
+
+def test_asian_http_transport_rejects_cross_host_redirect_to_unknown_host():
+    class _RedirectResponse:
+        status_code = 302
+        headers = {"Location": "https://evil.example/next"}
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    redirect = _RedirectResponse()
+    session = _FakeSession(redirect)
+
+    with pytest.raises(ValueError, match="HTTPS host is not allowed"):
+        market_http.asian_market_get("https://finance.yahoo.co.jp/quote/7203.T", session=session)
+
+    assert redirect.closed is True
+    assert len(session.calls) == 1
 
 
 def test_asian_kline_adapter_forwards_session_and_cancellation_budget(monkeypatch):

@@ -44,7 +44,7 @@ def test_asian_http_applies_deadline_to_real_request_and_stops_retry_after_cance
 
     with pytest.raises(TaskCancelledError, match="window_switched"):
         asian_market_http.asian_market_get(
-            "https://example.com",
+            "https://finance.yahoo.co.jp/quote/7203.T",
             timeout=15,
             retries=2,
             cancellation_token=token,

@@ -1,4 +1,15 @@
 from app.services import ui_navigation_service
+from infra.storage.file_integrity import fingerprint_file
+
+
+def _seal_codex_launcher(monkeypatch, launcher):
+    fingerprint = fingerprint_file(launcher)
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "CODEX_LOCAL_LAUNCHER_FINGERPRINT",
+        fingerprint,
+        raising=False,
+    )
 
 
 def test_powershell_executable_prefers_systemroot_binary(monkeypatch, tmp_path):
@@ -233,25 +244,23 @@ def test_open_codex_desktop_thread_uses_fast_appx_path(monkeypatch):
 
 def test_open_codex_desktop_thread_falls_back_to_local_launcher(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
         captured["args"] = args
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr(ui_navigation_service.os, "name", "nt", raising=False)
     monkeypatch.setattr(ui_navigation_service, "CODEX_LOCAL_LAUNCHER", launcher)
-    monkeypatch.setattr(ui_navigation_service, "_activate_codex_appx", lambda _arguments: False)
+    monkeypatch.setattr(ui_navigation_service, "_try_open_codex_desktop_thread_fast", lambda _url: False)
     monkeypatch.setattr(ui_navigation_service, "_powershell_executable", lambda: "powershell.exe")
     monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+    _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo")
     assert captured["args"] == [
         "powershell.exe",
         "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
         "-File",
         str(launcher),
         "codex://new?path=/tmp/demo",
@@ -259,9 +268,34 @@ def test_open_codex_desktop_thread_falls_back_to_local_launcher(monkeypatch, tmp
     assert captured["kwargs"] == {}
 
 
+def test_open_codex_desktop_thread_rejects_tampered_launcher_without_spawning(monkeypatch, tmp_path):
+    launcher = tmp_path / "open-codex-project.ps1"
+    launcher.write_text("Write-Output 'allow'\n", encoding="utf-8")
+    _seal_codex_launcher(monkeypatch, launcher)
+    launcher.write_text("Write-Output 'block'\n", encoding="utf-8")
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset(), None)
+    spawned = []
+    scheduled = []
+
+    monkeypatch.setattr(ui_navigation_service, "_codex_window_snapshot", lambda: before)
+    monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", lambda args: spawned.append(args))
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_schedule_codex_prompt_paste",
+        lambda prompt, snapshot: scheduled.append((prompt, snapshot)),
+    )
+
+    assert not ui_navigation_service.open_codex_desktop_thread(
+        "codex://new?path=/tmp/demo&prompt=hello",
+        launcher=launcher,
+    )
+    assert spawned == []
+    assert scheduled == []
+
+
 def test_open_codex_desktop_thread_strips_prompt_from_launcher_fallback(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
     captured = {}
     before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
 
@@ -269,10 +303,9 @@ def test_open_codex_desktop_thread_strips_prompt_from_launcher_fallback(monkeypa
         captured["args"] = args
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr(ui_navigation_service.os, "name", "nt", raising=False)
     monkeypatch.setattr(ui_navigation_service, "_codex_window_snapshot", lambda: before)
     monkeypatch.setattr(ui_navigation_service, "CODEX_LOCAL_LAUNCHER", launcher)
-    monkeypatch.setattr(ui_navigation_service, "_activate_codex_appx", lambda _arguments: False)
+    monkeypatch.setattr(ui_navigation_service, "_try_open_codex_desktop_thread_fast", lambda _url: False)
     monkeypatch.setattr(
         ui_navigation_service,
         "_schedule_codex_prompt_paste",
@@ -280,6 +313,7 @@ def test_open_codex_desktop_thread_strips_prompt_from_launcher_fallback(monkeypa
     )
     monkeypatch.setattr(ui_navigation_service, "_powershell_executable", lambda: "powershell.exe")
     monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+    _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo&prompt=hello")
     assert captured["paste"] == ("hello", before)
@@ -354,7 +388,7 @@ def test_select_codex_target_rejects_reused_foreground_when_it_was_already_foreg
 
 def test_open_codex_desktop_thread_uses_local_launcher(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -362,34 +396,52 @@ def test_open_codex_desktop_thread_uses_local_launcher(monkeypatch, tmp_path):
         captured["kwargs"] = kwargs
 
     monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+    _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
     assert captured["args"][-2:] == [str(launcher), "codex://new?path=/tmp/demo"]
     assert captured["kwargs"] == {}
 
 
-def test_open_codex_desktop_thread_returns_false_when_launcher_missing(tmp_path):
-    assert not ui_navigation_service.open_codex_desktop_thread(
-        "codex://new?path=/tmp/demo",
-        launcher=tmp_path / "missing.ps1",
+def test_open_codex_desktop_thread_rejects_missing_launcher_without_spawning(monkeypatch, tmp_path):
+    spawned = []
+    scheduled = []
+    missing_launcher = tmp_path / "missing.ps1"
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset(), None)
+
+    monkeypatch.setattr(ui_navigation_service, "CODEX_LOCAL_LAUNCHER", missing_launcher)
+    monkeypatch.setattr(ui_navigation_service, "_try_open_codex_desktop_thread_fast", lambda _url: False)
+    monkeypatch.setattr(ui_navigation_service, "_codex_window_snapshot", lambda: before)
+    monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", lambda args: spawned.append(args))
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_schedule_codex_prompt_paste",
+        lambda prompt, snapshot: scheduled.append((prompt, snapshot)),
     )
+
+    assert not ui_navigation_service.open_codex_desktop_thread(
+        "codex://new?path=/tmp/demo&prompt=hello",
+    )
+    assert spawned == []
+    assert scheduled == []
 
 
 def test_open_codex_desktop_thread_returns_false_on_spawn_error(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
 
     def fake_spawn(_args, **_kwargs):
         raise OSError("blocked")
 
     monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+    _seal_codex_launcher(monkeypatch, launcher)
 
     assert not ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
 
 
 def test_open_codex_desktop_thread_keeps_non_codex_url_on_launcher_fallback(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -402,6 +454,7 @@ def test_open_codex_desktop_thread_keeps_non_codex_url_on_launcher_fallback(monk
         "_schedule_codex_prompt_paste",
         lambda *_args: (_ for _ in ()).throw(AssertionError("paste should not be scheduled")),
     )
+    _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("https://example.test?prompt=hello", launcher=launcher)
     assert captured["args"][-1] == "https://example.test?prompt=hello"

@@ -17,6 +17,18 @@ ASIAN_MARKET_HTTP_HEADERS = {
     ),
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
+ASIAN_MARKET_ALLOWED_HOSTS = frozenset(
+    {
+        "finance.naver.com",
+        "finance.yahoo.co.jp",
+        "kabutan.jp",
+        "mis.twse.com.tw",
+        "polling.finance.naver.com",
+        "qt.gtimg.cn",
+        "www.tpex.org.tw",
+        "www.twse.com.tw",
+    }
+)
 RequestException = requests.RequestException
 requests_module = requests
 
@@ -57,6 +69,7 @@ def asian_market_get(
                 session=session,
                 headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS),
                 timeout=bounded_io_timeout(timeout, cancellation_token),
+                allowed_hosts=ASIAN_MARKET_ALLOWED_HOSTS,
             )
             raise_if_cancelled(cancellation_token)
             return response
@@ -69,6 +82,7 @@ def asian_market_get(
 
 
 __all__ = [
+    "ASIAN_MARKET_ALLOWED_HOSTS",
     "ASIAN_MARKET_HTTP_HEADERS",
     "ASIAN_MARKET_HTTP_TIMEOUT_SEC",
     "RequestException",

@@ -12,9 +12,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from infra.navigation import ExternalTerminalNavigator
+from infra.storage.file_integrity import FileFingerprint, FileIntegrityError, verify_file_fingerprint
 from infra.tasks.process_runner import spawn_silent_process
 
 CODEX_LOCAL_LAUNCHER = Path.home() / ".codex" / "local-tools" / "open-codex-project.ps1"
+# Launcher upgrades must be reviewed and resealed; mismatches fail closed.
+CODEX_LOCAL_LAUNCHER_FINGERPRINT = FileFingerprint(
+    size_bytes=11131,
+    sha256="bd07c6c5745d47d71aaf8cc26ebbc150c2efec69d03c477ee337fb36882a38aa",
+)
 CODEX_APP_USER_MODEL_ID = "OpenAI.Codex_2p2nqsd0c76g0!App"
 _APP_ACTIVATION_MANAGER_CLSID = "45BA127D-10A8-46EA-8AB7-56EA9078943C"
 _IAPPLICATION_ACTIVATION_MANAGER_IID = "2E941141-7F97-4756-BA1D-9DECDE894A3D"
@@ -48,6 +54,18 @@ class _CodexWindowSnapshot:
 def _powershell_executable() -> str:
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     return str(powershell if powershell.is_file() else "powershell.exe")
+
+
+def _is_trusted_codex_launcher(launcher_path: Path) -> bool:
+    try:
+        verify_file_fingerprint(
+            launcher_path,
+            expected_size_bytes=CODEX_LOCAL_LAUNCHER_FINGERPRINT.size_bytes,
+            expected_sha256=CODEX_LOCAL_LAUNCHER_FINGERPRINT.sha256,
+        )
+    except FileIntegrityError:
+        return False
+    return True
 
 
 def _parse_codex_thread_url(thread_url: str) -> _CodexThreadRequest | None:
@@ -434,7 +452,7 @@ def open_codex_desktop_thread(thread_url: str, *, launcher: str | Path | None = 
         thread_url = _codex_thread_url_without_prompt(thread_url)
 
     launcher_path = Path(launcher) if launcher is not None else CODEX_LOCAL_LAUNCHER
-    if not launcher_path.is_file():
+    if not _is_trusted_codex_launcher(launcher_path):
         return False
 
     try:
@@ -442,8 +460,6 @@ def open_codex_desktop_thread(thread_url: str, *, launcher: str | Path | None = 
             [
                 _powershell_executable(),
                 "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
                 "-File",
                 str(launcher_path),
                 thread_url,

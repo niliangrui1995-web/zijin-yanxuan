@@ -589,6 +589,116 @@ def test_vcp_table_view_shell_nav_guard_blocks_post_budget_full_paint_event(qt_a
         table.deleteLater()
 
 
+def test_watchlist_native_deactivate_defers_only_untracked_full_viewport_paints(
+    qt_application,
+    monkeypatch,
+):
+    """A background top-level window must not turn passive Watchlist into stale quote output."""
+    class RecordingTable(VCPTableView):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    class NativeFullViewportPaint:
+        def __init__(self, table):
+            self._event = _full_viewport_paint_event(table)
+
+        def type(self):
+            return QEvent.Type.Paint
+
+        def region(self):
+            return self._event.region()
+
+        def spontaneous(self):
+            return True
+
+    window = QWidget()
+    table = RecordingTable(window)
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    try:
+        window.resize(640, 360)
+        table.resize(640, 360)
+        window.show()
+        table.show()
+        _process_events(qt_application)
+        # Complete the initial visible frame, then isolate the inactive-window
+        # sequence. A non-spontaneous test paint must never meet the guard.
+        QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        QCoreApplication.sendEvent(window, QEvent(QEvent.Type.WindowDeactivate))
+        table.eventFilter(window, QEvent(QEvent.Type.UpdateRequest))
+        monkeypatch.setattr(table, "_native_window_is_active", lambda: False)
+        provenance = table._native_window_paint_provenance()
+        native_event = NativeFullViewportPaint(table)
+
+        assert provenance["signal"] == "window_deactivate"
+        assert table.viewportEvent(native_event) is True
+        assert table.actual_paint_calls == 0
+        assert [item[0] for item in recorded] == [
+            "watchlist_inactive_window_full_paint_guard",
+        ]
+        # Isolate the direct predicate assertion and its metric below.
+        recorded.clear()
+        assert table._maybe_defer_inactive_window_full_paint(_full_viewport_paint_event(table)) is False
+        assert recorded == []
+        assert table._maybe_defer_inactive_window_full_paint(native_event) is True
+        assert len(recorded) == 1
+        metric_name, value, metric_kwargs = recorded[0]
+        assert metric_name == "watchlist_inactive_window_full_paint_guard"
+        assert value == 1
+        assert metric_kwargs["unit"] == "count"
+        tags = dict(metric_kwargs["tags"])
+        signal_age_ms = float(tags.pop("signal_age_ms"))
+        last_event_age_ms = float(tags.pop("last_event_age_ms"))
+        assert 0.0 <= signal_age_ms <= table.NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS
+        assert 0.0 <= last_event_age_ms <= table.NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS
+        assert tags == {
+            "decision": "defer_untracked_full",
+            "tab": "watchlist",
+            "reason": "other",
+            "signal": "window_deactivate",
+            "last_event": "window_update_request",
+            "window_inactive": "true",
+            "requires_full_paint": "false",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "paint_event_spontaneous": "true",
+        }
+
+        monkeypatch.setattr(table, "_native_window_is_active", lambda: True)
+        assert table._maybe_defer_inactive_window_full_paint(native_event) is False
+        monkeypatch.setattr(table, "_native_window_is_active", lambda: False)
+        table._mark_pending_paint_metric("quote_data_changed", changed_rows=1)
+        assert table._maybe_defer_inactive_window_full_paint(native_event) is False
+
+        table._pending_paint_metric = None
+        table.eventFilter(window, QEvent(QEvent.Type.WindowActivate))
+        assert table._maybe_defer_inactive_window_full_paint(native_event) is False
+
+        table.hide()
+        assert table._native_window_event_source is None
+        table.show()
+        assert table._native_window_event_source is window
+        assert table._native_window_requires_full_paint is True
+        table.eventFilter(window, QEvent(QEvent.Type.WindowDeactivate))
+        table.eventFilter(window, QEvent(QEvent.Type.UpdateRequest))
+        assert table._maybe_defer_inactive_window_full_paint(native_event) is False
+    finally:
+        table.deleteLater()
+        window.deleteLater()
+
+
 def test_vcp_table_view_ai_preload_guard_skips_visible_redundant_full_paints(
     qt_application,
     monkeypatch,
