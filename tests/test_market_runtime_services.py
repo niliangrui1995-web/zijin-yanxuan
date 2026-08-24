@@ -1080,6 +1080,109 @@ def test_external_terminal_navigator_rechecks_foreground_before_enter(monkeypatc
     assert ("press", "enter") not in typed
 
 
+@pytest.mark.parametrize(
+    ("app_name", "popup_title", "controls", "default_id", "expected"),
+    [
+        (
+            "TDX",
+            "Tdx",
+            [("entry", "Edit", "", 1024), ("choices", "ListBox", "", 1026)],
+            0,
+            True,
+        ),
+        (
+            "东方财富",
+            "",
+            [("input", "AfxWnd140u", "输入框", 1001), ("display", "AfxWnd140u", "显示框", 1000)],
+            0x534B0001,
+            True,
+        ),
+        (
+            "TDX",
+            "Tdx",
+            [("entry", "Edit", "", 1024), ("choices", "Button", "", 1026)],
+            0,
+            False,
+        ),
+        (
+            "东方财富",
+            "",
+            [("input", "AfxWnd140u", "输入框", 1001), ("display", "AfxWnd140u", "显示框", 1000)],
+            0,
+            False,
+        ),
+    ],
+)
+def test_external_terminal_navigator_only_confirms_verified_quote_popups(
+    monkeypatch,
+    app_name,
+    popup_title,
+    controls,
+    default_id,
+    expected,
+):
+    foreground = {"hwnd": "target"}
+    typed = []
+    control_by_hwnd = {hwnd: (class_name, text, control_id) for hwnd, class_name, text, control_id in controls}
+
+    def write(text, **_kwargs):
+        typed.append(("write", text))
+        foreground["hwnd"] = "quote-popup"
+
+    def get_class_name(hwnd):
+        if hwnd == "quote-popup":
+            return "#32770"
+        return control_by_hwnd[hwnd][0]
+
+    def get_window_text(hwnd):
+        if hwnd == "quote-popup":
+            return popup_title
+        return control_by_hwnd[hwnd][1]
+
+    def get_dialog_control_id(hwnd):
+        return control_by_hwnd[hwnd][2]
+
+    def enum_child_windows(hwnd, callback, _lparam):
+        assert hwnd == "quote-popup"
+        for child_hwnd in control_by_hwnd:
+            callback(child_hwnd, None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "win32gui",
+        SimpleNamespace(
+            GetForegroundWindow=lambda: foreground["hwnd"],
+            IsWindowVisible=lambda _hwnd: True,
+            IsWindowEnabled=lambda _hwnd: True,
+            GetClassName=get_class_name,
+            GetWindowText=get_window_text,
+            GetDlgCtrlID=get_dialog_control_id,
+            GetParent=lambda _hwnd: "quote-popup",
+            EnumChildWindows=enum_child_windows,
+            SendMessage=lambda _hwnd, _message, _wparam, _lparam: default_id,
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "win32con", SimpleNamespace(DM_GETDEFID=0x0400))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyautogui",
+        SimpleNamespace(press=lambda key, **_kwargs: typed.append(("press", key)), write=write),
+    )
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_window_process_id",
+        staticmethod(lambda _hwnd: 100),
+    )
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda *_args: None),
+    )
+
+    assert ExternalTerminalNavigator._type_quote_code("600000", app_name, expected_hwnd="target") is expected
+    assert (("press", "enter") in typed) is expected
+
+
 def test_external_terminal_navigator_rejects_owned_dialog_before_enter(monkeypatch):
     foreground = {"hwnd": "target"}
     typed = []

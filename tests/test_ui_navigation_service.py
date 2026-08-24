@@ -87,7 +87,7 @@ def test_powershell_param_block_end_ignores_quoted_and_commented_closing_parenth
         ui_navigation_service._powershell_param_block_end("Write-Output 'not a launcher'")
 
 
-def test_codex_thread_url_helpers_parse_strip_and_quote_arguments():
+def test_codex_thread_url_helpers_parse_and_build_native_activation_route():
     assert ui_navigation_service._parse_codex_thread_url("https://example.test") is None
     assert ui_navigation_service._parse_codex_thread_url("codex://new?path=&prompt=") == ui_navigation_service._CodexThreadRequest(
         path=None,
@@ -96,19 +96,23 @@ def test_codex_thread_url_helpers_parse_strip_and_quote_arguments():
 
     request = ui_navigation_service._parse_codex_thread_url("codex://new?path=C%3A%5Cdemo%20app&prompt=%20hello%20")
     assert request == ui_navigation_service._CodexThreadRequest(path=r"C:\demo app", prompt=" hello ")
-    assert ui_navigation_service._codex_activation_arguments(request) == r'"--open-project=C:\demo app"'
-    assert ui_navigation_service._codex_activation_arguments(ui_navigation_service._CodexThreadRequest(None, "x")) == ""
-
+    assert (
+        ui_navigation_service._codex_activation_arguments(request)
+        == "codex://new?path=C%3A%5Cdemo+app&prompt=+hello+"
+    )
+    assert ui_navigation_service._codex_activation_arguments(ui_navigation_service._CodexThreadRequest(None, "x")) == "codex://new?prompt=x"
+    assert (
+        ui_navigation_service._codex_activation_arguments(
+            ui_navigation_service._CodexThreadRequest(r"C:\demo&unsafe", 'hello&"unsafe"')
+        )
+        == "codex://new?path=C%3A%5Cdemo%26unsafe&prompt=hello%26%22unsafe%22"
+    )
     assert ui_navigation_service._codex_thread_url_without_prompt("https://example.test?prompt=x") == "https://example.test?prompt=x"
     assert ui_navigation_service._codex_thread_url_without_prompt("codex://new?path=%2Ftmp%2Fdemo") == "codex://new?path=%2Ftmp%2Fdemo"
     assert (
         ui_navigation_service._codex_thread_url_without_prompt("codex://new?path=%2Ftmp%2Fdemo&prompt=hello&mode=&x=1#frag")
         == "codex://new?path=%2Ftmp%2Fdemo&mode=&x=1#frag"
     )
-
-    assert ui_navigation_service._quote_windows_argument("plain") == "plain"
-    assert ui_navigation_service._quote_windows_argument('has "quote"') == r'"has \"quote\""'
-
 
 def test_windows_helper_shortcuts_on_non_windows(monkeypatch):
     monkeypatch.setattr(ui_navigation_service.os, "name", "posix", raising=False)
@@ -379,19 +383,22 @@ def test_failed_hresult_and_guid_from_string():
 
 def test_open_codex_desktop_thread_uses_fast_appx_path(monkeypatch):
     captured = {}
-    before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
 
     def fake_activate(arguments):
         captured["arguments"] = arguments
         return True
 
     monkeypatch.setattr(ui_navigation_service.os, "name", "nt", raising=False)
-    monkeypatch.setattr(ui_navigation_service, "_codex_window_snapshot", lambda: before)
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_codex_window_snapshot",
+        lambda: (_ for _ in ()).throw(AssertionError("clipboard fallback should not run")),
+    )
     monkeypatch.setattr(ui_navigation_service, "_activate_codex_appx", fake_activate)
     monkeypatch.setattr(
         ui_navigation_service,
         "_schedule_codex_prompt_paste",
-        lambda prompt, snapshot: captured.setdefault("paste", (prompt, snapshot)),
+        lambda *_args: (_ for _ in ()).throw(AssertionError("paste should not be scheduled")),
     )
     monkeypatch.setattr(
         ui_navigation_service,
@@ -401,8 +408,7 @@ def test_open_codex_desktop_thread_uses_fast_appx_path(monkeypatch):
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo&prompt=hello")
     assert captured == {
-        "arguments": "--open-project=/tmp/demo",
-        "paste": ("hello", before),
+        "arguments": "codex://new?path=%2Ftmp%2Fdemo&prompt=hello",
     }
 
 

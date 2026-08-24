@@ -185,13 +185,16 @@ def test_send_ctrl_v_success_and_error(monkeypatch):
 
 def test_fast_open_activation_exception_and_success(monkeypatch):
     monkeypatch.setattr(module.os, "name", "nt")
-    monkeypatch.setattr(module, "_codex_window_snapshot", lambda: module._CodexWindowSnapshot(frozenset(), None))
     monkeypatch.setattr(module, "_activate_codex_appx", lambda _args: (_ for _ in ()).throw(OSError("bad")))
     url = "codex://new?path=C%3A%5Cdemo&prompt=hello"
     assert module._try_open_codex_desktop_thread_fast(url) is False
 
-    scheduled = []
-    monkeypatch.setattr(module, "_activate_codex_appx", lambda _args: True)
-    monkeypatch.setattr(module, "_schedule_codex_prompt_paste", lambda *args: scheduled.append(args))
+    activated = []
+    monkeypatch.setattr(module, "_activate_codex_appx", lambda args: activated.append(args) or True)
+    monkeypatch.setattr(
+        module,
+        "_schedule_codex_prompt_paste",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("paste should not be scheduled")),
+    )
     assert module._try_open_codex_desktop_thread_fast(url) is True
-    assert scheduled and scheduled[0][0] == "hello"
+    assert activated == [url]

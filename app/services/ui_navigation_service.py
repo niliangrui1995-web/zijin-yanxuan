@@ -294,16 +294,14 @@ def _codex_thread_url_without_prompt(thread_url: str) -> str:
     )
 
 
-def _quote_windows_argument(value: str) -> str:
-    if not any(ch.isspace() or ch == '"' for ch in value):
-        return value
-    return '"' + value.replace('"', '\\"') + '"'
-
-
 def _codex_activation_arguments(request: _CodexThreadRequest) -> str:
-    if not request.path:
-        return ""
-    return _quote_windows_argument(f"--open-project={request.path}")
+    query_items = []
+    if request.path:
+        query_items.append(("path", request.path))
+    if request.prompt:
+        query_items.append(("prompt", request.prompt))
+    query = urlencode(query_items)
+    return f"codex://new?{query}" if query else "codex://new"
 
 
 def _guid_from_string(value: str):
@@ -812,14 +810,12 @@ def _try_open_codex_desktop_thread_fast(thread_url: str) -> bool:
     if request is None:
         return False
 
-    before = _codex_window_snapshot()
     try:
         if not _activate_codex_appx(_codex_activation_arguments(request)):
             return False
     except (AttributeError, OSError, TypeError, ValueError):
         return False
 
-    _schedule_codex_prompt_paste(request.prompt, before)
     return True
 
 

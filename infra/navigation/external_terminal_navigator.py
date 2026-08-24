@@ -245,6 +245,62 @@ class ExternalTerminalNavigator:
 
         return bool(win32gui.GetForegroundWindow() == expected_hwnd)
 
+    @classmethod
+    def _is_terminal_quote_popup(cls, hwnd, expected_hwnd, app_name: str) -> bool:
+        if app_name not in {"TDX", "东方财富"} or not hwnd or hwnd == expected_hwnd:
+            return False
+
+        try:
+            import pywintypes
+            import win32con
+            import win32gui
+        except ImportError:
+            return False
+
+        win32_errors = (OSError, RuntimeError, TypeError, ValueError, pywintypes.error)
+
+        try:
+            expected_process_id = cls._window_process_id(expected_hwnd)
+            if expected_process_id is None or cls._window_process_id(hwnd) != expected_process_id:
+                return False
+            if not win32gui.IsWindowVisible(hwnd) or not win32gui.IsWindowEnabled(hwnd):
+                return False
+            if win32gui.GetClassName(hwnd) != "#32770":
+                return False
+
+            controls = {}
+
+            def callback(child_hwnd, _):
+                try:
+                    if win32gui.GetParent(child_hwnd) != hwnd:
+                        return True
+                    if not win32gui.IsWindowVisible(child_hwnd) or not win32gui.IsWindowEnabled(child_hwnd):
+                        return True
+                    controls[win32gui.GetDlgCtrlID(child_hwnd)] = (
+                        win32gui.GetClassName(child_hwnd),
+                        win32gui.GetWindowText(child_hwnd),
+                    )
+                except win32_errors:
+                    return True
+                return True
+
+            win32gui.EnumChildWindows(hwnd, callback, None)
+            if app_name == "TDX":
+                return (
+                    win32gui.GetWindowText(hwnd).casefold() == "tdx"
+                    and controls.get(1024, (None,))[0] == "Edit"
+                    and controls.get(1026, (None,))[0] == "ListBox"
+                )
+
+            return (
+                win32gui.GetWindowText(hwnd) == ""
+                and controls.get(1001) == ("AfxWnd140u", "输入框")
+                and controls.get(1000) == ("AfxWnd140u", "显示框")
+                and win32gui.SendMessage(hwnd, getattr(win32con, "DM_GETDEFID", 0x0400), 0, 0) == 0x534B0001
+            )
+        except win32_errors:
+            return False
+
     @staticmethod
     def _type_quote_code(bare: str, app_name: str, *, expected_hwnd=None) -> bool:
         if not ExternalTerminalNavigator._is_expected_window_foreground(expected_hwnd):
@@ -260,9 +316,17 @@ class ExternalTerminalNavigator:
             return False
         pyautogui.write(bare, interval=0.04)
         time.sleep(0.08)
-        if not ExternalTerminalNavigator._is_expected_window_foreground(expected_hwnd):
-            event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
-            return False
+        if expected_hwnd is not None:
+            import win32gui
+
+            foreground_hwnd = win32gui.GetForegroundWindow()
+            if foreground_hwnd != expected_hwnd and not ExternalTerminalNavigator._is_terminal_quote_popup(
+                foreground_hwnd,
+                expected_hwnd,
+                app_name,
+            ):
+                event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
+                return False
         pyautogui.press("enter")
         event_bus.sig_system_log.emit("info", f"[{app_name}] 已使用窗口级快捷输入: {bare}")
         return True
