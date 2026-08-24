@@ -292,6 +292,7 @@ class ExternalTerminalNavigator:
             return False
 
     def _launch_tdx_impl(self, code: str) -> None:
+        hwnd = None
         try:
             import ctypes
 
@@ -348,7 +349,10 @@ class ExternalTerminalNavigator:
 
             if hwnd:
                 if not self._input_quote_code(user32, hwnd, code, "TDX"):
-                    self._open_quote_web_fallback(code, "通达信输入代码失败")
+                    event_bus.sig_system_log.emit(
+                        "warn",
+                        "[TDX] 已定位通达信，但未能安全输入代码；未打开网页行情",
+                    )
             else:
                 event_bus.sig_system_log.emit("warn", "[TDX] 启动后仍未检测到通达信窗口，已切换网页兜底")
                 self._open_quote_web_fallback(code, "通达信窗口未就绪")
@@ -362,9 +366,13 @@ class ExternalTerminalNavigator:
             ValueError,
         ) as exc:
             event_bus.sig_system_log.emit("error", f"[TDX] 跳转失败: {exc}")
-            self._open_quote_web_fallback(code, "通达信跳转异常")
+            if hwnd:
+                event_bus.sig_system_log.emit("warn", "[TDX] 已定位通达信，但未打开网页行情")
+            else:
+                self._open_quote_web_fallback(code, "通达信跳转异常")
 
     def _launch_eastmoney_impl(self, code: str) -> None:
+        hwnd = None
         try:
             import ctypes
 
@@ -372,10 +380,11 @@ class ExternalTerminalNavigator:
             user32 = ctypes.windll.user32
 
             def find_em_window():
-                found_hwnd = self._null_hwnd(ctypes)
+                native_hwnd = self._null_hwnd(ctypes)
+                fallback_hwnd = self._null_hwnd(ctypes)
 
                 def callback(hwnd, _):
-                    nonlocal found_hwnd
+                    nonlocal fallback_hwnd, native_hwnd
                     if not user32.IsWindowVisible(hwnd):
                         return True
                     length = user32.GetWindowTextLengthW(hwnd)
@@ -384,13 +393,21 @@ class ExternalTerminalNavigator:
                         user32.GetWindowTextW(hwnd, buf, length + 1)
                         title = buf.value
 
-                        if "东方财富" in title:
-                            found_hwnd = hwnd
+                        class_buf = ctypes.create_unicode_buffer(256)
+                        user32.GetClassNameW(hwnd, class_buf, 256)
+                        class_name = class_buf.value
+
+                        if "东方财富" not in title or class_name.startswith("Chrome_WidgetWin_"):
+                            return True
+                        if class_name.startswith("Afx:"):
+                            native_hwnd = hwnd
                             return False
+                        if not fallback_hwnd:
+                            fallback_hwnd = hwnd
                     return True
 
                 user32.EnumWindows(enum_windows_proc(callback), 0)
-                return found_hwnd
+                return native_hwnd or fallback_hwnd
 
             hwnd = find_em_window()
             if not hwnd:
@@ -399,7 +416,13 @@ class ExternalTerminalNavigator:
                 return
 
             if not self._input_quote_code(user32, hwnd, code, "东方财富"):
-                self._open_quote_web_fallback(code, "东方财富输入代码失败")
+                event_bus.sig_system_log.emit(
+                    "warn",
+                    "[东方财富] 已定位东方财富终端，但未能安全输入代码；未打开网页行情",
+                )
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {exc}")
-            self._open_quote_web_fallback(code, "东方财富跳转异常")
+            if hwnd:
+                event_bus.sig_system_log.emit("warn", "[东方财富] 已定位东方财富终端，但未打开网页行情")
+            else:
+                self._open_quote_web_fallback(code, "东方财富跳转异常")

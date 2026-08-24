@@ -98,7 +98,7 @@ def build_codex_project_thread_url(
 
 
 def _warn_codex_open_failed(parent, message: str) -> None:
-    QMessageBox.warning(parent, "无法打开 Codex", message)
+    QMessageBox.warning(parent, "无法打开 ChatGPT", message)
 
 
 def _is_windows_os() -> bool:
@@ -134,7 +134,7 @@ def _open_codex_url(url: str) -> bool:
     try:
         return bool(webbrowser.open_new_tab(url))
     except _CODEX_URL_OPEN_ERRORS as exc:
-        _log.warning("[股票右键菜单] Codex 深链接回退失败: %s", exc, exc_info=True)
+        _log.warning("[股票右键菜单] ChatGPT 深链接回退失败: %s", exc, exc_info=True)
         emit_structured_log(
             "stock_context_menu.codex_open_failed",
             logger=_log,
@@ -167,7 +167,7 @@ def open_codex_project_thread(
         _warn_codex_open_failed(parent, f"产业链投研项目路径不存在：{project_path}")
         return False
     if not _is_windows_os() and not _is_codex_scheme_registered():
-        _warn_codex_open_failed(parent, "当前系统没有注册 codex:// 深链接，请先安装或修复 Codex 桌面端。")
+        _warn_codex_open_failed(parent, "当前系统没有注册 codex:// 深链接，请先安装或修复 ChatGPT 桌面端。")
         return False
 
     launch_prompt = prompt if prompt is not None else CODEX_CURRENT_STOCK_PROMPT
@@ -178,7 +178,7 @@ def open_codex_project_thread(
         opened = _open_codex_url(url)
 
     if not opened:
-        _warn_codex_open_failed(parent, "系统没有接受 Codex 打开请求。")
+        _warn_codex_open_failed(parent, "系统没有接受 ChatGPT 打开请求。")
         return False
 
     return True
@@ -260,7 +260,7 @@ def build_stock_context_menu(
     # --- 跳转操作 ---
     act_tdx = menu.addAction("跳转通达信")
     act_em = menu.addAction("跳转东方财富")
-    act_codex = menu.addAction("打开 Codex")
+    act_codex = menu.addAction("打开 ChatGPT")
 
     # --- 导出 ---
     act_export = None

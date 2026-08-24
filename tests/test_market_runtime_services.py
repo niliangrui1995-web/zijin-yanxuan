@@ -1080,6 +1080,84 @@ def test_external_terminal_navigator_rechecks_foreground_before_enter(monkeypatc
     assert ("press", "enter") not in typed
 
 
+def test_external_terminal_navigator_rejects_owned_dialog_before_enter(monkeypatch):
+    foreground = {"hwnd": "target"}
+    typed = []
+
+    def write(text, **_kwargs):
+        typed.append(("write", text))
+        foreground["hwnd"] = "quote-popup"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "win32gui",
+        SimpleNamespace(
+            GetForegroundWindow=lambda: foreground["hwnd"],
+            GetClassName=lambda _hwnd: "#32770",
+            GetWindow=lambda _hwnd, _flag: "target",
+            GetWindowText=lambda _hwnd: "Tdx",
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "win32con", SimpleNamespace(GW_OWNER=4))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyautogui",
+        SimpleNamespace(press=lambda key, **_kwargs: typed.append(("press", key)), write=write),
+    )
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_window_process_id",
+        staticmethod(lambda _hwnd: 100),
+    )
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda *_args: None),
+    )
+
+    assert ExternalTerminalNavigator._type_quote_code("600000", "APP", expected_hwnd="target") is False
+    assert ("press", "enter") not in typed
+
+
+def test_external_terminal_navigator_rejects_unowned_blank_dialog_before_enter(monkeypatch):
+    foreground = {"hwnd": "target"}
+    typed = []
+
+    def write(text, **_kwargs):
+        typed.append(("write", text))
+        foreground["hwnd"] = "quote-popup"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "win32gui",
+        SimpleNamespace(
+            GetForegroundWindow=lambda: foreground["hwnd"],
+            GetClassName=lambda _hwnd: "#32770",
+            GetWindow=lambda _hwnd, _flag: 0,
+            GetWindowText=lambda _hwnd: "",
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "win32con", SimpleNamespace(GW_OWNER=4))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyautogui",
+        SimpleNamespace(press=lambda key, **_kwargs: typed.append(("press", key)), write=write),
+    )
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_window_process_id",
+        staticmethod(lambda _hwnd: 100),
+    )
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda *_args: None),
+    )
+
+    assert ExternalTerminalNavigator._type_quote_code("600000", "APP", expected_hwnd="target") is False
+    assert ("press", "enter") not in typed
+
+
 @pytest.mark.parametrize(
     ("can_send_input", "activated", "message_fragment"),
     [(False, True, "权限"), (True, False, "激活")],
@@ -1446,8 +1524,9 @@ def test_external_terminal_navigator_tdx_ignores_windows_until_spawned_window_ap
     assert inputs == [(4, "600000", "TDX")]
 
 
-def test_external_terminal_navigator_tdx_input_failure_uses_web_fallback(monkeypatch):
+def test_external_terminal_navigator_tdx_input_failure_does_not_use_web_fallback(monkeypatch):
     fallbacks = []
+    emitted = []
     navigator = ExternalTerminalNavigator(
         SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc"))
     )
@@ -1455,6 +1534,10 @@ def test_external_terminal_navigator_tdx_input_failure_uses_web_fallback(monkeyp
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.path.exists", lambda _path: True)
     monkeypatch.setattr(navigator, "_input_quote_code", lambda user32, hwnd, code, app: False)
     monkeypatch.setattr(navigator, "_open_quote_web_fallback", lambda code, reason="": fallbacks.append((code, reason)))
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda level, message: emitted.append((level, message))),
+    )
     _install_fake_external_nav_ctypes(
         monkeypatch,
         _FakeUser32([10], titles={10: "terminal"}, classes={10: "TdxW_MainFrame_Class"}),
@@ -1462,7 +1545,8 @@ def test_external_terminal_navigator_tdx_input_failure_uses_web_fallback(monkeyp
 
     navigator._launch_tdx_impl("600000")
 
-    assert fallbacks == [("600000", fallbacks[0][1])]
+    assert fallbacks == []
+    assert emitted == [("warn", emitted[0][1])]
 
 
 def test_external_terminal_navigator_eastmoney_window_paths(monkeypatch):
@@ -1492,6 +1576,29 @@ def test_external_terminal_navigator_eastmoney_window_paths(monkeypatch):
     assert inputs == []
     assert fallbacks[-1][0] == "600000"
     assert emitted[-1][0] == "warn"
+
+
+def test_external_terminal_navigator_eastmoney_prefers_native_terminal_over_browser_title(monkeypatch):
+    inputs = []
+    navigator = ExternalTerminalNavigator(SimpleNamespace())
+
+    monkeypatch.setattr(
+        navigator,
+        "_input_quote_code",
+        lambda user32, hwnd, code, app: inputs.append((hwnd, code, app)) or True,
+    )
+    _install_fake_external_nav_ctypes(
+        monkeypatch,
+        _FakeUser32(
+            [10, 20],
+            titles={10: "长芯博创 - 东方财富网 - Google Chrome", 20: "东方财富终端"},
+            classes={10: "Chrome_WidgetWin_1", 20: "Afx:002B0000:8:00010003:00000000:00010637"},
+        ),
+    )
+
+    navigator._launch_eastmoney_impl("000001")
+
+    assert inputs == [(20, "000001", "东方财富")]
 
 
 def test_external_terminal_navigator_eastmoney_ignores_non_matching_windows(monkeypatch):
@@ -1530,7 +1637,8 @@ def test_external_terminal_navigator_eastmoney_input_failure_and_exception(monke
 
     navigator._launch_eastmoney_impl("000001")
 
-    assert fallbacks == [("000001", fallbacks[0][1])]
+    assert fallbacks == []
+    assert emitted == [("warn", emitted[0][1])]
 
     import ctypes
 

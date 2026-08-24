@@ -196,7 +196,7 @@ def test_open_codex_project_thread_warns_when_windows_project_opener_rejects(mon
     )
 
     assert not stock_context_menu.open_codex_project_thread(project_path=tmp_path)
-    assert "Codex" in warnings[0]
+    assert "ChatGPT" in warnings[0]
 
 
 def test_open_codex_desktop_thread_uses_navigation_service_fast_path(monkeypatch):

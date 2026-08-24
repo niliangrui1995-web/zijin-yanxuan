@@ -21,8 +21,8 @@ from infra.tasks.process_runner import spawn_silent_process
 CODEX_LOCAL_LAUNCHER = Path.home() / ".codex" / "local-tools" / "open-codex-project.ps1"
 # Launcher upgrades must be reviewed and resealed; mismatches fail closed.
 CODEX_LOCAL_LAUNCHER_FINGERPRINT = FileFingerprint(
-    size_bytes=11131,
-    sha256="bd07c6c5745d47d71aaf8cc26ebbc150c2efec69d03c477ee337fb36882a38aa",
+    size_bytes=11420,
+    sha256="8cff3a69709f0c14be9391c268c83b134831be68cd65681b0df0db6874c31b88",
 )
 CODEX_APP_USER_MODEL_ID = "OpenAI.Codex_2p2nqsd0c76g0!App"
 _APP_ACTIVATION_MANAGER_CLSID = "45BA127D-10A8-46EA-8AB7-56EA9078943C"
@@ -32,6 +32,7 @@ _COINIT_APARTMENTTHREADED = 0x2
 _RPC_E_CHANGED_MODE = -2147417850
 _GMEM_MOVEABLE = 0x0002
 _CF_UNICODETEXT = 13
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _KEYEVENTF_KEYUP = 0x0002
 _SW_RESTORE = 9
 _VK_CONTROL = 0x11
@@ -540,6 +541,79 @@ def _is_codex_window_title(title: str) -> bool:
     return text == "Codex" or text.endswith(" - Codex")
 
 
+def _codex_window_executable_path(hwnd: int) -> str | None:
+    if os.name != "nt" or not hwnd:
+        return None
+
+    kernel32 = None
+    process_handle = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        process_id = wintypes.DWORD()
+        if not user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id)) or not process_id.value:
+            return None
+        process_handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, process_id.value)
+        if not process_handle:
+            return None
+        capacity = 32768
+        buffer = ctypes.create_unicode_buffer(capacity)
+        path_length = wintypes.DWORD(capacity)
+        if not kernel32.QueryFullProcessImageNameW(process_handle, 0, buffer, ctypes.byref(path_length)):
+            return None
+        return buffer.value or None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    finally:
+        if kernel32 is not None and process_handle:
+            kernel32.CloseHandle(process_handle)
+
+
+def _is_codex_window(hwnd: int, title: str) -> bool:
+    text = str(title or "").strip()
+    if text != "ChatGPT" and not text.endswith(" - ChatGPT") and not _is_codex_window_title(text):
+        return False
+
+    executable_path = _codex_window_executable_path(hwnd)
+    if not executable_path:
+        return False
+    normalized_path = executable_path.replace("/", "\\").casefold()
+    executable_name = normalized_path.rsplit("\\", 1)[-1]
+    return (
+        executable_name in {"chatgpt.exe", "codex.exe"}
+        and "\\windowsapps\\openai.codex_" in normalized_path
+    )
+
+
+def _is_codex_window_handle(hwnd: int) -> bool:
+    if os.name != "nt" or not hwnd:
+        return False
+
+    try:
+        import win32gui
+
+        return _is_codex_window(int(hwnd), win32gui.GetWindowText(hwnd))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _list_codex_window_handles() -> frozenset[int]:
     if os.name != "nt":
         return frozenset()
@@ -568,7 +642,7 @@ def _list_codex_window_handles() -> frozenset[int]:
                 return True
             buffer = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buffer, length + 1)
-            if _is_codex_window_title(buffer.value):
+            if _is_codex_window(int(hwnd), buffer.value):
                 handles.add(int(hwnd))
             return True
 
@@ -618,6 +692,12 @@ def _select_codex_paste_target(
             and current.foreground_handle != before.foreground_handle
         ):
             return current.foreground_handle
+        if (
+            allow_reused_foreground
+            and len(current.handles) == 1
+            and before.foreground_handle not in current.handles
+        ):
+            return next(iter(current.handles))
         return None
 
     if current.foreground_handle in new_handles:
@@ -694,7 +774,12 @@ def _paste_codex_prompt_when_target_ready(prompt: str, before: _CodexWindowSnaps
             return
 
         time.sleep(_CODEX_TARGET_WINDOW_READY_DELAY_SECONDS)
-        if _foreground_window_handle() != hwnd:
+        if _foreground_window_handle() != hwnd or not _is_codex_window_handle(hwnd):
+            return
+        if (
+            prompt_clipboard_sequence is None
+            or _clipboard_sequence_number() != prompt_clipboard_sequence
+        ):
             return
         _send_ctrl_v()
     finally:

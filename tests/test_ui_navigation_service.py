@@ -164,6 +164,27 @@ def test_codex_window_title_and_selection_edges(monkeypatch):
     assert ui_navigation_service._select_codex_paste_target(before_empty) == 5
 
 
+def test_codex_window_recognizes_verified_chatgpt_desktop_client(monkeypatch):
+    def executable_path(hwnd):
+        if hwnd in {42, 44}:
+            return r"C:\Program Files\WindowsApps\OpenAI.Codex_26.818.8289.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe"
+        if hwnd == 45:
+            return None
+        return r"C:\Program Files\Other\ChatGPT.exe"
+
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_codex_window_executable_path",
+        executable_path,
+    )
+
+    assert ui_navigation_service._is_codex_window(42, "ChatGPT") is True
+    assert ui_navigation_service._is_codex_window(42, "产业链投研 - ChatGPT") is True
+    assert ui_navigation_service._is_codex_window(43, "ChatGPT") is False
+    assert ui_navigation_service._is_codex_window(44, "Codex") is True
+    assert ui_navigation_service._is_codex_window(45, "ChatGPT") is False
+
+
 def test_wait_for_codex_paste_target_allows_reused_foreground_after_delay(monkeypatch):
     clock = {"now": 0.0}
     calls = []
@@ -555,6 +576,7 @@ def test_paste_codex_prompt_waits_for_new_window_before_ctrl_v(monkeypatch):
     )
     monkeypatch.setattr(ui_navigation_service.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(ui_navigation_service, "_foreground_window_handle", lambda: 2)
+    monkeypatch.setattr(ui_navigation_service, "_is_codex_window_handle", lambda hwnd: hwnd == 2)
     monkeypatch.setattr(ui_navigation_service, "_send_ctrl_v", lambda: calls.append(("paste",)) or True)
 
     ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
@@ -566,6 +588,51 @@ def test_paste_codex_prompt_waits_for_new_window_before_ctrl_v(monkeypatch):
         ("paste",),
         ("restore", snapshot),
     ]
+
+
+def test_paste_codex_prompt_does_not_ctrl_v_when_target_identity_changes(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
+    snapshot = ui_navigation_service._WindowsClipboardSnapshot(text="original")
+    calls = []
+
+    monkeypatch.setattr(ui_navigation_service, "_capture_windows_clipboard_snapshot", lambda: snapshot)
+    monkeypatch.setattr(ui_navigation_service, "_restore_windows_clipboard_snapshot", lambda value: calls.append(("restore", value)) or True)
+    monkeypatch.setattr(ui_navigation_service, "_copy_codex_prompt_to_clipboard", lambda _prompt: True)
+    monkeypatch.setattr(ui_navigation_service, "_clipboard_sequence_number", lambda: 1)
+    monkeypatch.setattr(ui_navigation_service, "_wait_for_codex_paste_target", lambda _snapshot: 2)
+    monkeypatch.setattr(ui_navigation_service, "_focus_window", lambda _hwnd: True)
+    monkeypatch.setattr(ui_navigation_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ui_navigation_service, "_foreground_window_handle", lambda: 2)
+    monkeypatch.setattr(ui_navigation_service, "_is_codex_window_handle", lambda _hwnd: False)
+    monkeypatch.setattr(ui_navigation_service, "_send_ctrl_v", lambda: calls.append(("paste",)) or True)
+
+    ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
+
+    assert ("paste",) not in calls
+    assert calls == [("restore", snapshot)]
+
+
+def test_paste_codex_prompt_does_not_ctrl_v_after_clipboard_changes(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
+    snapshot = ui_navigation_service._WindowsClipboardSnapshot(text="original")
+    calls = []
+    clipboard_sequences = iter((1, 2, 2))
+
+    monkeypatch.setattr(ui_navigation_service, "_capture_windows_clipboard_snapshot", lambda: snapshot)
+    monkeypatch.setattr(ui_navigation_service, "_restore_windows_clipboard_snapshot", lambda value: calls.append(("restore", value)) or True)
+    monkeypatch.setattr(ui_navigation_service, "_copy_codex_prompt_to_clipboard", lambda _prompt: True)
+    monkeypatch.setattr(ui_navigation_service, "_clipboard_sequence_number", lambda: next(clipboard_sequences))
+    monkeypatch.setattr(ui_navigation_service, "_wait_for_codex_paste_target", lambda _snapshot: 2)
+    monkeypatch.setattr(ui_navigation_service, "_focus_window", lambda _hwnd: True)
+    monkeypatch.setattr(ui_navigation_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ui_navigation_service, "_foreground_window_handle", lambda: 2)
+    monkeypatch.setattr(ui_navigation_service, "_is_codex_window_handle", lambda _hwnd: True)
+    monkeypatch.setattr(ui_navigation_service, "_send_ctrl_v", lambda: calls.append(("paste",)) or True)
+
+    ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
+
+    assert ("paste",) not in calls
+    assert calls == []
 
 
 def test_paste_codex_prompt_does_not_ctrl_v_without_new_window(monkeypatch):
@@ -590,6 +657,25 @@ def test_select_codex_target_allows_reused_foreground_after_launch(monkeypatch):
 
     assert ui_navigation_service._select_codex_paste_target(before) is None
     assert ui_navigation_service._select_codex_paste_target(before, allow_reused_foreground=True) == 10
+
+
+def test_select_codex_target_reuses_single_verified_window_without_foreground_change(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({10}), 99)
+    after = ui_navigation_service._CodexWindowSnapshot(frozenset({10}), 99)
+
+    monkeypatch.setattr(ui_navigation_service, "_codex_window_snapshot", lambda: after)
+
+    assert ui_navigation_service._select_codex_paste_target(before) is None
+    assert ui_navigation_service._select_codex_paste_target(before, allow_reused_foreground=True) == 10
+
+
+def test_select_codex_target_rejects_ambiguous_reused_windows_without_foreground_change(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({10, 11}), 99)
+    after = ui_navigation_service._CodexWindowSnapshot(frozenset({10, 11}), 99)
+
+    monkeypatch.setattr(ui_navigation_service, "_codex_window_snapshot", lambda: after)
+
+    assert ui_navigation_service._select_codex_paste_target(before, allow_reused_foreground=True) is None
 
 
 def test_select_codex_target_rejects_reused_foreground_when_it_was_already_foreground(monkeypatch):

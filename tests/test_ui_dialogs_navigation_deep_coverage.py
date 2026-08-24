@@ -333,7 +333,7 @@ def test_stock_context_menu_no_selection_and_chart_paths(monkeypatch, fake_stock
         ("置底", "bottom"),
         ("跳转通达信", "tdx"),
         ("跳转东方财富", "eastmoney"),
-        ("打开 Codex", "codex"),
+        ("打开 ChatGPT", "codex"),
         ("导出当前表", "export"),
         ("Extra", "extra"),
     ],
