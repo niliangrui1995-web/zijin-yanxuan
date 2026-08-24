@@ -12,6 +12,7 @@ tests/test_data_store.py — DataStore SQLite 存储层测试
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def test_pytest_session_default_database_is_outside_project_data():
@@ -46,6 +47,19 @@ def test_default_data_store_path_stays_in_repo_data_after_infra_move(monkeypatch
     expected = Path(__file__).resolve().parents[1] / "data" / "vcp_hunter.db"
 
     assert resolve_data_store_path() == expected.resolve()
+
+
+def test_lazy_data_store_proxy_defers_store_resolution_until_member_access(monkeypatch):
+    import infra.storage.data_store as data_store_module
+
+    calls = []
+    store = SimpleNamespace(load_json=lambda key, default=None: calls.append(key) or default)
+    monkeypatch.setattr(data_store_module, "get_data_store", lambda: store)
+    proxy = data_store_module._LazyDataStore()
+
+    assert calls == []
+    assert proxy.load_json("probe", default={}) == {}
+    assert calls == ["probe"]
 
 
 class TestDataStore:

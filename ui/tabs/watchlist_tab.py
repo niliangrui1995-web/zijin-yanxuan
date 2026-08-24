@@ -17,7 +17,7 @@ from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_quote_service import resolve_quote_metrics
+from app.services.ui_quote_service import get_total_shares, resolve_quote_metrics
 from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
@@ -141,6 +141,7 @@ def _prefer_live_value(live_entry, info_new, key):
 def _watchlist_display_fields(info_new, info_old, live_entry):
     cap = _prefer_live_value(live_entry, info_new, "市值")
     subsector = info_new.get("细分板块") or info_old.get("细分板块") or info_new.get("subsector", "")
+    total_shares = get_total_shares(live_entry)
     return {
         "现价": str(_prefer_live_value(live_entry, info_new, "现价")),
         "涨幅%": str(_prefer_live_value(live_entry, info_new, "涨幅%")),
@@ -148,7 +149,8 @@ def _watchlist_display_fields(info_new, info_old, live_entry):
         "RPS强度": str(info_new.get("RPS强度", "--")),
         "细分板块": str(subsector or ""),
         "摘要": str(info_new.get("备注") or info_old.get("备注", "") or ""),
-        "_zongguben": live_entry.get("_zongguben", 0),
+        "total_shares": total_shares,
+        "_zongguben": total_shares,
     }
 
 
@@ -188,9 +190,15 @@ def _merge_watchlist_quote_row(row: dict, quote: Mapping) -> None:
         "市值": metrics.get("market_cap_text"),
     }
     row.update({key: value for key, value in updates.items() if value is not None and value != ""})
-    zongguben = float(metrics.get("zongguben", 0) or 0)
-    if zongguben > 0:
-        row["_zongguben"] = zongguben
+    total_shares = float(
+        metrics.get("total_shares")
+        or metrics.get("zongguben")
+        or metrics.get("_zongguben")
+        or 0
+    )
+    if total_shares > 0:
+        row["total_shares"] = total_shares
+        row["_zongguben"] = total_shares
 
 
 def _merge_watchlist_quote_snapshot(rows, quote_snapshot) -> list:
@@ -248,11 +256,13 @@ def _capture_watchlist_live_data(model) -> dict:
     for row in list(getattr(model, "row_data", None) or []):
         code = row.get("代码")
         if code:
+            total_shares = get_total_shares(row)
             live_data_map[code] = {
                 "现价": row.get("现价", "--"),
                 "涨幅%": row.get("涨幅%", "--"),
                 "市值": row.get("市值", "--"),
-                "_zongguben": row.get("_zongguben", 0),
+                "total_shares": total_shares,
+                "_zongguben": total_shares,
             }
     return live_data_map
 
@@ -552,7 +562,7 @@ def _run_vcp_refresh(codes_with_rows, context_snapshot, fallback_radar_data, can
 
 
 def _build_vcp_refresh_job(owner, codes_with_rows):
-    from domains.stock_context.signal_builders import RADAR_SOURCE_KEYS
+    from app.services.stock_context_query_service import RADAR_SOURCE_KEYS
 
     window_reader = getattr(owner, "window", None)
     window = window_reader() if callable(window_reader) else None

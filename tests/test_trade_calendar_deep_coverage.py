@@ -13,6 +13,18 @@ from domains.global_earnings_calendar.service import EarningsCalendarEvent
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
 from ui.components import trade_calendar as calendar_module
 
+_FIXED_TODAY = dt.date(2026, 8, 25)
+
+
+class _FixedDate(dt.date):
+    @classmethod
+    def today(cls):
+        return cls(_FIXED_TODAY.year, _FIXED_TODAY.month, _FIXED_TODAY.day)
+
+
+def _freeze_calendar_today(monkeypatch):
+    monkeypatch.setattr(calendar_module._dt, "date", _FixedDate)
+
 
 class _Signal:
     def __init__(self):
@@ -70,7 +82,7 @@ def _event(
         company=f"{ticker} Corp",
         ticker=ticker,
         sector="AI",
-        report_date=report_date or dt.date.today().isoformat(),
+        report_date=report_date or _FIXED_TODAY.isoformat(),
         fiscal_period="Q2",
         time_label=time_label,
         beijing_time=beijing_time,
@@ -227,7 +239,8 @@ def test_earnings_refresh_worker_cancel_and_signature_fallback(monkeypatch, qt_a
     assert calls == ["refresh"]
 
 
-def test_earnings_panel_cache_filter_group_and_format_edge_paths(qt_application):
+def test_earnings_panel_cache_filter_group_and_format_edge_paths(monkeypatch, qt_application):
+    _freeze_calendar_today(monkeypatch)
     class _BadStatus:
         def load_cache_status(self):
             raise OSError("bad")
@@ -237,7 +250,7 @@ def test_earnings_panel_cache_filter_group_and_format_edge_paths(qt_application)
         assert panel._cache_status == {}
         invalid = _event("BAD", report_date="not-a-date")
         empty_day = _event("EMPTY", report_date="")
-        normal = _event("NORMAL", report_date=(dt.date.today() + dt.timedelta(days=2)).isoformat())
+        normal = _event("NORMAL", report_date=(_FIXED_TODAY + dt.timedelta(days=2)).isoformat())
         panel.set_events([invalid, empty_day, normal])
         panel.set_filter_mode("unknown")
         assert panel._filter_mode == "30d"

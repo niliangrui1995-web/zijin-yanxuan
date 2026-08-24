@@ -13,6 +13,7 @@ import numpy as np
 import polars as pl
 
 from core.logger import get_logger
+from core.rps_cache_identity import rps_cache_key
 from vcp.constants import CACHE_DIR, DATE_FMT, RPS_BUFFER_DAYS
 
 _log = get_logger(__name__)
@@ -308,9 +309,9 @@ def build_rps_matrix_pl(
 
     # 缓存检查
     if rps_cache is not None:
-        cache_key = (str(start_date), str(end_date))
+        cache_key = rps_cache_key(data_dict, start_date, end_date)
         if cache_key in rps_cache:
-            _log.warning(f"\n[加速引擎] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
+            _log.debug(f"[加速引擎] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
             return rps_cache[cache_key]
 
     _log.info(f"\n[加速引擎] 正在计算全市场 RPS 强度矩阵... (标的数: {num_stocks})")
@@ -429,7 +430,7 @@ def build_rps_matrix_pl(
     )
 
     if rps_cache is not None:
-        cache_key = (str(start_date), str(end_date))
+        cache_key = rps_cache_key(data_dict, start_date, end_date)
         rps_cache[cache_key] = result
 
     return result
@@ -566,6 +567,16 @@ def load_cache_parquet() -> tuple[dict, str] | None:
 # ================================================================
 
 
+def _sector_member_aliases(member, sector_name: str) -> set[tuple[str, str]]:
+    member_text = str(member)
+    bare = member_text.replace("sh", "").replace("sz", "")
+    aliases = {(member_text, sector_name), (bare, sector_name)}
+    if bare == member_text:
+        prefix = "sh" if member_text.startswith(("6", "9")) else "sz"
+        aliases.add((f"{prefix}{member_text}", sector_name))
+    return aliases
+
+
 def build_sector_rps_pl(
     sector_to_codes: dict[str, list[str]],
     all_data: dict,
@@ -600,10 +611,13 @@ def build_sector_rps_pl(
 
             # 找到 target_date 对应的位置
             dates_col = _as_date(pldf["datetime"], pldf.schema.get("datetime"))
-            valid_indices = [index for index, is_valid in enumerate((dates_col <= target_dt).to_list()) if is_valid]
-            if not valid_indices:
+            if dates_col.is_sorted():
+                loc = int(dates_col.search_sorted(target_dt, side="right")) - 1
+            else:
+                valid_indices = (dates_col <= target_dt).arg_true()
+                loc = int(valid_indices[-1]) if valid_indices.len() else -1
+            if loc < 0:
                 continue
-            loc = valid_indices[-1]
 
             close_col = pldf["close"]
             curr_close = float(close_col[loc])
@@ -618,13 +632,6 @@ def build_sector_rps_pl(
                 if prev_close > 0:
                     ret = (curr_close - prev_close) / prev_close
                     records.append((code, p, ret))
-                    # 兼容格式：补上 bare/prefixed 双版本
-                    bare = code.replace("sh", "").replace("sz", "")
-                    if bare == code:
-                        prefix = "sh" if code.startswith(("6", "9")) else "sz"
-                        records.append((f"{prefix}{code}", p, ret))
-                    else:
-                        records.append((bare, p, ret))
         except _POLARS_DATA_ERRORS as _e:
             _log.debug(f"[加速引擎] 板块RPS计算跳过一只: {_e}")
             continue
@@ -640,10 +647,10 @@ def build_sector_rps_pl(
         }
     )
 
-    code_sector_records = []
+    code_sector_records = set()
     for sector_name, members in sector_to_codes.items():
         for member in members:
-            code_sector_records.append((member, sector_name))
+            code_sector_records.update(_sector_member_aliases(member, sector_name))
 
     if not code_sector_records:
         return {}

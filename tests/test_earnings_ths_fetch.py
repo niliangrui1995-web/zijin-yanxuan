@@ -8,7 +8,7 @@ from http.client import RemoteDisconnected
 import pandas as pd
 import pytest
 
-from earnings import engine as engine_module
+from domains.earnings import engine as engine_module
 
 
 class _FakeResponse:

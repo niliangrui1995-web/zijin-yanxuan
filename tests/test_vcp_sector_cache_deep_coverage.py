@@ -190,6 +190,10 @@ def test_sector_polars_locator_and_check_constraints():
     manager = _bare_manager()
     frame = pl.DataFrame({"datetime": [dt.date(2026, 1, 1), dt.date(2026, 1, 3)], "close": [10.0, 12.0]})
     assert manager._locate_polars_close(frame, dt.date(2026, 1, 2), pl) == (0, 10.0)
+    unsorted_frame = pl.DataFrame(
+        {"datetime": [dt.date(2026, 1, 3), dt.date(2026, 1, 1), dt.date(2026, 1, 2)], "close": [12.0, 10.0, 11.0]}
+    )
+    assert manager._locate_polars_close(unsorted_frame, dt.date(2026, 1, 2), pl) == (2, 11.0)
     assert manager._locate_polars_close(frame, dt.date(2025, 1, 1), pl) is None
     assert manager._locate_polars_close(pl.DataFrame({"close": [1]}), dt.date(2026, 1, 1), pl) is None
 

@@ -17,6 +17,7 @@ from contextlib import suppress
 from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+import app.services.asian_market_cache_service as asian_market_cache_service
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_lifecycle_service import (
@@ -132,6 +133,13 @@ def build_asian_rt_quote(*args, **kwargs):
     from ui.kline_window_asian import build_asian_rt_quote as _build_asian_rt_quote
 
     return _build_asian_rt_quote(*args, **kwargs)
+
+
+def _cached_asian_rt_quote(code: str) -> dict[str, object]:
+    return asian_market_cache_service.get_realtime_quote(
+        asian_market_cache_service.GLOBAL_ASIAN_RT_CACHE,
+        code,
+    )
 
 
 def _runtime_helper(name: str):
@@ -849,11 +857,9 @@ class KLineChartWindow(KLineWindowPoolLifecycleMixin, QWidget):
         return get_cn_target_trade_date()
 
     def _build_asian_rt_quote(self):
-        from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE
-
         market = self._get_market()
         latest_trade_date = MarketCalendar.get_latest_trade_date(market)
-        quote = GLOBAL_ASIAN_RT_CACHE.get(self.code) or {}
+        quote = _cached_asian_rt_quote(self.code)
         return build_asian_rt_quote(
             self.code,
             quote,

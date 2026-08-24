@@ -10,13 +10,11 @@ from domains import _resolve_lazy_export
 
 if TYPE_CHECKING:
     from domains.earnings.engine import EarningsEngine
-    from domains.earnings.scheduler import EarningsScheduler
 
-__all__ = ["EarningsEngine", "EarningsScheduler"]
+__all__ = ["EarningsEngine"]
 
 _EXPORTS = {
     "EarningsEngine": ("domains.earnings.engine", "EarningsEngine"),
-    "EarningsScheduler": ("domains.earnings.scheduler", "EarningsScheduler"),
 }
 
 

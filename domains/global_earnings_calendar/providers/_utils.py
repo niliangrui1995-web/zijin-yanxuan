@@ -32,7 +32,10 @@ def _collect_daemon_task_results(tasks, *, max_workers: int, thread_name_prefix:
                 return
             try:
                 completed_tasks.put((task_key, task(), None))
-            except BaseException as exc:  # noqa: BLE001 - return worker failures to the caller thread.
+            except (KeyboardInterrupt, SystemExit) as exc:
+                # Keep process-control signals observable to the caller thread.
+                completed_tasks.put((task_key, None, exc))
+            except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers.
                 completed_tasks.put((task_key, None, exc))
             finally:
                 pending_tasks.task_done()

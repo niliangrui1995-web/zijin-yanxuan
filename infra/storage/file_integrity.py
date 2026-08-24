@@ -37,24 +37,26 @@ def fingerprint_file(path: str | Path, *, chunk_size: int = _DEFAULT_CHUNK_SIZE)
     return FileFingerprint(size_bytes=size_bytes, sha256=digest.hexdigest())
 
 
-def verify_file_fingerprint(
-    path: str | Path,
+def fingerprint_bytes(content: bytes) -> FileFingerprint:
+    data = bytes(content)
+    return FileFingerprint(
+        size_bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
+
+
+def _verify_fingerprint(
+    actual: FileFingerprint,
     *,
+    artifact_path: Path,
     expected_size_bytes: int,
     expected_sha256: str,
 ) -> FileFingerprint:
-    artifact_path = Path(path)
-    if (
-        not isinstance(expected_size_bytes, int)
-        or isinstance(expected_size_bytes, bool)
-        or expected_size_bytes <= 0
-        or not is_sha256_hexdigest(expected_sha256)
-    ):
-        raise FileIntegrityError(f"artifact fingerprint is invalid: {artifact_path}")
-    try:
-        actual = fingerprint_file(artifact_path)
-    except (OSError, TypeError, ValueError) as exc:
-        raise FileIntegrityError(f"artifact is unreadable: {artifact_path}") from exc
+    _validate_expected_fingerprint(
+        artifact_path=artifact_path,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+    )
     if actual.size_bytes != expected_size_bytes:
         raise FileIntegrityError(
             "artifact size mismatch: "
@@ -65,10 +67,74 @@ def verify_file_fingerprint(
     return actual
 
 
+def _validate_expected_fingerprint(
+    *,
+    artifact_path: Path,
+    expected_size_bytes: int,
+    expected_sha256: str,
+) -> None:
+    if (
+        not isinstance(expected_size_bytes, int)
+        or isinstance(expected_size_bytes, bool)
+        or expected_size_bytes <= 0
+        or not is_sha256_hexdigest(expected_sha256)
+    ):
+        raise FileIntegrityError(f"artifact fingerprint is invalid: {artifact_path}")
+
+
+def read_verified_file_bytes(
+    path: str | Path,
+    *,
+    expected_size_bytes: int,
+    expected_sha256: str,
+) -> bytes:
+    artifact_path = Path(path)
+    _validate_expected_fingerprint(
+        artifact_path=artifact_path,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+    )
+    try:
+        with artifact_path.open("rb") as file_obj:
+            # The artifact path may be user-writable.  Do not allocate based on
+            # its untrusted size before enforcing the sealed expected length.
+            content = file_obj.read(expected_size_bytes + 1)
+    except (OSError, OverflowError, TypeError, ValueError) as exc:
+        raise FileIntegrityError(f"artifact is unreadable: {artifact_path}") from exc
+    _verify_fingerprint(
+        fingerprint_bytes(content),
+        artifact_path=artifact_path,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+    )
+    return content
+
+
+def verify_file_fingerprint(
+    path: str | Path,
+    *,
+    expected_size_bytes: int,
+    expected_sha256: str,
+) -> FileFingerprint:
+    artifact_path = Path(path)
+    try:
+        actual = fingerprint_file(artifact_path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise FileIntegrityError(f"artifact is unreadable: {artifact_path}") from exc
+    return _verify_fingerprint(
+        actual,
+        artifact_path=artifact_path,
+        expected_size_bytes=expected_size_bytes,
+        expected_sha256=expected_sha256,
+    )
+
+
 __all__ = [
     "FileFingerprint",
     "FileIntegrityError",
+    "fingerprint_bytes",
     "fingerprint_file",
     "is_sha256_hexdigest",
+    "read_verified_file_bytes",
     "verify_file_fingerprint",
 ]

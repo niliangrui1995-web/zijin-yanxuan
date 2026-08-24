@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 
 import ast
+import socket
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from PyQt6.QtTest import QSignalSpy
 from yfinance.exceptions import YFRateLimitError
 
@@ -11,6 +13,15 @@ from ui.services import asian_market_runtime_service as runtime_service
 from ui.tabs import asian_market_workers as workers
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _resolve_http_hosts_to_public_addresses(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+    )
 
 
 class _FakeResponse:
@@ -126,7 +137,9 @@ def test_asian_quote_provider_boundary_exists_without_qt_dependencies():
         for alias in node.names
     }
     assert imported_roots.isdisjoint({"PyQt6", "app", "ui"})
-    assert "_LegacyAsianQuoteFacade" in legacy_path.read_text(encoding="utf-8")
+    legacy_source = legacy_path.read_text(encoding="utf-8")
+    assert "sys.modules[__name__]" not in legacy_source
+    assert ".__class__ =" not in legacy_source
     assert "asian_quote_provider" in facade_source
     assert "asian_realtime_provider" not in facade_source
 

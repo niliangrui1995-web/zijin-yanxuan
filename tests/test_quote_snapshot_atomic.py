@@ -9,7 +9,7 @@ import pytest
 
 from core.global_store import GlobalStore
 from core.observability import metric_history
-from core.state.quote_snapshot import QuoteSnapshot, snapshot_to_mutable_dict
+from core.state.quote_snapshot import QuoteSnapshot, merge_quote_snapshot, snapshot_to_mutable_dict
 from ui.tabs.tab_quote_bridge import apply_quote_snapshot
 from ui.tabs.watchlist_tab import _copy_quote_snapshot
 
@@ -46,6 +46,35 @@ def test_quote_snapshot_remains_compatible_with_watchlist_copy_boundary() -> Non
     snapshot = QuoteSnapshot.create(version=1, timestamp=1, quotes={"000001": {"close": 12.5}})
 
     assert _copy_quote_snapshot(snapshot) == {"000001": {"close": 12.5}}
+
+
+def test_merge_quote_snapshot_reuses_unchanged_frozen_payloads() -> None:
+    snapshot = QuoteSnapshot.create(
+        version=1,
+        timestamp=1,
+        quotes={
+            "000001": {"close": 12.5, "source": "eastmoney"},
+            "600519": {"close": 1500.0},
+        },
+    )
+
+    unchanged, observed = merge_quote_snapshot(
+        snapshot,
+        {"000001": {"close": None}, "600519": {"close": 1500.0}},
+        version=2,
+        timestamp=2,
+    )
+    changed, _ = merge_quote_snapshot(
+        snapshot,
+        {"000001": {"close": 13.0}},
+        version=2,
+        timestamp=2,
+    )
+
+    assert unchanged.quotes is snapshot.quotes
+    assert observed.quotes is snapshot.quotes
+    assert changed["000001"] is not snapshot["000001"]
+    assert changed["600519"] is snapshot["600519"]
 
 
 def test_quote_snapshot_crosses_mapping_consumer_without_mutable_conversion() -> None:
@@ -102,6 +131,13 @@ def test_quote_snapshot_mutable_copy_is_filtered_and_detached() -> None:
     assert copied.keys() == {"000001"}
     assert snapshot["000001"]["close"] == 12.5
     assert snapshot["000001"]["nested"]["items"][0]["value"] == 1  # type: ignore[index]
+
+
+def test_snapshot_to_mutable_dict_handles_non_mapping_and_public_entrypoint() -> None:
+    snapshot = QuoteSnapshot.create(version=1, timestamp=1, quotes={"000001": {"close": 12.5}})
+
+    assert snapshot_to_mutable_dict(None) == {}
+    assert snapshot.to_mutable_dict() == {"000001": {"close": 12.5}}
 
 
 def test_quote_snapshot_concurrent_readers_only_see_complete_replacements() -> None:

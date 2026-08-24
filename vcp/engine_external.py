@@ -13,6 +13,7 @@ from datetime import datetime
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
+from domains.quotes.snapshot import TOTAL_SHARES_KEY, get_total_shares
 from domains.quotes.snapshot import coerce_number as _coerce_number
 from infra.http_safety import urlopen_https
 from vcp.constants import (
@@ -25,6 +26,8 @@ from vcp.data_provider_local import load_local_tdx_capital_snapshot
 from vcp.utils import _load_tdx_local_config
 
 _log = get_logger(__name__)
+_LOCAL_TDX_FINANCE_READ_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
+_EASTMONEY_FINANCE_FETCH_ERRORS = (json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError)
 
 
 def _to_eastmoney_secid(code: str) -> str:
@@ -45,7 +48,17 @@ def _normalize_stock_codes(codes) -> list[str]:
 
 
 def _has_valid_share_capital(entry) -> bool:
-    return _coerce_number((entry or {}).get("zongguben") or (entry or {}).get("_zongguben")) > 0
+    return get_total_shares(entry) > 0
+
+
+def _canonicalize_finance_info(entry: dict | None) -> dict:
+    normalized = dict(entry or {})
+    total_shares = get_total_shares(normalized)
+    if total_shares > 0:
+        normalized[TOTAL_SHARES_KEY] = total_shares
+    normalized.pop("zongguben", None)
+    normalized.pop("_zongguben", None)
+    return normalized
 
 
 def _load_local_tdx_finance_info(codes) -> dict[str, dict]:
@@ -54,8 +67,8 @@ def _load_local_tdx_finance_info(codes) -> dict[str, dict]:
         return {}
     try:
         return load_local_tdx_capital_snapshot(codes, tdx_vipdoc)
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        _log.debug(f"[财务股本] 读取通达信本地总股本失败: {exc}")
+    except _LOCAL_TDX_FINANCE_READ_ERRORS as exc:
+        _log.warning("[财务股本] 读取通达信本地总股本失败: %s", exc, exc_info=True)
         return {}
 
 
@@ -113,7 +126,7 @@ def _fetch_eastmoney_finance_info(codes):
                 continue
 
             results[code_val] = {
-                "zongguben": total_market_cap / price_base,
+                TOTAL_SHARES_KEY: total_market_cap / price_base,
                 "market_cap": total_market_cap,
                 "float_market_cap": float_market_cap,
                 "price_base": price_base,
@@ -121,6 +134,18 @@ def _fetch_eastmoney_finance_info(codes):
             }
 
     return results
+
+
+def _fresh_cached_finance_info(cache_entry: dict, now: datetime, code: str) -> dict | None:
+    try:
+        cache_date = datetime.strptime(cache_entry.get("date", "2000-01-01"), "%Y-%m-%d")
+    except (KeyError, ValueError) as exc:
+        _log.debug(f"[财务股本] 缓存日期解析异常({code}): {exc}")
+        return None
+    cached_info = cache_entry.get("info")
+    if (now - cache_date).days < 30 and _has_valid_share_capital(cached_info):
+        return _canonicalize_finance_info(cached_info)
+    return None
 
 
 def batch_get_finance_info(codes):
@@ -140,7 +165,9 @@ def batch_get_finance_info(codes):
 
     local_results = _load_local_tdx_finance_info(normalized_codes)
     results = {
-        code: info for code, info in (local_results or {}).items() if _has_valid_share_capital(info)
+        code: _canonicalize_finance_info(info)
+        for code, info in (local_results or {}).items()
+        if _has_valid_share_capital(info)
     }
 
     need_query = []
@@ -150,14 +177,10 @@ def batch_get_finance_info(codes):
         if code in results:
             continue
         if code in cache:
-            cached = cache[code]
-            try:
-                cache_date = datetime.strptime(cached.get("date", "2000-01-01"), "%Y-%m-%d")
-                if (now - cache_date).days < 30 and _has_valid_share_capital(cached.get("info")):
-                    results[code] = cached["info"]
-                    continue
-            except (KeyError, ValueError) as exc:
-                _log.debug(f"[财务股本] 缓存日期解析异常({code}): {exc}")
+            cached_info = _fresh_cached_finance_info(cache[code], now, code)
+            if cached_info is not None:
+                results[code] = cached_info
+                continue
         need_query.append(code)
 
     if not need_query:
@@ -165,22 +188,23 @@ def batch_get_finance_info(codes):
 
     try:
         online_results = _fetch_eastmoney_finance_info(need_query)
-    except (json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        _log.warning(f"[eastmoney] 无法获取总股本，回退本地旧缓存: {exc}")
+    except _EASTMONEY_FINANCE_FETCH_ERRORS as exc:
+        _log.warning("[eastmoney] 无法获取总股本，回退本地旧缓存: %s", exc, exc_info=True)
         for code in need_query:
             if code in cache and _has_valid_share_capital(cache[code].get("info")):
-                results[code] = cache[code]["info"]
+                results[code] = _canonicalize_finance_info(cache[code]["info"])
         return results
 
     if not online_results:
         for code in need_query:
             if code in cache and _has_valid_share_capital(cache[code].get("info")):
-                results[code] = cache[code]["info"]
+                results[code] = _canonicalize_finance_info(cache[code]["info"])
         return results
 
     for index, raw_code in enumerate(need_query):
         info = online_results.get(raw_code)
         if info:
+            info = _canonicalize_finance_info(info)
             results[raw_code] = info
             cache[raw_code] = {
                 "info": info,
@@ -221,12 +245,12 @@ def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | No
                 results[code] = market_cap
             continue
 
-        zongguben = info.get("zongguben", 0)
-        if zongguben and zongguben > 0:
+        total_shares = get_total_shares(info)
+        if total_shares > 0:
             if close_prices and code in close_prices:
-                results[code] = zongguben * close_prices[code]
+                results[code] = total_shares * close_prices[code]
             else:
-                results[code] = zongguben
+                results[code] = total_shares
     return results
 
 

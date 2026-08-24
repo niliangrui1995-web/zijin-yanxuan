@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 import urllib.request
 from collections.abc import Collection, Mapping
 from contextlib import suppress
@@ -8,6 +9,7 @@ from urllib.parse import urljoin, urlsplit
 
 DEFAULT_REQUESTS_USER_AGENT = "vcp-hunter/1.0"
 DEFAULT_MAX_HTTPS_REDIRECTS = 5
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 
 def _request_url(request) -> str:
@@ -29,14 +31,7 @@ def _normalized_allowed_hosts(allowed_hosts: Collection[str] | str | None) -> se
     return {host for host in (_normalized_host(item) for item in allowed_hosts) if host}
 
 
-def _is_blocked_host(hostname: str) -> bool:
-    host = _normalized_host(hostname)
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
-        return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
+def _is_blocked_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return any(
         (
             address.is_loopback,
@@ -45,8 +40,40 @@ def _is_blocked_host(hostname: str) -> bool:
             address.is_multicast,
             address.is_reserved,
             address.is_unspecified,
+            isinstance(address, ipaddress.IPv4Address) and address in _CGNAT_NETWORK,
         )
     )
+
+
+def _resolved_host_addresses(hostname: str) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...] | None:
+    try:
+        resolved = socket.getaddrinfo(
+            hostname,
+            443,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError:
+        return None
+
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    for _family, _socktype, _protocol, _canonname, sockaddr in resolved:
+        try:
+            addresses.append(ipaddress.ip_address(sockaddr[0]))
+        except (IndexError, TypeError, ValueError):
+            return None
+    return tuple(addresses)
+
+
+def _is_blocked_host(hostname: str) -> bool:
+    host = _normalized_host(hostname)
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return True
+    try:
+        return _is_blocked_address(ipaddress.ip_address(host))
+    except ValueError:
+        addresses = _resolved_host_addresses(host)
+        return not addresses or any(_is_blocked_address(address) for address in addresses)
 
 
 def ensure_https_request(request, *, allowed_hosts: Collection[str] | str | None = None):
@@ -57,11 +84,11 @@ def ensure_https_request(request, *, allowed_hosts: Collection[str] | str | None
     host = _normalized_host(parts.hostname)
     if not host:
         raise ValueError(f"HTTPS URL host is required: {url!r}")
-    if _is_blocked_host(host):
-        raise ValueError(f"private or local HTTPS hosts are not allowed: {url!r}")
     allowed_host_set = _normalized_allowed_hosts(allowed_hosts)
     if allowed_host_set and host not in allowed_host_set:
         raise ValueError(f"HTTPS host is not allowed: {url!r}")
+    if _is_blocked_host(host):
+        raise ValueError(f"private or local HTTPS hosts are not allowed: {url!r}")
     return request
 
 
@@ -140,21 +167,13 @@ def _requests_https(
 
     requester = getattr(session if session is not None else requests, method_name)
     for redirect_count in range(max_redirects + 1):
-        try:
-            response = requester(
-                current_url,
-                headers=request_headers,
-                timeout=timeout,
-                allow_redirects=False,
-                **request_kwargs,
-            )
-        except TypeError as exc:
-            if "allow_redirects" not in str(exc):
-                raise
-            response = requester(current_url, headers=request_headers, timeout=timeout, **request_kwargs)
-            final_url = getattr(response, "url", current_url)
-            ensure_https_request(final_url, allowed_hosts=allowed_hosts)
-            return response
+        response = requester(
+            current_url,
+            headers=request_headers,
+            timeout=timeout,
+            allow_redirects=False,
+            **request_kwargs,
+        )
         redirect_location = _response_redirect_location(response)
         if redirect_location is None:
             return response

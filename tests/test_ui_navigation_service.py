@@ -1,5 +1,14 @@
+import base64
+import gzip
+import io
+import re
+import subprocess
+
+import pytest
+
 from app.services import ui_navigation_service
-from infra.storage.file_integrity import fingerprint_file
+from infra.storage import file_integrity
+from infra.storage.file_integrity import FileIntegrityError, fingerprint_bytes, fingerprint_file
 
 
 def _seal_codex_launcher(monkeypatch, launcher):
@@ -10,6 +19,38 @@ def _seal_codex_launcher(monkeypatch, launcher):
         fingerprint,
         raising=False,
     )
+
+
+def _decoded_trusted_launcher_command(command):
+    wrapper = base64.b64decode(command[-1]).decode("utf-16-le")
+    encoded_values = re.findall(r"FromBase64String\('([^']+)'\)", wrapper)
+    return gzip.decompress(base64.b64decode(encoded_values[0])), wrapper, encoded_values
+
+
+def test_verified_file_read_bounds_untrusted_artifact_size(monkeypatch, tmp_path):
+    artifact = tmp_path / "open-codex-project.ps1"
+    trusted_fingerprint = fingerprint_bytes(b"trusted")
+    read_sizes = []
+
+    class GuardedReader(io.BytesIO):
+        def read(self, size=-1):
+            read_sizes.append(size)
+            return super().read(size)
+
+    def fake_open(path, *args, **kwargs):
+        assert path == artifact
+        return GuardedReader(b"untrusted artifact is much larger than the sealed launcher")
+
+    monkeypatch.setattr(file_integrity.Path, "open", fake_open)
+
+    with pytest.raises(FileIntegrityError, match="size mismatch"):
+        file_integrity.read_verified_file_bytes(
+            artifact,
+            expected_size_bytes=trusted_fingerprint.size_bytes,
+            expected_sha256=trusted_fingerprint.sha256,
+        )
+
+    assert read_sizes == [trusted_fingerprint.size_bytes + 1]
 
 
 def test_powershell_executable_prefers_systemroot_binary(monkeypatch, tmp_path):
@@ -26,6 +67,24 @@ def test_powershell_executable_falls_back_when_binary_missing(monkeypatch, tmp_p
     monkeypatch.setenv("SystemRoot", str(tmp_path))
 
     assert ui_navigation_service._powershell_executable() == "powershell.exe"
+
+
+def test_powershell_param_block_end_ignores_quoted_and_commented_closing_parentheses():
+    source = (
+        "\ufeff  Param(\n"
+        "    [string]$ProjectPath = \"quoted ) and `\" marker\",\n"
+        "    [string]$Name = 'it''s )'\n"
+        "    # ) ignored\n"
+        ")\n"
+        "Write-Output $ProjectPath\n"
+    )
+
+    end = ui_navigation_service._powershell_param_block_end(source)
+
+    assert source[end] == ")"
+    assert source[end + 1 :].startswith("\nWrite-Output")
+    with pytest.raises(ValueError, match="must begin"):
+        ui_navigation_service._powershell_param_block_end("Write-Output 'not a launcher'")
 
 
 def test_codex_thread_url_helpers_parse_strip_and_quote_arguments():
@@ -139,7 +198,10 @@ def test_wait_for_codex_paste_target_times_out(monkeypatch):
 def test_paste_codex_prompt_stops_when_copy_or_focus_fails(monkeypatch):
     calls = []
     before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
+    snapshot = ui_navigation_service._WindowsClipboardSnapshot(text="original")
 
+    monkeypatch.setattr(ui_navigation_service, "_capture_windows_clipboard_snapshot", lambda: snapshot)
+    monkeypatch.setattr(ui_navigation_service, "_restore_windows_clipboard_snapshot", lambda _snapshot: True)
     monkeypatch.setattr(ui_navigation_service, "_copy_codex_prompt_to_clipboard", lambda _prompt: False)
     monkeypatch.setattr(ui_navigation_service, "_wait_for_codex_paste_target", lambda _snapshot: calls.append("wait") or 2)
     ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
@@ -151,6 +213,87 @@ def test_paste_codex_prompt_stops_when_copy_or_focus_fails(monkeypatch):
     monkeypatch.setattr(ui_navigation_service, "_send_ctrl_v", lambda: calls.append("paste") or True)
     ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
     assert calls == [("focus", 2)]
+
+
+def test_paste_codex_prompt_restores_clipboard_when_target_is_missing(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
+    snapshot = object()
+    calls = []
+
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_capture_windows_clipboard_snapshot",
+        lambda: calls.append("capture") or snapshot,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_restore_windows_clipboard_snapshot",
+        lambda value: calls.append(("restore", value)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_copy_codex_prompt_to_clipboard",
+        lambda prompt: calls.append(("copy", prompt)) or True,
+    )
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_wait_for_codex_paste_target",
+        lambda value: calls.append(("wait", value)) or None,
+    )
+
+    ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
+
+    assert calls == ["capture", ("copy", "hello"), ("wait", before), ("restore", snapshot)]
+
+
+def test_paste_codex_prompt_rechecks_foreground_before_ctrl_v_and_restores_clipboard(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
+    snapshot = object()
+    calls = []
+
+    monkeypatch.setattr(ui_navigation_service, "_capture_windows_clipboard_snapshot", lambda: snapshot, raising=False)
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_restore_windows_clipboard_snapshot",
+        lambda value: calls.append(("restore", value)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_copy_codex_prompt_to_clipboard",
+        lambda prompt: calls.append(("copy", prompt)) or True,
+    )
+    monkeypatch.setattr(ui_navigation_service, "_wait_for_codex_paste_target", lambda _before: 2)
+    monkeypatch.setattr(ui_navigation_service, "_focus_window", lambda hwnd: calls.append(("focus", hwnd)) or True)
+    monkeypatch.setattr(ui_navigation_service, "_foreground_window_handle", lambda: 3)
+    monkeypatch.setattr(ui_navigation_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ui_navigation_service, "_send_ctrl_v", lambda: calls.append("paste") or True)
+
+    ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
+
+    assert calls == [("copy", "hello"), ("focus", 2), ("restore", snapshot)]
+
+
+def test_paste_codex_prompt_keeps_current_clipboard_when_sequence_is_unknown(monkeypatch):
+    before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
+    snapshot = object()
+    restored = []
+
+    monkeypatch.setattr(ui_navigation_service, "_capture_windows_clipboard_snapshot", lambda: snapshot)
+    monkeypatch.setattr(ui_navigation_service, "_copy_codex_prompt_to_clipboard", lambda _prompt: True)
+    monkeypatch.setattr(ui_navigation_service, "_clipboard_sequence_number", lambda: None)
+    monkeypatch.setattr(ui_navigation_service, "_wait_for_codex_paste_target", lambda _before: None)
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_restore_windows_clipboard_snapshot",
+        lambda value: restored.append(value),
+    )
+
+    ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
+
+    assert restored == []
 
 
 def test_schedule_codex_prompt_paste_starts_daemon_thread(monkeypatch):
@@ -244,7 +387,7 @@ def test_open_codex_desktop_thread_uses_fast_appx_path(monkeypatch):
 
 def test_open_codex_desktop_thread_falls_back_to_local_launcher(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -258,19 +401,24 @@ def test_open_codex_desktop_thread_falls_back_to_local_launcher(monkeypatch, tmp
     _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo")
-    assert captured["args"] == [
+    assert captured["args"][:3] == [
         "powershell.exe",
         "-NoProfile",
-        "-File",
-        str(launcher),
-        "codex://new?path=/tmp/demo",
+        "-EncodedCommand",
     ]
+    assert "-ExecutionPolicy" not in captured["args"]
+    assert "-File" not in captured["args"]
+    source, wrapper, encoded_values = _decoded_trusted_launcher_command(captured["args"])
+    assert source == launcher.read_bytes()
+    assert base64.b64decode(encoded_values[-1]).decode("utf-8") == "codex://new?path=/tmp/demo"
+    assert "$__codexSource = $__codexSource.Insert(" in wrapper
+    assert len(subprocess.list2cmdline(captured["args"])) < ui_navigation_service._WINDOWS_MAX_COMMAND_LINE_CHARACTERS
     assert captured["kwargs"] == {}
 
 
 def test_open_codex_desktop_thread_rejects_tampered_launcher_without_spawning(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'allow'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'allow'\n", encoding="utf-8")
     _seal_codex_launcher(monkeypatch, launcher)
     launcher.write_text("Write-Output 'block'\n", encoding="utf-8")
     before = ui_navigation_service._CodexWindowSnapshot(frozenset(), None)
@@ -293,9 +441,66 @@ def test_open_codex_desktop_thread_rejects_tampered_launcher_without_spawning(mo
     assert scheduled == []
 
 
+def test_open_codex_desktop_thread_uses_verified_source_after_launcher_replacement(monkeypatch, tmp_path):
+    launcher = tmp_path / "open-codex-project.ps1"
+    trusted_source = b"param([string]$ProjectPath)\nWrite-Output 'trusted'\n"
+    launcher.write_bytes(trusted_source)
+    trusted_fingerprint = fingerprint_file(launcher)
+    _seal_codex_launcher(monkeypatch, launcher)
+    captured = {}
+
+    def fake_spawn(args, **kwargs):
+        launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'replacement'\n", encoding="utf-8")
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(ui_navigation_service, "_try_open_codex_desktop_thread_fast", lambda _url: False)
+    monkeypatch.setattr(ui_navigation_service, "_powershell_executable", lambda: "powershell.exe")
+    monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+
+    assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
+
+    source, wrapper, encoded_values = _decoded_trusted_launcher_command(captured["args"])
+    assert source == trusted_source
+    assert source != launcher.read_bytes()
+    assert str(launcher) not in captured["args"]
+    assert "codex://new?path=/tmp/demo" not in captured["args"]
+    assert "-File" not in captured["args"]
+    assert "-ExecutionPolicy" not in captured["args"]
+    assert str(len(trusted_source)) in wrapper
+    assert trusted_fingerprint.sha256 in wrapper
+    assert fingerprint_file(launcher).sha256 not in wrapper
+    assert base64.b64decode(encoded_values[-1]).decode("utf-8") == "codex://new?path=/tmp/demo"
+
+
+@pytest.mark.skipif(ui_navigation_service.os.name != "nt", reason="requires Windows PowerShell")
+def test_trusted_launcher_command_preserves_script_context_and_argument(monkeypatch, tmp_path):
+    launcher = tmp_path / "open-codex-project.ps1"
+    output_path = tmp_path / "launcher-context.txt"
+    launcher.write_text(
+        "param([string]$ProjectPath)\n"
+        "[System.IO.File]::WriteAllText($ProjectPath, \"$PSScriptRoot|$PSCommandPath\")\n",
+        encoding="utf-8",
+    )
+    source = launcher.read_bytes()
+    fingerprint = fingerprint_file(launcher)
+    monkeypatch.setattr(ui_navigation_service, "CODEX_LOCAL_LAUNCHER_FINGERPRINT", fingerprint)
+    command = ui_navigation_service._build_trusted_codex_launcher_command(
+        ui_navigation_service._powershell_executable(),
+        launcher,
+        source,
+        str(output_path),
+    )
+
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+
+    assert completed.returncode == 0, completed.stderr
+    assert output_path.read_text(encoding="utf-8") == f"{launcher.parent}|{launcher}"
+
+
 def test_open_codex_desktop_thread_strips_prompt_from_launcher_fallback(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'trusted'\n", encoding="utf-8")
     captured = {}
     before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
 
@@ -317,14 +522,22 @@ def test_open_codex_desktop_thread_strips_prompt_from_launcher_fallback(monkeypa
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo&prompt=hello")
     assert captured["paste"] == ("hello", before)
-    assert captured["args"][-1] == "codex://new?path=%2Ftmp%2Fdemo"
-    assert "prompt" not in captured["args"][-1]
+    _source, _wrapper, encoded_values = _decoded_trusted_launcher_command(captured["args"])
+    assert base64.b64decode(encoded_values[-1]).decode("utf-8") == "codex://new?path=%2Ftmp%2Fdemo"
+    assert "prompt" not in base64.b64decode(encoded_values[-1]).decode("utf-8")
 
 
 def test_paste_codex_prompt_waits_for_new_window_before_ctrl_v(monkeypatch):
     before = ui_navigation_service._CodexWindowSnapshot(frozenset({1}), 1)
     calls = []
+    snapshot = ui_navigation_service._WindowsClipboardSnapshot(text="original")
 
+    monkeypatch.setattr(ui_navigation_service, "_capture_windows_clipboard_snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        ui_navigation_service,
+        "_restore_windows_clipboard_snapshot",
+        lambda value: calls.append(("restore", value)) or True,
+    )
     monkeypatch.setattr(
         ui_navigation_service,
         "_copy_codex_prompt_to_clipboard",
@@ -341,6 +554,7 @@ def test_paste_codex_prompt_waits_for_new_window_before_ctrl_v(monkeypatch):
         lambda hwnd: calls.append(("focus", hwnd)) or True,
     )
     monkeypatch.setattr(ui_navigation_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ui_navigation_service, "_foreground_window_handle", lambda: 2)
     monkeypatch.setattr(ui_navigation_service, "_send_ctrl_v", lambda: calls.append(("paste",)) or True)
 
     ui_navigation_service._paste_codex_prompt_when_target_ready("hello", before)
@@ -350,6 +564,7 @@ def test_paste_codex_prompt_waits_for_new_window_before_ctrl_v(monkeypatch):
         ("wait", before),
         ("focus", 2),
         ("paste",),
+        ("restore", snapshot),
     ]
 
 
@@ -388,7 +603,7 @@ def test_select_codex_target_rejects_reused_foreground_when_it_was_already_foreg
 
 def test_open_codex_desktop_thread_uses_local_launcher(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -399,7 +614,9 @@ def test_open_codex_desktop_thread_uses_local_launcher(monkeypatch, tmp_path):
     _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
-    assert captured["args"][-2:] == [str(launcher), "codex://new?path=/tmp/demo"]
+    source, _wrapper, encoded_values = _decoded_trusted_launcher_command(captured["args"])
+    assert source == launcher.read_bytes()
+    assert base64.b64decode(encoded_values[-1]).decode("utf-8") == "codex://new?path=/tmp/demo"
     assert captured["kwargs"] == {}
 
 
@@ -428,7 +645,7 @@ def test_open_codex_desktop_thread_rejects_missing_launcher_without_spawning(mon
 
 def test_open_codex_desktop_thread_returns_false_on_spawn_error(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'trusted'\n", encoding="utf-8")
 
     def fake_spawn(_args, **_kwargs):
         raise OSError("blocked")
@@ -441,7 +658,7 @@ def test_open_codex_desktop_thread_returns_false_on_spawn_error(monkeypatch, tmp
 
 def test_open_codex_desktop_thread_keeps_non_codex_url_on_launcher_fallback(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -457,5 +674,6 @@ def test_open_codex_desktop_thread_keeps_non_codex_url_on_launcher_fallback(monk
     _seal_codex_launcher(monkeypatch, launcher)
 
     assert ui_navigation_service.open_codex_desktop_thread("https://example.test?prompt=hello", launcher=launcher)
-    assert captured["args"][-1] == "https://example.test?prompt=hello"
+    _source, _wrapper, encoded_values = _decoded_trusted_launcher_command(captured["args"])
+    assert base64.b64decode(encoded_values[-1]).decode("utf-8") == "https://example.test?prompt=hello"
     assert captured["kwargs"] == {}

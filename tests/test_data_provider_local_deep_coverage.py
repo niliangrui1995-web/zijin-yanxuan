@@ -136,7 +136,7 @@ def test_parse_base_dbf_skips_deleted_invalid_negative_and_truncated_records(tmp
 
     parsed = local._parse_tdx_base_dbf(str(dbf))
 
-    assert parsed == {"000004": {"zongguben": 1_230_000.0, "source": "tdx_base"}}
+    assert parsed == {"000004": {"total_shares": 1_230_000.0, "source": "tdx_base"}}
     assert local._parse_tdx_base_dbf(str(dbf)) is parsed
 
 

@@ -112,6 +112,7 @@ def test_apply_quote_metrics_updates_only_present_quote_columns(monkeypatch):
         "涨幅%": 3.5,
         "涨幅": 3.5,
         "市值": "12.34亿",
+        "total_shares": 1000.0,
         "_zongguben": 1000.0,
     }
 

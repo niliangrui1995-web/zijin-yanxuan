@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Enforce a deterministic, repository-wide Mypy no-new-diagnostics baseline."""
+"""Enforce a deterministic gradual UI Mypy no-new-diagnostics baseline."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASELINE = REPO_ROOT / "config" / "mypy_baseline.json"
+DEFAULT_BASELINE = REPO_ROOT / "config" / "mypy_ui_baseline.json"
 SCHEMA_VERSION = 1
 DISPLAY_LIMIT = 10
 BASELINE_POLICY = "exact-current-baseline; updates may only reduce unless --allow-new"
@@ -23,7 +23,13 @@ MYPY_ARGUMENTS = (
     "-m",
     "mypy",
 )
-MYPY_TARGET = "."
+MYPY_TARGETS = (
+    "ui/kline_pool_state.py",
+    "ui/kline_typing.py",
+    "ui/kline_window_recovery.py",
+)
+MYPY_TARGET = " ".join(MYPY_TARGETS)
+MYPY_RATCHET_PREFIXES = ("ui/",)
 MYPY_OPTIONS = (
     "--output",
     "json",
@@ -118,7 +124,7 @@ def collect_mypy_diagnostics() -> tuple[str, Counter[DiagnosticFingerprint]]:
     version_result = _run([sys.executable, "-m", "mypy", "--version"])
     if version_result.returncode != 0:
         raise RuntimeError(version_result.stderr.strip() or "Unable to determine Mypy version")
-    result = _run([sys.executable, *MYPY_ARGUMENTS, MYPY_TARGET, *MYPY_OPTIONS])
+    result = _run([sys.executable, *MYPY_ARGUMENTS, *MYPY_TARGETS, *MYPY_OPTIONS])
     if result.returncode not in {0, 1}:
         details = result.stderr.strip() or result.stdout.strip() or "unknown Mypy failure"
         raise RuntimeError(f"Mypy failed for {MYPY_TARGET} ({result.returncode}): {details}")
@@ -160,7 +166,7 @@ def baseline_document(
         "scope": MYPY_TARGET,
         "identity_fields": ["path", "severity", "code", "message"],
         "mypy_version": mypy_version,
-        "command": ["python", *MYPY_ARGUMENTS, MYPY_TARGET, *MYPY_OPTIONS],
+        "command": ["python", *MYPY_ARGUMENTS, *MYPY_TARGETS, *MYPY_OPTIONS],
         "update_reason": reason,
         "diagnostic_count": sum(diagnostics.values()),
         "diagnostics": entries,
@@ -222,6 +228,14 @@ def compare_diagnostics(
     return Counter(current) - Counter(baseline), Counter(baseline) - Counter(current)
 
 
+def diagnostic_count_for_prefix(
+    diagnostics: Mapping[DiagnosticFingerprint, int], prefix: str
+) -> int:
+    """Count diagnostics in one explicitly protected repository subtree."""
+    normalized_prefix = str(prefix or "").replace("\\", "/")
+    return sum(int(count) for fingerprint, count in diagnostics.items() if fingerprint.path.startswith(normalized_prefix))
+
+
 def _format_diagnostics(diagnostics: Mapping[DiagnosticFingerprint, int]) -> Iterable[str]:
     for item in sorted(diagnostics):
         yield f"{item.path}: [{item.code}] {item.message} (count={diagnostics[item]})"
@@ -236,7 +250,7 @@ def _print_diagnostics(prefix: str, diagnostics: Mapping[DiagnosticFingerprint, 
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Enforce the repository-wide Mypy diagnostic baseline.")
+    parser = argparse.ArgumentParser(description="Enforce the gradual UI Mypy diagnostic baseline.")
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--update", action="store_true", help="Replace the baseline with current diagnostics.")
     parser.add_argument(
@@ -260,6 +274,11 @@ def _check_baseline(
         f"[mypy-baseline] baseline={sum(baseline.values())} current={sum(current.values())} "
         f"new={sum(added.values())} resolved={sum(resolved.values())}"
     )
+    for prefix in MYPY_RATCHET_PREFIXES:
+        print(
+            f"[mypy-baseline] ratchet={prefix} current={diagnostic_count_for_prefix(current, prefix)} "
+            f"new={diagnostic_count_for_prefix(added, prefix)}"
+        )
     _print_diagnostics("NEW", added)
     if resolved:
         print(

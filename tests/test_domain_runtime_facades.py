@@ -16,6 +16,25 @@ def test_runtime_health_service_exports_diagnostic_entrypoints():
     assert callable(runtime_health_service.export_runtime_health_report)
 
 
+def test_runtime_health_service_forwards_explicit_kline_dependency(monkeypatch):
+    kline_manager = object()
+    calls = []
+
+    monkeypatch.setattr(
+        runtime_health_service,
+        "_collect_runtime_health",
+        lambda main_window, *, kline_manager_instance=None: calls.append(
+            (main_window, kline_manager_instance)
+        )
+        or {"status": "ok"},
+    )
+
+    assert runtime_health_service.collect_runtime_health("window", kline_manager_instance=kline_manager) == {
+        "status": "ok"
+    }
+    assert calls == [("window", kline_manager)]
+
+
 def test_sector_runtime_service_returns_sector_manager(monkeypatch):
     calls = []
 

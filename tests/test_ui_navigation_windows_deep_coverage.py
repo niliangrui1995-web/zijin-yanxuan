@@ -134,6 +134,33 @@ def test_windows_clipboard_handles_api_exception(monkeypatch):
     assert module._copy_text_to_windows_clipboard("hello") is False
 
 
+def test_windows_clipboard_snapshot_preserves_text_and_rejects_rich_content(monkeypatch):
+    user, kernel = _clipboard_dlls()
+    user.CountClipboardFormats = _Fn(1)
+    user.IsClipboardFormatAvailable = _Fn(1)
+    user.GetClipboardData = _Fn(11)
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda name, **_kwargs: user if name == "user32" else kernel)
+    monkeypatch.setattr(ctypes, "wstring_at", lambda _pointer: "original")
+
+    snapshot = module._capture_windows_clipboard_snapshot()
+
+    assert snapshot == module._WindowsClipboardSnapshot(text="original")
+    assert user.CloseClipboard.calls
+    assert kernel.GlobalUnlock.calls == [(11,)]
+
+    restored = []
+    monkeypatch.setattr(module, "_copy_text_to_windows_clipboard", lambda text: restored.append(text) or True)
+    monkeypatch.setattr(module, "_clear_windows_clipboard", lambda: restored.append("cleared") or True)
+
+    assert module._restore_windows_clipboard_snapshot(snapshot) is True
+    assert module._restore_windows_clipboard_snapshot(module._WindowsClipboardSnapshot(text=None)) is True
+    assert restored == ["original", "cleared"]
+
+    user.CountClipboardFormats = _Fn(2)
+    assert module._capture_windows_clipboard_snapshot() is None
+
+
 def test_focus_window_success_false_and_error(monkeypatch):
     monkeypatch.setattr(module.os, "name", "nt")
     user = SimpleNamespace(ShowWindow=_Fn(1), SetForegroundWindow=_Fn(1))

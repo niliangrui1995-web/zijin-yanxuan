@@ -15,6 +15,7 @@ import pandas as pd
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
+from domains.quotes.snapshot import TOTAL_SHARES_KEY
 from infra.storage.json_cache_repository import cache_file_signature as _dbf_signature
 from infra.tasks.lifecycle import (
     TaskCancelledError,
@@ -32,6 +33,7 @@ _BASE_DBF_SIGNATURE: tuple[int, int] | None = None
 _BASE_DBF_CAPITALS: dict[str, dict] | None = None
 _GBBQ_CACHE_MTIME_RE = re.compile(r'"mtime"\s*:\s*([0-9]+(?:\.[0-9]+)?)')
 _GBBQ_CACHE_MTIME_TAIL_BYTES = 64 * 1024
+_BASE_DBF_PARSE_ERRORS = (IndexError, struct.error, TypeError, ValueError)
 
 
 def serialize_gbbq_cache(data_map: dict) -> dict:
@@ -187,11 +189,11 @@ def _parse_tdx_base_dbf(path: str) -> dict[str, dict]:
                 if zgb_wan_shares <= 0:
                     continue
                 capitals[code] = {
-                    "zongguben": zgb_wan_shares * 10000.0,
+                    TOTAL_SHARES_KEY: zgb_wan_shares * 10000.0,
                     "source": "tdx_base",
                 }
-        except (IndexError, struct.error, TypeError, ValueError) as exc:
-            _log.debug(f"[数据中台] 解析通达信 base.dbf 失败: {exc}")
+        except _BASE_DBF_PARSE_ERRORS as exc:
+            _log.warning("[数据中台] 解析通达信 base.dbf 失败: %s", exc, exc_info=True)
             capitals = {}
 
         _BASE_DBF_PATH = path

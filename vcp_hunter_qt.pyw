@@ -86,6 +86,11 @@ def main():
     app = QApplication(sys.argv)
     append_bootstrap_event(PROJECT_ROOT, "qapplication.created")
 
+    from core.logger import set_frontend_sink
+    from domains.runtime import domain_events
+
+    set_frontend_sink(lambda level, text: domain_events.sig_system_log.emit(level, text))
+
     from ui.services.log_buffer_service import install_log_buffer_service
 
     log_buffer_service = install_log_buffer_service(parent=app, persistent=True)

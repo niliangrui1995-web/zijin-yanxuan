@@ -870,6 +870,43 @@ def _manager_can_prewarm(manager) -> bool:
     )
 
 
+def _ensure_manager_application_lifecycle_owner(manager) -> None:
+    """Bind the singleton's non-QObject resources to the Qt application lifetime."""
+    try:
+        from PyQt6.QtCore import QCoreApplication, QObject
+
+        application = QCoreApplication.instance()
+        if application is None or application.closingDown():
+            return
+        owner = getattr(manager, "_application_lifecycle_owner", None)
+        if owner is not None:
+            try:
+                if owner.parent() is application:
+                    return
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+        manager_ref = weakref.ref(manager)
+
+        class _ApplicationLifecycleOwner(QObject):
+            def __init__(self) -> None:
+                super().__init__(application)
+                application.aboutToQuit.connect(self._on_application_quit)
+
+            def _on_application_quit(self) -> None:
+                owned_manager = manager_ref()
+                if owned_manager is not None:
+                    try:
+                        owned_manager.shutdown()
+                    finally:
+                        if owned_manager._application_lifecycle_owner is self:
+                            owned_manager._application_lifecycle_owner = None
+
+        manager._application_lifecycle_owner = _ApplicationLifecycleOwner()
+    except (AttributeError, ImportError, RuntimeError, TypeError):
+        return
+
+
 def _prepare_manager_prewarm(manager, *, main_window, hidden_view: bool | None) -> None:
     manager._prewarm_started = True
     manager._prewarm_cancelled = False
@@ -909,6 +946,7 @@ def _prewarm_manager(
 ) -> bool:
     if not _manager_can_prewarm(manager):
         return False
+    _ensure_manager_application_lifecycle_owner(manager)
     _prepare_manager_prewarm(
         manager,
         main_window=main_window,
@@ -1506,6 +1544,7 @@ def _open_manager_chart(
     preparation = _prepare_chart_open(manager, arguments, pending_request)
     if preparation is None:
         return None
+    _ensure_manager_application_lifecycle_owner(manager)
     warm_chart = manager._take_ready_idle_chart()
     warm_page = None if warm_chart is not None else manager._take_ready_prewarm_page()
     keeper_ready_at = time.perf_counter()
@@ -1560,6 +1599,7 @@ class _KLineManagerPrewarmLifecycle:
     _shutting_down: bool
     _last_shutdown_diagnostics: dict[str, object]
     _pending_open: _PendingKlineOpenCoordinator
+    _application_lifecycle_owner: Any | None
 
     def __new__(cls):
         if cls._instance is None:
@@ -1590,6 +1630,7 @@ class _KLineManagerPrewarmLifecycle:
             cls._instance._shutting_down = False
             cls._instance._last_shutdown_diagnostics = {}
             cls._instance._pending_open = _PendingKlineOpenCoordinator(cls._instance)
+            cls._instance._application_lifecycle_owner = None
         return cls._instance
 
     def prewarm(

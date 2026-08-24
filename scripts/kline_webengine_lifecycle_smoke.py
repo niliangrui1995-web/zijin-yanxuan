@@ -133,7 +133,9 @@ def _new_native_lifecycle_report(mode: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sample(label: str, window: MainWindowQT | None) -> dict[str, Any]:
-    report = collect_runtime_health_summary(window)
+    from ui.components.kline_window_manager import kline_manager
+
+    report = collect_runtime_health_summary(window, kline_manager_instance=kline_manager)
     process = report.get("process") or {}
     webengine = report.get("webengine") or {}
     background_tasks = report.get("background_tasks") or {}

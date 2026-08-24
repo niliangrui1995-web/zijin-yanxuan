@@ -244,10 +244,13 @@ class SectorManager:
             return None
 
         dates_col = df["datetime"].cast(pl.Date)
-        valid_indices = [index for index, is_valid in enumerate((dates_col <= target_dt).to_list()) if is_valid]
-        if not valid_indices:
+        if dates_col.is_sorted():
+            loc = int(dates_col.search_sorted(target_dt, side="right")) - 1
+        else:
+            valid_indices = (dates_col <= target_dt).arg_true()
+            loc = int(valid_indices[-1]) if valid_indices.len() else -1
+        if loc < 0:
             return None
-        loc = valid_indices[-1]
         return loc, float(df["close"][loc])
 
     @staticmethod

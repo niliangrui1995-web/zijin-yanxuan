@@ -805,6 +805,35 @@ def test_central_quotes_service_heartbeat_marks_market_closed_pause(monkeypatch)
         main_window.deleteLater()
 
 
+def test_central_quotes_service_skips_thread_health_scan_outside_heartbeat(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    thread_anomaly_checks = []
+
+    class DummyProvider:
+        @staticmethod
+        def compact_runtime_caches():
+            return {"rt_quote_cache_size": 0}
+
+        @staticmethod
+        def protect_against_thread_anomaly(count):
+            thread_anomaly_checks.append(count)
+            return False
+
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    monkeypatch.setattr(service, "_collect_thread_health", lambda: pytest.fail("unexpected thread scan"))
+
+    try:
+        service._tick_count = service._heartbeat_every_ticks - 1
+
+        assert service._run_maintenance(active_codes_count=1) == {"rt_quote_cache_size": 0}
+        assert thread_anomaly_checks == []
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_heartbeat_marks_active_when_success_recent_despite_owner_stopped(monkeypatch):
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()

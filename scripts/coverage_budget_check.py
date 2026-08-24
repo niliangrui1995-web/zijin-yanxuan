@@ -15,6 +15,7 @@ COVERAGE_PACKAGE_BUDGETS = {
     "vcp": 90.0,
 }
 COVERAGE_FILE_BUDGETS = {
+    "app/services/watchlist_indicator_service.py": 50.0,
     "vcp/realtime_quote_runtime.py": 80.0,
 }
 

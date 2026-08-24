@@ -202,3 +202,18 @@ def test_mypy_baseline_rejects_paths_outside_repository(tmp_path):
         assert "outside the repository" in str(exc)
     else:
         raise AssertionError("outside-repository path was accepted")
+
+
+def test_mypy_baseline_keeps_ui_diagnostics_in_the_no_new_diagnostics_ratchet():
+    ui_fingerprint = _fingerprint("ui/components/example.py", "ui regression")
+    core_fingerprint = _fingerprint("core/example.py", "core regression")
+    diagnostics = Counter({ui_fingerprint: 2, core_fingerprint: 1})
+
+    assert mypy_baseline.MYPY_TARGETS == (
+        "ui/kline_pool_state.py",
+        "ui/kline_typing.py",
+        "ui/kline_window_recovery.py",
+    )
+    assert mypy_baseline.DEFAULT_BASELINE.name == "mypy_ui_baseline.json"
+    assert mypy_baseline.MYPY_RATCHET_PREFIXES == ("ui/",)
+    assert mypy_baseline.diagnostic_count_for_prefix(diagnostics, "ui/") == 2

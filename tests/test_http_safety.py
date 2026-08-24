@@ -1,8 +1,18 @@
+import socket
 import urllib.request
 
 import pytest
 
 from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT, ensure_https_request, requests_get_https, urlopen_https
+
+
+@pytest.fixture(autouse=True)
+def _resolve_hostnames_to_public_addresses(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+    )
 
 
 def test_ensure_https_request_accepts_https_request_object():
@@ -26,6 +36,20 @@ def test_ensure_https_request_rejects_non_https_urls(url):
 def test_ensure_https_request_rejects_private_or_local_hosts(url):
     with pytest.raises(ValueError):
         ensure_https_request(url)
+
+
+def test_ensure_https_request_rejects_hostname_with_any_cgnat_address(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.0.1", 0)),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="private or local HTTPS hosts"):
+        ensure_https_request("https://dns-rebinding.example/path")
 
 
 def test_ensure_https_request_enforces_allowed_hosts():
@@ -67,6 +91,15 @@ def test_requests_get_https_preserves_custom_user_agent():
     requests_get_https("https://example.com/data", session=DummySession(), headers={"User-Agent": "custom"})
 
     assert calls == [({"User-Agent": "custom"}, False)]
+
+
+def test_requests_get_https_requires_redirect_control_from_custom_session():
+    class LegacySession:
+        def get(self, _url, *, headers=None, timeout=None):
+            raise AssertionError("request must not run without redirect control")
+
+    with pytest.raises(TypeError, match="allow_redirects"):
+        requests_get_https("https://example.com/data", session=LegacySession())
 
 
 def test_requests_get_https_validates_safe_redirect_chain():
@@ -115,6 +148,36 @@ def test_requests_get_https_rejects_unsafe_redirect_target():
             return redirect
 
     with pytest.raises(ValueError):
+        requests_get_https("https://example.com/data", session=DummySession())
+
+    assert redirect.closed is True
+
+
+def test_requests_get_https_rejects_redirect_hostname_with_cgnat_address(monkeypatch):
+    def resolve(hostname, *_args, **_kwargs):
+        address = "100.64.0.1" if hostname == "dns-rebinding.example" else "93.184.216.34"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+
+    class DummyResponse:
+        status_code = 302
+        headers = {"Location": "https://dns-rebinding.example/private"}
+
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    redirect = DummyResponse()
+
+    class DummySession:
+        @staticmethod
+        def get(_url, *, headers=None, timeout=None, allow_redirects=None):
+            return redirect
+
+    with pytest.raises(ValueError, match="private or local HTTPS hosts"):
         requests_get_https("https://example.com/data", session=DummySession())
 
     assert redirect.closed is True

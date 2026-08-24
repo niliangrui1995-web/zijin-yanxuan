@@ -1279,12 +1279,12 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         if not isinstance(stats, dict):
             stats = {}
 
+        if self._tick_count % self._heartbeat_every_ticks != 0:
+            return stats
+
         total_threads, pytdx_threads = self._collect_thread_health()
         if self._poller.protect_against_thread_anomaly(pytdx_threads):
             self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
-
-        if self._tick_count % self._heartbeat_every_ticks != 0:
-            return stats
 
         runtime_stats = stats.get("rt_runtime", {})
         last_success_at = float(runtime_stats.get("last_success_at") or 0)

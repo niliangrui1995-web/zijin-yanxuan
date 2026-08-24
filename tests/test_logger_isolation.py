@@ -108,6 +108,9 @@ def test_event_bus_handler_compacts_ui_stall_diagnostics(monkeypatch, qt_applica
         events.append((level, text))
 
     domain_events.sig_system_log.connect(capture)
+    previous_sink = logger_module.set_frontend_sink(
+        lambda level, text: domain_events.sig_system_log.emit(level, text)
+    )
     gate = logger_module._UiDiagnosticFrontendGate(min_interval_sec=5.0)
     monkeypatch.setattr(logger_module, "_ui_diagnostic_frontend_gate", gate)
     ticks = iter([100.0, 100.1, 100.2, 106.0])
@@ -137,6 +140,7 @@ def test_event_bus_handler_compacts_ui_stall_diagnostics(monkeypatch, qt_applica
         handler.emit(record("127.887"))
         handler.emit(record("858.572"))
     finally:
+        logger_module.set_frontend_sink(previous_sink)
         domain_events.sig_system_log.disconnect(capture)
 
     assert len(events) == 2
@@ -147,3 +151,17 @@ def test_event_bus_handler_compacts_ui_stall_diagnostics(monkeypatch, qt_applica
     assert "已合并 2 条" in events[1][1]
     assert "耗时=858.572" in events[1][1]
     assert "完整明细见文件日志" in events[1][1]
+
+
+def test_event_bus_handler_keeps_logging_available_when_optional_sink_fails():
+    handler = logger_module.EventBusHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    def fail_sink(_level, _text):
+        raise OSError("UI sink unavailable")
+
+    previous_sink = logger_module.set_frontend_sink(fail_sink)
+    try:
+        handler.emit(_log_record("headless logging remains available"))
+    finally:
+        logger_module.set_frontend_sink(previous_sink)

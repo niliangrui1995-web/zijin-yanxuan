@@ -33,7 +33,12 @@ class _OfflineSnapshotModel:
                 continue
             close = float(payload.get("close", 0) or 0)
             last_close = float(payload.get("last_close", 0) or 0)
-            zongguben = float(payload.get("_zongguben") or payload.get("zongguben") or 0)
+            zongguben = float(
+                payload.get("total_shares")
+                or payload.get("_zongguben")
+                or payload.get("zongguben")
+                or 0
+            )
             if close > 0:
                 row["现价"] = f"{close:.2f}"
             if close > 0 and last_close > 0:

@@ -122,14 +122,6 @@ def runtime_health_report(
             task_manager_instance = task_manager
         except (ImportError, OSError, RuntimeError, TypeError, ValueError):
             task_manager_instance = None
-    if kline_manager_instance is None:
-        try:
-            from ui.components.kline_window_manager import kline_manager
-
-            kline_manager_instance = kline_manager
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
-            kline_manager_instance = None
-
     if process_snapshot is None:
         try:
             process_snapshot = collect_process_snapshot()

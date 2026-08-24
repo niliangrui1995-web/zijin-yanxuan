@@ -214,7 +214,7 @@ def test_open_codex_desktop_thread_uses_navigation_service_fast_path(monkeypatch
 
 def test_navigation_service_open_codex_desktop_thread_uses_silent_launcher(monkeypatch, tmp_path):
     launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("Write-Output 'trusted'\n", encoding="utf-8")
+    launcher.write_text("param([string]$ProjectPath)\nWrite-Output 'trusted'\n", encoding="utf-8")
     captured = {}
 
     def fake_spawn(args, **kwargs):
@@ -233,13 +233,13 @@ def test_navigation_service_open_codex_desktop_thread_uses_silent_launcher(monke
     )
 
     assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
-    assert captured["args"] == [
+    assert captured["args"][:3] == [
         "powershell.exe",
         "-NoProfile",
-        "-File",
-        str(launcher),
-        "codex://new?path=/tmp/demo",
+        "-EncodedCommand",
     ]
+    assert "-ExecutionPolicy" not in captured["args"]
+    assert "-File" not in captured["args"]
     assert captured["kwargs"] == {}
 
 
@@ -262,6 +262,39 @@ def test_open_codex_url_keeps_qdesktopservices_fallback_off_windows(monkeypatch)
 
     assert stock_context_menu._open_codex_url("codex://threads/new?path=/tmp/demo")
     assert opened_urls == ["codex://threads/new?path=/tmp/demo"]
+
+
+def test_open_codex_url_records_browser_fallback_failure(monkeypatch):
+    events = []
+    metrics = []
+
+    class FakeDesktopServices:
+        @staticmethod
+        def openUrl(_qurl):
+            return False
+
+    monkeypatch.setattr(stock_context_menu, "QDesktopServices", FakeDesktopServices)
+    monkeypatch.setattr(
+        stock_context_menu.webbrowser,
+        "open_new_tab",
+        lambda _url: (_ for _ in ()).throw(stock_context_menu.webbrowser.Error("browser unavailable")),
+    )
+    monkeypatch.setattr(
+        stock_context_menu,
+        "emit_structured_log",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    monkeypatch.setattr(
+        stock_context_menu,
+        "record_metric",
+        lambda name, value, **kwargs: metrics.append((name, value, kwargs)),
+    )
+
+    assert not stock_context_menu._open_codex_url("codex://new?path=/tmp/demo")
+    assert events[0][0] == "stock_context_menu.codex_open_failed"
+    assert events[0][1]["scheme"] == "codex"
+    assert metrics[0][0] == "stock_context_menu_codex_open_failures"
+    assert metrics[0][2]["tags"] == {"error_type": "Error"}
 
 
 def test_open_codex_project_thread_warns_when_project_path_is_missing(monkeypatch, tmp_path):

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pandas as pd
 import pytest
 
-from earnings import engine as engine_module
+from domains.earnings import engine as engine_module
+from domains.earnings import metrics as metrics_module
 from earnings.engine import EarningsEngine
 
 
@@ -41,6 +43,47 @@ def test_parse_amount_handles_units_and_invalid_values():
     assert pd.isna(engine_module._parse_amount(""))
     assert pd.isna(engine_module._parse_amount("--"))
     assert pd.isna(engine_module._parse_amount(None))
+
+
+def test_akshare_lazy_module_does_not_install_process_global_tqdm_hook():
+    assert engine_module.ak._before_load is None
+
+
+def test_get_next_trade_date_does_not_hide_calendar_programming_error(monkeypatch):
+    class _BrokenTradeDates:
+        @staticmethod
+        def __bool__():
+            return True
+
+        @staticmethod
+        def __contains__(_value):
+            raise AssertionError("calendar membership invariant failed")
+
+    monkeypatch.setattr(engine_module.MarketCalendar, "_trade_dates", _BrokenTradeDates())
+
+    with pytest.raises(AssertionError, match="calendar membership invariant failed"):
+        EarningsEngine._get_next_trade_date(pd.Timestamp("2026-08-24").date())
+
+
+def test_metric_helpers_remain_compatible_engine_re_exports():
+    helper_names = (
+        "_ProfitGetter",
+        "_SingleQuarterMetricResult",
+        "_SingleQuarterMetrics",
+        "_SINGLE_QUARTER_METRIC_RESOLVERS",
+        "_basis_from_quick_flags",
+        "_compute_single_quarter_metrics",
+        "_cumulative_single_quarter_metrics",
+        "_parse_amount",
+        "_q1_single_quarter_metrics",
+        "_q2_single_quarter_metrics",
+        "_q3_single_quarter_metrics",
+        "_q4_single_quarter_metrics",
+        "_select_profit_columns",
+    )
+
+    for name in helper_names:
+        assert getattr(engine_module, name) is getattr(metrics_module, name)
 
 
 def test_single_quarter_metrics_cover_all_report_periods():
@@ -237,6 +280,43 @@ def test_ths_financial_cache_prunes_oldest_entry(monkeypatch):
         engine_module._set_cached_ths_financial_benefit("2", "按报告期", df)
 
         assert list(engine_module._THS_FINANCIAL_BENEFIT_CACHE) == ["000002::按报告期"]
+    finally:
+        engine_module._THS_FINANCIAL_BENEFIT_CACHE.clear()
+        engine_module._THS_FINANCIAL_BENEFIT_CACHE.update(original_cache)
+
+
+def test_ths_financial_cache_keeps_concurrent_reads_and_eviction_consistent():
+    original_cache = dict(engine_module._THS_FINANCIAL_BENEFIT_CACHE)
+    barrier = threading.Barrier(4)
+    failures = []
+
+    def worker(index: int) -> None:
+        try:
+            barrier.wait()
+            symbol = str(index + 1)
+            for value in range(100):
+                frame = pd.DataFrame({"报告期": ["2026-03-31"], "净利润": [value]})
+                engine_module._set_cached_ths_financial_benefit(symbol, "按报告期", frame)
+                cached, _age_sec = engine_module._get_cached_ths_financial_benefit(
+                    symbol,
+                    "按报告期",
+                    max_age_sec=60,
+                )
+                assert cached is not None
+                assert cached.loc[0, "净利润"] == value
+        except BaseException as exc:  # noqa: BLE001 - worker failures are asserted below.
+            failures.append(exc)
+
+    try:
+        engine_module._THS_FINANCIAL_BENEFIT_CACHE.clear()
+        threads = [threading.Thread(target=worker, args=(index,)) for index in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert failures == []
     finally:
         engine_module._THS_FINANCIAL_BENEFIT_CACHE.clear()
         engine_module._THS_FINANCIAL_BENEFIT_CACHE.update(original_cache)

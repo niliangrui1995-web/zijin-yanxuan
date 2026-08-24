@@ -9,8 +9,19 @@ from app.services.ui_task_lifecycle_service import (
     TaskLifecycleGroup,
     TaskSubmissionStatus,
     invoke_with_cancellation,
+    task_unsettled_status,
 )
-from infra.tasks.lifecycle import CancellationToken
+from infra.tasks.lifecycle import (
+    CancellationToken,
+)
+from infra.tasks.lifecycle import (
+    task_unsettled_status as infra_task_unsettled_status,
+)
+
+
+def test_ui_task_lifecycle_facade_reexports_physical_task_status_probe():
+    assert task_unsettled_status is infra_task_unsettled_status
+
 
 
 class _QueuedRunner:
@@ -647,6 +658,30 @@ def test_lifecycle_group_submission_exception_cleans_placeholder_and_terminates_
     assert lifecycle.active_names == ()
     assert lifecycle.task_ids_for(("raising-load",)) == ()
     assert lifecycle.submissions_settled_for(("raising-load",)) is True
+    assert terminated == [True]
+
+
+def test_lifecycle_group_control_signal_cleans_placeholder_and_terminates_once():
+    class _InterruptingRunner(_QueuedRunner):
+        def run_in_background(self, fn, **kwargs):
+            del fn, kwargs
+            raise KeyboardInterrupt("stop submission")
+
+    lifecycle = TaskLifecycleGroup(_InterruptingRunner())
+    terminated = []
+
+    with pytest.raises(KeyboardInterrupt, match="stop submission"):
+        lifecycle.run_background(
+            "interrupting-load",
+            lambda _token: "unused",
+            task_id="interrupting-task",
+            timeout_sec=5.0,
+            on_terminated=lambda: terminated.append(True),
+        )
+
+    assert lifecycle.active_names == ()
+    assert lifecycle.task_ids_for(("interrupting-load",)) == ()
+    assert lifecycle.submissions_settled_for(("interrupting-load",)) is True
     assert terminated == [True]
 
 

@@ -16,6 +16,14 @@ from PyQt6.QtWidgets import (
 from app.services.runtime_health_service import collect_runtime_health, export_runtime_health_report
 
 
+def _kline_manager_instance():
+    try:
+        from ui.components.kline_window_manager import kline_manager
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return kline_manager
+
+
 def _quote_health_summary(request_stats: dict) -> str:
     count_keys = (
         "recent_network_result_count",
@@ -99,12 +107,18 @@ class RuntimeHealthDialog(QDialog):
         )
 
     def refresh(self) -> None:
-        self._last_report = collect_runtime_health(self._main_window)
+        self._last_report = collect_runtime_health(
+            self._main_window,
+            kline_manager_instance=_kline_manager_instance(),
+        )
         self.summary_label.setText(self._summary_text(self._last_report))
         self.report_edit.setPlainText(json.dumps(self._last_report, ensure_ascii=False, indent=2))
 
     def export_json(self) -> None:
-        report = self._last_report or collect_runtime_health(self._main_window)
+        report = self._last_report or collect_runtime_health(
+            self._main_window,
+            kline_manager_instance=_kline_manager_instance(),
+        )
         project_root = getattr(self._main_window, "_project_root", None)
         output_path = export_runtime_health_report(
             self._main_window,

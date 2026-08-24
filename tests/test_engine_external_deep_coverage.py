@@ -76,7 +76,7 @@ def test_fetch_finance_batches_filters_invalid_rows_and_closes(monkeypatch):
     assert len(responses) == 2
     assert result == {
         "600001": {
-            "zongguben": 100.0,
+            "total_shares": 100.0,
             "market_cap": 1000.0,
             "float_market_cap": 800.0,
             "price_base": 10.0,
@@ -113,7 +113,11 @@ def test_batch_finance_empty_invalid_cache_and_online_empty_fallback(monkeypatch
 
     result = module.batch_get_finance_info(["000001", "000002", "000003"])
 
-    assert result == {"000001": {"zongguben": 1}, "000002": {"zongguben": 2}, "000003": {"zongguben": 3}}
+    assert result == {
+        "000001": {"total_shares": 1},
+        "000002": {"total_shares": 2},
+        "000003": {"total_shares": 3},
+    }
 
     monkeypatch.setattr(module, "load_json_file", lambda *_args: (_ for _ in ()).throw(DataFormatError("bad")))
     assert module.batch_get_finance_info(["000004"]) == {}
@@ -135,7 +139,7 @@ def test_batch_finance_network_failure_uses_stale_valid_cache(monkeypatch, tmp_p
         lambda *_args: (_ for _ in ()).throw(RuntimeError("offline")),
     )
 
-    assert module.batch_get_finance_info(["000001", "000002"]) == {"000001": {"zongguben": 5}}
+    assert module.batch_get_finance_info(["000001", "000002"]) == {"000001": {"total_shares": 5}}
 
 
 def test_batch_finance_saves_online_results_in_batches_and_tolerates_write_error(monkeypatch, tmp_path):

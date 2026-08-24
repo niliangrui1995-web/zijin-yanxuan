@@ -4,6 +4,7 @@ from core.quote_snapshot import (
     coerce_number,
     enrich_quotes_with_finance,
     get_missing_a_share_finance_codes,
+    get_total_shares,
     merge_quote_snapshot_inplace,
     resolve_quote_metrics,
 )
@@ -49,8 +50,9 @@ def test_enrich_quotes_with_finance_builds_dynamic_market_cap():
         {"000001": {"zongguben": 1_000_000_000, "source": "eastmoney"}},
     )
 
-    assert enriched["000001"]["zongguben"] == 1_000_000_000
-    assert enriched["000001"]["_zongguben"] == 1_000_000_000
+    assert enriched["000001"]["total_shares"] == 1_000_000_000
+    assert "zongguben" not in enriched["000001"]
+    assert "_zongguben" not in enriched["000001"]
     assert enriched["000001"]["market_cap"] == 12_500_000_000
     assert enriched["000001"]["finance_source"] == "eastmoney"
 
@@ -58,7 +60,7 @@ def test_enrich_quotes_with_finance_builds_dynamic_market_cap():
 def test_build_finance_quote_payload_creates_mergeable_payload():
     payload = build_finance_quote_payload({"000001": {"zongguben": 2_000_000_000, "market_cap": 20_000_000_000}})
 
-    assert payload["000001"]["zongguben"] == 2_000_000_000
+    assert payload["000001"]["total_shares"] == 2_000_000_000
     assert payload["000001"]["market_cap"] == 20_000_000_000
 
 
@@ -69,6 +71,7 @@ def test_resolve_quote_metrics_prefers_live_price_times_zongguben():
     )
 
     assert metrics["price_text"] == "8.00"
+    assert metrics["total_shares"] == 1_500_000_000
     assert round(metrics["pct"], 4) == round((8.0 / 7.5 - 1.0) * 100.0, 4)
     assert metrics["market_cap_text"] == "120亿"
 
@@ -112,3 +115,18 @@ def test_resolve_quote_metrics_falls_back_to_last_close_pct_and_static_market_ca
 
     metrics = resolve_quote_metrics({}, {"close": 0, "last_close": 0, "pct": object()})
     assert metrics["pct"] is None
+
+
+def test_total_shares_reads_legacy_payloads_but_enriched_quotes_write_ascii_key():
+    assert get_total_shares({"zongguben": 1_000}) == 1_000
+    assert get_total_shares({"_zongguben": 2_000}) == 2_000
+    assert get_total_shares({"total_shares": 3_000, "zongguben": 1_000}) == 3_000
+
+    enriched = enrich_quotes_with_finance(
+        {"000001": {"_zongguben": 1_000}},
+        {"000001": {"zongguben": 2_000}},
+    )
+
+    assert enriched["000001"]["total_shares"] == 2_000
+    assert "zongguben" not in enriched["000001"]
+    assert "_zongguben" not in enriched["000001"]

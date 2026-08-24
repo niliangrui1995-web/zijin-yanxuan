@@ -87,6 +87,8 @@ def _pending_ai_chain_bse_backfill_codes(engine, cancellation_token=None) -> set
     if not callable(getter):
         return set()
     values = invoke_with_cancellation(getter, cancellation_token)
+    if not isinstance(values, Iterable):
+        return set()
     from domains.industry_chain import normalize_ai_chain_code
 
     return {
@@ -360,16 +362,26 @@ class EarningsRefreshService(QObject):
         scan_results: list[Mapping[str, object]] = []
         for target_date in date_list or []:
             self._raise_if_cancelled(cancellation_token)
-            fetch_kwargs = {"target_publish_date": target_date}
-            if stock_codes is not None:
-                fetch_kwargs["stock_codes"] = set(stock_codes)
             if cancellation_token is None:
-                df = self.engine.fetch_daily_surprises(**fetch_kwargs)
+                if stock_codes is None:
+                    df = self.engine.fetch_daily_surprises(target_publish_date=target_date)
+                else:
+                    df = self.engine.fetch_daily_surprises(
+                        target_publish_date=target_date,
+                        stock_codes=set(stock_codes),
+                    )
+            elif stock_codes is None:
+                df = invoke_with_cancellation(
+                    self.engine.fetch_daily_surprises,
+                    cancellation_token,
+                    target_publish_date=target_date,
+                )
             else:
                 df = invoke_with_cancellation(
                     self.engine.fetch_daily_surprises,
                     cancellation_token,
-                    **fetch_kwargs,
+                    target_publish_date=target_date,
+                    stock_codes=set(stock_codes),
                 )
             scan_result = _degraded_scan_result(self.engine)
             if scan_result:

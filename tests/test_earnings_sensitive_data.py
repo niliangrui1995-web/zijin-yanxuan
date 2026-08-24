@@ -75,7 +75,7 @@ def test_http_error_and_nested_cache_payload_are_redacted():
     assert redact_sensitive_text(f"Authorization: Bearer {ALPHA_SECRET}").endswith("<redacted>")
 
 
-def test_provider_request_keeps_secret_for_upstream_but_redacts_failure():
+def test_provider_request_keeps_secret_for_upstream_but_redacts_failure(public_dns_resolution):
     class _Session:
         def __init__(self) -> None:
             self.calls = []

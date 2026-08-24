@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import sys
 import threading
 import time
@@ -23,6 +24,8 @@ from infra.tasks.lifecycle import (
     invoke_with_cancellation,
     task_unsettled_status,
 )
+
+_RUNNER_OPERATION_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
 class _BackgroundRunner(Protocol):
@@ -118,6 +121,15 @@ def _owned_delivery_callbacks(lifecycle, name, token, on_success, on_error):
             )
 
     return _deliver_success, _deliver_error
+
+
+def _cleanup_failed_submission(lifecycle, name: str, token: CancellationToken, on_terminated) -> None:
+    with lifecycle._lock:
+        current = lifecycle._tasks.get(name)
+        if current is not None and current.token is token:
+            lifecycle._tasks.pop(name, None)
+    token.cancel("submission_failed")
+    on_terminated()
 
 
 class TaskLifecycleGroup:
@@ -244,7 +256,7 @@ class TaskLifecycleGroup:
         try:
             result = probe(owned.task_id, owned.token)
             return result if type(result) is bool else None
-        except Exception:  # noqa: BLE001 - an identity probe failure means unknown.
+        except _RUNNER_OPERATION_ERRORS:
             return None
 
     def run_background(
@@ -344,6 +356,7 @@ class TaskLifecycleGroup:
             "timeout_sec": timeout_sec,
             **scheduler_kwargs,
         }
+        submission_completed = False
         try:
             submitted_task_id, token_forwarded = _submit_owned_task(
                 resolved_runner,
@@ -390,15 +403,10 @@ class TaskLifecycleGroup:
                         actual_task_id,
                         reason="cancelled_during_submit",
                     )
-        except Exception:
-            with self._lock:
-                current = self._tasks.get(normalized)
-                if current is not None and current.token is token:
-                    self._tasks.pop(normalized, None)
-            token.cancel("submission_failed")
-            deliver_terminated_once()
-            raise
+            submission_completed = True
         finally:
+            if not submission_completed:
+                _cleanup_failed_submission(self, normalized, token, deliver_terminated_once)
             self._finish_submission(normalized, token)
         if completed_during_submission:
             submission_status = TaskSubmissionStatus.ACCEPTED
@@ -491,7 +499,7 @@ class TaskLifecycleGroup:
         completed = submissions_completed
         settled_by_wait: set[tuple[int, str]] = set()
         for runner, task_ids in runner_tasks.values():
-            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000.0))
+            remaining_ms = max(0, math.ceil((deadline - time.monotonic()) * 1000.0))
             waited = bounded_wait_for_tasks_status(
                 runner,
                 tuple(dict.fromkeys(task_ids)),

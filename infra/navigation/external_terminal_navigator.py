@@ -238,20 +238,31 @@ class ExternalTerminalNavigator:
         return False
 
     @staticmethod
-    def _type_quote_code(bare: str, app_name: str, *, expected_hwnd=None) -> bool:
-        if expected_hwnd is not None:
-            import win32gui
+    def _is_expected_window_foreground(expected_hwnd) -> bool:
+        if expected_hwnd is None:
+            return True
+        import win32gui
 
-            if win32gui.GetForegroundWindow() != expected_hwnd:
-                event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
-                return False
+        return bool(win32gui.GetForegroundWindow() == expected_hwnd)
+
+    @staticmethod
+    def _type_quote_code(bare: str, app_name: str, *, expected_hwnd=None) -> bool:
+        if not ExternalTerminalNavigator._is_expected_window_foreground(expected_hwnd):
+            event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
+            return False
 
         import pyautogui
 
         pyautogui.press("esc", presses=2, interval=0.05)
         time.sleep(0.08)
+        if not ExternalTerminalNavigator._is_expected_window_foreground(expected_hwnd):
+            event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
+            return False
         pyautogui.write(bare, interval=0.04)
         time.sleep(0.08)
+        if not ExternalTerminalNavigator._is_expected_window_foreground(expected_hwnd):
+            event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
+            return False
         pyautogui.press("enter")
         event_bus.sig_system_log.emit("info", f"[{app_name}] 已使用窗口级快捷输入: {bare}")
         return True

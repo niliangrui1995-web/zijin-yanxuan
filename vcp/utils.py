@@ -25,16 +25,25 @@ def _check_vipdoc_valid(vipdoc):
     )
 
 
+def _tdx_config_candidates() -> tuple[str, ...]:
+    configured_path = str(os.environ.get("VCP_HUNTER_TDX_CONFIG_PATH") or "").strip()
+    configured_candidate = os.path.expanduser(configured_path) if configured_path else ""
+    return tuple(
+        path
+        for path in (
+            configured_candidate,
+            os.path.join(PROJECT_ROOT, "vcp_tdx_config.json"),
+            os.path.join(DEFAULT_TDX_ROOT, "vcp_tdx_config.json"),
+        )
+        if path
+    )
+
+
 def _load_tdx_local_config():
     """读取通达信本地路径配置。"""
-    candidates = [
-        os.path.join("D:\\", "vcp_qt", "vcp_tdx_config.json"),
-        os.path.join(DEFAULT_TDX_ROOT, "vcp_tdx_config.json"),
-        os.path.join(PROJECT_ROOT, "vcp_tdx_config.json"),
-    ]
-    for cfg_path in candidates:
+    for cfg_path in _tdx_config_candidates():
         try:
-            if cfg_path and os.path.exists(cfg_path):
+            if os.path.exists(cfg_path):
                 with open(cfg_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 root = (cfg.get("tdx_vipdoc_root") or "").strip().rstrip(os.sep)

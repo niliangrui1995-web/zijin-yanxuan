@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import socket
 from types import SimpleNamespace
 
 import pandas as pd
@@ -23,6 +24,25 @@ ASIAN_MARKET_PROVIDER_URLS = (
     ("www.tpex.org.tw", "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"),
     ("www.twse.com.tw", "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?response=json"),
 )
+
+
+@pytest.fixture
+def public_dns_resolution(monkeypatch):
+    """Keep FakeSession transport tests independent of live provider DNS."""
+    import infra.http_safety as http_safety
+
+    def resolve_public_ip(_host, port, family=0, type=0, proto=0, flags=0):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", int(port)),
+            )
+        ]
+
+    monkeypatch.setattr(http_safety.socket, "getaddrinfo", resolve_public_ip)
 
 
 class _FakeResponse:
@@ -272,7 +292,7 @@ def test_twse_price_selection_covers_order_book_and_fallback_quality(info, previ
     assert provider.pick_twse_price(info, previous_close) == expected
 
 
-def test_tw_realtime_provider_handles_empty_and_valid_payloads():
+def test_tw_realtime_provider_handles_empty_and_valid_payloads(public_dns_resolution):
     assert provider.fetch_tw_realtime_quote("", object()) is None
     empty = _FakeSession(_FakeResponse(data={"msgArray": []}))
     assert provider.fetch_tw_realtime_quote("2330.TW", empty) is None
@@ -329,7 +349,7 @@ def test_kr_previous_close_resolves_difference_direction_and_ratio(info, close_p
     assert provider._kr_previous_close(info, close_price) == expected
 
 
-def test_kr_realtime_provider_handles_empty_missing_and_valid_payloads():
+def test_kr_realtime_provider_handles_empty_missing_and_valid_payloads(public_dns_resolution):
     assert provider.fetch_kr_realtime_quote("", object()) is None
     assert provider.fetch_kr_realtime_quote("005930.KS", _FakeSession(_FakeResponse(data={}))) is None
     missing = _FakeSession(_FakeResponse(data={"datas": [{"closePrice": "--"}]}))
@@ -360,7 +380,7 @@ def test_kr_realtime_provider_handles_empty_missing_and_valid_payloads():
     assert quote["currency"] == "KRW"
 
 
-def test_hk_realtime_provider_covers_content_decode_and_invalid_shapes():
+def test_hk_realtime_provider_covers_content_decode_and_invalid_shapes(public_dns_resolution):
     assert provider.fetch_hk_realtime_quote("", object()) is None
     assert provider.fetch_hk_realtime_quote("0522.HK", _FakeSession(_FakeResponse(text="bad"))) is None
 
@@ -436,7 +456,7 @@ def test_jp_page_parsers_cover_indicator_and_preloaded_shapes(monkeypatch):
     assert provider._parse_jp_indicator_page("missing") is None
 
 
-def test_fetch_jp_realtime_quote_covers_no_code_no_quote_and_retry(monkeypatch):
+def test_fetch_jp_realtime_quote_covers_no_code_no_quote_and_retry(monkeypatch, public_dns_resolution):
     assert provider.fetch_jp_realtime_quote("", object()) is None
     no_quote = _FakeSession(_FakeResponse(text="normal page", status_code=200))
     assert provider.fetch_jp_realtime_quote("5201.T", no_quote) is None
@@ -1128,7 +1148,7 @@ def test_asian_http_transport_allowlist_matches_provider_urls():
 
 
 @pytest.mark.parametrize("_host, url", ASIAN_MARKET_PROVIDER_URLS)
-def test_asian_http_transport_allows_known_provider_host(_host, url):
+def test_asian_http_transport_allows_known_provider_host(_host, url, public_dns_resolution):
     response = object()
     session = _FakeSession(response)
 
@@ -1154,7 +1174,7 @@ def test_asian_http_transport_rejects_unknown_host_before_request():
     assert session.calls == []
 
 
-def test_asian_http_transport_rejects_cross_host_redirect_to_unknown_host():
+def test_asian_http_transport_rejects_cross_host_redirect_to_unknown_host(public_dns_resolution):
     class _RedirectResponse:
         status_code = 302
         headers = {"Location": "https://evil.example/next"}

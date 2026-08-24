@@ -434,7 +434,6 @@ def _shell_nav_repaint_acceptance(results: list[dict], *, expected_cycles: int |
 
     for result in results:
         cycle = result.get("cycle")
-        paint_region = result.get("paint_region", {}) or {}
         paint_metrics = result.get("paint_metrics", {}) or {}
         stalls = result.get("ui_stall_snapshot", {}) or {}
         expected_tab_count = result.get("expected_tab_count")

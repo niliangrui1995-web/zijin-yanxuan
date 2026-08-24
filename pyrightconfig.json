@@ -6,7 +6,10 @@
     "infra/features/service_toggle_registry.py",
     "infra/http_safety.py",
     "infra/market_data",
-    "infra/tasks"
+    "infra/tasks",
+    "ui/kline_pool_state.py",
+    "ui/kline_typing.py",
+    "ui/kline_window_recovery.py"
   ],
   "exclude": [
     "**/__pycache__",

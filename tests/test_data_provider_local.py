@@ -330,7 +330,7 @@ def test_load_local_tdx_capital_snapshot_reads_base_dbf(tmp_path):
 
     snapshot = load_local_tdx_capital_snapshot(["000001", "688129", "300001"], str(tmp_path / "vipdoc"))
 
-    assert snapshot["000001"]["zongguben"] == pytest.approx(19_405_918_700)
-    assert snapshot["688129"]["zongguben"] == pytest.approx(120_478_700)
+    assert snapshot["000001"]["total_shares"] == pytest.approx(19_405_918_700)
+    assert snapshot["688129"]["total_shares"] == pytest.approx(120_478_700)
     assert snapshot["000001"]["source"] == "tdx_base"
     assert "300001" not in snapshot

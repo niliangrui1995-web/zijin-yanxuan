@@ -755,7 +755,7 @@ def test_lhb_shell_nav_repaint_guard_delegates_to_table(monkeypatch):
         tab.deleteLater()
 
 
-def test_lhb_quote_default_resort_emits_one_layout_and_full_data_span():
+def test_lhb_quote_default_resort_emits_one_layout_and_targeted_data_span():
     tab = LhbTab(object(), autoload_pool=False)
     rows = [
         {"代码": f"{row:06d}", "名称": f"股票{row}", "涨幅%": 0.0}
@@ -780,7 +780,9 @@ def test_lhb_quote_default_resort_emits_one_layout_and_full_data_span():
 
         assert len(source_layout) == 1
         assert len(proxy_layout) == 1
-        expected_span = (0, 0, 49, tab.model.columnCount() - 1)
+        quote_columns = [tab.model.headers.index(header) for header in ("现价", "涨幅%", "市值", "买点")]
+        expected_target_span = (0, min(quote_columns), 49, max(quote_columns))
+        expected_full_span = (0, 0, 49, tab.model.columnCount() - 1)
         source_spans = [
             (event[0].row(), event[0].column(), event[1].row(), event[1].column())
             for event in source_data
@@ -789,8 +791,10 @@ def test_lhb_quote_default_resort_emits_one_layout_and_full_data_span():
             (event[0].row(), event[0].column(), event[1].row(), event[1].column())
             for event in proxy_data
         ]
-        assert expected_span in source_spans
-        assert expected_span in proxy_spans
+        assert expected_target_span in source_spans
+        assert expected_target_span in proxy_spans
+        assert expected_full_span not in source_spans
+        assert expected_full_span not in proxy_spans
         assert [row["代码"] for row in tab.model.row_data[:3]] == ["000050", "000049", "000048"]
     finally:
         tab.deleteLater()

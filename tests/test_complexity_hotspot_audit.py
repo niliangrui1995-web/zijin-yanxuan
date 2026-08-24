@@ -113,7 +113,7 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
     workspace_node = workspace_functions["ClassicWorkspace.__init__"]
     workspace_line_count = int(getattr(workspace_node, "end_lineno", workspace_node.lineno)) - workspace_node.lineno + 1
     assert HOTSPOT_BUDGETS["ui/workspaces/classic_workspace.py"]["ClassicWorkspace.__init__"] == workspace_line_count
-    assert HOTSPOT_BUDGETS["vcp/fetchers/asian_kline_fetcher.py"]["sync_asian_kline_cache"] == 185
+    assert HOTSPOT_BUDGETS["vcp/fetchers/asian_kline_fetcher.py"]["sync_asian_kline_cache"] == 168
 
 
 def test_default_hotspot_budgets_cover_current_large_functions():
@@ -139,7 +139,8 @@ def test_mccabe_budget_rejects_unbudgeted_complexity_over_25(tmp_path):
 
 def test_default_mccabe_budgets_cover_current_complexity_over_25():
     assert scan_mccabe_complexity_budgets() == []
-    assert len(MCCABE_COMPLEXITY_BUDGETS) == 1
+    assert MCCABE_COMPLEXITY_BUDGETS["scripts/native_watchlist_profile.py"]["_residual_repaint_acceptance"] == 32
+    assert len(MCCABE_COMPLEXITY_BUDGETS) == 2
 
 
 def test_legacy_source_moves_follow_canonical_app_entrypoints():

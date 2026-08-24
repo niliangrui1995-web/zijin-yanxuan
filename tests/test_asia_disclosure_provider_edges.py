@@ -63,7 +63,7 @@ def _jpx_workbook_bytes():
     return buffer.getvalue()
 
 
-def test_jpx_fetch_discovers_workbook_links_and_filters_window():
+def test_jpx_fetch_discovers_workbook_links_and_filters_window(public_dns_resolution):
     universe = {
         "8035.T": _company("Tokyo Electron", "8035.T", "JP"),
         "NVDA": _company("NVIDIA", "NVDA", "US"),
@@ -85,7 +85,7 @@ def test_jpx_fetch_discovers_workbook_links_and_filters_window():
     assert JpxFinancialAnnouncementProvider.parse_workbook(b"", universe) == []
 
 
-def test_jpx_workbook_links_reject_off_origin_and_unsafe_targets():
+def test_jpx_workbook_links_reject_off_origin_and_unsafe_targets(public_dns_resolution):
     html = """
     <a href="/files/a.xlsx">A</a>
     <a href="https://evil.example/a.xlsx">external</a>
@@ -117,7 +117,7 @@ def test_jpx_parse_workbook_rejects_excessive_rows(monkeypatch):
         JpxFinancialAnnouncementProvider.parse_workbook(_jpx_workbook_bytes(), universe)
 
 
-def test_tdnet_fetch_skips_404_and_parse_html_filters_rows():
+def test_tdnet_fetch_skips_404_and_parse_html_filters_rows(public_dns_resolution):
     universe = {"8035.T": _company("Tokyo Electron", "8035.T", "JP")}
     html = f"""
     <table>
@@ -143,7 +143,7 @@ def test_tdnet_fetch_skips_404_and_parse_html_filters_rows():
     assert events[0].call_time_source_url == "https://tdnet/20260502.html"
 
 
-def test_dart_fetch_handles_key_market_and_total_page_edges():
+def test_dart_fetch_handles_key_market_and_total_page_edges(public_dns_resolution):
     kr_company = _company("Hanmi", "042700.KS", "KR")
     payload = {
         "total_page": ["bad"],
@@ -176,7 +176,7 @@ def test_dart_fetch_handles_key_market_and_total_page_edges():
     assert events[0].call_time_source_url == "https://dart.fss.or.kr/"
 
 
-def test_kind_fetch_and_parse_html_filter_edges():
+def test_kind_fetch_and_parse_html_filter_edges(public_dns_resolution):
     kr_company = _company("Hanmi", "042700.KS", "KR")
     html = f"""
     <table>
@@ -202,7 +202,7 @@ def test_kind_fetch_and_parse_html_filter_edges():
     assert events[0].call_time_source_url == "https://kind.krx.co.kr/"
 
 
-def test_mops_session_get_fetch_and_parse_edges(monkeypatch):
+def test_mops_session_get_fetch_and_parse_edges(monkeypatch, public_dns_resolution):
     tw_company = _company("TSMC", "2330.TW", "TW")
     html = """
     <table>
@@ -253,7 +253,7 @@ def test_mops_session_get_fetch_and_parse_edges(monkeypatch):
     assert MopsEarningsDisclosureProvider._default_session() is asia_module.requests
 
 
-def test_mops_fetch_records_partial_stop_degradation():
+def test_mops_fetch_records_partial_stop_degradation(public_dns_resolution):
     html = """
     <table>
       <tr><td>2026/06/01</td><td>18:00</td><td>financial report</td></tr>

@@ -143,6 +143,24 @@ def _scheduler(
     return scheduler
 
 
+@pytest.fixture(autouse=True)
+def _dispose_auto_refresh_schedulers(monkeypatch):
+    """Keep parentless scheduler QObjects out of later tests' delete queue."""
+    schedulers = []
+    original_init = AutoRefreshScheduler.__init__
+
+    def _tracked_init(scheduler, *args, **kwargs):
+        original_init(scheduler, *args, **kwargs)
+        schedulers.append(scheduler)
+
+    monkeypatch.setattr(AutoRefreshScheduler, "__init__", _tracked_init)
+    yield
+
+    for scheduler in reversed(schedulers):
+        scheduler.shutdown()
+        scheduler.deleteLater()
+
+
 def test_auto_refresh_scheduler_skips_daily_jobs_before_trigger(monkeypatch):
     _reset_scheduler_settings()
     now = [datetime.datetime(2026, 4, 20, 19, 59)]
@@ -950,8 +968,11 @@ def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
             "status": "ok",
         },
     )
-    monkeypatch.setattr("core.ai_industry_chain_pool.load_cached_ai_industry_chain_stock_codes", lambda: {"300308"})
-    monkeypatch.setattr("core.lhb_pool_manager.LhbPoolManager", FakePoolManager)
+    monkeypatch.setattr(
+        "app.services.ui_industry_chain_service.load_cached_ai_industry_chain_stock_codes",
+        lambda: {"300308"},
+    )
+    monkeypatch.setattr("app.services.ui_lhb_pool_service.LhbPoolManager", FakePoolManager)
     monkeypatch.setattr(
         "app.services.ui_market_calendar_service.MarketCalendar.get_recent_trade_dates",
         classmethod(lambda cls, n, ref_date=None: ["20260420"]),

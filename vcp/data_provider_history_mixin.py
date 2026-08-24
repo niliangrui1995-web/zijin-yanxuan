@@ -814,7 +814,7 @@ class TdxDataProviderHistoryMixin:
                     audit_log.setdefault(status_msg, []).append(res_code)
         gc.collect()
         failed_count = sum(len(v) for v in audit_log.values())
-        _log.error(
+        _log.info(
             f"\n[缓存] 阶段1完成：已同步 {len(self.cache_data)} 只标的 | 失败 {failed_count} | 耗时 {time.time() - start_time:.1f}s"
         )
         _log.info(f"{'=' * 50}\n [内部审计报告] 数据对账单\n{'=' * 50}")

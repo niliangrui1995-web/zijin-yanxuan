@@ -152,6 +152,13 @@ def build_na_daily_refresh_payload(output_dir: str | None = None, *, limit: int 
     }
 
 
+def _report_file_strings(entry: dict) -> list[str]:
+    raw_report_files = entry.get("report_files")
+    if not isinstance(raw_report_files, list):
+        return []
+    return [path for path in raw_report_files if isinstance(path, str)]
+
+
 def build_na_daily_history_payload(output_dir: str | None, report_date: str) -> dict:
     normalized_date = str(report_date or "").strip()
     history = list_report_history(output_dir)
@@ -169,7 +176,7 @@ def build_na_daily_history_payload(output_dir: str | None, report_date: str) -> 
         }
 
     state = str(entry.get("state") or "missing").strip()
-    report_files = list(entry.get("report_files") or [])
+    report_files = _report_file_strings(entry)
     if state != "available":
         return {
             "job_key": "na_daily_history",

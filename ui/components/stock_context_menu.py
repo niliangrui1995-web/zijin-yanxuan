@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
 from app.services.ui_event_service import ui_signals as event_bus
 from app.services.ui_navigation_service import open_codex_desktop_thread as launch_codex_desktop_thread
 from app.services.ui_watchlist_service import watchlist_vm
+from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from ui.components.motion import install_menu_fade
 from ui.styles.context_menu_qss import generate_context_menu_qss
 
@@ -34,6 +36,8 @@ CODEX_CURRENT_STOCK_PROMPT = "深度研究 当前股票"
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+")
 _WHITESPACE_RE = re.compile(r"\s+")
 _STOCK_CODE_RE = re.compile(r"(?:[A-Za-z]{2})?(\d{6})(?:\.[A-Za-z]{2})?")
+_CODEX_URL_OPEN_ERRORS = (OSError, RuntimeError, webbrowser.Error)
+_log = get_logger(__name__)
 
 
 def _normalize_text(value, *, max_length: int | None = None) -> str:
@@ -129,7 +133,22 @@ def _open_codex_url(url: str) -> bool:
 
     try:
         return bool(webbrowser.open_new_tab(url))
-    except Exception:
+    except _CODEX_URL_OPEN_ERRORS as exc:
+        _log.warning("[股票右键菜单] Codex 深链接回退失败: %s", exc, exc_info=True)
+        emit_structured_log(
+            "stock_context_menu.codex_open_failed",
+            logger=_log,
+            level="warning",
+            scheme=QUrl(url).scheme(),
+            error_type=type(exc).__name__,
+        )
+        record_metric(
+            "stock_context_menu_codex_open_failures",
+            1,
+            unit="count",
+            tags={"error_type": type(exc).__name__},
+            logger=_log,
+        )
         return False
 
 

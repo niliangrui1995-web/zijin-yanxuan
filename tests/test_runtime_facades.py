@@ -142,7 +142,10 @@ def test_scan_engine_facade_covers_lazy_rps_and_remaining_delegates(monkeypatch)
 
 
 def test_legacy_vcp_engine_import_points_at_scan_facade():
-    assert importlib.import_module("vcp.engine") is scan_engine_facade
+    legacy_module = importlib.import_module("vcp.engine")
+
+    assert legacy_module is not scan_engine_facade
+    assert legacy_module.VCPEngine is scan_engine_facade.VCPEngine
 
 
 def test_runtime_services_load_local_tdx_capital_snapshot_delegates(monkeypatch):

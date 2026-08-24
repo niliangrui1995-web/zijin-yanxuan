@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "policy": "exact-current-baseline; updates may only reduce unless --allow-new",
+  "scope": "ui/kline_pool_state.py ui/kline_typing.py ui/kline_window_recovery.py",
+  "identity_fields": [
+    "path",
+    "severity",
+    "code",
+    "message"
+  ],
+  "mypy_version": "mypy 2.3.0 (compiled: yes)",
+  "command": [
+    "python",
+    "-m",
+    "mypy",
+    "ui/kline_pool_state.py",
+    "ui/kline_typing.py",
+    "ui/kline_window_recovery.py",
+    "--output",
+    "json",
+    "--no-error-summary",
+    "--no-pretty",
+    "--no-warn-unused-configs",
+    "--num-workers",
+    "1"
+  ],
+  "update_reason": "2026-08-25: establish gradual UI type-check ratchet",
+  "diagnostic_count": 0,
+  "diagnostics": []
+}

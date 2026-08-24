@@ -128,46 +128,38 @@ def test_subprocess_result_is_rejected_when_owner_cancels_after_process(monkeypa
     assert calls == ["run"]
 
 
-def test_cancellable_subprocess_terminates_and_reaps_when_owner_hides(monkeypatch) -> None:
-    class Process:
-        def __init__(self) -> None:
-            self.returncode = None
-            self.communicate_calls = 0
-            self.terminated = False
-            self.killed = False
+def test_cancellable_subprocess_uses_shared_reap_boundary(monkeypatch) -> None:
+    observed: dict = {}
+    token = _Token(10)
 
-        def communicate(self, timeout=None):
-            self.communicate_calls += 1
-            if not self.terminated and not self.killed:
-                raise provider.ProcessTimeoutError(["python"], timeout)
-            return "", ""
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return SimpleNamespace(stdout="[]")
 
-        def poll(self):
-            return self.returncode
+    monkeypatch.setattr(provider, "run_cancellable_process", fake_run)
 
-        def terminate(self):
-            self.terminated = True
-            self.returncode = -15
-
-        def kill(self):
-            self.killed = True
-            self.returncode = -9
-
-    process = Process()
-    token = _Token(10, raise_on_call=2)
-    monkeypatch.setattr(provider, "spawn_process", lambda *_args, **_kwargs: process)
-
-    with pytest.raises(TaskDeadlineExceeded, match="deadline"):
-        provider._run_cancellable_process(
-            ["python"],
-            timeout=10,
-            cancellation_token=token,
-            env={},
-        )
-
-    assert process.terminated is True
-    assert process.killed is False
-    assert process.communicate_calls == 2
+    assert provider._run_cancellable_process(
+        ["python"],
+        timeout=10,
+        cancellation_token=token,
+        env={"SAFE": "1"},
+        creationflags=123,
+    ).stdout == "[]"
+    assert observed == {
+        "command": ["python"],
+        "kwargs": {
+            "cancellation_token": token,
+            "timeout": 10,
+            "check": True,
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "ignore",
+            "env": {"SAFE": "1"},
+            "creationflags": 123,
+        },
+    }
 
 
 def test_subprocess_is_not_started_when_owner_is_already_cancelled(monkeypatch) -> None:

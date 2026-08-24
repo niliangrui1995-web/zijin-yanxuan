@@ -28,6 +28,43 @@ type MutableQuoteMap = dict[str, dict[str, object]]
 
 _SUPPORTED_SCALAR_TYPES = (type(None), bool, int, float, complex, str, bytes)
 _QUARANTINED_VALUE = object()
+TOTAL_SHARES_KEY = "total_shares"
+_LEGACY_TOTAL_SHARES_KEYS = ("_zongguben", "zongguben")
+
+
+def coerce_quote_number(value: object) -> float:
+    if value in (None, "", "-", "--"):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def get_total_shares(*entries: Mapping | None) -> float:
+    """Read canonical share capital while accepting legacy quote payloads."""
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        for key in (TOTAL_SHARES_KEY, *_LEGACY_TOTAL_SHARES_KEYS):
+            total_shares = coerce_quote_number(entry.get(key))
+            if total_shares > 0:
+                return total_shares
+    return 0.0
+
+
+def get_missing_a_share_finance_codes(codes: Iterable[str], snapshot: Mapping[str, Mapping] | None) -> list[str]:
+    snapshot = snapshot or {}
+    missing: list[str] = []
+    seen: set[str] = set()
+    for raw_code in codes or []:
+        code = str(raw_code or "").strip()
+        if len(code) != 6 or not code.isdigit() or code in seen:
+            continue
+        seen.add(code)
+        if get_total_shares(snapshot.get(code)) <= 0:
+            missing.append(code)
+    return missing
 
 
 def _unknown_type_name(value: object) -> str:
@@ -172,6 +209,37 @@ def _freeze_quotes(
     )
 
 
+def _non_null_frozen_quote_updates(payload: QuotePayload) -> dict[str, object]:
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _updated_frozen_quote_payload(
+    existing_payload: QuotePayload | None,
+    incoming_payload: QuotePayload,
+) -> QuotePayload | None:
+    updates = _non_null_frozen_quote_updates(incoming_payload)
+    if not updates:
+        return None
+    if existing_payload is None:
+        return MappingProxyType(updates)
+    if all(existing_payload.get(key) == value for key, value in updates.items()):
+        return None
+    return MappingProxyType({**existing_payload, **updates})
+
+
+def _merge_frozen_quotes(existing: QuoteMap, incoming: QuoteMap) -> QuoteMap:
+    """Merge sanitized incoming entries while reusing unchanged frozen payloads."""
+    merged: dict[str, Mapping[str, object]] | None = None
+    for code, incoming_payload in incoming.items():
+        updated_payload = _updated_frozen_quote_payload(existing.get(code), incoming_payload)
+        if updated_payload is None:
+            continue
+        if merged is None:
+            merged = dict(existing)
+        merged[code] = updated_payload
+    return existing if merged is None else MappingProxyType(merged)
+
+
 def _copy_frozen_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _copy_frozen_value(item) for key, item in value.items()}
@@ -282,6 +350,34 @@ class QuoteSnapshot(Mapping[str, QuotePayload]):
             strict_values=strict_values,
         )
 
+    @classmethod
+    def _from_frozen(
+        cls,
+        *,
+        version: int,
+        timestamp: float,
+        quotes: QuoteMap,
+        unknown_leaf_count: int = 0,
+        unknown_leaf_types: tuple[str, ...] = (),
+    ) -> QuoteSnapshot:
+        """Build a snapshot from data already normalized by this module."""
+        if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+            raise ValueError("version must be a non-negative integer")
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            raise ValueError("timestamp must be a finite non-negative number")
+        timestamp_value = float(timestamp)
+        if not math.isfinite(timestamp_value) or timestamp_value < 0:
+            raise ValueError("timestamp must be a finite non-negative number")
+        if not isinstance(quotes, Mapping):
+            raise TypeError("quotes must be a mapping")
+        snapshot = object.__new__(cls)
+        object.__setattr__(snapshot, "version", int.__add__(version, 0))
+        object.__setattr__(snapshot, "timestamp", timestamp_value)
+        object.__setattr__(snapshot, "quotes", quotes)
+        object.__setattr__(snapshot, "unknown_leaf_count", int(unknown_leaf_count))
+        object.__setattr__(snapshot, "unknown_leaf_types", tuple(unknown_leaf_types))
+        return snapshot
+
     def __getitem__(self, key: str) -> Mapping[str, object]:
         return self.quotes[key]
 
@@ -306,6 +402,45 @@ class QuoteSnapshot(Mapping[str, QuotePayload]):
         return NotImplemented
 
 
+def merge_quote_snapshot(
+    snapshot: QuoteSnapshot,
+    incoming: Mapping[str, Mapping[str, object]],
+    *,
+    version: int,
+    timestamp: float | None = None,
+    strict_values: bool = False,
+) -> tuple[QuoteSnapshot, QuoteSnapshot]:
+    """Merge incoming quotes without refreezing untouched entries.
+
+    The first result is safe to publish. The second preserves unknown-leaf
+    observations for the caller's existing telemetry path.
+    """
+    if not isinstance(snapshot, QuoteSnapshot):
+        raise TypeError("snapshot must be a QuoteSnapshot")
+    if not isinstance(incoming, Mapping):
+        raise TypeError("incoming quotes must be a mapping")
+
+    frozen_incoming, unknown_leaf_count, unknown_leaf_types = _freeze_quotes(
+        incoming,
+        strict_values=strict_values,
+    )
+    timestamp_value = time.time() if timestamp is None else timestamp
+    merged_quotes = _merge_frozen_quotes(snapshot.quotes, frozen_incoming)
+    published = QuoteSnapshot._from_frozen(
+        version=version,
+        timestamp=timestamp_value,
+        quotes=merged_quotes,
+    )
+    observed = QuoteSnapshot._from_frozen(
+        version=version,
+        timestamp=timestamp_value,
+        quotes=merged_quotes,
+        unknown_leaf_count=unknown_leaf_count,
+        unknown_leaf_types=unknown_leaf_types,
+    )
+    return published, observed
+
+
 __all__ = [
     "MutableQuoteMap",
     "QuoteMap",
@@ -313,5 +448,10 @@ __all__ = [
     "QuoteScalar",
     "QuoteSnapshot",
     "QuoteValue",
+    "TOTAL_SHARES_KEY",
+    "coerce_quote_number",
+    "get_missing_a_share_finance_codes",
+    "get_total_shares",
+    "merge_quote_snapshot",
     "snapshot_to_mutable_dict",
 ]

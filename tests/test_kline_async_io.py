@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services import asian_market_cache_service
 from app.services.kline_data_service import KlineDataService
 from app.services.ui_task_lifecycle_service import TaskCancelledError
 from ui import kline_window_asian as asian
@@ -173,13 +174,11 @@ def test_asian_history_backfill_is_latest_only_and_ignores_stale_callbacks(monke
 
 
 def test_kline_asian_cache_file_is_read_and_prepared_inside_background_task(monkeypatch):
-    from ui.tabs import asian_market_tab as asian_module
-
     cache_reads = []
     runner = _CapturingRunner()
     monkeypatch.setattr(runtime, "task_manager", runner)
-    monkeypatch.setattr(asian_module, "JSON_CACHE", "unused-test-cache.json")
-    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(asian_market_cache_service, "ASIAN_KLINE_CACHE", "unused-test-cache.json")
+    monkeypatch.setattr(asian_market_cache_service, "GLOBAL_ASIAN_RT_CACHE", {})
 
     def load_stock(path, code, *, cancellation_token=None):
         cache_reads.append((path, code, cancellation_token))

@@ -857,6 +857,38 @@ def test_split_retry_does_not_expand_eastmoney_edge_failures(monkeypatch):
     assert failures == ["HTTP Error 502: Bad Gateway"]
 
 
+def test_split_retry_caps_non_disconnect_failures_and_enters_cooldown(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 16
+    provider._rt_quote_min_batch_size = 1
+    provider._rt_quote_batch_pause_sec = 0.0
+    eastmoney_seen = []
+    cooldown_reasons = []
+
+    def _fail_request(codes, inferred_trade_date):
+        del inferred_trade_date
+        eastmoney_seen.append(tuple(codes))
+        raise RuntimeError("unexpected upstream response")
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_eastmoney_quote_batch", _fail_request)
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _make_sina_quote_fetcher([]))
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Sina should cover the failed batch")),
+    )
+    monkeypatch.setattr(provider, "_enter_eastmoney_cooldown", lambda reason: cooldown_reasons.append(reason))
+
+    codes = [f"{idx:06d}" for idx in range(1, 17)]
+    result = provider.fetch_realtime_quotes_batch(codes)
+
+    assert len(eastmoney_seen) == 3
+    assert cooldown_reasons and "split retry budget exhausted" in cooldown_reasons[0]
+    assert set(result) == set(codes)
+    assert all(quote["source"] == "sina" for quote in result.values())
+
+
 def test_fetch_realtime_quotes_batch_switches_remaining_batches_to_sina_after_disconnect(monkeypatch):
     provider = _make_provider()
     provider._rt_quote_batch_size = 2

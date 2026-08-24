@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableView
 
 from domains.global_earnings_calendar.service import EarningsCalendarEvent
+from ui.components import trade_calendar as calendar_module
 from ui.components.trade_calendar import (
     _DETACHED_EARNINGS_REFRESH_WORKERS,
     OligarchEarningsCalendarPanel,
@@ -14,6 +15,18 @@ from ui.components.trade_calendar import (
 )
 from ui.theme import THEME_YUEBAI
 from ui.theme_tokens import build_ui_tokens
+
+_FIXED_TODAY = dt.date(2026, 8, 25)
+
+
+class _FixedDate(dt.date):
+    @classmethod
+    def today(cls):
+        return cls(_FIXED_TODAY.year, _FIXED_TODAY.month, _FIXED_TODAY.day)
+
+
+def _freeze_calendar_today(monkeypatch):
+    monkeypatch.setattr(calendar_module._dt, "date", _FixedDate)
 
 
 def test_trade_calendar_uses_compact_weekday_labels():
@@ -130,9 +143,10 @@ def test_trade_calendar_marker_styles_follow_calendar_tokens():
     assert styles["normal"]["color"] == calendar_tokens["marker_normal"]
 
 
-def test_oligarch_earnings_panel_filters_events_by_search_and_segment():
-    near_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
-    later_report_date = (dt.date.today() + dt.timedelta(days=7)).isoformat()
+def test_oligarch_earnings_panel_filters_events_by_search_and_segment(monkeypatch):
+    _freeze_calendar_today(monkeypatch)
+    near_report_date = (_FIXED_TODAY + dt.timedelta(days=1)).isoformat()
+    later_report_date = (_FIXED_TODAY + dt.timedelta(days=7)).isoformat()
     events = [
         EarningsCalendarEvent(
             "NVIDIA",
@@ -216,8 +230,9 @@ def test_oligarch_earnings_panel_filters_to_selected_calendar_date():
         panel.deleteLater()
 
 
-def test_oligarch_earnings_panel_reloads_cached_events_from_service():
-    future_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+def test_oligarch_earnings_panel_reloads_cached_events_from_service(monkeypatch):
+    _freeze_calendar_today(monkeypatch)
+    future_report_date = (_FIXED_TODAY + dt.timedelta(days=1)).isoformat()
 
     class _FakeService:
         def __init__(self):
@@ -245,8 +260,9 @@ def test_oligarch_earnings_panel_reloads_cached_events_from_service():
         panel.deleteLater()
 
 
-def test_oligarch_earnings_panel_shows_degraded_cache_status():
-    future_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+def test_oligarch_earnings_panel_shows_degraded_cache_status(monkeypatch):
+    _freeze_calendar_today(monkeypatch)
+    future_report_date = (_FIXED_TODAY + dt.timedelta(days=1)).isoformat()
 
     class _FakeService:
         universe = {"AMAT": object()}
@@ -284,8 +300,9 @@ def test_oligarch_earnings_panel_shows_degraded_cache_status():
         panel.deleteLater()
 
 
-def test_oligarch_earnings_panel_shows_degraded_ticker_cache_status():
-    future_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+def test_oligarch_earnings_panel_shows_degraded_ticker_cache_status(monkeypatch):
+    _freeze_calendar_today(monkeypatch)
+    future_report_date = (_FIXED_TODAY + dt.timedelta(days=1)).isoformat()
 
     class _FakeService:
         universe = {"3711.TW": object()}

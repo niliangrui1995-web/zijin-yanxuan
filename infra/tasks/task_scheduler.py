@@ -29,6 +29,7 @@ from infra.tasks.lifecycle import (
 )
 
 DEFAULT_TASK_THREAD_POOL_MAX = 12
+_TASK_POOL_OPERATION_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
 def _task_thread_pool_max_count(env: dict[str, str] | None = None) -> int:
@@ -159,6 +160,18 @@ def _connect_queued(signal: Any, callback: Any) -> None:
     signal.connect(callback, type=Qt.ConnectionType.QueuedConnection)
 
 
+def _deliver_submission_terminated_callback(on_terminated, task_id: str) -> None:
+    """Contain an application terminal callback after a failed task submission."""
+    if on_terminated is None:
+        return
+    try:
+        on_terminated()
+    except Exception:  # noqa: BLE001 - application callback must not mask submission failure.
+        from core.logger import get_logger
+
+        get_logger(__name__).exception(f"[TaskManager] 后台任务 '{task_id}' 未启动终态回调异常")
+
+
 def _is_current_worker_delivery(manager, task_id: str, worker) -> bool:
     with manager._lock:
         current = manager.active_workers.get(task_id)
@@ -250,17 +263,19 @@ class GlobalTaskManager(QObject):
                 task_id = str(uuid.uuid4())[:8]
 
             self.active_workers[task_id] = worker
+            submitted = False
             try:
                 if priority is None:
                     self.thread_pool.start(worker)
                 else:
                     self.thread_pool.start(worker, int(priority))
-            except Exception:
-                if self.active_workers.get(task_id) is worker:
-                    self.active_workers.pop(task_id, None)
-                worker.cancel("submission_failed")
-                worker.terminated_event.set()
-                raise
+                submitted = True
+            finally:
+                if not submitted:
+                    if self.active_workers.get(task_id) is worker:
+                        self.active_workers.pop(task_id, None)
+                    worker.cancel("submission_failed")
+                    worker.terminated_event.set()
             return task_id
 
     @staticmethod
@@ -345,19 +360,17 @@ class GlobalTaskManager(QObject):
 
         self._connect_worker_callbacks(worker, tid, on_success, on_error, on_terminated)
 
+        submitted = False
         try:
             if task_priority is None:
-                return self.submit_task(worker, tid)
-            return self.submit_task(worker, tid, priority=task_priority)
-        except Exception:
-            if on_terminated is not None:
-                try:
-                    on_terminated()
-                except Exception:  # noqa: BLE001 - submission cleanup must not mask the start failure.
-                    from core.logger import get_logger
-
-                    get_logger(__name__).exception(f"[TaskManager] 后台任务 '{tid}' 未启动终态回调异常")
-            raise
+                result = self.submit_task(worker, tid)
+            else:
+                result = self.submit_task(worker, tid, priority=task_priority)
+            submitted = True
+            return result
+        finally:
+            if not submitted:
+                _deliver_submission_terminated_callback(on_terminated, tid)
 
     def cancel_all(self, *, reason: str = "cancel_all"):
         """终极清退：取消排队任务并保留运行任务的物理终态跟踪。"""
@@ -382,7 +395,7 @@ class GlobalTaskManager(QObject):
             try:
                 if try_take(worker) is True:
                     taken.append(worker)
-            except Exception:  # noqa: BLE001 - failed removal is not termination proof.
+            except _TASK_POOL_OPERATION_ERRORS:
                 continue
         for worker in taken:
             worker.terminated_event.set()
@@ -451,7 +464,7 @@ class GlobalTaskManager(QObject):
         try:
             result = self.thread_pool.waitForDone(max(0, int(wait_timeout_ms or 0)))
             return result if type(result) is bool else False
-        except Exception:  # noqa: BLE001 - shutdown proof must fail closed.
+        except _TASK_POOL_OPERATION_ERRORS:
             return False
 
     @property

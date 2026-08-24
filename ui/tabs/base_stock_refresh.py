@@ -29,6 +29,7 @@ from app.services.ui_quote_service import (
     build_offline_quotes,
     coerce_number,
     enrich_quotes_with_finance,
+    get_total_shares,
     is_a_share_code,
     publish_rt_quotes,
 )
@@ -159,8 +160,8 @@ def collect_missing_finance_codes(owner, current_model=None) -> list[str]:
             continue
 
         snapshot_entry = snapshot.get(code) or {}
-        row_zbg = coerce_number(row_dict.get("_zongguben", 0))
-        snapshot_zbg = coerce_number(snapshot_entry.get("_zongguben") or snapshot_entry.get("zongguben"))
+        row_zbg = get_total_shares(row_dict)
+        snapshot_zbg = get_total_shares(snapshot_entry)
         if row_zbg <= 0 and snapshot_zbg <= 0:
             missing.append(code)
 
@@ -195,7 +196,7 @@ def load_cached_finance_snapshot(codes, *, tdx_vipdoc: str | None = None) -> dic
 
 
 def _finance_entry_has_share_capital(entry: dict | None) -> bool:
-    return coerce_number((entry or {}).get("_zongguben") or (entry or {}).get("zongguben")) > 0
+    return get_total_shares(entry) > 0
 
 
 def _get_finance_cache_signature(path: str) -> tuple[int, int] | None:
@@ -251,7 +252,7 @@ def _quote_entry_has_price(entry: Mapping[str, object] | None) -> bool:
 def _quote_entry_has_cap(entry: Mapping[str, object] | None) -> bool:
     payload = dict(entry or {})
     return (
-        coerce_number(payload.get("_zongguben") or payload.get("zongguben")) > 0
+        get_total_shares(payload) > 0
         or coerce_number(payload.get("market_cap")) > 0
     )
 
@@ -711,7 +712,7 @@ def _row_signature_by_code(owner, model, payload: dict) -> dict[str, tuple]:
 
         display_values = tuple((header, _stable_signature_value(row.get(header))) for header in headers)
         internal_values = (
-            ("_zongguben", _stable_signature_value(row.get("_zongguben"))),
+            ("total_shares", _stable_signature_value(get_total_shares(row))),
             ("_history_date", _stable_signature_value(row.get("_history_date"))),
         )
         signatures[matched_code] = display_values + internal_values

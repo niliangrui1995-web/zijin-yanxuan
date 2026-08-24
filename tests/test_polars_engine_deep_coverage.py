@@ -9,6 +9,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from core.rps_cache_identity import rps_cache_key
 from vcp import polars_engine as engine
 
 
@@ -90,6 +91,32 @@ def test_to_pldf_handles_none_pandas_index_columns_and_unknown_objects():
     assert engine._to_pldf(plain).to_dict(as_series=False)["close"] == [9.0]
 
 
+def test_rps_cache_key_changes_when_the_current_snapshot_changes():
+    frame = pd.DataFrame(
+        {"close": [10.0, 11.0]},
+        index=pd.DatetimeIndex(["2026-01-01", "2026-01-02"], name="datetime"),
+    )
+    data = {"000001": frame}
+
+    before = rps_cache_key(data, "20260101", "20260102")
+    frame.loc[frame.index[-1], "close"] = 12.0
+
+    assert rps_cache_key(data, "20260101", "20260102") != before
+
+
+def test_rps_cache_key_uses_pandas_index_trade_date_when_no_date_column_exists():
+    frame = pd.DataFrame(
+        {"close": [10.0, 11.0]},
+        index=pd.DatetimeIndex(["2026-01-01", "2026-01-02"], name="datetime"),
+    )
+    data = {"000001": frame}
+
+    before = rps_cache_key(data, "20260101", "20260102")
+    frame.index = pd.DatetimeIndex(["2026-01-01", "2026-01-03"], name="datetime")
+
+    assert rps_cache_key(data, "20260101", "20260102") != before
+
+
 def test_build_prices_matrix_fast_filters_invalid_frames_and_forward_fills():
     indexed = pd.DataFrame(
         {"close": [10.0, 12.0]},
@@ -155,7 +182,7 @@ def test_prices_matrix_cache_round_trip_missing_empty_and_corrupt(tmp_path, monk
 
 def test_build_rps_matrix_returns_cached_and_empty_results(monkeypatch):
     cached_result = {"20260105": {"rps50": {"000001": 100.0}}}
-    cache = {("20260101", "20260105"): cached_result}
+    cache = {rps_cache_key({}, "20260101", "20260105"): cached_result}
     assert engine.build_rps_matrix_pl({}, "20260101", "20260105", cache) is cached_result
 
     monkeypatch.setattr(engine, "_load_prices_matrix", lambda: None)
@@ -182,7 +209,7 @@ def test_build_rps_matrix_computes_weekend_fallback_and_updates_cache(monkeypatc
     assert list(result) == ["20260102"]
     assert set(result["20260102"]) == {"rps50", "rps120", "rps250"}
     assert result["20260102"]["rps250"]["C"] == 100.0
-    assert cache[("20260104", "20260104")] == result
+    assert cache[rps_cache_key({}, "20260104", "20260104")] == result
     assert len(saved) == 1
     np.testing.assert_allclose(saved[0][0], matrix)
 

@@ -3,6 +3,7 @@ import datetime as dt
 import importlib
 import io
 import json
+import socket
 import subprocess
 import sys
 import textwrap
@@ -10,6 +11,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
 import yfinance as yf
 
 from domains.global_earnings_calendar.service import (
@@ -36,6 +38,25 @@ from domains.global_earnings_calendar.service import (
     sorted_events,
 )
 from vcp.fetchers import yf_session
+
+
+@pytest.fixture
+def public_dns_resolution(monkeypatch):
+    """Keep provider FakeSession tests independent of live DNS resolution."""
+    import infra.http_safety as http_safety
+
+    def resolve_public_ip(_host, port, family=0, type=0, proto=0, flags=0):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", int(port)),
+            )
+        ]
+
+    monkeypatch.setattr(http_safety.socket, "getaddrinfo", resolve_public_ip)
 
 
 def test_build_oligarch_universe_maps_sector_and_priority():
@@ -121,7 +142,7 @@ def test_alpha_vantage_provider_filters_universe_and_sorts():
     assert events[0].source == "Alpha Vantage"
 
 
-def test_nasdaq_provider_parses_lite_after_hours_calendar_row():
+def test_nasdaq_provider_parses_lite_after_hours_calendar_row(public_dns_resolution):
     class FakeResponse:
         def raise_for_status(self):
             return None
@@ -340,7 +361,7 @@ def test_mops_provider_parses_earnings_conference_material_information():
     assert "spoke_date=20260327" in events[0].conference_url
 
 
-def test_mops_provider_stops_after_transport_failure_without_raising():
+def test_mops_provider_stops_after_transport_failure_without_raising(public_dns_resolution):
     class FailingSession:
         def __init__(self):
             self.calls = []
@@ -1528,10 +1549,9 @@ def test_build_demo_events_are_relative_to_current_month():
 
 
 def test_build_oligarch_universe_handles_missing_module_and_empty_tickers(monkeypatch):
-    monkeypatch.setattr(
-        "domains.global_earnings_calendar.service.importlib.import_module",
-        lambda name: (_ for _ in ()).throw(ImportError("missing")),
-    )
+    from domains.global_earnings_calendar import service as calendar_service
+
+    monkeypatch.setattr(calendar_service, "_load_industry_module", lambda: None)
     assert build_oligarch_universe(None) == {}
 
     module = SimpleNamespace(
@@ -1542,6 +1562,34 @@ def test_build_oligarch_universe_handles_missing_module_and_empty_tickers(monkey
     )
     universe = build_oligarch_universe(module)
     assert set(universe) == {"NORM"}
+
+
+def test_industry_data_loader_reads_explicit_literals_without_changing_sys_path(tmp_path, monkeypatch):
+    from domains.global_earnings_calendar import service as calendar_service
+
+    source_path = tmp_path / "industry_dict.py"
+    source_path.write_text(
+        "\n".join(
+            (
+                "OLIGARCH_DICT = {'AI': ['ExampleCo']}",
+                "VANGUARD_TICKERS = {'ExampleCo': 'EXM'}",
+                "SUPER_GIANTS = set(['ExampleCo'])",
+                "STRATEGIC_GIANTS = set()",
+                "raise RuntimeError('must not execute external source')",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(calendar_service.INDUSTRY_DICT_PATH_ENV, str(source_path))
+    original_sys_path = list(sys.path)
+
+    module = calendar_service._load_industry_module()
+
+    assert module is not None
+    assert module.OLIGARCH_DICT == {"AI": ["ExampleCo"]}
+    assert module.VANGUARD_TICKERS == {"ExampleCo": "EXM"}
+    assert module.SUPER_GIANTS == {"ExampleCo"}
+    assert sys.path == original_sys_path
 
 
 def test_service_lazy_data_store_and_load_events_network_fallback(monkeypatch):
@@ -1751,6 +1799,45 @@ def test_refresh_events_provider_deadline_persists_fast_sources_and_marks_slow_s
         and kwargs["tags"] == {"provider": "Slow"}
         for name, value, kwargs in metric_calls
     )
+
+
+def test_refresh_events_deadline_worker_reraises_control_signal(tmp_path):
+    class MemoryStore:
+        def __init__(self):
+            self.data = {}
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class InterruptingProvider:
+        @staticmethod
+        def fetch(*_args, **_kwargs):
+            raise KeyboardInterrupt("stop provider refresh")
+
+    class EmptyProvider:
+        @staticmethod
+        def fetch(*_args, **_kwargs):
+            return []
+
+    service = GlobalEarningsCalendarService(
+        data_store=MemoryStore(),
+        universe={},
+        confirmed_provider=ConfirmedEarningsEventsProvider(tmp_path / "missing.json"),
+        official_providers=[("Interrupting", InterruptingProvider())],
+        nasdaq_provider=EmptyProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="stop provider refresh"):
+        service.refresh_events(
+            today=dt.date(2026, 5, 8),
+            lookahead_days=1,
+            provider_timeout_sec=1.0,
+        )
 
 
 def test_provider_deadline_does_not_hold_refresh_worker_process_open():

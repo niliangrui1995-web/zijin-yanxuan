@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from contextlib import nullcontext
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,11 +20,6 @@ from domains.runtime.fault_tolerance import provider_fault_tolerance
 from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
 from infra.market_data.provider_ports import ProviderHealthPort, ProviderHealthSnapshot
 from infra.runtime_monitor import runtime_health_report
-from ui.workspaces.tab_registry import (
-    STATIC_LINEAGE_FIELDS,
-    lineage_exclusion_tab_definitions,
-    lineage_tab_definitions,
-)
 
 try:  # pragma: no cover - psutil is optional outside the packaged runtime.
     import psutil
@@ -50,17 +46,55 @@ EVENT_SIGNAL_NAMES = (
     "sig_watchlist_changed",
 )
 
-KEY_VIEW_LINEAGE = {
-    definition.key: definition.lineage.as_runtime_defaults(definition.key)
-    for definition in lineage_tab_definitions()
-    if definition.lineage is not None
-}
-DATA_LINEAGE_COVERED_TABS = tuple(KEY_VIEW_LINEAGE)
-DATA_LINEAGE_EXCLUDED_TABS = {
-    definition.key: definition.lineage_exclusion.as_runtime_defaults()
-    for definition in lineage_exclusion_tab_definitions()
-    if definition.lineage_exclusion is not None
-}
+@lru_cache(maxsize=1)
+def _default_lineage_snapshot() -> tuple[dict[str, dict[str, Any]], tuple[str, ...], dict[str, dict[str, Any]], frozenset[str]]:
+    """Load UI-owned tab metadata only when a health report needs lineage."""
+    from ui.workspaces.tab_registry import (
+        STATIC_LINEAGE_FIELDS,
+        lineage_exclusion_tab_definitions,
+        lineage_tab_definitions,
+    )
+
+    key_view_lineage = {
+        definition.key: definition.lineage.as_runtime_defaults(definition.key)
+        for definition in lineage_tab_definitions()
+        if definition.lineage is not None
+    }
+    excluded_tabs = {
+        definition.key: definition.lineage_exclusion.as_runtime_defaults()
+        for definition in lineage_exclusion_tab_definitions()
+        if definition.lineage_exclusion is not None
+    }
+    return key_view_lineage, tuple(key_view_lineage), excluded_tabs, STATIC_LINEAGE_FIELDS
+
+
+def _key_view_lineage() -> dict[str, dict[str, Any]]:
+    return _default_lineage_snapshot()[0]
+
+
+def _data_lineage_covered_tabs() -> tuple[str, ...]:
+    return _default_lineage_snapshot()[1]
+
+
+def _data_lineage_excluded_tabs() -> dict[str, dict[str, Any]]:
+    return _default_lineage_snapshot()[2]
+
+
+def _static_lineage_fields() -> frozenset[str]:
+    return _default_lineage_snapshot()[3]
+
+
+def __getattr__(name: str):
+    values = {
+        "KEY_VIEW_LINEAGE": _key_view_lineage,
+        "DATA_LINEAGE_COVERED_TABS": _data_lineage_covered_tabs,
+        "DATA_LINEAGE_EXCLUDED_TABS": _data_lineage_excluded_tabs,
+        "STATIC_LINEAGE_FIELDS": _static_lineage_fields,
+    }
+    getter = values.get(name)
+    if getter is None:
+        raise AttributeError(name)
+    return getter()
 
 
 def _iso_from_timestamp(value: float | int | None) -> str:
@@ -540,12 +574,13 @@ def _merge_custom_lineage(entry: dict[str, Any], tab) -> None:
         custom = custom_getter() or {}
         if not isinstance(custom, dict):
             return
-        rejected_fields = sorted(STATIC_LINEAGE_FIELDS.intersection(custom))
+        static_lineage_fields = _static_lineage_fields()
+        rejected_fields = sorted(static_lineage_fields.intersection(custom))
         if rejected_fields:
             entry["lineage_error"] = True
             entry["static_override_rejected"] = rejected_fields
         entry.update(
-            {field: value for field, value in custom.items() if field not in STATIC_LINEAGE_FIELDS}
+            {field: value for field, value in custom.items() if field not in static_lineage_fields}
         )
     except (AttributeError, RuntimeError, TypeError, ValueError):
         entry["lineage_error"] = True
@@ -569,7 +604,7 @@ def _workspace_lineage(main_window) -> list[dict[str, Any]]:
     get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
     lineage = []
 
-    for key, defaults in KEY_VIEW_LINEAGE.items():
+    for key, defaults in _key_view_lineage().items():
         tab = get_loaded_tab(key) if callable(get_loaded_tab) else None
         entry = _new_lineage_entry(key, defaults, specs_by_key.get(key, {}), tab)
         _merge_custom_lineage(entry, tab)
@@ -608,7 +643,7 @@ def _workspace_lineage_exclusions(main_window) -> list[dict[str, Any]]:
     }
     get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
     exclusions = []
-    for key, defaults in DATA_LINEAGE_EXCLUDED_TABS.items():
+    for key, defaults in _data_lineage_excluded_tabs().items():
         spec = specs_by_key.get(key, {})
         tab = get_loaded_tab(key) if callable(get_loaded_tab) else None
         exclusions.append(
@@ -626,8 +661,8 @@ def _workspace_lineage_exclusions(main_window) -> list[dict[str, Any]]:
 
 def _lineage_coverage_snapshot() -> dict[str, Any]:
     return {
-        "covered": list(DATA_LINEAGE_COVERED_TABS),
-        "excluded": list(DATA_LINEAGE_EXCLUDED_TABS),
+        "covered": list(_data_lineage_covered_tabs()),
+        "excluded": list(_data_lineage_excluded_tabs()),
     }
 
 
@@ -650,13 +685,16 @@ def _runtime_health_root(main_window=None):
     return root
 
 
-def collect_runtime_health_summary(main_window=None) -> dict[str, Any]:
+def collect_runtime_health_summary(main_window=None, *, kline_manager_instance: object | None = None) -> dict[str, Any]:
     """Collect only the fields needed by frequent stability-cycle checkpoints."""
     root = _runtime_health_root(main_window)
     process = collect_process_snapshot()
     return {
         "process": process,
-        "runtime_monitor": runtime_health_report(process_snapshot=process),
+        "runtime_monitor": runtime_health_report(
+            process_snapshot=process,
+            kline_manager_instance=kline_manager_instance,
+        ),
         "background_tasks": _active_task_snapshot(),
         "timers": _timer_snapshot(root),
         "event_bus": _event_bus_snapshot(),
@@ -664,7 +702,7 @@ def collect_runtime_health_summary(main_window=None) -> dict[str, Any]:
     }
 
 
-def collect_runtime_health(main_window=None) -> dict[str, Any]:
+def collect_runtime_health(main_window=None, *, kline_manager_instance: object | None = None) -> dict[str, Any]:
     root = _runtime_health_root(main_window)
 
     process = collect_process_snapshot()
@@ -678,7 +716,10 @@ def collect_runtime_health(main_window=None) -> dict[str, Any]:
             "threads": sorted(thread.name for thread in threading.enumerate()),
         },
         "process": process,
-        "runtime_monitor": runtime_health_report(process_snapshot=process),
+        "runtime_monitor": runtime_health_report(
+            process_snapshot=process,
+            kline_manager_instance=kline_manager_instance,
+        ),
         "background_tasks": _active_task_snapshot(),
         "timers": _timer_snapshot(root),
         "event_bus": _event_bus_snapshot(),
@@ -743,9 +784,14 @@ def export_runtime_health_report(
     project_root: str | Path | None = None,
     report: dict[str, Any] | None = None,
     now: datetime | None = None,
+    kline_manager_instance: object | None = None,
 ) -> Path:
     current = now or datetime.now()
-    payload = report if report is not None else collect_runtime_health(main_window)
+    payload = (
+        report
+        if report is not None
+        else collect_runtime_health(main_window, kline_manager_instance=kline_manager_instance)
+    )
     output_dir = runtime_health_output_dir(project_root, now=current)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"runtime_health_{current.strftime('%H%M%S_%f')}.json"

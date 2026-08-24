@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import base64
+import gzip
 import os
+import subprocess
 import threading
 import time
 import uuid
@@ -12,7 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from infra.navigation import ExternalTerminalNavigator
-from infra.storage.file_integrity import FileFingerprint, FileIntegrityError, verify_file_fingerprint
+from infra.storage.file_integrity import FileFingerprint, FileIntegrityError, read_verified_file_bytes
 from infra.tasks.process_runner import spawn_silent_process
 
 CODEX_LOCAL_LAUNCHER = Path.home() / ".codex" / "local-tools" / "open-codex-project.ps1"
@@ -37,6 +40,37 @@ _CODEX_TARGET_WINDOW_TIMEOUT_SECONDS = 6.0
 _CODEX_TARGET_WINDOW_POLL_SECONDS = 0.12
 _CODEX_TARGET_WINDOW_READY_DELAY_SECONDS = 0.45
 _CODEX_REUSED_WINDOW_READY_SECONDS = 1.2
+_WINDOWS_MAX_COMMAND_LINE_CHARACTERS = 32767
+_TRUSTED_LAUNCHER_WRAPPER_TEMPLATE = """$__codexCompressed = [System.Convert]::FromBase64String('%(compressed_source)s')
+$__codexMemory = [System.IO.MemoryStream]::new($__codexCompressed, $false)
+$__codexGzip = [System.IO.Compression.GZipStream]::new(
+    $__codexMemory, [System.IO.Compression.CompressionMode]::Decompress, $false)
+$__codexSourceMemory = [System.IO.MemoryStream]::new()
+try {
+    $__codexGzip.CopyTo($__codexSourceMemory)
+    $__codexSourceBytes = $__codexSourceMemory.ToArray()
+}
+finally {
+    $__codexGzip.Dispose()
+    $__codexMemory.Dispose()
+    $__codexSourceMemory.Dispose()
+}
+if ($__codexSourceBytes.Length -ne %(fingerprint_size)d) { exit 1 }
+$__codexHasher = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $__codexActualHash = -join ($__codexHasher.ComputeHash($__codexSourceBytes) | ForEach-Object { $_.ToString('x2') })
+}
+finally {
+    $__codexHasher.Dispose()
+}
+if ($__codexActualHash -cne '%(fingerprint_sha256)s') { exit 1 }
+$__codexSource = [System.Text.Encoding]::UTF8.GetString($__codexSourceBytes)
+$__codexSource = $__codexSource.Insert(
+%(param_block_position)d, [System.Text.Encoding]::UTF8.GetString(
+[System.Convert]::FromBase64String('%(context)s')))
+$__codexThreadUrl = [System.Text.Encoding]::UTF8.GetString(
+[System.Convert]::FromBase64String('%(thread_url)s'))
+& ([System.Management.Automation.ScriptBlock]::Create($__codexSource)) $__codexThreadUrl"""
 
 
 @dataclass(frozen=True)
@@ -51,21 +85,176 @@ class _CodexWindowSnapshot:
     foreground_handle: int | None
 
 
+@dataclass(frozen=True)
+class _WindowsClipboardSnapshot:
+    text: str | None
+
+
 def _powershell_executable() -> str:
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     return str(powershell if powershell.is_file() else "powershell.exe")
 
 
-def _is_trusted_codex_launcher(launcher_path: Path) -> bool:
+def _read_trusted_codex_launcher(launcher_path: Path) -> bytes | None:
     try:
-        verify_file_fingerprint(
+        return read_verified_file_bytes(
             launcher_path,
             expected_size_bytes=CODEX_LOCAL_LAUNCHER_FINGERPRINT.size_bytes,
             expected_sha256=CODEX_LOCAL_LAUNCHER_FINGERPRINT.sha256,
         )
     except FileIntegrityError:
-        return False
-    return True
+        return None
+
+
+def _skip_powershell_leading_whitespace(script_source: str) -> int:
+    position = 1 if script_source.startswith("\ufeff") else 0
+    while position < len(script_source) and script_source[position].isspace():
+        position += 1
+    return position
+
+
+def _powershell_param_block_start(script_source: str) -> int:
+    position = _skip_powershell_leading_whitespace(script_source)
+    if script_source[position : position + 5].lower() != "param":
+        raise ValueError("trusted launcher must begin with a PowerShell param block")
+    position += 5
+    if position < len(script_source) and (script_source[position].isalnum() or script_source[position] == "_"):
+        raise ValueError("trusted launcher has an invalid PowerShell param block")
+    while position < len(script_source) and script_source[position].isspace():
+        position += 1
+    if position >= len(script_source) or script_source[position] != "(":
+        raise ValueError("trusted launcher has no PowerShell param block")
+    return position
+
+
+def _skip_powershell_single_quoted_text(script_source: str, position: int) -> int:
+    position += 1
+    while position < len(script_source):
+        if script_source[position] != "'":
+            position += 1
+            continue
+        if position + 1 < len(script_source) and script_source[position + 1] == "'":
+            position += 2
+            continue
+        return position + 1
+    return position
+
+
+def _skip_powershell_double_quoted_text(script_source: str, position: int) -> int:
+    position += 1
+    while position < len(script_source):
+        character = script_source[position]
+        if character == "`":
+            position += 2
+            continue
+        if character == '"':
+            return position + 1
+        position += 1
+    return position
+
+
+def _skip_powershell_quoted_text(script_source: str, position: int) -> int:
+    if script_source[position] == "'":
+        return _skip_powershell_single_quoted_text(script_source, position)
+    return _skip_powershell_double_quoted_text(script_source, position)
+
+
+def _skip_powershell_comment(script_source: str, position: int) -> int:
+    line_end = script_source.find("\n", position)
+    return len(script_source) if line_end < 0 else line_end
+
+
+def _scan_powershell_param_block(script_source: str, position: int) -> int:
+    depth = 0
+    while position < len(script_source):
+        character = script_source[position]
+        if character in ("'", '"'):
+            position = _skip_powershell_quoted_text(script_source, position)
+            continue
+        if character == "#":
+            position = _skip_powershell_comment(script_source, position)
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return position
+        position += 1
+    raise ValueError("trusted launcher has an unclosed PowerShell param block")
+
+
+def _powershell_param_block_end(script_source: str) -> int:
+    return _scan_powershell_param_block(script_source, _powershell_param_block_start(script_source))
+
+
+def _powershell_base64(value: bytes) -> str:
+    return base64.b64encode(value).decode("ascii")
+
+
+def _powershell_utf8_assignment(name: str, value: str) -> str:
+    encoded_value = _powershell_base64(value.encode("utf-8"))
+    return f"{name} = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{encoded_value}'))"
+
+
+def _trusted_launcher_context(launcher_path: Path) -> str:
+    return "\n".join(
+        ("", _powershell_utf8_assignment("$PSScriptRoot", str(launcher_path.parent)), _powershell_utf8_assignment("$PSCommandPath", str(launcher_path)))
+    )
+
+
+def _powershell_param_block_position(script_source: str) -> int:
+    param_block_end = _powershell_param_block_end(script_source)
+    return len(script_source[: param_block_end + 1].encode("utf-16-le")) // 2
+
+
+def _trusted_launcher_wrapper(
+    launcher_source: bytes,
+    param_block_position: int,
+    context: str,
+    thread_url: str,
+) -> str:
+    return _TRUSTED_LAUNCHER_WRAPPER_TEMPLATE % {
+        "compressed_source": _powershell_base64(gzip.compress(launcher_source, mtime=0)),
+        "fingerprint_size": CODEX_LOCAL_LAUNCHER_FINGERPRINT.size_bytes,
+        "fingerprint_sha256": CODEX_LOCAL_LAUNCHER_FINGERPRINT.sha256,
+        "param_block_position": param_block_position,
+        "context": _powershell_base64(context.encode("utf-8")),
+        "thread_url": _powershell_base64(thread_url.encode("utf-8")),
+    }
+
+
+def _powershell_encoded_command(powershell: str, wrapper: str) -> list[str]:
+    return [
+        powershell,
+        "-NoProfile",
+        "-EncodedCommand",
+        _powershell_base64(wrapper.encode("utf-16-le")),
+    ]
+
+
+def _validate_windows_command_length(command: list[str]) -> None:
+    if len(subprocess.list2cmdline(command)) >= _WINDOWS_MAX_COMMAND_LINE_CHARACTERS:
+        raise ValueError("trusted launcher command exceeds the Windows command-line limit")
+
+
+def _build_trusted_codex_launcher_command(
+    powershell: str,
+    launcher_path: Path,
+    launcher_source: bytes,
+    thread_url: str,
+) -> list[str]:
+    # The child receives this in-memory, sealed source rather than reopening launcher_path.
+    source = launcher_source.decode("utf-8")
+    wrapper = _trusted_launcher_wrapper(
+        launcher_source,
+        _powershell_param_block_position(source),
+        _trusted_launcher_context(launcher_path),
+        thread_url,
+    )
+    command = _powershell_encoded_command(powershell, wrapper)
+    _validate_windows_command_length(command)
+    return command
 
 
 def _parse_codex_thread_url(thread_url: str) -> _CodexThreadRequest | None:
@@ -248,6 +437,97 @@ def _copy_text_to_windows_clipboard(text: str) -> bool:
         return False
 
 
+def _capture_windows_clipboard_snapshot() -> _WindowsClipboardSnapshot | None:
+    if os.name != "nt":
+        return None
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.CloseClipboard.restype = wintypes.BOOL
+        user32.CountClipboardFormats.restype = ctypes.c_int
+        user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+        user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+        if not user32.OpenClipboard(None):
+            return None
+        try:
+            format_count = int(user32.CountClipboardFormats())
+            if format_count == 0:
+                return _WindowsClipboardSnapshot(text=None)
+            if format_count != 1 or not user32.IsClipboardFormatAvailable(_CF_UNICODETEXT):
+                return None
+            handle = user32.GetClipboardData(_CF_UNICODETEXT)
+            if not handle:
+                return None
+            locked = kernel32.GlobalLock(handle)
+            if not locked:
+                return None
+            try:
+                return _WindowsClipboardSnapshot(text=ctypes.wstring_at(locked))
+            finally:
+                kernel32.GlobalUnlock(handle)
+        finally:
+            user32.CloseClipboard()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _clear_windows_clipboard() -> bool:
+    if os.name != "nt":
+        return False
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.EmptyClipboard.restype = wintypes.BOOL
+        user32.CloseClipboard.restype = wintypes.BOOL
+        if not user32.OpenClipboard(None):
+            return False
+        try:
+            return bool(user32.EmptyClipboard())
+        finally:
+            user32.CloseClipboard()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def _restore_windows_clipboard_snapshot(snapshot: _WindowsClipboardSnapshot) -> bool:
+    if snapshot.text is None:
+        return _clear_windows_clipboard()
+    return _copy_text_to_windows_clipboard(snapshot.text)
+
+
+def _clipboard_sequence_number() -> int | None:
+    if os.name != "nt":
+        return None
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+        return int(user32.GetClipboardSequenceNumber())
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
 def _copy_codex_prompt_to_clipboard(prompt: str | None) -> bool:
     text = str(prompt or "").strip()
     if not text:
@@ -396,18 +676,34 @@ def _send_ctrl_v() -> bool:
 
 
 def _paste_codex_prompt_when_target_ready(prompt: str, before: _CodexWindowSnapshot) -> None:
-    if not _copy_codex_prompt_to_clipboard(prompt):
+    clipboard_snapshot = _capture_windows_clipboard_snapshot()
+    if clipboard_snapshot is None:
         return
 
-    hwnd = _wait_for_codex_paste_target(before)
-    if hwnd is None:
-        return
+    prompt_clipboard_sequence = None
+    try:
+        if not _copy_codex_prompt_to_clipboard(prompt):
+            return
+        prompt_clipboard_sequence = _clipboard_sequence_number()
 
-    if not _focus_window(hwnd):
-        return
+        hwnd = _wait_for_codex_paste_target(before)
+        if hwnd is None:
+            return
 
-    time.sleep(_CODEX_TARGET_WINDOW_READY_DELAY_SECONDS)
-    _send_ctrl_v()
+        if not _focus_window(hwnd):
+            return
+
+        time.sleep(_CODEX_TARGET_WINDOW_READY_DELAY_SECONDS)
+        if _foreground_window_handle() != hwnd:
+            return
+        _send_ctrl_v()
+    finally:
+        current_clipboard_sequence = _clipboard_sequence_number()
+        if (
+            prompt_clipboard_sequence is not None
+            and current_clipboard_sequence == prompt_clipboard_sequence
+        ):
+            _restore_windows_clipboard_snapshot(clipboard_snapshot)
 
 
 def _schedule_codex_prompt_paste(prompt: str | None, before: _CodexWindowSnapshot) -> None:
@@ -452,20 +748,20 @@ def open_codex_desktop_thread(thread_url: str, *, launcher: str | Path | None = 
         thread_url = _codex_thread_url_without_prompt(thread_url)
 
     launcher_path = Path(launcher) if launcher is not None else CODEX_LOCAL_LAUNCHER
-    if not _is_trusted_codex_launcher(launcher_path):
+    launcher_source = _read_trusted_codex_launcher(launcher_path)
+    if launcher_source is None:
         return False
 
     try:
         spawn_silent_process(
-            [
+            _build_trusted_codex_launcher_command(
                 _powershell_executable(),
-                "-NoProfile",
-                "-File",
-                str(launcher_path),
+                launcher_path,
+                launcher_source,
                 thread_url,
-            ],
+            ),
         )
-    except OSError:
+    except (OSError, UnicodeDecodeError, ValueError):
         return False
     if request is not None and before is not None:
         _schedule_codex_prompt_paste(request.prompt, before)

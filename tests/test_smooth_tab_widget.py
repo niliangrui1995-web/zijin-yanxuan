@@ -208,7 +208,7 @@ def test_stock_table_model_same_code_reorder_avoids_model_reset():
 
     assert len(reset_spy) == 0
     assert len(layout_spy) == 1
-    assert len(change_spy) == 1
+    assert len(change_spy) == 0
     assert [row["代码"] for row in model.row_data] == ["000003", "000001", "000002"]
     assert model.row_data[2]["名称"] == "B+"
 

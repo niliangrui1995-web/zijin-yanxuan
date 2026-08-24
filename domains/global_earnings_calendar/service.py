@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import ast
 import datetime as dt
-import importlib
 import os
 import queue
-import sys
 import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping, Protocol
 
 from core.logger import get_logger
@@ -121,6 +121,15 @@ from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 log = get_logger(__name__)
 EXCLUDED_OLIGARCH_TICKERS = {"6594.T"}
 EXCLUDED_OLIGARCH_COMPANIES = {"Nidec"}
+INDUSTRY_DICT_PATH_ENV = "VCP_HUNTER_INDUSTRY_DICT_PATH"
+_INDUSTRY_DICT_FIELDS = frozenset(
+    {
+        "OLIGARCH_DICT",
+        "VANGUARD_TICKERS",
+        "SUPER_GIANTS",
+        "STRATEGIC_GIANTS",
+    }
+)
 
 
 class CancellationTokenLike(Protocol):
@@ -184,21 +193,103 @@ def _record_provider_fetch_metric(
         )
 
 
-def _ensure_industry_module_path() -> None:
+def _collect_serial_provider_fetch_results(
+    provider_calls: tuple[tuple[str, object], ...],
+    universe: Mapping[str, OligarchCompany],
+    *,
+    today: dt.date,
+    lookahead_days: int,
+    cancellation_token: CancellationTokenLike | None,
+) -> list[tuple[str, object, list[EarningsCalendarEvent], BaseException | None, float, bool]]:
+    results = []
+    for provider_name, provider in provider_calls:
+        _raise_if_cancelled(cancellation_token)
+        started_at = time.monotonic()
+        try:
+            rows = list(provider.fetch(universe, today=today, lookahead_days=lookahead_days) or [])
+            error = None
+        except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers.
+            rows = []
+            error = exc
+        results.append((provider_name, provider, rows, error, time.monotonic() - started_at, False))
+        _raise_if_cancelled(cancellation_token)
+    return results
+
+
+def _calendar_provider_calls(service) -> tuple[tuple[str, object], ...]:
+    return tuple(service.official_providers) + (
+        ("Nasdaq", service.nasdaq_provider),
+        ("Alpha Vantage", service.provider),
+        ("Yahoo Finance", service.yfinance_provider),
+    )
+
+
+def _industry_dict_paths() -> tuple[Path, ...]:
+    """Return explicit data-file candidates without modifying import resolution."""
+    configured = str(os.environ.get(INDUSTRY_DICT_PATH_ENV) or "").strip()
     project_root = Path(__file__).resolve().parents[2]
-    pipeline_dir = project_root.parent / "\u6bcf\u65e5\u6218\u62a5" / "\u6bcf\u65e5\u6218\u62a5"
-    pipeline_text = str(pipeline_dir)
-    if pipeline_dir.is_dir() and pipeline_text not in sys.path:
-        sys.path.insert(0, pipeline_text)
+    candidates = []
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    candidates.extend(
+        (
+            project_root / "data" / "industry_dict.py",
+            project_root.parent / "\u6bcf\u65e5\u6218\u62a5" / "\u6bcf\u65e5\u6218\u62a5" / "industry_dict.py",
+        )
+    )
+    return tuple(candidates)
+
+
+def _literal_industry_value(value: ast.AST):
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "set":
+        if not value.args and not value.keywords:
+            return set()
+        if len(value.args) != 1 or value.keywords:
+            raise ValueError("industry set declaration must use literal values")
+        return set(ast.literal_eval(value.args[0]))
+    return ast.literal_eval(value)
+
+
+def _read_industry_data(source_path: Path) -> SimpleNamespace:
+    source = source_path.read_text(encoding="utf-8")
+    parsed = ast.parse(source, filename=str(source_path))
+    values: dict[str, object] = {
+        "OLIGARCH_DICT": {},
+        "VANGUARD_TICKERS": {},
+        "SUPER_GIANTS": set(),
+        "STRATEGIC_GIANTS": set(),
+    }
+    for statement in parsed.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = statement.targets if isinstance(statement, ast.Assign) else (statement.target,)
+        value = statement.value
+        if value is None:
+            continue
+        for target in targets:
+            if not isinstance(target, ast.Name) or target.id not in _INDUSTRY_DICT_FIELDS:
+                continue
+            values[target.id] = _literal_industry_value(value)
+    return SimpleNamespace(**values)
 
 
 def _load_industry_module():
-    _ensure_industry_module_path()
-    try:
-        return importlib.import_module("industry_dict")
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        log.warning(f"[global earnings calendar] industry_dict unavailable: {redact_sensitive_text(exc)}")
-        return None
+    for source_path in _industry_dict_paths():
+        if not source_path.is_file():
+            continue
+        try:
+            return _read_industry_data(source_path)
+        except (OSError, SyntaxError, TypeError, ValueError) as exc:
+            log.warning(
+                "[global earnings calendar] industry data unavailable: %s",
+                redact_sensitive_text(exc),
+            )
+            return None
+    log.warning(
+        "[global earnings calendar] industry data unavailable: set %s or add data/industry_dict.py",
+        INDUSTRY_DICT_PATH_ENV,
+    )
+    return None
 
 
 def build_oligarch_universe(industry_module=None) -> dict[str, OligarchCompany]:
@@ -627,29 +718,29 @@ class GlobalEarningsCalendarService:
         today: dt.date,
         lookahead_days: int,
         provider_timeout_sec: float | None,
+        cancellation_token: CancellationTokenLike | None = None,
     ) -> list[tuple[str, object, list[EarningsCalendarEvent], BaseException | None, float, bool]]:
         if provider_timeout_sec is None:
-            results = []
-            for provider_name, provider in provider_calls:
-                started_at = time.monotonic()
-                try:
-                    rows = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
-                    error = None
-                except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers.
-                    rows = []
-                    error = exc
-                results.append((provider_name, provider, rows, error, time.monotonic() - started_at, False))
-            return results
+            return _collect_serial_provider_fetch_results(
+                provider_calls,
+                self.universe,
+                today=today,
+                lookahead_days=lookahead_days,
+                cancellation_token=cancellation_token,
+            )
 
         completed = queue.Queue()
         started_at = time.monotonic()
-
         def _fetch(index: int, provider) -> None:
             call_started_at = time.monotonic()
             try:
                 rows = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
                 error = None
-            except BaseException as exc:  # noqa: BLE001 - restore non-Exception failures in the caller thread.
+            except (KeyboardInterrupt, SystemExit) as exc:
+                # Restore process-control signals in the caller thread.
+                rows = []
+                error = exc
+            except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers.
                 rows = []
                 error = exc
             completed.put((index, rows, error, time.monotonic() - call_started_at))
@@ -722,11 +813,7 @@ class GlobalEarningsCalendarService:
         provider_degradations: list[dict[str, object]] = []
         provider_total_failure_count = 0
 
-        provider_calls = tuple(self.official_providers) + (
-            ("Nasdaq", self.nasdaq_provider),
-            ("Alpha Vantage", self.provider),
-            ("Yahoo Finance", self.yfinance_provider),
-        )
+        provider_calls = _calendar_provider_calls(self)
         provider_attempted_count = len(provider_calls)
         provider_timeout_sec = self._normalize_provider_timeout_sec(provider_timeout_sec)
         provider_results = self._collect_provider_fetch_results(
@@ -734,6 +821,7 @@ class GlobalEarningsCalendarService:
             today=today,
             lookahead_days=lookahead_days,
             provider_timeout_sec=provider_timeout_sec,
+            cancellation_token=cancellation_token,
         )
         for provider_name, provider, rows, error, elapsed_sec, timed_out in provider_results:
             _raise_if_cancelled(cancellation_token)

@@ -6,6 +6,7 @@ import pandas as pd
 
 from core.f5_activation_gate import f5_snapshot_activation_boundary, f5_snapshot_read_boundary
 from core.logger import get_logger
+from core.rps_cache_identity import rps_cache_key
 from core.runtime_paths import DATE_FMT, RPS_BUFFER_DAYS
 from domains.market_calendar import MarketCalendar
 
@@ -96,9 +97,9 @@ class RpsService:
             self._daily_rps_cache = {}
             self._rps_cache_date = today
 
-        cache_key = (str(start_date), str(end_date))
+        cache_key = rps_cache_key(data_dict, start_date, end_date)
         if cache_key in self._daily_rps_cache:
-            _log.warning(f"\n[策略中台] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
+            _log.debug(f"[策略中台] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
             return self._daily_rps_cache[cache_key]
 
         accelerated = self._build_accelerated_rps(data_dict, start_date, end_date)

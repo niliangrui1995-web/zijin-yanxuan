@@ -11,6 +11,7 @@ import ast
 import atexit
 import os
 import shutil
+import socket
 import sys
 import tempfile
 from functools import lru_cache
@@ -30,6 +31,7 @@ _QT_SETTINGS_CONFIGURED = False
 _QT_SETTINGS_ROOT = None
 _TEST_LOG_ROOT = None
 _TEST_DB_ROOT = None
+_TEST_PUBLIC_DNS_ADDRESS = "93.184.216.34"
 
 _QT_APPLICATION_IMPORT_PREFIXES = (
     "ui.components",
@@ -47,6 +49,69 @@ _QT_SETTINGS_IMPORT_PREFIXES = (
     "ui.theme",
     "ui.theme_tokens",
 )
+
+_CI_MARKER_PATHS = {
+    "arch": frozenset(
+        {
+            "tests/test_architecture_boundaries.py",
+            "tests/test_app_config.py",
+            "tests/test_application_bootstrap.py",
+            "tests/test_domain_entrypoints.py",
+            "tests/test_event_bus_layers.py",
+            "tests/test_log_tab.py",
+            "tests/test_market_data_ports.py",
+            "tests/test_main_window_f5_done.py",
+            "tests/test_main_window_network.py",
+            "tests/test_workspace_quote_codes.py",
+            "tests/test_kline_open_service.py",
+            "tests/test_main_window_shell.py",
+            "tests/test_observability.py",
+            "tests/test_service_toggle_registry.py",
+            "tests/test_startup_orchestrator.py",
+        }
+    ),
+    "service": frozenset(
+        {
+            "tests/test_central_quote_polling_service.py",
+            "tests/test_central_quotes_worker.py",
+            "tests/test_earnings_scheduler_startup.py",
+            "tests/test_earnings_tab_trade_window.py",
+            "tests/test_provider_services.py",
+            "tests/test_engine_services.py",
+            "tests/test_background_job_runner.py",
+            "tests/test_task_manager.py",
+        }
+    ),
+    "runtime": frozenset(
+        {
+            "tests/test_runtime_env.py",
+            "tests/test_runtime_env_self_check.py",
+            "tests/test_yf_session.py",
+        }
+    ),
+    "perf": frozenset(
+        {
+            "tests/test_perf_probe_scripts.py",
+            "tests/test_perf_budget_check.py",
+            "tests/test_runtime_health.py",
+            "tests/test_tab_data_lineage_service.py",
+            "tests/test_lhb_tab.py",
+            "tests/test_fund_holdings_tab.py",
+            "tests/test_market_data_warehouse_manifest.py",
+            "tests/test_market_data_warehouse.py",
+            "tests/test_kline_webengine_lifecycle_smoke.py",
+            "tests/test_qt_webengine_preflight.py",
+        }
+    ),
+    "windows": frozenset(
+        {
+            "tests/test_windows_autostart.py",
+            "tests/test_build_windows_script.py",
+            "tests/test_single_instance.py",
+        }
+    ),
+}
+_SMOKE_MARKERS = frozenset({"arch", "service", "runtime", "windows"})
 
 
 def _module_matches(module, prefixes):
@@ -137,6 +202,14 @@ def _node_path(node):
     if fspath is not None:
         return Path(str(fspath))
     return None
+
+
+def _ci_markers_for_path(path):
+    try:
+        relative_path = Path(path).resolve().relative_to(Path(_PROJECT_ROOT).resolve()).as_posix()
+    except (OSError, ValueError):
+        return ()
+    return tuple(marker for marker, paths in _CI_MARKER_PATHS.items() if relative_path in paths)
 
 
 def _node_needs_qt_application(node):
@@ -283,6 +356,18 @@ def pytest_collect_file(file_path, parent):
     return None
 
 
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        path = _node_path(item)
+        if path is None:
+            continue
+        markers = _ci_markers_for_path(path)
+        for marker in markers:
+            item.add_marker(marker)
+        if set(markers) & _SMOKE_MARKERS:
+            item.add_marker("smoke")
+
+
 def _ensure_qt_application_instance():
     global _QT_APPLICATION
 
@@ -358,3 +443,26 @@ def reset_global_runtime_state(_ensure_qt_application_for_qt_tests):
     if global_store is not None:
         global_store.reset_runtime_state()
     _flush_qt_deferred_deletes_if_available()
+
+
+@pytest.fixture
+def public_dns_resolution(monkeypatch):
+    """为 FakeSession 的外部 HTTPS 用例提供确定性的公网 DNS 解析。"""
+    import infra.http_safety as http_safety
+
+    def resolve_public_ip(_host, port, family=0, type=0, proto=0, flags=0):
+        try:
+            resolved_port = int(port)
+        except (TypeError, ValueError):
+            resolved_port = 0
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                (_TEST_PUBLIC_DNS_ADDRESS, resolved_port),
+            )
+        ]
+
+    monkeypatch.setattr(http_safety.socket, "getaddrinfo", resolve_public_ip)

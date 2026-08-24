@@ -4,16 +4,12 @@
 from __future__ import annotations
 
 import json
-import subprocess  # nosec B404 - subprocess boundary is argv-only and shell-free
 import sys
-import time
 
 from infra.tasks import (
-    ProcessExecutionError,
-    ProcessTimeoutError,
     build_domestic_process_env,
+    run_cancellable_process,
     run_process,
-    spawn_process,
     windows_no_window_kwargs,
 )
 from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
@@ -42,10 +38,6 @@ elif mode == "block_trade":
         print(df.to_json(orient="records", force_ascii=False, date_format="iso"))
 """
 
-_PROCESS_CANCEL_POLL_SECONDS = 0.05
-_PROCESS_TERMINATE_GRACE_SECONDS = 0.5
-
-
 def _bounded_timeout(timeout: float, cancellation_token=None) -> float:
     _raise_if_cancelled(cancellation_token)
     normalized = max(0.1, float(timeout))
@@ -59,62 +51,20 @@ def _bounded_timeout(timeout: float, cancellation_token=None) -> float:
     return max(0.1, min(normalized, remaining))
 
 
-def _stop_process(process) -> None:
-    """Best-effort bounded reap for a cancelled/expired AkShare child."""
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.communicate(timeout=_PROCESS_TERMINATE_GRACE_SECONDS)
-    except ProcessTimeoutError:
-        process.kill()
-        process.communicate()
-
-
 def _run_cancellable_process(command: list[str], *, timeout: float, cancellation_token, env: dict, **kwargs):
-    """Run the network helper while polling its owner cancellation token.
-
-    ``subprocess.run`` can only return after its own timeout.  That made a hidden
-    or closing tab retain the global task slot for an entire AkShare request.
-    This small Popen loop keeps the same hard timeout while allowing owner
-    cancellation to terminate and reap the helper promptly.
-    """
-    process = spawn_process(
+    """Run the AkShare helper through the shared cancellable-process boundary."""
+    return run_cancellable_process(
         command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        cancellation_token=cancellation_token,
+        timeout=timeout,
+        check=True,
+        capture_output=True,
         text=True,
         encoding="utf-8",
         errors="ignore",
         env=env,
         **kwargs,
     )
-    deadline = time.monotonic() + max(0.1, float(timeout))
-    try:
-        while True:
-            cancellation_token.raise_if_cancelled()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ProcessTimeoutError(command, timeout)
-            try:
-                stdout, stderr = process.communicate(
-                    timeout=min(_PROCESS_CANCEL_POLL_SECONDS, remaining),
-                )
-                break
-            except ProcessTimeoutError:
-                continue
-        cancellation_token.raise_if_cancelled()
-        if process.returncode:
-            raise ProcessExecutionError(
-                process.returncode,
-                command,
-                output=stdout,
-                stderr=stderr,
-            )
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-    finally:
-        _stop_process(process)
 
 
 def _run_akshare_process(

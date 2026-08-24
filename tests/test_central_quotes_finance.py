@@ -32,8 +32,9 @@ def test_central_quotes_service_enriches_quotes_with_missing_finance(monkeypatch
     try:
         payload = service._fetch_quote_payload({"000001"})
         quote = payload["quotes"]["000001"]
-        assert quote["zongguben"] == 1_000_000_000
-        assert quote["_zongguben"] == 1_000_000_000
+        assert quote["total_shares"] == 1_000_000_000
+        assert "zongguben" not in quote
+        assert "_zongguben" not in quote
         assert quote["market_cap"] == 10_500_000_000
     finally:
         service.shutdown()

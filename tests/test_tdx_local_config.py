@@ -37,3 +37,19 @@ def test_tdx_local_config_accepts_install_root_or_vipdoc(tmp_path, monkeypatch, 
     monkeypatch.setattr(utils, "PROJECT_ROOT", os.fspath(tmp_path))
 
     assert utils._load_tdx_local_config() == os.fspath(vipdoc)
+
+
+def test_tdx_local_config_honors_explicit_config_path(tmp_path, monkeypatch):
+    install_root = tmp_path / "huatai"
+    vipdoc = install_root / "vipdoc"
+    (vipdoc / "sh").mkdir(parents=True)
+    (vipdoc / "sz").mkdir()
+    config_path = tmp_path / "custom_tdx_config.json"
+    config_path.write_text(
+        json.dumps({"tdx_vipdoc_root": str(install_root)}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("VCP_HUNTER_TDX_CONFIG_PATH", str(config_path))
+
+    assert utils._load_tdx_local_config() == os.fspath(vipdoc)

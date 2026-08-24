@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 
 import domains.scan.breakout_monitor_service as breakout_monitor_module
+from core.rps_cache_identity import rps_cache_key
 from domains.market_calendar import MarketCalendar
 from domains.scan import BreakoutMonitorService, IndicatorService, RpsService, VcpScannerService
 from vcp.engine import VCPEngine
@@ -119,11 +120,12 @@ def test_indicator_service_handles_plain_pandas_index_and_computed_polars_result
     assert "entangle" in pl_result.columns
 
 
-def test_legacy_vcp_engine_module_is_a_thin_alias_shim():
+def test_legacy_vcp_engine_module_is_a_regular_reexport_shim():
     legacy_module = importlib.import_module("vcp.engine")
     target_module = importlib.import_module("app.services.scan_engine_facade")
 
-    assert legacy_module is target_module
+    assert legacy_module is not target_module
+    assert legacy_module.VCPEngine is target_module.VCPEngine
 
 
 def test_rps_service_falls_back_to_pandas_matrix(monkeypatch):
@@ -181,7 +183,7 @@ def test_rps_service_uses_polars_result_and_cache(monkeypatch):
         "20260420": {"rps120": {"000001": 90}}
     }
 
-    service._daily_rps_cache[("2026-04-20", "2026-04-20")] = {"cached": True}
+    service._daily_rps_cache[rps_cache_key({}, "2026-04-20", "2026-04-20")] = {"cached": True}
     assert service.build_rps_matrix({}, "2026-04-20", "2026-04-20") == {"cached": True}
 
 

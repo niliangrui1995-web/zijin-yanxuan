@@ -33,15 +33,17 @@ from PyQt6.QtWidgets import QApplication
 
 from app.bootstrap.startup_orchestrator import ASIAN_DATA_SYNC_START_DELAY_MS, ASIAN_DATA_SYNC_TIMEOUT_SEC
 from app.services.f5_retention_service import inspect_f5_runtime
+from app.services.runtime_health_service import (
+    collect_runtime_health,
+    export_runtime_health_report,
+)
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_service import background_job_runner as task_manager
 from core.observability import metric_history
 from core.runtime_paths import CACHE_DIR
 from infra.diagnostics.runtime_health import (
     build_runtime_health_trend,
-    collect_runtime_health,
     collect_runtime_health_summary,
-    export_runtime_health_report,
 )
 from infra.diagnostics.ui_exception_boundary import install_ui_exception_hook
 from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
@@ -647,7 +649,7 @@ def _wait_for_background_tasks_idle(
 
 def _shutdown_runtime_health(window: MainWindowQT) -> dict:
     try:
-        runtime_health = collect_runtime_health(window)
+        runtime_health = collect_runtime_health(window, kline_manager_instance=kline_manager)
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return {}
     return runtime_health if isinstance(runtime_health, dict) else {}
@@ -1314,7 +1316,7 @@ def _sample(
     sample_output_dir: Path | None = None,
 ) -> dict:
     sample_started = time.perf_counter()
-    report = collect_runtime_health(window)
+    report = collect_runtime_health(window, kline_manager_instance=kline_manager)
     report["label"] = label
     report["measurement_phase"] = _measurement_phase(label)
     report["sample_collect_elapsed_ms"] = round((time.perf_counter() - sample_started) * 1000.0, 3)
@@ -1344,7 +1346,7 @@ def _sample(
 
 
 def _runtime_health_sample_summary(label: str, window: MainWindowQT) -> dict:
-    report = collect_runtime_health_summary(window)
+    report = collect_runtime_health_summary(window, kline_manager_instance=kline_manager)
     process = report.get("process") or {}
     webengine = report.get("webengine") or {}
     background_tasks = report.get("background_tasks") or {}

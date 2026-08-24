@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from app.bootstrap.startup_orchestrator import StartupOrchestrator
+    from app.bootstrap.startup_orchestrator import StartupHostPort, StartupOrchestrator
     from infra.market_data.tdx_data_provider import TdxDataProvider as TdxDataProviderType
 
 # Public test seams remain patchable without importing the heavy provider at
@@ -88,7 +88,7 @@ def create_data_provider(*, offline: bool = True) -> TdxDataProviderType:
     return provider
 
 
-def create_startup_orchestrator(main_window: Any, job_runner: Any = None) -> StartupOrchestrator:
+def create_startup_orchestrator(main_window: StartupHostPort, job_runner: Any = None) -> StartupOrchestrator:
     from app.bootstrap.startup_orchestrator import StartupHostAdapter, StartupOrchestrator
 
     return StartupOrchestrator(job_runner=job_runner, host=StartupHostAdapter(main_window))

@@ -3,6 +3,7 @@ target-version = "py314"
 line-length = 120
 extend-include = ["*.pyw"]
 exclude = [
+  "artifacts",
   "build",
   "dist",
   "data",
@@ -11,17 +12,41 @@ exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
-ignore = [
-  "E501",
-  "E402",
-  "E701",
-  "E702",
-]
+extend-select = ["B006", "B011", "B013", "B014", "B015", "B017", "B020", "B026", "B904", "UP006", "SIM101", "SIM109", "SIM115"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/capture_ui_audit_screenshots.py" = ["E402"]
+"scripts/kline_webengine_lifecycle_smoke.py" = ["E402"]
+"scripts/perf_budget_check.py" = ["E402"]
+"scripts/perf_memory_probe.py" = ["E402"]
+"scripts/perf_round4_probe.py" = ["E402"]
+"scripts/perf_round5_probe.py" = ["E402"]
+"scripts/runtime_health_stability_suite.py" = ["E402"]
+"scripts/soak_leak_probe.py" = ["E402"]
+"ui/tabs/foreign_block_trade_tab.py" = ["E402"]
+"ui/tabs/watchlist_tab.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "arch: architecture and layering regression tests",
+  "service: application and domain service regression tests",
+  "runtime: runtime dependency and environment guardrail tests",
+  "perf: performance and runtime-budget regression tests",
+  "smoke: fast cross-layer regression tests",
+  "windows: Windows platform integration tests",
+  "slow: explicitly opt-in long-running integration tests",
+]
+filterwarnings = [
+  'error::DeprecationWarning:(app|core|domains|infra|ui|vcp)(\..*)?$',
+]
 
 [tool.mypy]
 python_version = "3.14"
@@ -86,4 +111,14 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
 [tool.coverage.run]
+branch = true
 core = "pytrace"
+relative_files = true
+source = ["app", "core", "domains", "infra", "ui", "vcp"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]

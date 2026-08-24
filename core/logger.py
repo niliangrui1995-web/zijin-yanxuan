@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -20,6 +21,36 @@ _shared_handlers: Optional[list[logging.Handler]] = None
 _logger_lock = threading.Lock()
 _system_log_backpressure_lock = threading.Lock()
 _system_log_backpressure_stack: list["_SystemLogBackpressure"] = []
+_frontend_sink_lock = threading.Lock()
+_frontend_sink: Callable[[str, str], object] | None = None
+
+
+def set_frontend_sink(sink: Callable[[str, str], object] | None) -> Callable[[str, str], object] | None:
+    """Register the optional application-owned system-log sink.
+
+    Core logging remains usable in workers and headless tools when no UI sink is
+    installed. The previous sink is returned so tests and controlled shutdowns
+    can restore it without reaching into module state.
+    """
+    if sink is not None and not callable(sink):
+        raise TypeError("frontend log sink must be callable or None")
+    global _frontend_sink
+    with _frontend_sink_lock:
+        previous = _frontend_sink
+        _frontend_sink = sink
+    return previous
+
+
+def _emit_frontend_log(level: str, message: str) -> bool:
+    with _frontend_sink_lock:
+        sink = _frontend_sink
+    if sink is None:
+        return True
+    try:
+        sink(level, message)
+    except Exception:  # noqa: BLE001 - an optional UI sink must not break file/console logging.
+        return False
+    return True
 
 
 class _DailyRotatingFileHandler(RotatingFileHandler):
@@ -122,12 +153,7 @@ class _SystemLogBackpressure(AbstractContextManager):
         if self.suppressed_diagnostics:
             details.append(f"UI诊断 {self.suppressed_diagnostics} 条")
         text = f"[{self.label}] 系统日志页已合并显示：{', '.join(details)}；完整明细仍保留在文件日志"
-        try:
-            from domains.runtime import domain_events as event_bus
-
-            event_bus.sig_system_log.emit("info", text + "\n")
-        except (ImportError, RuntimeError, AttributeError):
-            pass
+        _emit_frontend_log("info", text + "\n")
 
     @classmethod
     def _is_diagnostic_record(cls, record: logging.LogRecord, message: str) -> bool:
@@ -321,10 +347,9 @@ class EventBusHandler(logging.Handler):
             level = record.levelname.lower()
             if level == "warning":
                 level = "warn"
-            from domains.runtime import domain_events as event_bus
-
-            event_bus.sig_system_log.emit(level, msg + "\n")
-        except (ImportError, RuntimeError, AttributeError):
+            if not _emit_frontend_log(level, msg + "\n"):
+                self.handleError(record)
+        except (RuntimeError, TypeError, ValueError):
             self.handleError(record)
 
 

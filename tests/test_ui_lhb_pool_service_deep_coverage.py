@@ -175,6 +175,50 @@ def test_delegate_helpers_and_stock_universe_edges():
     assert manager._filter_records_to_stock_universe([{"code": "000001"}]) == []
 
 
+def test_lhb_pool_accepts_canonical_amount_keys():
+    manager = _manager()
+    records = {
+        "20260102": [
+            {
+                "代码": "000001",
+                "net_buy_wan": 1200,
+                "institution_net_buy_wan": 0,
+            }
+        ]
+    }
+
+    qualifying_codes, hit_counts = module.collect_qualifying_codes(records, {"000001"})
+    latest = manager._build_latest_pool_records(records, qualifying_codes, hit_counts, None)
+
+    assert qualifying_codes == {"000001"}
+    assert latest["000001"]["net_buy_wan"] == 1200
+    assert latest["000001"]["institution_net_buy_wan"] == 0
+
+
+def test_lhb_pool_records_expected_compute_failures_with_error_metric(monkeypatch):
+    manager = _manager()
+    metrics = []
+    warnings = []
+    monkeypatch.setattr(
+        manager,
+        "_compute_pool_rows",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("cache unavailable")),
+    )
+    monkeypatch.setattr(module, "record_metric", lambda name, value, **kwargs: metrics.append((name, value, kwargs)))
+    monkeypatch.setattr(module.log, "warning", lambda *args, **kwargs: warnings.append((args, kwargs)))
+
+    try:
+        manager.compute_pool()
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected pool computation error")
+
+    assert warnings
+    assert metrics[-1][0] == "lhb_pool_compute_ms"
+    assert metrics[-1][2]["tags"]["status"] == "error"
+
+
 def test_day_management_validation_prune_and_clear(monkeypatch):
     manager = _manager()
     records = [{"code": "000001"}, {"code": "999999"}]
@@ -289,10 +333,13 @@ def test_frame_adapter_and_attach_history_paths(monkeypatch):
         }
     )
     adapted = manager._coerce_kline_frame(frame)
+    assert isinstance(adapted, module._KlineFrameAdapter)
+    assert type(manager._coerce_kline_frame(frame)) is type(adapted)
     assert adapted.empty is False
     assert len(adapted) == 20
     assert list(adapted.index)[-1] == "2026-01-20"
     assert adapted.get("missing", "fallback") == "fallback"
+    assert isinstance(adapted["close"], module._KlineSeriesAdapter)
     assert adapted["close"].tail(2).astype(float).tolist() == [19.0, 20.0]
 
     monkeypatch.setattr(module, "calculate_buy_point_from_history", lambda **kwargs: f"buy-{kwargs['open_price']}")

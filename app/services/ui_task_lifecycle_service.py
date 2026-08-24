@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """UI-facing facade for owner-bound cooperative task lifecycle primitives."""
 
-from infra.tasks.lifecycle import raise_if_cancelled, reraise_task_cancellation
+from infra.tasks.lifecycle import (
+    raise_if_cancelled,
+    reraise_task_cancellation,
+    task_unsettled_status,
+)
 from infra.tasks.owner_lifecycle import (
     CancellationToken,
     TaskCancelledError,
@@ -28,4 +32,5 @@ __all__ = [
     "reraise_task_cancellation",
     "shutdown_task_lifecycle_for_owner",
     "task_lifecycle_for",
+    "task_unsettled_status",
 ]

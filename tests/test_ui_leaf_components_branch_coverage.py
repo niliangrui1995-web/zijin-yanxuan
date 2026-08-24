@@ -271,7 +271,7 @@ def test_runtime_health_dialog_refresh_export_and_close(monkeypatch, qt_applicat
     collected = []
     exported = []
 
-    def collect(main_window):
+    def collect(main_window, **_kwargs):
         collected.append(main_window)
         return reports[min(len(collected) - 1, len(reports) - 1)]
 

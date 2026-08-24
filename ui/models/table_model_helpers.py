@@ -151,14 +151,26 @@ def _apply_quote_metadata_to_row(item_dict: dict, quote: Mapping[str, Any]) -> b
     return changed
 
 
+def _quote_total_shares(metrics: Mapping[str, Any]) -> float:
+    return float(metrics.get("total_shares") or metrics.get("zongguben") or metrics.get("_zongguben") or 0)
+
+
+def apply_quote_total_shares_to_row(item_dict: dict, metrics: Mapping[str, Any]) -> bool:
+    total_shares = _quote_total_shares(metrics)
+    changed = False
+    if total_shares > 0 and float(item_dict.get("total_shares", 0) or 0) != total_shares:
+        item_dict["total_shares"] = total_shares
+        changed = True
+    if total_shares > 0 and float(item_dict.get("_zongguben", 0) or 0) != total_shares:
+        item_dict["_zongguben"] = total_shares
+        changed = True
+    return changed
+
+
 def _apply_quote_metrics_to_row(item_dict: dict, quote: Mapping[str, Any]) -> tuple[bool, dict]:
     metrics = resolve_quote_metrics(item_dict, quote)
     row_changed = _apply_quote_metadata_to_row(item_dict, quote)
-
-    zongguben = float(metrics.get("zongguben", 0) or 0)
-    if zongguben > 0 and float(item_dict.get("_zongguben", 0) or 0) != zongguben:
-        item_dict["_zongguben"] = zongguben
-        row_changed = True
+    row_changed = apply_quote_total_shares_to_row(item_dict, metrics) or row_changed
 
     price_text = metrics.get("price_text")
     if price_text is not None:

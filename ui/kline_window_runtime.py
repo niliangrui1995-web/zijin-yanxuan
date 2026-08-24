@@ -6,6 +6,7 @@ from functools import partial
 
 import pandas as pd
 
+import app.services.asian_market_cache_service as asian_market_cache_service
 from app.services.kline_data_service import KlineDataResult, KlineDataService
 from app.services.kline_render_preparer import KlineRenderPreparer, PreparedKlineRender
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -533,11 +534,13 @@ def _build_history_load_request(window, identity: KlineLoadIdentity) -> _History
     cached_asian_quote = None
     asian_quote_fetcher = None
     if market != "CN":
-        from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE, JSON_CACHE
         from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
-        asian_cache_path = JSON_CACHE
-        cached_asian_quote = dict(GLOBAL_ASIAN_RT_CACHE.get(request_code) or {}) or None
+        asian_cache_path = asian_market_cache_service.ASIAN_KLINE_CACHE
+        cached_asian_quote = asian_market_cache_service.get_realtime_quote(
+            asian_market_cache_service.GLOBAL_ASIAN_RT_CACHE,
+            request_code,
+        ) or None
         asian_quote_fetcher = fetch_asian_realtime_quote
     data_provider = window.data_provider
     from ui.theme import theme_manager
@@ -588,9 +591,11 @@ def _apply_history_load_result(result, *, window, request: _HistoryLoadRequest) 
     if not _is_current_request(window, identity.code, identity.generation) or result is None:
         return
     if result.fetched_asian_quote:
-        from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE
-
-        GLOBAL_ASIAN_RT_CACHE[identity.code] = result.fetched_asian_quote
+        asian_market_cache_service.set_realtime_quote(
+            asian_market_cache_service.GLOBAL_ASIAN_RT_CACHE,
+            identity.code,
+            result.fetched_asian_quote,
+        )
     if result.quote_error is not None:
         _handle_asian_quote_error(window, identity.code, result.quote_error)
     if request.market != "CN" and result.data_result.degraded:

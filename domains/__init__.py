@@ -8,7 +8,6 @@ from importlib import import_module
 __all__ = [
     "BreakoutMonitorService",
     "EarningsEngine",
-    "EarningsScheduler",
     "FundHoldingsStore",
     "FundHoldingsSyncService",
     "IndicatorService",
@@ -29,7 +28,6 @@ _EXPORTS = {
     "RpsService": ("domains.scan", "RpsService"),
     "VcpScannerService": ("domains.scan", "VcpScannerService"),
     "EarningsEngine": ("domains.earnings", "EarningsEngine"),
-    "EarningsScheduler": ("domains.earnings", "EarningsScheduler"),
     "FundHoldingsStore": ("domains.fund_holdings", "FundHoldingsStore"),
     "FundHoldingsSyncService": ("domains.fund_holdings", "FundHoldingsSyncService"),
     "fund_holdings_store": ("domains.fund_holdings", "fund_holdings_store"),

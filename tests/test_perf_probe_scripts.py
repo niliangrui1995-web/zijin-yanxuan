@@ -779,7 +779,7 @@ def test_runtime_health_collects_structured_post_close_state(monkeypatch):
     monkeypatch.setattr(
         runtime_suite,
         "collect_runtime_health",
-        lambda _window: {
+        lambda _window, **_kwargs: {
             "webengine": {"available": True, "count": 1},
             "f5_refresh": {
                 "job_controller_present": True,
@@ -831,7 +831,7 @@ def test_runtime_health_post_close_diagnostics_fail_closed(monkeypatch):
     monkeypatch.setattr(runtime_suite, "task_manager", _Broken())
     monkeypatch.setattr(runtime_suite, "QThreadPool", _Broken())
     monkeypatch.setattr(runtime_suite, "pending_thread_count", lambda: "0")
-    monkeypatch.setattr(runtime_suite, "collect_runtime_health", lambda _window: {})
+    monkeypatch.setattr(runtime_suite, "collect_runtime_health", lambda _window, **_kwargs: {})
     monkeypatch.setattr(runtime_suite, "kline_manager", _Broken(), raising=False)
 
     state = runtime_suite._collect_post_close_state(
@@ -1098,7 +1098,7 @@ def test_runtime_health_sample_records_collect_and_write_cost(monkeypatch, tmp_p
     monkeypatch.setattr(
         runtime_suite,
         "collect_runtime_health",
-        lambda _window: {"ui_stalls": {"critical_count": 3}},
+        lambda _window, **_kwargs: {"ui_stalls": {"critical_count": 3}},
     )
 
     sample = runtime_suite._sample(

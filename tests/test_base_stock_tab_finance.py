@@ -81,8 +81,7 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
             latest_quotes,
             {
                 "000001": {
-                    "zongguben": 1_000_000_000,
-                    "_zongguben": 1_000_000_000,
+                    "total_shares": 1_000_000_000,
                     "finance_source": "eastmoney",
                 }
             },
@@ -91,7 +90,9 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
         assert len(spy) == 1
         payload = spy[0][0]
         assert "000001" in payload
-        assert payload["000001"]["zongguben"] == 1_000_000_000
+        assert payload["000001"]["total_shares"] == 1_000_000_000
+        assert "zongguben" not in payload["000001"]
+        assert "_zongguben" not in payload["000001"]
         assert "AAPL" not in payload
         assert "000002" not in payload
     finally:

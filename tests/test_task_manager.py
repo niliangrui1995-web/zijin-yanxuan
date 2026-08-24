@@ -12,8 +12,8 @@ from infra.tasks.task_scheduler import BackgroundWorker, _task_thread_pool_max_c
 
 def _pump_events_until(predicate, timeout=3.0):
     app = QCoreApplication.instance() or QCoreApplication([])
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         app.processEvents()
         if predicate():
             return True
@@ -33,17 +33,22 @@ def test_task_manager_dedupes_same_task_id():
 
     calls = []
     calls_lock = threading.Lock()
+    started = threading.Event()
+    release = threading.Event()
 
     def slow_task():
         with calls_lock:
             calls.append(time.time())
-        time.sleep(0.1)
+        started.set()
+        assert release.wait(timeout=3)
         return "ok"
 
     task_manager.run_in_background(slow_task, task_id="dup_test")
+    assert started.wait(1)
     task_manager.run_in_background(slow_task, task_id="dup_test")
 
     assert task_manager.active_count == 1
+    release.set()
     assert _pump_events_until(lambda: task_manager.active_count == 0)
     assert len(calls) == 1
 
@@ -86,6 +91,28 @@ def test_task_manager_start_failure_releases_slot_and_allows_same_id_retry(monke
         task_manager.cancel_all()
         second.run()
         _pump_events_until(lambda: not task_manager.is_task_unsettled("start-failure-retry"))
+
+
+def test_task_manager_start_interrupt_cleans_slot_without_swallowing_control_signal(monkeypatch):
+    class _InterruptingPool:
+        @staticmethod
+        def start(worker, *args):
+            del worker, args
+            raise KeyboardInterrupt("stop submission")
+
+    monkeypatch.setattr(task_manager, "thread_pool", _InterruptingPool())
+    task_manager.active_workers.clear()
+    task_manager._retired_workers.clear()
+    task_manager._shutting_down = False
+    worker = BackgroundWorker(lambda: "unused")
+
+    with pytest.raises(KeyboardInterrupt, match="stop submission"):
+        task_manager.submit_task(worker, task_id="interrupting-start")
+
+    assert task_manager.is_active_task("interrupting-start") is False
+    assert worker.cancellation_token.cancelled is True
+    assert worker.cancellation_token.reason == "submission_failed"
+    assert worker.terminated_event.is_set() is True
 
 
 def test_cancel_all_without_try_take_keeps_worker_unsettled_until_terminated(monkeypatch):
@@ -198,7 +225,6 @@ def test_task_manager_rejects_new_tasks_during_shutdown():
         return "unexpected"
 
     task_manager.run_in_background(should_not_run, task_id="shutdown_test")
-    time.sleep(0.05)
 
     assert calls == []
     assert task_manager.active_count == 0

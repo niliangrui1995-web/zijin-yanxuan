@@ -1156,6 +1156,11 @@ def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatc
         ),
         raising=False,
     )
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "is_task_token_active",
+        lambda *_args, **_kwargs: True,
+    )
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:

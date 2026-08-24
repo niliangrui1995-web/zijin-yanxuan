@@ -9,14 +9,17 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+import domains.market_calendar.calendar_service as calendar_service
 from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError, NetworkServiceError
 from core.market_calendar import MarketCalendar
 from core.runtime_paths import PROJECT_ROOT
+from infra.tasks import TaskLifecycleGroup
 
 
 @pytest.fixture(autouse=True)
 def _reset_market_calendar_task_shutdown(monkeypatch):
     monkeypatch.setattr(MarketCalendar, "_task_shutdown", False, raising=False)
+    monkeypatch.setattr(calendar_service, "_MARKET_CALENDAR_TASKS", TaskLifecycleGroup())
 
 
 def _fake_status(status: str):

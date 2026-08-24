@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import threading
 import uuid
+from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -51,7 +52,8 @@ class LhbPoolRepository:
     """Load and atomically merge date-level changes into the LHB cache."""
 
     _loaded_payload_lock = threading.RLock()
-    _loaded_payload_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+    _loaded_payload_cache: OrderedDict[str, tuple[tuple[int, int], dict]] = OrderedDict()
+    _loaded_payload_cache_max_entries = 8
 
     @staticmethod
     def default_paths() -> tuple[str, str, str]:
@@ -65,22 +67,41 @@ class LhbPoolRepository:
             return None
         return (int(stat.st_size), int(stat.st_mtime_ns))
 
+    @staticmethod
+    def _payload_cache_key(cache_path: str) -> str:
+        return os.path.normcase(os.path.abspath(cache_path))
+
+    @classmethod
+    def _remember_loaded_payload(
+        cls,
+        cache_key: str,
+        signature: tuple[int, int],
+        payload: dict,
+    ) -> None:
+        cls._loaded_payload_cache[cache_key] = (signature, copy.deepcopy(payload))
+        cls._loaded_payload_cache.move_to_end(cache_key)
+        while len(cls._loaded_payload_cache) > cls._loaded_payload_cache_max_entries:
+            cls._loaded_payload_cache.popitem(last=False)
+
     @classmethod
     def load_json_payload(cls, cache_path: str) -> dict:
+        cache_key = cls._payload_cache_key(cache_path)
         signature = cls.cache_file_signature(cache_path)
         if signature is None:
+            with cls._loaded_payload_lock:
+                cls._loaded_payload_cache.pop(cache_key, None)
             return {}
-        cache_key = os.path.abspath(cache_path)
         with cls._loaded_payload_lock:
             cached = cls._loaded_payload_cache.get(cache_key)
             if cached is not None and cached[0] == signature:
+                cls._loaded_payload_cache.move_to_end(cache_key)
                 return copy.deepcopy(cached[1])
 
         with open(cache_path, "r", encoding="utf-8") as handle:
             raw = json.load(handle)
         payload = raw if isinstance(raw, dict) else {}
         with cls._loaded_payload_lock:
-            cls._loaded_payload_cache[cache_key] = (signature, copy.deepcopy(payload))
+            cls._remember_loaded_payload(cache_key, signature, payload)
         return payload
 
     @classmethod
@@ -88,9 +109,9 @@ class LhbPoolRepository:
         signature = cls.cache_file_signature(cache_path)
         if signature is None:
             return
-        cache_key = os.path.abspath(cache_path)
+        cache_key = cls._payload_cache_key(cache_path)
         with cls._loaded_payload_lock:
-            cls._loaded_payload_cache[cache_key] = (signature, copy.deepcopy(payload))
+            cls._remember_loaded_payload(cache_key, signature, payload)
 
     @staticmethod
     def read_uncached_payload(cache_path: str) -> dict:

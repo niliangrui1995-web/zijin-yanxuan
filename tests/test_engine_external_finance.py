@@ -67,7 +67,7 @@ def test_batch_get_finance_info_uses_eastmoney_market_cap_fields(monkeypatch, tm
     assert "/api/qt/ulist.np/get" not in seen_urls[0]
     assert "fields=f12,f2,f18,f20,f21" in seen_urls[0]
     assert "secids=0.000001" in seen_urls[0]
-    assert result["000001"]["zongguben"] == pytest.approx(217540343000 / 11.19)
+    assert result["000001"]["total_shares"] == pytest.approx(217540343000 / 11.19)
     assert result["000001"]["market_cap"] == 217540343000
     assert result["000001"]["price_base"] == 11.19
     assert result["000001"]["source"] == "eastmoney"
@@ -100,7 +100,7 @@ def test_batch_get_finance_info_falls_back_to_last_close_when_latest_price_missi
 
     result = engine_external.batch_get_finance_info(["600519"])
 
-    assert result["600519"]["zongguben"] == pytest.approx(1837706540513 / 1462.07)
+    assert result["600519"]["total_shares"] == pytest.approx(1837706540513 / 1462.07)
     assert result["600519"]["market_cap"] == 1837706540513
 
 
@@ -136,7 +136,7 @@ def test_batch_get_finance_info_prefers_local_tdx_capital(monkeypatch, tmp_path)
 
     result = engine_external.batch_get_finance_info(["000001"])
 
-    assert result == {"000001": {"zongguben": 2_000_000_000, "source": "tdx_base"}}
+    assert result == {"000001": {"total_shares": 2_000_000_000, "source": "tdx_base"}}
 
 
 def test_batch_check_market_cap_prefers_direct_market_cap_scaling(monkeypatch):
@@ -208,7 +208,7 @@ def test_batch_get_finance_info_uses_recent_cache_when_network_fails(monkeypatch
 
     assert result == {
         "000001": {
-            "zongguben": 19457582073.27935,
+            "total_shares": 19457582073.27935,
             "market_cap": 217540343000,
             "source": "eastmoney",
         }

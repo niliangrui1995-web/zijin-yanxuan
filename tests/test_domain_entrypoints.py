@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
+import domains
+import domains.earnings as earnings_domain
 from core.market_calendar import MarketCalendar as LegacyMarketCalendar
 from core.quote_dispatcher import publish_rt_quotes as legacy_publish_rt_quotes
-from domains.earnings import EarningsEngine, EarningsScheduler
+from domains.earnings import EarningsEngine
+from domains.earnings.scheduler import EarningsScheduler as DeprecatedDomainEarningsScheduler
 from domains.market_calendar import MarketCalendar
 from domains.quotes import publish_rt_quotes
 from domains.scan import IndicatorService, RpsService
@@ -21,8 +26,17 @@ def test_legacy_scan_service_paths_forward_to_domain_entrypoints():
 
 def test_legacy_earnings_and_market_calendar_paths_are_thin_shims():
     assert LegacyEarningsEngine is EarningsEngine
-    assert LegacyEarningsScheduler is EarningsScheduler
+    assert LegacyEarningsScheduler is DeprecatedDomainEarningsScheduler
     assert LegacyMarketCalendar is MarketCalendar
+
+
+def test_domains_does_not_reexport_ui_backed_earnings_scheduler():
+    assert "EarningsScheduler" not in domains.__all__
+    assert "EarningsScheduler" not in earnings_domain.__all__
+    with pytest.raises(AttributeError):
+        getattr(domains, "EarningsScheduler")
+    with pytest.raises(AttributeError):
+        getattr(earnings_domain, "EarningsScheduler")
 
 
 def test_legacy_quotes_and_watchlist_paths_forward_to_domain_entrypoints():

@@ -19,6 +19,15 @@ from typing import Any, BinaryIO, Iterator
 
 from core.runtime_paths import CACHE_DIR
 
+_HISTORY_PATH_LOCKS_LOCK = threading.Lock()
+_HISTORY_PATH_LOCKS: dict[Path, threading.RLock] = {}
+
+
+def _history_path_lock(path: Path) -> threading.RLock:
+    resolved_path = path.resolve()
+    with _HISTORY_PATH_LOCKS_LOCK:
+        return _HISTORY_PATH_LOCKS.setdefault(resolved_path, threading.RLock())
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeHealthThresholds:
@@ -62,22 +71,24 @@ class RuntimeHealthHistoryStore:
         self._lock = threading.RLock()
 
     def load(self, *, limit: int | None = None) -> list[dict[str, Any]]:
-        with self._lock:
-            with _interprocess_file_lock(self.path):
-                records = self._read_records()
+        with _history_path_lock(self.path):
+            with self._lock:
+                with _interprocess_file_lock(self.path):
+                    records = self._read_records()
         return records[-limit:] if limit is not None else records
 
     def append(self, sample: Mapping[str, Any]) -> None:
         record = dict(sample)
         payload = json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        with self._lock:
-            with _interprocess_file_lock(self.path):
-                with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-                    handle.write(payload + "\n")
-                    handle.flush()
-                records = self._read_records()
-                if len(records) > self.max_records:
-                    self._compact(records)
+        with _history_path_lock(self.path):
+            with self._lock:
+                with _interprocess_file_lock(self.path):
+                    with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                        handle.write(payload + "\n")
+                        handle.flush()
+                    records = self._read_records()
+                    if len(records) > self.max_records:
+                        self._compact(records)
 
     def _read_records(self) -> list[dict[str, Any]]:
         if not self.path.is_file():

@@ -36,6 +36,7 @@ from ui.models.table_model_helpers import (
     _sync_serial_values,
     _tooltip_for_cell,
     _with_serial_header,
+    apply_quote_total_shares_to_row,
 )
 
 _log = logging.getLogger(__name__)
@@ -70,6 +71,47 @@ _ROW_CHANGE_DEPENDENCIES = {
     "_report_ts": ("日报时间",),
     "_report_row_rank": ("日报时间",),
 }
+_MONEY_BAR_HEADERS = frozenset({"上榜净买额(万)", "机构净买(万)", "外资净买(万)", "外资净买入"})
+
+
+def _build_code_row_index(rows) -> dict[str, list[int]]:
+    index: dict[str, list[int]] = {}
+    for row, item in enumerate(rows):
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("代码") or "").strip()
+        if code:
+            index.setdefault(code, []).append(row)
+    return index
+
+
+def _changed_row_codes(rows, changed_rows: list[int]) -> set[str]:
+    return {
+        str(rows[row].get("代码") or "").strip()
+        for row in changed_rows
+        if isinstance(rows[row], dict)
+    }
+
+
+def _quotes_for_codes(snapshot, code_row_index: Mapping[str, list[int]], codes: set[str] | None) -> dict:
+    target_codes = code_row_index if codes is None else {code for code in codes if code}
+    return {code: snapshot[code] for code in target_codes if code in snapshot}
+
+
+def _iter_indexed_quote_rows(quotes: Mapping[str, Mapping[str, Any]], code_row_index: Mapping[str, list[int]]):
+    for code, quote in quotes.items():
+        for row in code_row_index.get(str(code).strip(), ()):
+            yield row, quote
+
+
+def _quote_column_bounds(headers) -> tuple[int | None, int | None]:
+    quote_columns = [headers.index(header) for header in ("现价", "市价", "涨幅%", "涨幅", "市值") if header in headers]
+    return min(quote_columns) if quote_columns else None, max(quote_columns) if quote_columns else None
+
+
+def _clear_money_bar_cache_for_changed_value(model, old_value, new_value) -> None:
+    if old_value != new_value:
+        model._clear_money_bar_max_abs_cache()
 
 
 def _indicator_tone(text: str) -> str:
@@ -174,6 +216,7 @@ class StockTableModel(QAbstractTableModel):
         super().__init__()
         self._headers = _with_serial_header(headers)
         self._data = data or []
+        self._code_row_index = _build_code_row_index(self._data)
         self._flash_records = {}
         self._sort_value_cache = {}
         self._presentation_cache_enabled = False
@@ -510,15 +553,17 @@ class StockTableModel(QAbstractTableModel):
             roles.insert(7, Qt.ItemDataRole.UserRole + 1)
         return roles
 
-    def _emit_incremental_rows(self, rows: list) -> None:
+    def _emit_incremental_rows(self, rows: list) -> list[int]:
         _sync_serial_values(rows)
         changed_rows = []
         changed_rows_by_span = {}
         flash_recorded = False
+        codes_changed = False
         for row_idx, new_row in enumerate(rows):
             old_row = self._data[row_idx]
             if old_row != new_row:
                 changed_keys = _changed_row_keys(old_row, new_row)
+                codes_changed = codes_changed or "代码" in changed_keys
                 changed_cols = _affected_columns_for_row_change(self._headers, changed_keys)
                 flash_recorded = self._record_row_flashes(row_idx, old_row, new_row) or flash_recorded
                 self._data[row_idx] = new_row
@@ -527,8 +572,10 @@ class StockTableModel(QAbstractTableModel):
                     changed_rows_by_span.setdefault(span, []).append(row_idx)
 
         if not changed_rows:
-            return
+            return []
 
+        if codes_changed:
+            self._code_row_index = _build_code_row_index(self._data)
         self._clear_sort_value_cache_for_rows(changed_rows)
         self._clear_presentation_cache_for_rows(changed_rows)
         for (start_col, end_col), span_rows in sorted(changed_rows_by_span.items()):
@@ -540,21 +587,17 @@ class StockTableModel(QAbstractTableModel):
                 self._flash_roles(include_flash=flash_recorded),
                 coalesce=self._sparse_update_coalescing,
             )
+        return changed_rows
 
     def _emit_reordered_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
         self.layoutAboutToBeChanged.emit()
         self._data = rows
+        self._code_row_index = _build_code_row_index(self._data)
         self._flash_records.clear()
         self._clear_sort_value_cache()
         self.clear_presentation_cache()
         self.layoutChanged.emit()
-        if self.rowCount() and self.columnCount():
-            self.dataChanged.emit(
-                self.index(0, 0),
-                self.index(self.rowCount() - 1, self.columnCount() - 1),
-                self._flash_roles(include_flash=False),
-            )
 
     def _emit_single_row_membership_delta(self, rows: list, delta: tuple[str, int]) -> None:
         action, row = delta
@@ -570,6 +613,7 @@ class StockTableModel(QAbstractTableModel):
             self.beginRemoveRows(QModelIndex(), row, row)
             self._data.pop(row)
             self.endRemoveRows()
+        self._code_row_index = _build_code_row_index(self._data)
         self._emit_incremental_rows(rows)
 
     def update_data(
@@ -584,16 +628,15 @@ class StockTableModel(QAbstractTableModel):
         self._clear_money_bar_max_abs_cache()
         rows = list(new_data or [])
         if self._can_update_incrementally(rows):
-            self._emit_incremental_rows(rows)
+            changed_rows = self._emit_incremental_rows(rows)
             if hydrate_latest_quotes:
-                self._hydrate_latest_quotes_from_store()
+                self._hydrate_latest_quotes_from_store(_changed_row_codes(rows, changed_rows))
             return
         if self._can_reorder_incrementally(rows):
             self._emit_reordered_rows(rows)
             if hydrate_latest_quotes:
                 self._hydrate_latest_quotes_from_store()
             return
-
         membership_delta = None
         if allow_single_row_membership_delta and len(rows) != len(self._data):
             membership_delta = self._single_row_membership_delta(rows)
@@ -616,6 +659,7 @@ class StockTableModel(QAbstractTableModel):
 
         self.beginResetModel()
         self._data = rows
+        self._code_row_index = _build_code_row_index(self._data)
         _sync_serial_values(self._data)
         self._flash_records.clear()
         self._clear_sort_value_cache()
@@ -624,7 +668,7 @@ class StockTableModel(QAbstractTableModel):
         if hydrate_latest_quotes:
             self._hydrate_latest_quotes_from_store()
 
-    def _hydrate_latest_quotes_from_store(self):
+    def _hydrate_latest_quotes_from_store(self, codes: set[str] | None = None):
         if not self._data or "代码" not in self._headers:
             return
         if not any(header in self._headers for header in ("现价", "市价", "涨幅%", "涨幅", "市值", "买点")):
@@ -639,7 +683,7 @@ class StockTableModel(QAbstractTableModel):
         if not snapshot:
             return
 
-        self.update_quotes(snapshot)
+        self.update_quotes(_quotes_for_codes(snapshot, self._code_row_index, codes))
 
     def supportedDropActions(self):
         return Qt.DropAction.MoveAction
@@ -713,14 +757,11 @@ class StockTableModel(QAbstractTableModel):
         if 0 <= row < len(self._data):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
+            if col_name == "代码" and old_val != new_val:
+                self._code_row_index = _build_code_row_index(self._data)
             self._clear_presentation_cache_for_rows((row,))
-            if old_val != new_val and col_name in {
-                "上榜净买额(万)",
-                "机构净买(万)",
-                "外资净买(万)",
-                "外资净买入",
-            }:
-                self._clear_money_bar_max_abs_cache()
+            if col_name in _MONEY_BAR_HEADERS:
+                _clear_money_bar_cache_for_changed_value(self, old_val, new_val)
 
             try:
                 col_idx = self._headers.index(col_name)
@@ -746,38 +787,24 @@ class StockTableModel(QAbstractTableModel):
 
         changed_row_set = set()
         flash_recorded = False
-        quote_cols = []
-        for header in ("现价", "市价", "涨幅%", "涨幅", "市值"):
-            if header in self._headers:
-                quote_cols.append(self._headers.index(header))
-        start_col = min(quote_cols) if quote_cols else None
-        end_col = max(quote_cols) if quote_cols else None
+        start_col, end_col = _quote_column_bounds(self._headers)
         buy_point_col = self._headers.index("买点") if "买点" in self._headers else -1
         buy_point_clock = None
 
-        for row, item_dict in enumerate(self._data):
-            code = item_dict.get("代码")
-            if not code or code not in quotes:
-                continue
-
+        for row, q in _iter_indexed_quote_rows(quotes, self._code_row_index):
+            item_dict = self._data[row]
             scanned_rows += 1
-            q = quotes[code]
             metrics = resolve_quote_metrics(item_dict, q)
             rt_close = float(metrics.get("rt_close", 0) or 0)
             pct = metrics.get("pct")
             row_changed = _apply_quote_metadata_to_row(item_dict, q)
-            zongguben = float(metrics.get("zongguben", 0) or 0)
-            if zongguben > 0 and float(item_dict.get("_zongguben", 0) or 0) != zongguben:
-                item_dict["_zongguben"] = zongguben
-                row_changed = True
+            row_changed = apply_quote_total_shares_to_row(item_dict, metrics) or row_changed
 
             price_text = metrics.get("price_text")
             if price_text is not None:
                 for price_key in ("现价", "市价"):
                     if price_key in self._headers and item_dict.get(price_key) != price_text:
-                        flash_recorded = (
-                            self.set_cell_value(row, price_key, price_text, emit_signal=False) or flash_recorded
-                        )
+                        flash_recorded = self.set_cell_value(row, price_key, price_text, emit_signal=False) or flash_recorded
                         row_changed = True
             if pct is not None:
                 for pct_key in ("涨幅%", "涨幅"):
@@ -816,11 +843,10 @@ class StockTableModel(QAbstractTableModel):
 
                     if history_date == today_str:
                         temp_hist = history[:-1] + [rt_close]
+                    elif is_trade_refresh_time:
+                        temp_hist = history[1:] + [rt_close]
                     else:
-                        if is_trade_refresh_time:
-                            temp_hist = history[1:] + [rt_close]
-                        else:
-                            temp_hist = history[:-1] + [rt_close]
+                        temp_hist = history[:-1] + [rt_close]
 
                     rt_open = float(q.get("open") or rt_close)
                     pos_str = calculate_buy_point_from_history(

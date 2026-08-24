@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services import asian_market_cache_service
 from ui import kline_window_qt as kline
 from ui.kline_load_controller import KlineLoadController
 
@@ -313,9 +314,7 @@ def test_market_date_quote_normalize_and_load_begins_owned_generation(monkeypatc
     loads = []
     monkeypatch.setattr(kline, "can_begin_chart_load", lambda window: True)
     monkeypatch.setattr(kline, "load_and_draw", lambda window, *, identity: loads.append((window, identity)))
-    import ui.tabs.asian_market_tab as asian_tab
-
-    monkeypatch.setattr(asian_tab, "GLOBAL_ASIAN_RT_CACHE", {"2330.TW": {"close": 1}})
+    monkeypatch.setattr(asian_market_cache_service, "GLOBAL_ASIAN_RT_CACHE", {"2330.TW": {"close": 1}})
     controller = KlineLoadController(window_id="window-a")
     window = SimpleNamespace(
         code="2330.TW",

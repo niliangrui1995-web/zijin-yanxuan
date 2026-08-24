@@ -6,6 +6,8 @@ import pandas as pd
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QWidget
 
+from app.services import asian_market_cache_service
+from app.services.kline_open_context import KlineOpenContext
 from core.task_manager import task_manager
 from ui import kline_window_header as header_module
 from ui import kline_window_qt as kline_module
@@ -14,8 +16,6 @@ from ui.components import kline_window_manager as manager_module
 from ui.components.kline_window_manager import KLineWindowManager
 from ui.kline_chart_payload import build_kline_shell_html, build_kline_theme_colors
 from ui.kline_pool_state import KLinePoolState
-from ui.tabs import asian_market_tab as asian_module
-from ui.tabs import asian_market_workers as asian_workers_module
 from ui.theme import THEME_YAOHEI, theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -1465,8 +1465,13 @@ def test_kline_load_and_draw_asian_falls_back_to_single_ticket_fetch(monkeypatch
         "_check_fav_status",
         lambda self: setattr(self, "is_fav", False),
     )
-    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
-    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(asian_market_cache_service, "ASIAN_KLINE_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_market_cache_service, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(
+        kline_module.MarketCalendar,
+        "get_latest_trade_date",
+        classmethod(lambda cls, market="CN", ref_date=None, **_kwargs: dt.date(2026, 4, 15)),
+    )
 
     def _fake_fetch_single_kline(name, ticker, period="1y"):
         assert ticker == "2330.TW"
@@ -1490,31 +1495,30 @@ def test_kline_load_and_draw_asian_falls_back_to_single_ticket_fetch(monkeypatch
             "klines": klines,
         }
 
-    def _run_inline(
-        fn,
-        *args,
-        on_success=None,
-        on_error=None,
-        on_terminated=None,
-        task_id=None,
-        **kwargs,
-    ):
+    def _submit_inline(_window, _name, fn, on_success, _task_suffix, _timeout_sec, *, on_error=None, **_kwargs):
         try:
-            result = fn(*args, **kwargs)
-            if on_success:
-                on_success(result)
+            on_success(fn(None))
         except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             if on_error:
                 on_error(str(exc))
             else:
                 raise exc
-        finally:
-            if on_terminated:
-                on_terminated()
-        return task_id or "test-kline-asian-fallback"
 
     monkeypatch.setattr(runtime_module, "fetch_single_kline", _fake_fetch_single_kline)
-    monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
+    monkeypatch.setattr(runtime_module, "_submit_owned_window_task", _submit_inline)
+    monkeypatch.setattr(
+        runtime_module,
+        "current_kline_open_context",
+        lambda _window: KlineOpenContext(
+            code="2330.TW",
+            name="台积电",
+            vcp_data={},
+            navigation=(),
+            current_idx=0,
+            source_tab_key="test",
+            source_tab_index=0,
+        ),
+    )
 
     window = kline_module.KLineChartWindow(
         None,
@@ -1534,7 +1538,11 @@ def test_kline_load_and_draw_asian_falls_back_to_single_ticket_fetch(monkeypatch
 
     try:
         monkeypatch.setattr(runtime_module, "queue_prepared_render", _capture_prepared)
+        monkeypatch.setattr(window, "_render_chart", lambda frame, **_kwargs: captured.setdefault("df", frame))
         monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
+        request = runtime_module._build_history_load_request(window, window._load_controller.begin("2330.TW"))
+        assert request.context.code == "2330.TW"
+        assert request.asian_cache_path == str(cache_file)
 
         original_load(window)
 
@@ -1548,7 +1556,7 @@ def test_kline_load_and_draw_asian_falls_back_to_single_ticket_fetch(monkeypatch
         _dispose_kline_window(window)
 
 
-def test_kline_load_and_draw_asian_fetches_realtime_quote_when_history_is_stale(monkeypatch, tmp_path):
+def test_kline_load_and_draw_asian_schedules_history_backfill_when_history_is_stale(monkeypatch, tmp_path):
     original_load = kline_module.KLineChartWindow._load_and_draw
     cache_file = tmp_path / "asian_klines_latest.json"
     cache_file.write_text(
@@ -1594,50 +1602,36 @@ def test_kline_load_and_draw_asian_fetches_realtime_quote_when_history_is_stale(
         "_check_fav_status",
         lambda self: setattr(self, "is_fav", False),
     )
-    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
-    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
-    monkeypatch.setattr(
-        asian_workers_module,
-        "fetch_asian_realtime_quote",
-        lambda code, **kwargs: {
-            "date": "2026-04-20",
-            "open": 2030.0,
-            "high": 2055.0,
-            "low": 2025.0,
-            "close": 2025.0,
-            "volume": 3456.0,
-        },
-    )
+    monkeypatch.setattr(asian_market_cache_service, "ASIAN_KLINE_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_market_cache_service, "GLOBAL_ASIAN_RT_CACHE", {})
     monkeypatch.setattr(
         kline_module.MarketCalendar,
         "get_latest_trade_date",
-        classmethod(lambda cls, market="CN", ref_date=None: dt.date(2026, 4, 20)),
+        classmethod(lambda cls, market="CN", ref_date=None, **_kwargs: dt.date(2026, 4, 20)),
     )
 
-    def _run_inline(
-        fn,
-        *args,
-        on_success=None,
-        on_error=None,
-        on_terminated=None,
-        task_id=None,
-        **kwargs,
-    ):
-        try:
-            result = fn(*args, **kwargs)
-            if on_success:
-                on_success(result)
-        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
-            if on_error:
-                on_error(str(exc))
-            else:
-                raise exc
-        finally:
-            if on_terminated:
-                on_terminated()
-        return task_id or "test-kline-asian-realtime"
+    submissions = []
 
-    monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
+    def _capture_submit(_window, name, fn, on_success, task_suffix, _timeout_sec, **_kwargs):
+        submissions.append((name, task_suffix))
+        if name == "history_load":
+            on_success(fn(None))
+        return None
+
+    monkeypatch.setattr(runtime_module, "_submit_owned_window_task", _capture_submit)
+    monkeypatch.setattr(
+        runtime_module,
+        "current_kline_open_context",
+        lambda _window: KlineOpenContext(
+            code="2330.TW",
+            name="台积电",
+            vcp_data={},
+            navigation=(),
+            current_idx=0,
+            source_tab_key="test",
+            source_tab_index=0,
+        ),
+    )
 
     window = kline_module.KLineChartWindow(
         None,
@@ -1649,24 +1643,16 @@ def test_kline_load_and_draw_asian_fetches_realtime_quote_when_history_is_stale(
         current_idx=0,
     )
 
-    captured = {}
-
-    def _capture_prepared(_window, prepared, *, loading=False):
-        captured["df"] = prepared.display_frame
-        return True
-
     try:
-        monkeypatch.setattr(runtime_module, "queue_prepared_render", _capture_prepared)
         monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
+        request = runtime_module._build_history_load_request(window, window._load_controller.begin("2330.TW"))
+        assert request.context.code == "2330.TW"
+        assert request.asian_cache_path == str(cache_file)
 
         original_load(window)
 
-        assert "df" in captured
-        assert list(captured["df"].index.strftime("%Y-%m-%d")) == [
-            "2026-04-16",
-            "2026-04-17",
-            "2026-04-20",
-        ]
-        assert float(captured["df"].iloc[-1]["close"]) == 2025.0
+        assert [name for name, _task_suffix in submissions] == ["history_load", "asian_history_backfill"]
+        assert submissions[0][1].endswith(":history")
+        assert submissions[1][1].endswith(":asian-history")
     finally:
         _dispose_kline_window(window)

@@ -25,7 +25,7 @@ class _JsonResponse:
         return None
 
 
-def test_sec_provider_resolves_adr_cik_and_fetches_6k_event(monkeypatch):
+def test_sec_provider_resolves_adr_cik_and_fetches_6k_event(monkeypatch, public_dns_resolution):
     monkeypatch.setenv("SEC_USER_AGENT", "test-sec-agent")
     calls = []
 
@@ -103,7 +103,7 @@ def test_sec_parse_submissions_filters_payload_shape_dates_and_keywords():
     )
 
 
-def test_company_ir_provider_loads_rules_file_and_fetches_matching_event(tmp_path):
+def test_company_ir_provider_loads_rules_file_and_fetches_matching_event(tmp_path, public_dns_resolution):
     rules_path = tmp_path / "rules.json"
     rules_path.write_text(
         json.dumps(

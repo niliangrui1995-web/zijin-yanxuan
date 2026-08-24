@@ -20,7 +20,9 @@ from vcp.realtime_quote_batch import (
 
 FALLBACK_PRESSURE_FETCH_LIMIT = 20
 FALLBACK_PRESSURE_MIN_PENDING = 40
+EASTMONEY_SPLIT_RETRY_MAX_FAILURES = 3
 _EASTMONEY_FAST_FAIL_ATTR = "_rt_eastmoney_fast_fail_on_edge_error"
+_EASTMONEY_SPLIT_RETRY_BUDGET_EXHAUSTED = "eastmoney split retry budget exhausted"
 _CN_TZ = timezone(timedelta(hours=8))
 _QUOTE_FRESHNESS_VALUES = ("network", "cache", "stale")
 _OPENING_WARMUP_STATUSES = frozenset(
@@ -68,6 +70,26 @@ def is_disconnect_like_error(exc_or_text) -> bool:
         "timed out",
     )
     return any(keyword in normalized for keyword in keywords)
+
+
+def _is_split_retry_budget_exhausted(reason: str) -> bool:
+    return _EASTMONEY_SPLIT_RETRY_BUDGET_EXHAUSTED in str(reason or "").lower()
+
+
+def _consume_eastmoney_split_retry_budget(failure_budget: list[int], error: Exception | None = None) -> list[str] | None:
+    if error is not None:
+        failure_budget[0] += 1
+    if failure_budget[0] < EASTMONEY_SPLIT_RETRY_MAX_FAILURES:
+        return None
+    detail = f": {error}" if error is not None else ""
+    return [f"{_EASTMONEY_SPLIT_RETRY_BUDGET_EXHAUSTED}{detail}"]
+
+
+def _eastmoney_cooldown_failure(failures: list[str]) -> str:
+    return next(
+        (reason for reason in failures if is_disconnect_like_error(reason) or _is_split_retry_budget_exhausted(reason)),
+        "",
+    )
 
 
 def _is_opening_warmup_quote_window() -> bool:
@@ -228,6 +250,38 @@ def _fallback_pressure_fetch_limit(provider, pending_count: int) -> int:
     return max(1, limit)
 
 
+def _fetch_eastmoney_split_half(
+    provider,
+    codes,
+    inferred_trade_date: str,
+    min_batch_size: int,
+    cancellation_token,
+    failure_budget: list[int],
+):
+    return fetch_eastmoney_quotes_with_split_retry(
+        provider,
+        codes,
+        inferred_trade_date,
+        min_batch_size,
+        cancellation_token=cancellation_token,
+        _failure_budget=failure_budget,
+    )
+
+
+def _request_eastmoney_split_batch(provider, cancellation_token, codes, inferred_trade_date: str):
+    return _call_quote_source(
+        provider._request_eastmoney_quote_batch,
+        cancellation_token,
+        codes,
+        inferred_trade_date,
+    )
+
+
+def _normalized_eastmoney_split_codes(codes, cancellation_token) -> list[str]:
+    raise_if_cancelled(cancellation_token)
+    return normalize_quote_codes(codes)
+
+
 def fetch_eastmoney_quotes_with_split_retry(
     provider,
     codes,
@@ -235,37 +289,46 @@ def fetch_eastmoney_quotes_with_split_retry(
     min_batch_size: int,
     *,
     cancellation_token=None,
+    _failure_budget: list[int] | None = None,
 ):
-    raise_if_cancelled(cancellation_token)
-    normalized_codes = normalize_quote_codes(codes)
+    normalized_codes = _normalized_eastmoney_split_codes(codes, cancellation_token)
     if not normalized_codes:
         return {}, []
+    failure_budget = _failure_budget if _failure_budget is not None else [0]
+    if exhausted := _consume_eastmoney_split_retry_budget(failure_budget):
+        return {}, exhausted
 
     try:
-        quotes = _call_quote_source(
-            provider._request_eastmoney_quote_batch, cancellation_token, normalized_codes, inferred_trade_date
-        )
+        quotes = _request_eastmoney_split_batch(provider, cancellation_token, normalized_codes, inferred_trade_date)
         return quotes, []
     except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
         reraise_task_cancellation(exc)
+        if exhausted := _consume_eastmoney_split_retry_budget(failure_budget, exc):
+            return {}, exhausted
         if len(normalized_codes) <= min_batch_size or is_disconnect_like_error(exc):
             return {}, [str(exc)]
 
     mid = len(normalized_codes) // 2
-    left_quotes, left_failures = fetch_eastmoney_quotes_with_split_retry(
+    left_quotes, left_failures = _fetch_eastmoney_split_half(
         provider,
         normalized_codes[:mid],
         inferred_trade_date,
         min_batch_size,
-        cancellation_token=cancellation_token,
+        cancellation_token,
+        failure_budget,
     )
-    right_quotes, right_failures = fetch_eastmoney_quotes_with_split_retry(
+    if failure_budget[0] >= EASTMONEY_SPLIT_RETRY_MAX_FAILURES:
+        return {}, left_failures
+    right_quotes, right_failures = _fetch_eastmoney_split_half(
         provider,
         normalized_codes[mid:],
         inferred_trade_date,
         min_batch_size,
-        cancellation_token=cancellation_token,
+        cancellation_token,
+        failure_budget,
     )
+    if failure_budget[0] >= EASTMONEY_SPLIT_RETRY_MAX_FAILURES:
+        return {}, left_failures + right_failures
     merged_quotes = dict(left_quotes)
     merged_quotes.update(right_quotes)
     return merged_quotes, left_failures + right_failures
@@ -357,8 +420,7 @@ def _fetch_realtime_quote_batch_sources(
     quotes, failures = {}, []
     used_sina_fallback = False
     used_tencent_fallback = False
-    fast_fail_sentinel = object()
-    previous_fast_fail = fast_fail_sentinel
+    fast_fail_sentinel = previous_fast_fail = object()
     if fast_fail_eastmoney_edge_error:
         previous_fast_fail = getattr(provider, _EASTMONEY_FAST_FAIL_ATTR, fast_fail_sentinel)
         setattr(provider, _EASTMONEY_FAST_FAIL_ATTR, True)
@@ -371,8 +433,9 @@ def _fetch_realtime_quote_batch_sources(
                 inferred_trade_date,
                 min_batch_size,
             )
-            if failures and any(is_disconnect_like_error(reason) for reason in failures):
-                provider._enter_eastmoney_cooldown(failures[0])
+            cooldown_reason = _eastmoney_cooldown_failure(failures)
+            if cooldown_reason:
+                provider._enter_eastmoney_cooldown(cooldown_reason)
                 eastmoney_available = False
     finally:
         if fast_fail_eastmoney_edge_error:

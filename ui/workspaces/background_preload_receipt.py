@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from infra.tasks.lifecycle import task_unsettled_status
+from app.services.ui_task_lifecycle_service import task_unsettled_status
 
 _WORKSPACE_SNAPSHOT_LIFECYCLE = "workspace_background_snapshot"
 

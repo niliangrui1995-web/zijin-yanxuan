@@ -15,6 +15,7 @@ Application facade for the LHB rolling pool.
 """
 
 import copy
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -31,6 +32,8 @@ from domains.lhb.pool_service import (
     build_full_foreign_display_from_tooltip,
     collect_qualifying_codes,
     filter_records_to_stock_universe,
+    institution_net_buy_wan_value,
+    net_buy_wan_value,
     normalize_day_meta,
     record_stock_code,
     repair_day_meta,
@@ -42,6 +45,69 @@ from domains.lhb.pool_service import (
 from infra.storage.lhb_pool_repository import LhbPoolRepository, LhbRepositoryError
 
 log = get_logger(__name__)
+_LHB_POOL_COMPUTE_ERRORS = (LhbRepositoryError, OSError, RuntimeError, TypeError, ValueError)
+
+
+class _KlineSeriesAdapter:
+    def __init__(self, values: Any) -> None:
+        self._values = list(values)
+
+    @property
+    def iloc(self) -> Any:
+        return self
+
+    def __getitem__(self, index: Any) -> Any:
+        return self._values[index]
+
+    def tail(self, count: int) -> Any:
+        return _KlineSeriesAdapter(self._values[-int(count) :])
+
+    def astype(self, target_type: Any) -> Any:
+        return _KlineSeriesAdapter(target_type(value) for value in self._values)
+
+    def tolist(self) -> list[Any]:
+        return list(self._values)
+
+
+class _KlineFrameAdapter:
+    def __init__(self, source: Any, column_names: list[str]) -> None:
+        self._source = source
+        self.columns = column_names
+
+    @property
+    def empty(self) -> bool:
+        is_empty = getattr(self._source, "is_empty", None)
+        if callable(is_empty):
+            return bool(is_empty())
+        try:
+            return len(self._source) == 0
+        except TypeError:
+            return False
+
+    @property
+    def index(self) -> Any:
+        if "date" in self.columns:
+            return self["date"]
+        if "\u65e5\u671f" in self.columns:
+            return self["\u65e5\u671f"]
+        return range(len(self))
+
+    def __len__(self) -> int:
+        return len(self._source)
+
+    def __getitem__(self, column: str) -> Any:
+        series = self._source[column]
+        to_list = getattr(series, "to_list", None)
+        if callable(to_list):
+            values = to_list()
+        else:
+            tolist = getattr(series, "tolist", None)
+            values = tolist() if callable(tolist) else list(series)
+        return _KlineSeriesAdapter(values)
+
+    def get(self, column: str, default: Any = None) -> Any:
+        return self[column] if column in self.columns else default
+
 
 class LhbPoolManager:
     """龙虎榜关注池数据引擎；写入按日期差量合并并跨实例串行化。"""
@@ -335,66 +401,7 @@ class LhbPoolManager:
         if not columns or not hasattr(frame, "__getitem__"):
             return frame
 
-        class _SeriesAdapter:
-            def __init__(self, values: Any) -> None:
-                self._values = list(values)
-
-            @property
-            def iloc(self) -> Any:
-                return self
-
-            def __getitem__(self, index: Any) -> Any:
-                return self._values[index]
-
-            def tail(self, count: int) -> Any:
-                return _SeriesAdapter(self._values[-int(count) :])
-
-            def astype(self, target_type: Any) -> Any:
-                return _SeriesAdapter(target_type(value) for value in self._values)
-
-            def tolist(self) -> list[Any]:
-                return list(self._values)
-
-        class _FrameAdapter:
-            def __init__(self, source: Any, column_names: list[str]) -> None:
-                self._source = source
-                self.columns = column_names
-
-            @property
-            def empty(self) -> bool:
-                is_empty = getattr(self._source, "is_empty", None)
-                if callable(is_empty):
-                    return bool(is_empty())
-                try:
-                    return len(self._source) == 0
-                except TypeError:
-                    return False
-
-            @property
-            def index(self) -> Any:
-                if "date" in self.columns:
-                    return self["date"]
-                if "\u65e5\u671f" in self.columns:
-                    return self["\u65e5\u671f"]
-                return range(len(self))
-
-            def __len__(self) -> int:
-                return len(self._source)
-
-            def __getitem__(self, column: str) -> Any:
-                series = self._source[column]
-                to_list = getattr(series, "to_list", None)
-                if callable(to_list):
-                    values = to_list()
-                else:
-                    tolist = getattr(series, "tolist", None)
-                    values = tolist() if callable(tolist) else list(series)
-                return _SeriesAdapter(values)
-
-            def get(self, column: str, default: Any = None) -> Any:
-                return self[column] if column in self.columns else default
-
-        return _FrameAdapter(frame, columns)
+        return _KlineFrameAdapter(frame, columns)
 
     def _collect_qualifying_codes(
         self,
@@ -496,11 +503,8 @@ class LhbPoolManager:
                 if code not in qualifying_codes or code in latest_records:
                     continue
 
-                try:
-                    net_buy = float(rec.get("上榜净买额(万)", 0))
-                    jg_net = float(rec.get("机构净买(万)", 0))
-                except (ValueError, TypeError):
-                    net_buy = jg_net = 0.0
+                net_buy = net_buy_wan_value(rec)
+                jg_net = institution_net_buy_wan_value(rec)
                 if not (net_buy > 0 and jg_net >= 0):
                     continue
 
@@ -539,10 +543,13 @@ class LhbPoolManager:
         try:
             result = self._compute_pool_rows(data_provider=data_provider, engine=engine)
             return result
-        except Exception:
+        except _LHB_POOL_COMPUTE_ERRORS as exc:
             status = "error"
+            log.warning("[龙虎榜池] 计算关注池失败: %s", exc, exc_info=True)
             raise
         finally:
+            if sys.exc_info()[0] is not None:
+                status = "error"
             if status == "ok" and not result:
                 status = "empty"
             record_metric(

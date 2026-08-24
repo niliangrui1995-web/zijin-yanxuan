@@ -748,6 +748,9 @@ def test_stock_candidate_cancel_receipt_covers_candidate_and_snapshot_workers(mo
         def is_active_task(self, task_id):
             return task_id in self.active
 
+        def is_task_unsettled(self, task_id):
+            return task_id in self.active
+
         def cancel_task(self, task_id, *, reason):
             self.cancel_calls.append((task_id, reason))
             return True
@@ -758,6 +761,14 @@ def test_stock_candidate_cancel_receipt_covers_candidate_and_snapshot_workers(mo
 
         def cancel(self, name, *, reason):
             self.calls.append((name, reason))
+            return True
+
+        @staticmethod
+        def task_ids_for(_names):
+            return ()
+
+        @staticmethod
+        def submissions_settled_for(_names):
             return True
 
         @staticmethod
@@ -927,16 +938,11 @@ def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch
                 {"key": "scan", "title": "scan"},
             ]
 
-    def _capture_run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
-        jobs.append((fn, on_success, on_error, task_id))
-        return task_id
+    class _Lifecycle:
+        def run_background(self, _name, fn, *, on_success=None, on_error=None, task_id=None, **_kwargs):
+            jobs.append((lambda: fn(CancellationToken()), on_success, on_error, task_id))
 
-    monkeypatch.setattr(
-        stock_candidate_module.task_manager,
-        "run_in_background",
-        _capture_run_in_background,
-        raising=False,
-    )
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
 
     workspace = _Workspace()
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
@@ -981,16 +987,11 @@ def test_stock_candidate_refresh_queues_followup_while_background_running(monkey
         def tab_specs():
             return []
 
-    def _capture_run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
-        jobs.append((fn, on_success, on_error, task_id))
-        return task_id
+    class _Lifecycle:
+        def run_background(self, _name, fn, *, on_success=None, on_error=None, task_id=None, **_kwargs):
+            jobs.append((lambda: fn(CancellationToken()), on_success, on_error, task_id))
 
-    monkeypatch.setattr(
-        stock_candidate_module.task_manager,
-        "run_in_background",
-        _capture_run_in_background,
-        raising=False,
-    )
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
 
     workspace = _Workspace()
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)

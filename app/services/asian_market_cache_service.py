@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping, MutableMapping
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
@@ -18,7 +19,113 @@ from infra.storage.asian_market_cache import (
 )
 from infra.tasks.lifecycle import raise_if_cancelled
 
-GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
+
+class AsianQuoteCacheStore(MutableMapping[str, dict[str, object]]):
+    """Lock-protected realtime quote cache shared by UI and worker threads."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._quotes: dict[str, dict[str, object]] = {}
+
+    @staticmethod
+    def _code(value: object) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def _payload(value: Mapping[str, object]) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            raise TypeError("Asian realtime quote payload must be a mapping")
+        return dict(value)
+
+    def __getitem__(self, key: str) -> dict[str, object]:
+        code = self._code(key)
+        with self._lock:
+            return dict(self._quotes[code])
+
+    def __setitem__(self, key: str, value: Mapping[str, object]) -> None:
+        self.set_quote(key, value)
+
+    def __delitem__(self, key: str) -> None:
+        code = self._code(key)
+        with self._lock:
+            del self._quotes[code]
+
+    def __iter__(self) -> Iterator[str]:
+        with self._lock:
+            return iter(tuple(self._quotes))
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._quotes)
+
+    def get(self, key: str, default=None):
+        code = self._code(key)
+        with self._lock:
+            value = self._quotes.get(code)
+            return dict(value) if value is not None else default
+
+    def items(self):
+        return tuple(self.snapshot().items())
+
+    def set_quote(self, code: str, payload: Mapping[str, object]) -> None:
+        normalized_code = self._code(code)
+        if not normalized_code:
+            return
+        with self._lock:
+            self._quotes[normalized_code] = self._payload(payload)
+
+    def merge_quote(self, code: str, payload: Mapping[str, object]) -> None:
+        normalized_code = self._code(code)
+        if not normalized_code:
+            return
+        update = self._payload(payload)
+        with self._lock:
+            self._quotes[normalized_code] = {**self._quotes.get(normalized_code, {}), **update}
+
+    def snapshot(self) -> dict[str, dict[str, object]]:
+        with self._lock:
+            return {code: dict(payload) for code, payload in self._quotes.items()}
+
+
+GLOBAL_ASIAN_RT_CACHE: MutableMapping[str, dict[str, object]] = AsianQuoteCacheStore()
+
+
+def get_realtime_quote(cache: Mapping[str, Mapping[str, object]], code: str) -> dict[str, object]:
+    value = cache.get(str(code or "").strip()) if isinstance(cache, Mapping) else None
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def set_realtime_quote(
+    cache: MutableMapping[str, dict[str, object]],
+    code: str,
+    payload: Mapping[str, object],
+) -> None:
+    if isinstance(cache, AsianQuoteCacheStore):
+        cache.set_quote(code, payload)
+        return
+    cache[str(code or "").strip()] = dict(payload or {})
+
+
+def merge_realtime_quote(
+    cache: MutableMapping[str, dict[str, object]],
+    code: str,
+    payload: Mapping[str, object],
+) -> None:
+    if isinstance(cache, AsianQuoteCacheStore):
+        cache.merge_quote(code, payload)
+        return
+    normalized_code = str(code or "").strip()
+    cache[normalized_code] = {**dict(cache.get(normalized_code) or {}), **dict(payload or {})}
+
+
+def snapshot_realtime_quotes(cache: Mapping[str, Mapping[str, object]]) -> dict[str, dict[str, object]]:
+    if isinstance(cache, AsianQuoteCacheStore):
+        return cache.snapshot()
+    return {
+        str(code): dict(payload)
+        for code, payload in cache.items()
+        if isinstance(payload, Mapping)
+    }
 
 
 def read_mapping_cache(path: str) -> dict:
@@ -135,12 +242,17 @@ def load_latest_trade_dates(path: str = ASIAN_KLINE_CACHE) -> dict[str, dt.date]
 __all__ = [
     "ASIAN_KLINE_CACHE",
     "ASIAN_REALTIME_CACHE",
+    "AsianQuoteCacheStore",
     "cache_mtime",
     "clear_asian_ticker_index_cache",
+    "get_realtime_quote",
     "load_cached_asian_stock",
     "load_latest_trade_dates",
+    "merge_realtime_quote",
     "read_mapping_cache",
     "read_json_cache",
+    "set_realtime_quote",
+    "snapshot_realtime_quotes",
     "write_realtime_quote_cache",
     "write_json_cache",
 ]

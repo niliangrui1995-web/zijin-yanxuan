@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Deprecated compatibility entrypoint for the owner-scoped earnings service.
+"""Deprecated lazy compatibility entrypoint for the owner-scoped earnings service.
 
 New code must import :class:`app.services.ui_earnings_service.EarningsRefreshService`.
-This module intentionally contains no thread or scheduling implementation.
+The compatibility lookup stays lazy so importing the domain package does not
+pull UI application services into the domain import graph.
 """
 
 from __future__ import annotations
 
-from app.services.ui_earnings_service import EarningsRefreshService
-
 __deprecated__ = True
-EarningsScheduler = EarningsRefreshService
-
+EarningsScheduler: object
 __all__ = ["EarningsScheduler"]
+
+
+def __getattr__(name: str):
+    if name != "EarningsScheduler":
+        raise AttributeError(name)
+    from app.services.ui_earnings_service import EarningsRefreshService
+
+    globals()[name] = EarningsRefreshService
+    return EarningsRefreshService

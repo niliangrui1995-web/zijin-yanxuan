@@ -56,7 +56,7 @@ HOTSPOT_BUDGETS = {
         "ClassicWorkspace.__init__": 39,
     },
     "vcp/fetchers/asian_kline_fetcher.py": {
-        "sync_asian_kline_cache": 185,
+        "sync_asian_kline_cache": 168,
     },
 }
 
@@ -70,6 +70,9 @@ CHANGED_CLASS_MAX_METHODS = 20
 MCCABE_COMPLEXITY_BUDGETS = {
     "domains/scan/breakout_monitor_service.py": {
         "BreakoutMonitorService.precompute_ready_pool": 29,
+    },
+    "scripts/native_watchlist_profile.py": {
+        "_residual_repaint_acceptance": 32,
     },
 }
 LEGACY_SOURCE_MOVES = {

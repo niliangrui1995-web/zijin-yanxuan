@@ -18,8 +18,9 @@ def test_provider_lazy_services_available_on_bare_instance():
     assert isinstance(realtime, RealtimeQuoteProvider)
 
 
-def test_legacy_vcp_data_provider_module_is_a_thin_alias_shim():
+def test_legacy_vcp_data_provider_module_is_a_regular_reexport_shim():
     legacy_module = importlib.import_module("vcp.data_provider")
     target_module = importlib.import_module("infra.market_data.tdx_data_provider")
 
-    assert legacy_module is target_module
+    assert legacy_module is not target_module
+    assert legacy_module.TdxDataProvider is target_module.TdxDataProvider

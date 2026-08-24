@@ -19,6 +19,8 @@ from app.services.asian_market_cache_service import (
 )
 from app.services.asian_market_cache_service import (
     GLOBAL_ASIAN_RT_CACHE,
+    get_realtime_quote,
+    set_realtime_quote,
     write_realtime_quote_cache,
 )
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -387,7 +389,7 @@ class AsianMarketWorker(QThread):
                 code,
                 yf_session=yf_session,
                 info_session=info_session,
-                cached_payload=GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {},
+                cached_payload=get_realtime_quote(GLOBAL_ASIAN_RT_CACHE, code),
                 allow_optional_network=_has_optional_network_budget(deadline),
                 realtime_fetcher=fetch_asian_realtime_quote,
                 enrichment_fetcher=self._fetch_yahoo_enrichment,
@@ -406,7 +408,7 @@ class AsianMarketWorker(QThread):
             return code, None
         if payload is None:
             return code, None
-        GLOBAL_ASIAN_RT_CACHE[code] = payload
+        set_realtime_quote(GLOBAL_ASIAN_RT_CACHE, code, payload)
         return code, payload
 
     def _fetch_updates(self, *, open_markets_only: bool = False) -> dict:

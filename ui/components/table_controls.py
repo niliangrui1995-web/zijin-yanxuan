@@ -154,7 +154,43 @@ def _is_elided_table_cell(table, index) -> bool:
     return required_width > available_width
 
 
-class VCPTableView(QTableView):
+def _model_source_chain(model):
+    seen: set[int] = set()
+    while model is not None and id(model) not in seen:
+        seen.add(id(model))
+        yield model
+        source_model = getattr(model, "sourceModel", None)
+        model = source_model() if callable(source_model) else None
+
+
+def _call_model_presentation_cache_method(model, method_name: str, *args) -> None:
+    for source_model in _model_source_chain(model):
+        method = getattr(source_model, method_name, None)
+        if callable(method):
+            method(*args)
+
+
+def _enable_model_presentation_cache(model) -> None:
+    _call_model_presentation_cache_method(model, "set_presentation_cache_enabled", True)
+
+
+def _clear_model_presentation_cache(model) -> None:
+    _call_model_presentation_cache_method(model, "clear_presentation_cache")
+
+
+class _ViewportBaseBackgroundTableView(QTableView):
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() == QEvent.Type.StyleChange:
+            # QSS reparenting can reset the viewport fill after Qt finishes
+            # processing StyleChange. Keep this opt-in presentation contract.
+            sync_viewport_background = getattr(self, "sync_viewport_base_background", None)
+            if callable(sync_viewport_background):
+                sync_viewport_background()
+        return handled
+
+
+class VCPTableView(_ViewportBaseBackgroundTableView):
     """
     紫金研选统一表格组件 (VCPTableView)
     """
@@ -344,7 +380,7 @@ class VCPTableView(QTableView):
         if self._closing:
             return
         self._invalidate_shell_nav_repaint_guard("theme_changed")
-        self._clear_model_presentation_cache()
+        _clear_model_presentation_cache(self.model())
         self._apply_screen_width_limit()
         self.style().unpolish(self)
         self.style().polish(self)
@@ -377,19 +413,9 @@ class VCPTableView(QTableView):
         self._disconnect_shell_nav_guard_selection_model()
         self._disconnect_refresh_model()
         super().setModel(model)
+        _enable_model_presentation_cache(self.model())
         self._connect_refresh_model(model)
         self._connect_shell_nav_guard_selection_model()
-
-    def _clear_model_presentation_cache(self) -> None:
-        model = self.model()
-        seen: set[int] = set()
-        while model is not None and id(model) not in seen:
-            seen.add(id(model))
-            clear_cache = getattr(model, "clear_presentation_cache", None)
-            if callable(clear_cache):
-                clear_cache()
-            source_model = getattr(model, "sourceModel", None)
-            model = source_model() if callable(source_model) else None
 
     def _connect_shell_nav_guard_selection_model(self) -> None:
         selection_model = self.selectionModel()
@@ -1491,7 +1517,7 @@ class VCPTableView(QTableView):
             parent = parent.parentWidget()
 
         started_at = time.perf_counter()
-        from infra.diagnostics.ui_stall_probe import ui_stall_span
+        from app.services.ui_diagnostics_service import ui_stall_span
 
         stall_signal = reason
         if reason == "other" and delivered_full:
@@ -1626,7 +1652,7 @@ class VCPTableView(QTableView):
                 QEvent.Type.FontChange,
                 QEvent.Type.PaletteChange,
             }:
-                self._clear_model_presentation_cache()
+                _clear_model_presentation_cache(self.model())
         elif event_type in {
             QEvent.Type.MouseButtonPress,
             QEvent.Type.MouseButtonDblClick,
@@ -2304,6 +2330,11 @@ class TableStateWrapper(QWidget):
         stack.addWidget(self._table)
         stack.addWidget(self._overlay)
         self._stack = stack
+
+        # QSS can reset the viewport fill flag while the table is reparented.
+        sync_viewport_background = getattr(self._table, "sync_viewport_base_background", None)
+        if callable(sync_viewport_background):
+            sync_viewport_background()
 
         self.show_table()
 

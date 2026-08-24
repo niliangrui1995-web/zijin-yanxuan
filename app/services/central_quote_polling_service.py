@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from app.services.ui_quote_service import enrich_quotes_with_finance
+from app.services.ui_quote_service import enrich_quotes_with_finance, get_total_shares
 from core.logger import get_logger
 from infra.market_data.provider_ports import RealtimeQuotePort
 from infra.tasks.lifecycle import (
@@ -29,10 +29,7 @@ def batch_get_finance_info(codes):
 
 
 def _has_valid_share_capital(entry: dict | None) -> bool:
-    try:
-        return float((entry or {}).get("zongguben") or (entry or {}).get("_zongguben") or 0) > 0
-    except (TypeError, ValueError):
-        return False
+    return get_total_shares(entry) > 0
 
 
 class CentralQuotePoller:

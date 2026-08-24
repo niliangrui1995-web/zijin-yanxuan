@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import socket
 import sys
 import threading
 import time
@@ -19,6 +20,25 @@ from domains.global_earnings_calendar.providers.alpha_vantage import AlphaVantag
 from domains.global_earnings_calendar.providers.nasdaq import NasdaqEarningsCalendarProvider
 from domains.global_earnings_calendar.storage import ConfirmedEarningsEventsProvider
 from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT
+
+
+@pytest.fixture
+def public_dns_resolution(monkeypatch):
+    """Keep FakeSession provider tests independent of live DNS resolution."""
+    import infra.http_safety as http_safety
+
+    def resolve_public_ip(_host, port, family=0, type=0, proto=0, flags=0):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", int(port)),
+            )
+        ]
+
+    monkeypatch.setattr(http_safety.socket, "getaddrinfo", resolve_public_ip)
 
 
 def test_asian_market_service_delegates_to_fetcher_and_rate_limit_modules(monkeypatch):
@@ -282,6 +302,22 @@ def test_provider_utils_skips_ascii_ca_bundle(monkeypatch, tmp_path):
     assert "REQUESTS_CA_BUNDLE" not in provider_utils.os.environ
 
 
+def test_provider_utils_returns_control_signal_to_caller_thread():
+    def interrupting_task():
+        raise SystemExit("stop provider task")
+
+    results = provider_utils._collect_daemon_task_results(
+        [("interrupting", interrupting_task)],
+        max_workers=1,
+        thread_name_prefix="test-provider",
+    )
+
+    assert results[0][0] == "interrupting"
+    assert results[0][1] is None
+    assert isinstance(results[0][2], SystemExit)
+    assert str(results[0][2]) == "stop provider task"
+
+
 def test_provider_utils_copies_non_ascii_ca_bundle(monkeypatch, tmp_path):
     source_dir = tmp_path / "中文"
     source_dir.mkdir()
@@ -327,7 +363,7 @@ def test_provider_utils_handles_missing_certifi_and_copy_failure(monkeypatch, tm
     provider_utils._ensure_ascii_ca_bundle()
 
 
-def test_alpha_vantage_provider_fetch_and_parse_edges():
+def test_alpha_vantage_provider_fetch_and_parse_edges(public_dns_resolution):
     class Response:
         text = "symbol,reportDate,fiscalDateEnding\nNVDA,2026-05-20,2026-04-30\n"
 
@@ -342,8 +378,9 @@ def test_alpha_vantage_provider_fetch_and_parse_edges():
             self.response = Response()
             self.calls = []
 
-        def get(self, url, *, headers, params, timeout):
+        def get(self, url, *, headers, params, timeout, allow_redirects):
             self.calls.append((url, headers, params, timeout))
+            assert allow_redirects is False
             return self.response
 
     session = Session()

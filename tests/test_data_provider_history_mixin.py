@@ -92,6 +92,10 @@ def test_sync_market_data_refreshes_stale_nonempty_runtime_cache(monkeypatch):
         lambda code, force_refresh, existing: worker_calls.append((code, force_refresh, existing))
         or (code, refreshed, "OK")
     )
+    info_logs = []
+    error_logs = []
+    monkeypatch.setattr(history_mixin._log, "info", info_logs.append)
+    monkeypatch.setattr(history_mixin._log, "error", error_logs.append)
 
     monkeypatch.setattr(MarketCalendar, "today", classmethod(lambda cls, market="CN": date(2026, 7, 10)))
     monkeypatch.setattr(
@@ -107,6 +111,8 @@ def test_sync_market_data_refreshes_stale_nonempty_runtime_cache(monkeypatch):
     assert worker_calls[0][2] is cached
     assert provider.cache_data["000001"] is refreshed
     assert provider._market_data_snapshot_trade_date == "20260710"
+    assert any("[缓存] 阶段1完成" in message for message in info_logs)
+    assert not any("[缓存] 阶段1完成" in message for message in error_logs)
 
 
 def test_sync_market_data_checks_every_requested_code_instead_of_global_latest(monkeypatch):

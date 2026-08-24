@@ -13,6 +13,7 @@ from infra.market_data import asian_quote_provider
 from infra.market_data import asian_realtime_provider as _legacy_provider
 from infra.market_data.normalize import quote_normalizer
 from infra.market_data.policies import fallback_policy
+from infra.market_data.providers import asian_http_provider, yfinance_provider
 
 legacy_provider: Any = _legacy_provider
 
@@ -72,61 +73,39 @@ def test_legacy_private_replacement_paths_are_importable():
         assert hasattr(module, attribute), replacement
 
 
-def test_legacy_private_patch_target_table_is_complete():
-    assert set(legacy_provider._LEGACY_PRIVATE_PATCH_TARGETS) == _PATCHED_PRIVATE_HOOKS
-
-
 @pytest.mark.parametrize("hook_name", sorted(_PATCHED_PRIVATE_HOOKS))
-def test_legacy_private_hook_writes_reach_split_runtime_targets(hook_name):
-    targets = legacy_provider._LEGACY_PRIVATE_PATCH_TARGETS[hook_name]
+def test_legacy_private_hook_reads_warn_and_resolve_to_the_canonical_provider(hook_name):
     with pytest.warns(DeprecationWarning, match=hook_name):
-        original = getattr(legacy_provider, hook_name)
-    replacement = object()
-    try:
-        with pytest.warns(DeprecationWarning, match=hook_name):
-            setattr(legacy_provider, hook_name, replacement)
-        assert getattr(asian_quote_provider, hook_name) is replacement
-        assert all(getattr(module, name) is replacement for module, name in targets)
-    finally:
-        with pytest.warns(DeprecationWarning, match=hook_name):
-            setattr(legacy_provider, hook_name, original)
+        legacy_value = getattr(legacy_provider, hook_name)
+    assert legacy_value is getattr(asian_quote_provider, hook_name)
 
 
-def test_legacy_ticker_base_injection_still_short_circuits_tw_transport():
+def test_runtime_private_injection_uses_canonical_provider_modules(monkeypatch):
     calls: list[str] = []
 
     def transport(url, **_kwargs):
         calls.append(url)
         raise AssertionError("patched ticker base should prevent transport")
 
-    original_transport = legacy_provider.asian_market_get
-    with pytest.warns(DeprecationWarning, match="_ticker_base"):
-        original_ticker_base = legacy_provider._ticker_base
-    try:
-        legacy_provider.asian_market_get = transport
-        with pytest.warns(DeprecationWarning, match="_ticker_base"):
-            legacy_provider._ticker_base = lambda _code: ""
-        assert legacy_provider.fetch_tw_realtime_quote("2330.TW", object()) is None
-        assert calls == []
-    finally:
-        legacy_provider.asian_market_get = original_transport
-        with pytest.warns(DeprecationWarning, match="_ticker_base"):
-            legacy_provider._ticker_base = original_ticker_base
+    monkeypatch.setattr(asian_quote_provider, "asian_market_get", transport)
+    monkeypatch.setattr(asian_http_provider, "ticker_base", lambda _code: "")
+
+    assert legacy_provider.fetch_tw_realtime_quote("2330.TW", object()) is None
+    assert calls == []
 
 
-def test_legacy_facade_preserves_private_write_injection_with_warning():
+def test_legacy_facade_private_write_does_not_change_the_canonical_target():
     original = asian_quote_provider._direct_quote
 
     def replacement(*_args, **_kwargs):
         return {"close": 99.0}
 
     try:
-        with pytest.warns(DeprecationWarning, match="_direct_quote"):
-            legacy_provider._direct_quote = replacement
-        assert asian_quote_provider._direct_quote is replacement
+        legacy_provider._direct_quote = replacement
+
+        assert asian_quote_provider._direct_quote is original
     finally:
-        with pytest.warns(DeprecationWarning, match="_direct_quote"):
-            legacy_provider._direct_quote = original
+        del legacy_provider._direct_quote
 
 
 def test_legacy_facade_injects_monkeypatched_http_transport(monkeypatch):
@@ -144,10 +123,8 @@ def test_legacy_facade_injects_monkeypatched_http_transport(monkeypatch):
         )
         return {"close": 1.0}
 
-    monkeypatch.setattr(legacy_provider, "asian_market_get", transport)
-    with pytest.warns(DeprecationWarning, match="_asian_http"):
-        http_provider = legacy_provider._asian_http
-    monkeypatch.setattr(http_provider, "fetch_tw_realtime_quote", fake_fetch)
+    monkeypatch.setattr(asian_quote_provider, "asian_market_get", transport)
+    monkeypatch.setattr(asian_http_provider, "fetch_tw_realtime_quote", fake_fetch)
     session = object()
     token = object()
 
@@ -172,9 +149,7 @@ def test_legacy_facade_injects_monkeypatched_normalizer_hook(monkeypatch):
         captured.update(kwargs)
         return {"close": 10.0}
 
-    monkeypatch.setattr(legacy_provider, "resolve_previous_close", resolver)
-    with pytest.warns(DeprecationWarning, match="_yfinance"):
-        yfinance_provider = legacy_provider._yfinance
+    monkeypatch.setattr(asian_quote_provider, "resolve_previous_close", resolver)
     monkeypatch.setattr(yfinance_provider, "fetch_yfinance_realtime_quote", fake_fetch)
 
     assert legacy_provider.fetch_yfinance_realtime_quote("2330.TW", object()) == {"close": 10.0}

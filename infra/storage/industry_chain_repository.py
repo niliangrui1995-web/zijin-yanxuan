@@ -9,6 +9,8 @@ import threading
 import uuid
 from pathlib import Path
 
+from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from domains.industry_chain.pool_service import (
     build_ai_industry_chain_context_map,
     build_ai_industry_chain_rows,
@@ -40,6 +42,9 @@ AI_CHAIN_ROWS_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain
 AI_CHAIN_CODES_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_stock_codes.json"
 AI_CHAIN_CONTEXT_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_context_map.json"
 _CACHE_LOCK = threading.RLock()
+_CACHE_READ_ERRORS = (OSError, TypeError, ValueError, json.JSONDecodeError)
+_CACHE_WRITE_ERRORS = (OSError, TypeError, ValueError)
+_log = get_logger(__name__)
 
 
 class IndustryChainRepository:
@@ -127,7 +132,8 @@ class IndustryChainRepository:
             try:
                 with cache_path.open("r", encoding="utf-8") as handle:
                     payload = json.load(handle)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            except _CACHE_READ_ERRORS as exc:
+                _log.warning("[产业链池] 读取签名缓存失败: %s", exc, exc_info=True)
                 return None
         if not isinstance(payload, dict) or payload.get("source_signature") != signature:
             return None
@@ -155,7 +161,23 @@ class IndustryChainRepository:
                         temp_path.unlink(missing_ok=True)
                     except OSError:
                         pass
-        except (OSError, TypeError, ValueError):
+        except _CACHE_WRITE_ERRORS as exc:
+            _log.warning("[产业链池] 写入签名缓存失败: %s", exc, exc_info=True)
+            emit_structured_log(
+                "industry_chain.cache_write.failed",
+                logger=_log,
+                level="warning",
+                cache_name=cache_path.name,
+                payload_key=payload_key,
+                error_type=type(exc).__name__,
+            )
+            record_metric(
+                "industry_chain_cache_write_failures",
+                1,
+                unit="count",
+                tags={"payload_key": payload_key, "error_type": type(exc).__name__},
+                logger=_log,
+            )
             return
 
     def read_rows(self, source_path: str | Path | None = None) -> list[dict]:

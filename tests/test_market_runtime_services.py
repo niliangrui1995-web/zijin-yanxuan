@@ -1029,6 +1029,57 @@ def test_external_terminal_navigator_rejects_typing_when_foreground_changed(monk
     assert emitted == [("warn", "[APP] 目标窗口未处于前台，已取消快捷输入")]
 
 
+def test_external_terminal_navigator_rechecks_foreground_before_typing(monkeypatch):
+    foreground = {"hwnd": "target"}
+    typed = []
+
+    def press(key, **_kwargs):
+        typed.append(("press", key))
+        if key == "esc":
+            foreground["hwnd"] = "other"
+
+    monkeypatch.setitem(sys.modules, "win32gui", SimpleNamespace(GetForegroundWindow=lambda: foreground["hwnd"]))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyautogui",
+        SimpleNamespace(press=press, write=lambda text, **_kwargs: typed.append(("write", text))),
+    )
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda *_args: None),
+    )
+
+    assert ExternalTerminalNavigator._type_quote_code("600000", "APP", expected_hwnd="target") is False
+    assert ("write", "600000") not in typed
+    assert ("press", "enter") not in typed
+
+
+def test_external_terminal_navigator_rechecks_foreground_before_enter(monkeypatch):
+    foreground = {"hwnd": "target"}
+    typed = []
+
+    def write(text, **_kwargs):
+        typed.append(("write", text))
+        foreground["hwnd"] = "other"
+
+    monkeypatch.setitem(sys.modules, "win32gui", SimpleNamespace(GetForegroundWindow=lambda: foreground["hwnd"]))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyautogui",
+        SimpleNamespace(press=lambda key, **_kwargs: typed.append(("press", key)), write=write),
+    )
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda *_args: None),
+    )
+
+    assert ExternalTerminalNavigator._type_quote_code("600000", "APP", expected_hwnd="target") is False
+    assert ("write", "600000") in typed
+    assert ("press", "enter") not in typed
+
+
 @pytest.mark.parametrize(
     ("can_send_input", "activated", "message_fragment"),
     [(False, True, "权限"), (True, False, "激活")],

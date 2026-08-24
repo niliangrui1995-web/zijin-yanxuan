@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import subprocess
 import types
+from typing import get_type_hints
 
 import pytest
 from PyQt6.QtCore import QObject
 from PyQt6.QtTest import QSignalSpy
 
-import core.startup_orchestrator as startup_module
+import app.bootstrap.startup_orchestrator as startup_module
+import core.startup_orchestrator as legacy_startup_module
 from core.event_bus import event_bus
 from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_BUSY_RETRY_DELAY_MS,
@@ -30,6 +32,7 @@ from core.startup_orchestrator import (
     SMART_STARTUP_PRELOAD_RETRY_DELAY_MS,
     SMART_STARTUP_TASK_ID,
     StartupHostAdapter,
+    StartupHostPort,
     StartupOrchestrator,
     ms_until_next_global_earnings_calendar_daily_refresh,
 )
@@ -203,6 +206,14 @@ def test_startup_host_adapter_exposes_narrow_main_window_boundary():
     assert mw.online_done_count == 1
 
 
+def test_startup_host_adapter_declares_protocol_boundary():
+    hints = get_type_hints(StartupHostAdapter.__init__)
+
+    assert hints["main_window"] is StartupHostPort
+    assert legacy_startup_module is not startup_module
+    assert legacy_startup_module.StartupHostAdapter is StartupHostAdapter
+
+
 def test_startup_host_adapter_defers_asian_sync_while_f5_is_pending_or_running():
     mw = _DummyMainWindow()
     adapter = StartupHostAdapter(mw)
@@ -245,13 +256,13 @@ def test_startup_orchestrator_asian_sync_uses_cancellable_subprocess(monkeypatch
     delayed = []
     subprocess_tokens = []
 
-    monkeypatch.setattr("core.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: False)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: False)
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_startup_asian_sync_subprocess",
+        "app.bootstrap.startup_orchestrator._run_startup_asian_sync_subprocess",
         lambda token: subprocess_tokens.append(token),
     )
     monkeypatch.setattr(
-        "core.startup_orchestrator.QTimer.singleShot",
+        "app.bootstrap.startup_orchestrator.QTimer.singleShot",
         lambda delay, callback: delayed.append((delay, callback)),
     )
 
@@ -277,9 +288,9 @@ def test_startup_orchestrator_asian_sync_after_close_is_owned_by_central_schedul
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     delayed = []
 
-    monkeypatch.setattr("core.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: True)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: True)
     monkeypatch.setattr(
-        "core.startup_orchestrator.QTimer.singleShot",
+        "app.bootstrap.startup_orchestrator.QTimer.singleShot",
         lambda delay, callback: delayed.append((delay, callback)),
     )
 
@@ -425,7 +436,7 @@ def test_startup_orchestrator_deferred_load_emits_bootstrap_terminal_after_failu
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     spy = QSignalSpy(event_bus.sig_cache_bootstrap_ready)
     monkeypatch.setattr(
-        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        "app.bootstrap.startup_orchestrator.service_toggle_registry.is_enabled",
         lambda key, *_args, **_kwargs: key == "startup_history_cache_load",
     )
 
@@ -439,7 +450,7 @@ def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatc
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     labels = []
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda label, **_kwargs: labels.append(label),
     )
 
@@ -457,7 +468,7 @@ def test_startup_orchestrator_deferred_load_can_preload_history_when_enabled(mon
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
 
     monkeypatch.setattr(
-        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        "app.bootstrap.startup_orchestrator.service_toggle_registry.is_enabled",
         lambda key, *_args, **_kwargs: key == "startup_history_cache_load",
     )
 
@@ -486,11 +497,11 @@ def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch
     labels = []
 
     monkeypatch.setattr(
-        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        "app.bootstrap.startup_orchestrator.service_toggle_registry.is_enabled",
         lambda key, *_args, **_kwargs: key == "startup_history_cache_load",
     )
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda label, **_kwargs: labels.append(label),
     )
 
@@ -512,7 +523,7 @@ def test_startup_orchestrator_code_count_uses_lightweight_code_map_when_history_
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
 
     monkeypatch.setattr(
-        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        "app.bootstrap.startup_orchestrator.service_toggle_registry.is_enabled",
         lambda key, *_args, **_kwargs: False if key == "startup_history_cache_load" else True,
     )
 
@@ -527,7 +538,7 @@ def test_startup_orchestrator_asian_sync_runner_receives_same_cancellation_token
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
     scheduled_callbacks = []
 
-    monkeypatch.setattr("core.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: False)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator._central_scheduler_owns_asian_sync", lambda: False)
     monkeypatch.setattr(
         startup_module.QTimer,
         "singleShot",
@@ -560,8 +571,8 @@ def test_startup_orchestrator_offline_network_log_is_visible_info(monkeypatch):
         def error(self, message):
             records["error"].append(message)
 
-    monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
-    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator.log", _FakeLog())
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
 
     orchestrator.smart_startup()
 
@@ -575,7 +586,7 @@ def test_startup_orchestrator_smart_startup_records_process_snapshots(monkeypatc
     labels = []
 
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda label, **_kwargs: labels.append(label),
     )
 
@@ -631,7 +642,7 @@ def test_startup_orchestrator_smart_startup_stops_after_window_close(monkeypatch
     labels = []
 
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda label, **_kwargs: labels.append(label),
     )
 
@@ -674,7 +685,7 @@ def test_startup_orchestrator_smart_startup_limits_name_refresh_to_watchlist(mon
     mw._workspace = _Workspace()
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda *_args, **_kwargs: None,
     )
 
@@ -722,7 +733,7 @@ def test_startup_orchestrator_smart_startup_skips_full_name_refresh_without_watc
     mw._workspace = _Workspace()
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda *_args, **_kwargs: None,
     )
 
@@ -739,9 +750,9 @@ def test_startup_orchestrator_skips_asian_sync_when_toggle_disabled(monkeypatch)
     def fake_is_enabled(key, overrides=None):
         return False if key == "silent_asian_sync" else True
 
-    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
     monkeypatch.setattr(
-        "core.startup_orchestrator.run_python_module",
+        "app.bootstrap.startup_orchestrator.run_python_module",
         lambda *_args, **_kwargs: run_calls.append(True),
     )
 
@@ -770,7 +781,7 @@ def test_startup_orchestrator_global_earnings_reads_cache_before_network_refresh
         lambda: calls.append("cache") or {"status": "hit", "events": 3},
     )
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         lambda: calls.append("refresh") or {"status": "success", "events": 7},
     )
 
@@ -875,7 +886,7 @@ def test_startup_orchestrator_global_earnings_sync_allows_next_period_after_comp
         return 2
 
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         fake_refresh,
     )
 
@@ -889,7 +900,7 @@ def test_startup_orchestrator_global_earnings_sync_allows_next_period_after_comp
 
 def test_startup_orchestrator_global_earnings_sync_emits_update_event(monkeypatch):
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         lambda: 1,
     )
 
@@ -905,11 +916,11 @@ def test_startup_orchestrator_global_earnings_sync_marks_degraded_result(monkeyp
     snapshots = []
 
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         lambda: {"status": "degraded", "events": 82, "providers": ["MOPS"], "reused_event_count": 3},
     )
     monkeypatch.setattr(
-        "core.startup_orchestrator.log_process_snapshot",
+        "app.bootstrap.startup_orchestrator.log_process_snapshot",
         lambda name, **kwargs: snapshots.append((name, kwargs)),
     )
 
@@ -929,7 +940,7 @@ def test_startup_orchestrator_global_earnings_sync_marks_degraded_result(monkeyp
 
 def test_startup_orchestrator_global_earnings_retryable_degraded_rearms_soon(monkeypatch):
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         lambda: {
             "status": "degraded",
             "events": 82,
@@ -973,10 +984,10 @@ def test_startup_orchestrator_global_earnings_failure_logs_detail_and_retries(mo
             stderr="sqlite busy\nretry later",
         )
 
-    monkeypatch.setattr("core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
     monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: False)
-    monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
-    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator.log", _FakeLog())
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     spy = QSignalSpy(event_bus.sig_earnings_updated)
@@ -1011,8 +1022,8 @@ def test_startup_orchestrator_global_earnings_timeout_marks_degraded_cache_and_r
             "reason": reason,
         }
 
-    monkeypatch.setattr("core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
-    monkeypatch.setattr("core.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded", fake_mark)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded", fake_mark)
     monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: False)
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
@@ -1058,11 +1069,11 @@ def test_startup_orchestrator_global_earnings_timeout_offpeak_stale_cache_backof
     )
     monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: True)
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         fake_refresh,
     )
     monkeypatch.setattr(
-        "core.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded",
+        "app.bootstrap.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded",
         fake_mark,
     )
 
@@ -1103,7 +1114,7 @@ def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypa
         return 1
 
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         fake_refresh,
     )
 
@@ -1122,7 +1133,7 @@ def test_startup_orchestrator_daily_earnings_timer_queues_background_refresh_and
     calls = []
 
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         lambda: calls.append("refresh") or {"status": "success", "events": 1},
     )
 
@@ -1154,7 +1165,7 @@ def test_startup_orchestrator_global_earnings_sync_skips_overlapping_runs(monkey
         return 1
 
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         fake_refresh,
     )
 
@@ -1181,9 +1192,9 @@ def test_startup_orchestrator_skips_global_earnings_sync_when_toggle_disabled(mo
     def fake_is_enabled(key, overrides=None):
         return False if key == "daily_global_earnings_calendar_sync" else True
 
-    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
+    monkeypatch.setattr("app.bootstrap.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
     monkeypatch.setattr(
-        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        "app.bootstrap.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
         lambda: calls.append("refresh"),
     )
 

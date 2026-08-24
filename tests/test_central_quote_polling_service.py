@@ -67,7 +67,7 @@ def test_central_quote_poller_prefers_local_tdx_capital(monkeypatch):
     payload = poller.fetch_payload({"000001"})
 
     assert payload["finance_data"]["000001"]["source"] == "tdx_base"
-    assert payload["quotes"]["000001"]["_zongguben"] == 2_000_000_000
+    assert payload["quotes"]["000001"]["total_shares"] == 2_000_000_000
     assert payload["quotes"]["000001"]["market_cap"] == 21_000_000_000
 
 

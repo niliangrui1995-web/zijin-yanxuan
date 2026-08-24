@@ -8,11 +8,11 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtTest import QSignalSpy
 
+import app.services.na_daily_service as na_daily_service_module
 from core.event_bus import event_bus
 from core.global_store import global_store
 from core.quote_dispatcher import publish_rt_quotes
 from core.task_manager import task_manager
-from ui.services import na_daily_service as na_daily_service_module
 from ui.services.na_daily_service import NADailyRefreshService
 from ui.tabs import na_daily_tab as na_daily_tab_module
 from ui.tabs.na_daily_tab import NADailyTab

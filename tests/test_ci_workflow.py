@@ -54,6 +54,7 @@ def test_ci_default_test_job_collects_all_gate_failures_before_failing():
         "runtime_dependency",
         "performance_runtime",
         "full_regression",
+        "ui_type_check",
         "project_audit",
     )
     for gate_id in gate_ids:
@@ -61,6 +62,7 @@ def test_ci_default_test_job_collects_all_gate_failures_before_failing():
     assert text.count("continue-on-error: true") >= len(gate_ids) + 2
     assert "- name: Fail if any test gate failed" in text
     assert "steps.full_regression.outcome" in text
+    assert "steps.ui_type_check.outcome" in text
     assert "steps.project_audit.outcome" in text
     assert "pytest_status=$?" in text
     assert "budget_status=$?" in text
@@ -102,3 +104,37 @@ def test_scheduled_latest_allowed_canary_resolves_without_constraints():
     assert "python -m pip install -r requirements-dev.txt\n" in canary
     assert "constraints-py314" not in canary
     assert "--keep-going" in canary
+
+
+def test_ci_uses_marker_based_regression_groups_without_dropping_existing_coverage():
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    for marker in ("arch", "service", "runtime", "perf", "windows"):
+        assert f"python -m pytest -q -m {marker}" in text
+
+    assert (
+        "python -m pyright --warnings ui/kline_pool_state.py ui/kline_typing.py ui/kline_window_recovery.py"
+        in text
+    )
+
+    grouped_steps = (
+        "Architecture regression suite",
+        "Service regression suite",
+        "Runtime dependency guardrail",
+        "Performance and runtime guardrail",
+        "Windows architecture and runtime smoke",
+    )
+    for name in grouped_steps:
+        step = text.split(f"- name: {name}", maxsplit=1)[1].split("\n      - name:", maxsplit=1)[0]
+        assert "tests/test_" not in step
+
+
+def test_ci_caches_pip_uploads_coverage_and_cancels_superseded_runs():
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true" in text
+    assert text.count("cache: pip") == 5
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2" in text
+    assert "name: coverage-report" in text
+    assert "path: tmp/coverage.json" in text
+    assert "retention-days: 7" in text

@@ -4,17 +4,33 @@ import importlib
 import json
 import os
 import time
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 
 import requests
 
 from core.logger import get_logger
 from core.runtime_paths import PROJECT_ROOT
+
+# Metric helpers are intentionally re-exported from this legacy module.
+from domains.earnings.metrics import (  # noqa: F401
+    _SINGLE_QUARTER_METRIC_RESOLVERS,
+    _basis_from_quick_flags,
+    _compute_single_quarter_metrics,
+    _cumulative_single_quarter_metrics,
+    _parse_amount,
+    _ProfitGetter,
+    _q1_single_quarter_metrics,
+    _q2_single_quarter_metrics,
+    _q3_single_quarter_metrics,
+    _q4_single_quarter_metrics,
+    _select_profit_columns,
+    _SingleQuarterMetricResult,
+    _SingleQuarterMetrics,
+)
 from domains.industry_chain.pool_service import normalize_ai_chain_code
 from domains.market_calendar import MarketCalendar
 from infra.http_safety import requests_get_https
@@ -45,47 +61,7 @@ class _LazyModule:
         return getattr(self._load(), name)
 
 
-_TQDM_PATCH_LOCK = Lock()
-_TQDM_PATCHED = False
-
-
-def _install_silent_tqdm() -> None:
-    """Install the AkShare progress hook only when AkShare is actually used."""
-    global _TQDM_PATCHED
-
-    if _TQDM_PATCHED:
-        return
-    with _TQDM_PATCH_LOCK:
-        if _TQDM_PATCHED:
-            return
-        try:
-            tqdm_module = importlib.import_module("tqdm")
-            tqdm_class = tqdm_module.tqdm
-            if not getattr(tqdm_class, "_vcp_earnings_silent", False):
-                original_init = tqdm_class.__init__
-                original_update = tqdm_class.update
-
-                def _silent_tqdm_init(self, *args, **kwargs):
-                    kwargs["disable"] = True
-                    original_init(self, *args, **kwargs)
-                    self._my_n = 0
-
-                def _my_tqdm_update(self, n=1):
-                    original_update(self, n)
-                    self._my_n += n
-                    total = getattr(self, "total", None) or "?"
-                    if self._my_n % 5 == 0 or self._my_n == total:
-                        logger.info(f"[业绩引擎] 分页抓取中 {self._my_n}/{total}")
-
-                tqdm_class.__init__ = _silent_tqdm_init
-                tqdm_class.update = _my_tqdm_update
-                tqdm_class._vcp_earnings_silent = True
-        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug(f"[tqdm补丁] tqdm 劫持失败（非致命）: {exc}")
-        _TQDM_PATCHED = True
-
-
-ak = _LazyModule("akshare", before_load=_install_silent_tqdm)
+ak = _LazyModule("akshare")
 np = _LazyModule("numpy")
 pd = _LazyModule("pandas")
 
@@ -99,6 +75,7 @@ _BSE_QUICK_REPORT_COLUMNS = ["股票代码", "股票简称", "公告日期", "�
 
 _POOL_CACHE = {}
 _THS_FINANCIAL_BENEFIT_CACHE = {}
+_EARNINGS_CACHE_LOCK = RLock()
 _THS_FINANCIAL_BENEFIT_CACHE_TTL_SEC = 30 * 60
 _THS_FINANCIAL_BENEFIT_FALLBACK_TTL_SEC = 6 * 60 * 60
 _THS_NO_LAST_SUCCESS_BASIS = "N/A（本轮未取得同花顺历史底稿，未使用替代来源）"
@@ -140,18 +117,6 @@ def resolve_legacy_earnings_cache_path(cache_file: str | os.PathLike[str]) -> st
     return str(path.resolve())
 
 
-@dataclass(frozen=True)
-class _SingleQuarterMetrics:
-    current_single: float
-    last_single: float
-    yoy_base_single: float
-    last_single_basis: str
-
-
-type _ProfitGetter = Callable[[str, str], tuple[float, bool]]
-type _SingleQuarterMetricResult = tuple[_SingleQuarterMetrics | None, str | None]
-
-
 class EarningsUpstreamDegraded(RuntimeError):
     def __init__(self, func_cn: str, param_str: str, elapsed_sec: float, original_error: Exception):
         self.func_cn = str(func_cn or "").strip()
@@ -172,7 +137,6 @@ class EarningsUpstreamDegraded(RuntimeError):
 
 @lru_cache(maxsize=1)
 def _akshare_ths_headers() -> dict[str, str]:
-    _install_silent_tqdm()
     try:
         module = importlib.import_module("akshare.stock_fundamental.stock_finance_ths")
         headers = getattr(module, "headers")
@@ -185,31 +149,6 @@ def _akshare_ths_headers() -> dict[str, str]:
             "Chrome/114.0.0.0 Safari/537.36"
         )
         }
-
-
-def _parse_amount(value):
-    """把财务字段统一转成元，兼容字符串中的 万/亿 单位。"""
-    if pd.isna(value):
-        return np.nan
-    value_str = str(value).strip()
-    if not value_str:
-        return np.nan
-
-    multiplier = 1.0
-    if "万" in value_str:
-        multiplier = 10000.0
-        value_str = value_str.replace("万", "")
-    elif "亿" in value_str:
-        multiplier = 100000000.0
-        value_str = value_str.replace("亿", "")
-
-    digits = "".join(filter(lambda x: x.isdigit() or x in ".-", value_str))
-    if not digits or digits in (".", "-", "-."):
-        return np.nan
-    try:
-        return float(digits) * multiplier
-    except (ValueError, TypeError):
-        return np.nan
 
 
 def _fetch_enabled_ai_chain_bse_quick_report_rows(report_date: str, stock_codes: set[str]) -> pd.DataFrame:
@@ -307,148 +246,6 @@ def _merge_quick_report_profit_rows(quick_profit_map: dict[str, float], df_quick
             quick_profit_map[code] = float(profit)
 
 
-def _select_profit_columns(columns, is_koufei: bool) -> list:
-    if is_koufei:
-        candidate_groups = (
-            lambda col: "扣除" in str(col),
-            lambda col: "归属于母公司" in str(col) or "归属" in str(col),
-            lambda col: "净利润" in str(col),
-        )
-    else:
-        candidate_groups = (
-            lambda col: "归属于母公司" in str(col) or "归属" in str(col),
-            lambda col: "净利润" in str(col) and "扣除" not in str(col),
-            lambda col: "净利润" in str(col),
-        )
-
-    for matcher in candidate_groups:
-        cols = [col for col in columns if matcher(col)]
-        if cols:
-            return cols
-    return []
-
-
-def _basis_from_quick_flags(*quick_flags: bool) -> str:
-    return "快报净利润回填" if any(quick_flags) else "财报"
-
-
-def _cumulative_single_quarter_metrics(
-    target_est_cum_profit: float,
-    current_dates: tuple[str, str],
-    yoy_dates: tuple[str, str],
-    get_cum_profit_with_quick: _ProfitGetter,
-) -> _SingleQuarterMetricResult:
-    current_cum, current_quick = get_cum_profit_with_quick(current_dates[0], "本期累计基数")
-    previous_cum, previous_quick = get_cum_profit_with_quick(current_dates[1], "上一季基数")
-    if pd.isna(current_cum) or pd.isna(previous_cum):
-        return None, "缺记录"
-
-    yoy_current_cum, _ = get_cum_profit_with_quick(yoy_dates[0], "去年同期基数")
-    yoy_previous_cum, _ = get_cum_profit_with_quick(yoy_dates[1], "去年同期基数")
-    yoy_base_single = (
-        yoy_current_cum - yoy_previous_cum if pd.notna(yoy_current_cum) and pd.notna(yoy_previous_cum) else np.nan
-    )
-
-    return _SingleQuarterMetrics(
-        current_single=target_est_cum_profit - current_cum,
-        last_single=current_cum - previous_cum,
-        yoy_base_single=yoy_base_single,
-        last_single_basis=_basis_from_quick_flags(current_quick, previous_quick),
-    ), None
-
-
-def _q4_single_quarter_metrics(
-    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
-) -> _SingleQuarterMetricResult:
-    return _cumulative_single_quarter_metrics(
-        target_est_cum_profit,
-        (f"{year}-09-30", f"{year}-06-30"),
-        (f"{year - 1}-12-31", f"{year - 1}-09-30"),
-        get_cum_profit_with_quick,
-    )
-
-
-def _q3_single_quarter_metrics(
-    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
-) -> _SingleQuarterMetricResult:
-    return _cumulative_single_quarter_metrics(
-        target_est_cum_profit,
-        (f"{year}-06-30", f"{year}-03-31"),
-        (f"{year - 1}-09-30", f"{year - 1}-06-30"),
-        get_cum_profit_with_quick,
-    )
-
-
-def _q2_single_quarter_metrics(
-    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
-) -> _SingleQuarterMetricResult:
-    q1_date = f"{year}-03-31"
-    last_q2_date, last_q1_date = f"{year - 1}-06-30", f"{year - 1}-03-31"
-    q1_cum, q1_quick = get_cum_profit_with_quick(q1_date, "上一季基数")
-    if pd.isna(q1_cum):
-        return None, "缺记录"
-
-    yoy_base_single = np.nan
-    ly_q2_cum, _ = get_cum_profit_with_quick(last_q2_date, "去年同期基数")
-    ly_q1_cum, _ = get_cum_profit_with_quick(last_q1_date, "去年同期基数")
-    if pd.notna(ly_q2_cum) and pd.notna(ly_q1_cum):
-        yoy_base_single = ly_q2_cum - ly_q1_cum
-
-    return _SingleQuarterMetrics(
-        current_single=target_est_cum_profit - q1_cum,
-        last_single=q1_cum,
-        yoy_base_single=yoy_base_single,
-        last_single_basis=_basis_from_quick_flags(q1_quick),
-    ), None
-
-
-def _q1_single_quarter_metrics(
-    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
-) -> _SingleQuarterMetricResult:
-    last_q4_date, last_q3_date = f"{year - 1}-12-31", f"{year - 1}-09-30"
-    last_q1_date = f"{year - 1}-03-31"
-    last_q4_cum, q4_quick = get_cum_profit_with_quick(last_q4_date, "上一季基数")
-    last_q3_cum, q3_quick = get_cum_profit_with_quick(last_q3_date, "上一季基数")
-    if pd.isna(last_q4_cum) or pd.isna(last_q3_cum):
-        return None, "缺记录"
-
-    yoy_base_single = np.nan
-    ly_q1_cum, _ = get_cum_profit_with_quick(last_q1_date, "去年同期基数")
-    if pd.notna(ly_q1_cum):
-        yoy_base_single = ly_q1_cum
-
-    return _SingleQuarterMetrics(
-        current_single=target_est_cum_profit,
-        last_single=last_q4_cum - last_q3_cum,
-        yoy_base_single=yoy_base_single,
-        last_single_basis=_basis_from_quick_flags(q4_quick, q3_quick),
-    ), None
-
-
-_SINGLE_QUARTER_METRIC_RESOLVERS = {
-    12: _q4_single_quarter_metrics,
-    9: _q3_single_quarter_metrics,
-    6: _q2_single_quarter_metrics,
-    3: _q1_single_quarter_metrics,
-}
-
-
-def _compute_single_quarter_metrics(
-    year: int,
-    month: int,
-    target_est_cum_profit: float,
-    get_cum_profit_with_quick: _ProfitGetter,
-) -> tuple[_SingleQuarterMetrics, str | None]:
-    resolver = _SINGLE_QUARTER_METRIC_RESOLVERS.get(month)
-    if resolver is None:
-        return _SingleQuarterMetrics(np.nan, np.nan, np.nan, "财报"), None
-
-    metrics, error = resolver(year, target_est_cum_profit, get_cum_profit_with_quick)
-    if metrics is None:
-        return _SingleQuarterMetrics(np.nan, np.nan, np.nan, "财报"), error
-    return metrics, error
-
-
 def _preview_remote_text(raw_text, limit: int = 120) -> str:
     preview = " ".join((raw_text or "").split())
     if not preview:
@@ -469,25 +266,30 @@ def _get_cached_ths_financial_benefit(
     max_age_sec: int,
 ) -> tuple[pd.DataFrame | None, float | None]:
     cache_key = _ths_financial_benefit_cache_key(symbol, indicator)
-    cached = _THS_FINANCIAL_BENEFIT_CACHE.get(cache_key)
-    if cached is None:
-        return None, None
+    with _EARNINGS_CACHE_LOCK:
+        cached = _THS_FINANCIAL_BENEFIT_CACHE.get(cache_key)
+        if cached is None:
+            return None, None
 
-    cached_time, cached_df = cached
-    age_sec = time.time() - cached_time
-    if age_sec > max_age_sec:
-        return None, None
-    return cached_df.copy(), age_sec
+        cached_time, cached_df = cached
+        age_sec = time.time() - cached_time
+        if age_sec > max_age_sec:
+            return None, None
+        return cached_df.copy(), age_sec
 
 
 def _set_cached_ths_financial_benefit(symbol: str, indicator: str, df: pd.DataFrame) -> pd.DataFrame:
     cache_key = _ths_financial_benefit_cache_key(symbol, indicator)
-    if cache_key not in _THS_FINANCIAL_BENEFIT_CACHE and len(_THS_FINANCIAL_BENEFIT_CACHE) >= _THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES:
-        excess = len(_THS_FINANCIAL_BENEFIT_CACHE) - _THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES + 1
-        for old_key, _old_value in sorted(_THS_FINANCIAL_BENEFIT_CACHE.items(), key=lambda item: item[1][0])[:excess]:
-            _THS_FINANCIAL_BENEFIT_CACHE.pop(old_key, None)
     cached_df = df.copy()
-    _THS_FINANCIAL_BENEFIT_CACHE[cache_key] = (time.time(), cached_df)
+    with _EARNINGS_CACHE_LOCK:
+        if (
+            cache_key not in _THS_FINANCIAL_BENEFIT_CACHE
+            and len(_THS_FINANCIAL_BENEFIT_CACHE) >= _THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES
+        ):
+            excess = len(_THS_FINANCIAL_BENEFIT_CACHE) - _THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES + 1
+            for old_key, _old_value in sorted(_THS_FINANCIAL_BENEFIT_CACHE.items(), key=lambda item: item[1][0])[:excess]:
+                _THS_FINANCIAL_BENEFIT_CACHE.pop(old_key, None)
+        _THS_FINANCIAL_BENEFIT_CACHE[cache_key] = (time.time(), cached_df)
     return cached_df.copy()
 
 
@@ -663,6 +465,18 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
     return _set_cached_ths_financial_benefit(symbol, indicator, temp_df)
 
 
+def _ak_fetch_pool_label(function_name: str) -> str:
+    for marker, label in (
+        ("yjyg", "【业绩预告池】"),
+        ("yjbb", "【正式财报池】"),
+        ("yjkb", "【业绩快报池】"),
+        ("financial_benefit", "【同花顺历史底稿】"),
+    ):
+        if marker in function_name:
+            return label
+    return "未知金矿"
+
+
 def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwargs):
     """带退避的强力护甲 + 大白话进度解说"""
     retries = 3
@@ -671,15 +485,7 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
 
     # 翻译文言文函数名
     fname = fetch_func.__name__
-    func_cn = "未知金矿"
-    if "yjyg" in fname:
-        func_cn = "【业绩预告池】"
-    elif "yjbb" in fname:
-        func_cn = "【正式财报池】"
-    elif "yjkb" in fname:
-        func_cn = "【业绩快报池】"
-    elif "financial_benefit" in fname:
-        func_cn = "【同花顺历史底稿】"
+    func_cn = _ak_fetch_pool_label(fname)
     is_ths_financial = "financial_benefit" in fname
 
     # 提取报备日期供打印
@@ -688,11 +494,13 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
     # ==== 极速内存缓存过滤（仅针对大池子，同花顺个股不管） ====
     if "financial_benefit" not in fname:
         cache_key = f"{fname}_{param_str}"
-        if cache_key in _POOL_CACHE:
-            cached_time, cached_df = _POOL_CACHE[cache_key]
-            if time.time() - cached_time < 600:  # 10 分钟 TTL，足以覆盖一次深度扫描
-                # 过滤掉冗杂的打卡日志，保持清爽
-                return cached_df.copy()
+        with _EARNINGS_CACHE_LOCK:
+            cached = _POOL_CACHE.get(cache_key)
+            if cached is not None:
+                cached_time, cached_df = cached
+                if time.time() - cached_time < 600:  # 10 分钟 TTL，足以覆盖一次深度扫描
+                    # 过滤掉冗杂的打卡日志，保持清爽
+                    return cached_df.copy()
     # ==========================================================
 
     for i in range(retries):
@@ -707,8 +515,9 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
                 res = fetch_func(*args, **kwargs)
 
             if not is_ths_financial:
-                logger.info(f"[业绩引擎] ✅ {func_cn} ({param_str}) 拉取完成")
-                _POOL_CACHE[f"{fname}_{param_str}"] = (time.time(), res.copy() if not res.empty else res)
+                logger.info(f"[业绩引擎] {func_cn} ({param_str}) 拉取完成")
+                with _EARNINGS_CACHE_LOCK:
+                    _POOL_CACHE[f"{fname}_{param_str}"] = (time.time(), res.copy() if not res.empty else res)
 
             return res
 
@@ -723,7 +532,7 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
             if max_elapsed_sec is not None and elapsed_sec >= float(max_elapsed_sec):
                 if not is_ths_financial:
                     logger.warning(
-                        f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 已耗时 {elapsed_sec:.0f}s，"
+                        f"[业绩引擎] {func_cn} ({param_str}) 已耗时 {elapsed_sec:.0f}s，"
                         "停止本池重试并保留后续自动重试机会"
                     )
                 raise EarningsUpstreamDegraded(func_cn, param_str, elapsed_sec, e) from e
@@ -738,7 +547,7 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
                     )
                     if stale_df is not None:
                         logger.warning(
-                            f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 连续失败，回退使用 {int(age_sec)}s 前缓存: {e}"
+                            f"[业绩引擎] {func_cn} ({param_str}) 连续失败，回退使用 {int(age_sec)}s 前缓存: {e}"
                         )
                         stale_df.attrs["earnings_source_gap"] = _build_ths_source_gap(
                             kwargs.get("symbol") or param_str,
@@ -746,18 +555,18 @@ def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwa
                             last_success_basis=f"同花顺历史底稿内存缓存（{max(0, int(age_sec))}秒前成功）",
                         )
                         return stale_df
-                logger.error(f"[业绩引擎] ❌ {func_cn} ({param_str}) 重试 {retries} 次后仍失败: {e}")
+                logger.error(f"[业绩引擎] {func_cn} ({param_str}) 重试 {retries} 次后仍失败: {e}")
                 raise e
 
             if max_elapsed_sec is not None and elapsed_sec + delay >= float(max_elapsed_sec):
                 if not is_ths_financial:
                     logger.warning(
-                        f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 本轮重试预算不足，"
+                        f"[业绩引擎] {func_cn} ({param_str}) 本轮重试预算不足，"
                         "停止本池重试并保留后续自动重试机会"
                     )
                 raise EarningsUpstreamDegraded(func_cn, param_str, elapsed_sec, e) from e
 
-            logger.warning(f"[业绩引擎] ⚠️ {func_cn} 请求失败({e})，{delay:.0f}s 后第 {i + 2} 次重试")
+            logger.warning(f"[业绩引擎] {func_cn} 请求失败({e})，{delay:.0f}s 后第 {i + 2} 次重试")
             time.sleep(delay)
             delay *= 1.5
 
@@ -809,7 +618,7 @@ def _collect_guidance_pools(engine, report_dates, target_date, cancellation_toke
 
 def _collect_formal_pool(engine, report_date, target_date, degraded, cancellation_token=None):
     if degraded:
-        logger.warning(f"[业绩引擎] ⚠️ 【正式财报池】 ({report_date}) 本轮已降级，跳过并等待下次例行扫描重试")
+        logger.warning(f"[业绩引擎] 【正式财报池】 ({report_date}) 本轮已降级，跳过并等待下次例行扫描重试")
         return [], True, [], True
     try:
         rows = _call_engine_stage(
@@ -826,7 +635,7 @@ def _collect_formal_pool(engine, report_date, target_date, degraded, cancellatio
         )
         return rows, False, [], False
     except EarningsUpstreamDegraded as exc:
-        logger.warning(f"[业绩引擎] ⚠️ 财报({report_date})本轮降级: {exc}")
+        logger.warning(f"[业绩引擎] 财报({report_date})本轮降级: {exc}")
         return [], True, [exc.to_dict()], True
     except _AKSHARE_FETCH_ERRORS as exc:
         _raise_if_cancelled(cancellation_token)
@@ -1003,7 +812,7 @@ def _prepare_daily_scan(engine, target_date, cancellation_token=None, stock_code
         cancellation_token=cancellation_token,
     )
     if pending:
-        logger.info(f"[业绩引擎] 🔍 初筛完成，{len(pending)} 只待深度验证")
+        logger.info(f"[业绩引擎] 初筛完成，{len(pending)} 只待深度验证")
     return pending, critical, degradations
 
 
@@ -1152,7 +961,7 @@ class EarningsEngine:
                         return cursor
                 else:
                     return cursor
-            except Exception:
+            except (AttributeError, TypeError):
                 return cursor
             cursor += timedelta(days=1)
         return target_date + timedelta(days=1)
@@ -1327,7 +1136,7 @@ class EarningsEngine:
             if cache_changed:
                 self._save_cache()
             logger.info(
-                f"[业绩引擎] 💾 已加载近 {self.keep_days} 天 {len(self.local_records)} 条记录，"
+                f"[业绩引擎] 已加载近 {self.keep_days} 天 {len(self.local_records)} 条记录，"
                 f"上次同步: {self.last_sync_date}"
             )
         else:

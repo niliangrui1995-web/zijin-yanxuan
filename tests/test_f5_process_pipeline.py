@@ -512,7 +512,10 @@ def test_forced_deadline_exit_is_reaped_and_persisted_as_cancelled(tmp_path):
 def test_real_subprocess_cancel_and_crash_without_result_are_terminal(tmp_path):
     request = _request(tmp_path)
     repository = F5JobRepository(request.job_dir)
-    sleeping = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    sleeping = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+    )
     handle = ProcessF5JobHandle(request, repository, sleeping)
     handle.cancel("user_cancelled")
     handle._cancel_requested_at = time.monotonic() - 10

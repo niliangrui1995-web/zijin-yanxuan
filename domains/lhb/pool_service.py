@@ -10,6 +10,10 @@ from domains.industry_chain.pool_service import normalize_ai_chain_code
 POOL_WINDOW = 30
 AI_CHAIN_BSE_LHB_ENABLED_CODES = frozenset({"920045"})
 AI_CHAIN_BSE_LHB_MISSING_RPS250_EXEMPT_CODES = frozenset({"920045"})
+NET_BUY_WAN_KEY = "net_buy_wan"
+INSTITUTION_NET_BUY_WAN_KEY = "institution_net_buy_wan"
+_LEGACY_NET_BUY_WAN_KEY = "上榜净买额(万)"
+_LEGACY_INSTITUTION_NET_BUY_WAN_KEY = "机构净买(万)"
 
 
 def to_int(value: object, default: int = 0) -> int:
@@ -29,6 +33,21 @@ def to_float(value: object, default: float = 0.0) -> float:
         return float(normalized)
     except (TypeError, ValueError):
         return default
+
+
+def net_buy_wan_value(record: dict) -> float:
+    """Read canonical net-buy data while accepting persisted display-key records."""
+    source = record if isinstance(record, dict) else {}
+    return to_float(source.get(NET_BUY_WAN_KEY, source.get(_LEGACY_NET_BUY_WAN_KEY)), 0.0)
+
+
+def institution_net_buy_wan_value(record: dict) -> float:
+    """Read canonical institution net-buy data while accepting legacy records."""
+    source = record if isinstance(record, dict) else {}
+    return to_float(
+        source.get(INSTITUTION_NET_BUY_WAN_KEY, source.get(_LEGACY_INSTITUTION_NET_BUY_WAN_KEY)),
+        0.0,
+    )
 
 
 def _format_foreign_branch_line(line: str) -> str:
@@ -172,8 +191,8 @@ def collect_qualifying_codes(
                 or is_st_stock(record.get("名称", ""))
             ):
                 continue
-            net_buy = to_float(record.get("上榜净买额(万)"), 0.0)
-            institution_net_buy = to_float(record.get("机构净买(万)"), 0.0)
+            net_buy = net_buy_wan_value(record)
+            institution_net_buy = institution_net_buy_wan_value(record)
             if net_buy > 0 and institution_net_buy >= 0:
                 qualifying_codes.add(code)
                 code_hit_count[code] = code_hit_count.get(code, 0) + 1
@@ -181,6 +200,8 @@ def collect_qualifying_codes(
 
 
 __all__ = [
+    "INSTITUTION_NET_BUY_WAN_KEY",
+    "NET_BUY_WAN_KEY",
     "POOL_WINDOW",
     "build_day_meta",
     "build_full_foreign_display_from_tooltip",
@@ -188,6 +209,8 @@ __all__ = [
     "filter_records_to_stock_universe",
     "is_bse_code",
     "is_st_stock",
+    "institution_net_buy_wan_value",
+    "net_buy_wan_value",
     "normalize_day_meta",
     "pool_sort_key",
     "record_stock_code",

@@ -7,7 +7,7 @@ import datetime
 import json
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, cast
 
 from PyQt6.QtCore import QTimer
 
@@ -61,9 +61,40 @@ GLOBAL_EARNINGS_CALENDAR_OFFPEAK_END_MINUTE = 8 * 60
 RefreshResult = dict[str, object]
 
 
+class StartupHostPort(Protocol):
+    """Stable main-window capabilities required by startup orchestration."""
+
+    data_provider: Any
+    cache_manager: Any
+    engine: Any
+    asian_market_service: Any
+    tab_watchlist: Any
+    lbl_code_count: Any
+    lbl_status: Any
+
+    def current_workspace(self) -> Any: ...
+
+    def is_closing(self) -> bool: ...
+
+    def call_in_ui(self, callback: Callable[[], object]) -> None: ...
+
+    def refresh_code_count_label_from_provider(self) -> Any: ...
+
+    def set_titlebar_sync_state(self, *args: Any) -> None: ...
+
+    def update_network_ui(self, online: bool) -> None: ...
+
+    def on_smart_startup_online_done(self) -> None: ...
+
+
 def _central_scheduler_owns_asian_sync(now: datetime.datetime | None = None) -> bool:
     local_now = now or datetime.datetime.now()
     return (local_now.hour, local_now.minute) >= (16, 30)
+
+
+def _is_display_a_share_code(raw_code: object) -> bool:
+    code = str(raw_code or "").strip()
+    return len(code) == 6 and code.isdigit() and code.startswith(("60", "68", "00", "30"))
 
 
 def _run_startup_asian_sync_subprocess(cancellation_token: CancellationToken):
@@ -470,7 +501,7 @@ def _global_earnings_calendar_retry_delay_ms(
 class StartupHostAdapter:
     """Narrow host boundary used by StartupOrchestrator."""
 
-    def __init__(self, main_window: Any) -> None:
+    def __init__(self, main_window: StartupHostPort) -> None:
         self._main_window = main_window
 
     @property
@@ -575,36 +606,8 @@ class StartupHostAdapter:
         if callable(sync_runtime_state):
             sync_runtime_state()
 
-class StartupOrchestrator:
-    """主窗口启动流程协调器。"""
 
-    def __init__(self, main_window: Any = None, job_runner: Any = None, host: StartupHostAdapter | None = None) -> None:
-        self.host = host or StartupHostAdapter(main_window)
-        self._job_runner = job_runner or background_job_runner
-        self._closed = False
-        timer_parent = self.host.timer_parent
-        self._deferred_timer = QTimer(timer_parent)
-        self._deferred_timer.setSingleShot(True)
-        self._deferred_timer.timeout.connect(self.deferred_data_load)
-        self._smart_timer = QTimer(timer_parent)
-        self._smart_timer.setSingleShot(True)
-        self._smart_timer.timeout.connect(self.smart_startup)
-        self._global_earnings_calendar_daily_timer = QTimer(timer_parent)
-        self._global_earnings_calendar_daily_timer.setSingleShot(True)
-        self._global_earnings_calendar_daily_timer.timeout.connect(self._run_daily_global_earnings_calendar_refresh)
-        self._global_earnings_calendar_sync_running = False
-        self._global_earnings_calendar_retry_failures = 0
-
-    def schedule_startup(self) -> None:
-        if self._closed:
-            return
-        self._deferred_timer.start(0)
-        self._smart_timer.start(4500)
-        if service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
-            self._schedule_next_global_earnings_calendar_daily_refresh()
-        else:
-            log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar daily sync")
-
+class _StartupGlobalEarningsScheduleMixin:
     def _schedule_next_global_earnings_calendar_daily_refresh(self) -> None:
         if self._closed:
             return
@@ -647,6 +650,90 @@ class StartupOrchestrator:
             reason="background_preload_active",
             retry_ms=GLOBAL_EARNINGS_CALENDAR_PRELOAD_RETRY_DELAY_MS,
         )
+
+    def refresh_global_earnings_calendar(self) -> None:
+        """Silently refresh the global oligarch earnings calendar cache."""
+        if self._global_earnings_calendar_sync_running or not self._alive():
+            return
+        sync_enabled = service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync")
+        if not sync_enabled:
+            log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar sync")
+            return
+        if not _background_preload_is_settled(self.host):
+            self._schedule_global_earnings_calendar_preload_retry()
+            return
+
+        self._global_earnings_calendar_sync_running = True
+
+        try:
+            self._job_runner.run(GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID, self._refresh_global_earnings_calendar_bg)
+        except Exception:
+            self._global_earnings_calendar_sync_running = False
+            raise
+
+    def _refresh_global_earnings_calendar_bg(self) -> None:
+        started_at = time.perf_counter()
+        cache_events = 0
+        try:
+            if not self._alive():
+                return
+            cache_events = self._record_global_earnings_calendar_cache_ready()
+            try:
+                refresh_result = _coerce_global_earnings_calendar_refresh_result(
+                    _run_global_earnings_calendar_refresh_subprocess()
+                )
+                self._handle_global_earnings_calendar_refresh_success(refresh_result, started_at)
+            except ProcessTimeoutError as exc:
+                self._handle_global_earnings_calendar_refresh_error(
+                    exc,
+                    reason="refresh_timeout",
+                    cache_events=cache_events,
+                    timed_out=True,
+                )
+            except (OSError, ProcessExecutionError, RuntimeError, TypeError, ValueError) as exc:
+                self._handle_global_earnings_calendar_refresh_error(
+                    exc,
+                    reason="refresh_failed",
+                    cache_events=cache_events,
+                )
+        finally:
+            self._global_earnings_calendar_sync_running = False
+
+
+class StartupOrchestrator(_StartupGlobalEarningsScheduleMixin):
+    """主窗口启动流程协调器。"""
+
+    def __init__(
+        self,
+        main_window: StartupHostPort | None = None,
+        job_runner: Any = None,
+        host: StartupHostAdapter | None = None,
+    ) -> None:
+        self.host = host or StartupHostAdapter(cast(StartupHostPort, main_window))
+        self._job_runner = job_runner or background_job_runner
+        self._closed = False
+        timer_parent = self.host.timer_parent
+        self._deferred_timer = QTimer(timer_parent)
+        self._deferred_timer.setSingleShot(True)
+        self._deferred_timer.timeout.connect(self.deferred_data_load)
+        self._smart_timer = QTimer(timer_parent)
+        self._smart_timer.setSingleShot(True)
+        self._smart_timer.timeout.connect(self.smart_startup)
+        self._global_earnings_calendar_daily_timer = QTimer(timer_parent)
+        self._global_earnings_calendar_daily_timer.setSingleShot(True)
+        self._global_earnings_calendar_daily_timer.timeout.connect(self._run_daily_global_earnings_calendar_refresh)
+        self._global_earnings_calendar_sync_running = False
+        self._global_earnings_calendar_retry_failures = 0
+
+    def schedule_startup(self) -> None:
+        if self._closed:
+            return
+        self._deferred_timer.start(0)
+        self._smart_timer.start(4500)
+        if service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
+            self._schedule_next_global_earnings_calendar_daily_refresh()
+        else:
+            log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar daily sync")
 
     def shutdown(self) -> None:
         self._closed = True
@@ -759,162 +846,106 @@ class StartupOrchestrator:
         else:
             QTimer.singleShot(ASIAN_DATA_SYNC_START_DELAY_MS, _run_if_alive)
 
+    def _refresh_deferred_code_count(self) -> int | None:
+        host_count = self.host.refresh_code_count_label_from_provider()
+        if host_count is not None:
+            return host_count
+
+        provider = self.host.data_provider
+        cache_data = getattr(provider, "cache_data", None) or {}
+        code_name_map = getattr(provider, "code2name", None) or {}
+        count = len(cache_data)
+        if count <= 0:
+            count = sum(1 for raw_code in code_name_map if _is_display_a_share_code(raw_code))
+        if count > 0:
+            self.host.set_code_count_text(f"标的池: {count} 只")
+        return count
+
+    def _record_deferred_load_cancelled(self, stage: str) -> None:
+        log_process_snapshot(
+            "startup.deferred_load.cancelled",
+            logger=log,
+            extra={"stage": stage},
+        )
+
+    def _load_deferred_history_cache(self) -> str:
+        if service_toggle_registry.is_enabled("startup_history_cache_load"):
+            provider = self.host.data_provider
+            return provider.load_cache_from_disk() if provider is not None else ""
+
+        log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/K线窗口按需加载")
+        self._safe_call_in_ui(self._refresh_deferred_code_count)
+        return ""
+
+    def _publish_deferred_history_cache(self, cache_date: str) -> None:
+        count = len(getattr(self.host.data_provider, "cache_data", None) or {})
+        self._safe_call_in_ui(lambda: self.host.set_code_count_text(f"标的池 {count}"))
+        self._safe_call_in_ui(self._refresh_deferred_code_count)
+        self._safe_call_in_ui(lambda: self.host.set_status_text(f"已加载 {count} 只标的缓存(日线: {cache_date})"))
+        self._safe_call_in_ui(
+            lambda: self.host.set_titlebar_sync_state(
+                "cache",
+                "本地缓存已加载",
+                f"快照 {cache_date}",
+            )
+        )
+
+    def _run_deferred_data_load(self) -> None:
+        started_at = time.perf_counter()
+        if not self._alive():
+            return
+        log_process_snapshot("startup.deferred_load.begin", logger=log)
+
+        cache_date = self._load_deferred_history_cache()
+        if not self._alive():
+            self._record_deferred_load_cancelled("history_cache")
+            return
+        if cache_date:
+            self._publish_deferred_history_cache(cache_date)
+        if not self._alive():
+            self._record_deferred_load_cancelled("history_cache_ui")
+            return
+
+        self.host.try_load_rps_from_disk(
+            set_status_callback=lambda msg: self._safe_call_in_ui(lambda: self.host.set_status_text(msg)),
+        )
+        if not self._alive():
+            self._record_deferred_load_cancelled("rps_cache")
+            return
+
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        log_process_snapshot(
+            "startup.deferred_load.end",
+            logger=log,
+            extra={"cache_loaded": bool(cache_date), "elapsed_ms": int(round(elapsed_ms))},
+        )
+        record_metric(
+            "startup_deferred_load_ms",
+            elapsed_ms,
+            unit="ms",
+            tags={"cache_loaded": str(bool(cache_date)).lower()},
+        )
+        emit_structured_log(
+            "startup.deferred_load.completed",
+            elapsed_ms=round(elapsed_ms, 3),
+            cache_loaded=bool(cache_date),
+            cache_date=str(cache_date or ""),
+        )
+
+    def _run_deferred_data_load_owned(self) -> None:
+        try:
+            self._run_deferred_data_load()
+        finally:
+            self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
+
     def deferred_data_load(self) -> None:
         """延迟恢复历史缓存和 RPS 缓存。"""
-
-        def _is_display_a_share_code(raw_code: object) -> bool:
-            code = str(raw_code or "").strip()
-            return len(code) == 6 and code.isdigit() and code.startswith(("60", "68", "00", "30"))
-
-        def _refresh_code_count_label_from_provider() -> None:
-            host_count = self.host.refresh_code_count_label_from_provider()
-            if host_count is not None:
-                return host_count
-
-            provider = self.host.data_provider
-            cache_data = getattr(provider, "cache_data", None) or {}
-            code_name_map = getattr(provider, "code2name", None) or {}
-            count = len(cache_data)
-            if count <= 0:
-                count = sum(1 for raw_code in code_name_map if _is_display_a_share_code(raw_code))
-            if count > 0:
-                self.host.set_code_count_text(f"标的池: {count} 只")
-            return count
-
-        def _load_bg() -> None:
-            started_at = time.perf_counter()
-            if not self._alive():
-                return
-            log_process_snapshot("startup.deferred_load.begin", logger=log)
-
-            cache_date = ""
-            if service_toggle_registry.is_enabled("startup_history_cache_load"):
-                provider = self.host.data_provider
-                if provider is not None:
-                    cache_date = provider.load_cache_from_disk()
-            else:
-                log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/K线窗口按需加载")
-                self._safe_call_in_ui(_refresh_code_count_label_from_provider)
-            if not self._alive():
-                log_process_snapshot(
-                    "startup.deferred_load.cancelled",
-                    logger=log,
-                    extra={"stage": "history_cache"},
-                )
-                return
-            if cache_date and self._alive():
-                count = len(getattr(self.host.data_provider, "cache_data", None) or {})
-                self._safe_call_in_ui(lambda: self.host.set_code_count_text(f"标的池 {count}"))
-                self._safe_call_in_ui(_refresh_code_count_label_from_provider)
-                self._safe_call_in_ui(
-                    lambda: self.host.set_status_text(f"已加载 {count} 只标的缓存(日线: {cache_date})")
-                )
-                self._safe_call_in_ui(
-                    lambda: self.host.set_titlebar_sync_state(
-                        "cache",
-                        "本地缓存已加载",
-                        f"快照 {cache_date}",
-                    )
-                )
-
-            if not self._alive():
-                log_process_snapshot(
-                    "startup.deferred_load.cancelled",
-                    logger=log,
-                    extra={"stage": "history_cache_ui"},
-                )
-                return
-
-            self.host.try_load_rps_from_disk(
-                set_status_callback=lambda msg: self._safe_call_in_ui(lambda: self.host.set_status_text(msg)),
-            )
-            if not self._alive():
-                log_process_snapshot(
-                    "startup.deferred_load.cancelled",
-                    logger=log,
-                    extra={"stage": "rps_cache"},
-                )
-                return
-
-            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-            log_process_snapshot(
-                "startup.deferred_load.end",
-                logger=log,
-                extra={"cache_loaded": bool(cache_date), "elapsed_ms": int(round(elapsed_ms))},
-            )
-            record_metric(
-                "startup_deferred_load_ms",
-                elapsed_ms,
-                unit="ms",
-                tags={"cache_loaded": str(bool(cache_date)).lower()},
-            )
-            emit_structured_log(
-                "startup.deferred_load.completed",
-                elapsed_ms=round(elapsed_ms, 3),
-                cache_loaded=bool(cache_date),
-                cache_date=str(cache_date or ""),
-            )
-
-        def _load_bg_owned() -> None:
-            try:
-                _load_bg()
-            finally:
-                self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
-
-        self._job_runner.run(STARTUP_DEFERRED_LOAD, _load_bg_owned)
+        self._job_runner.run(STARTUP_DEFERRED_LOAD, self._run_deferred_data_load_owned)
 
         if service_toggle_registry.is_enabled("silent_asian_sync"):
             self._schedule_startup_asian_sync(lambda token: _execute_startup_asian_sync(self, token))
         else:
             log.info("[启动] silent_asian_sync toggle disabled, skip background sync")
-
-    def refresh_global_earnings_calendar(self) -> None:
-        """Silently refresh the global oligarch earnings calendar cache."""
-        if self._global_earnings_calendar_sync_running or not self._alive():
-            return
-        sync_enabled = service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync")
-        if not sync_enabled:
-            log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar sync")
-            return
-        if not _background_preload_is_settled(self.host):
-            self._schedule_global_earnings_calendar_preload_retry()
-            return
-
-        self._global_earnings_calendar_sync_running = True
-
-        try:
-            self._job_runner.run(GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID, self._refresh_global_earnings_calendar_bg)
-        except Exception:
-            self._global_earnings_calendar_sync_running = False
-            raise
-
-    def _refresh_global_earnings_calendar_bg(self) -> None:
-        started_at = time.perf_counter()
-        cache_events = 0
-        try:
-            if not self._alive():
-                return
-            cache_events = self._record_global_earnings_calendar_cache_ready()
-            try:
-                refresh_result = _coerce_global_earnings_calendar_refresh_result(
-                    _run_global_earnings_calendar_refresh_subprocess()
-                )
-                self._handle_global_earnings_calendar_refresh_success(refresh_result, started_at)
-            except ProcessTimeoutError as exc:
-                self._handle_global_earnings_calendar_refresh_error(
-                    exc,
-                    reason="refresh_timeout",
-                    cache_events=cache_events,
-                    timed_out=True,
-                )
-            except (OSError, ProcessExecutionError, RuntimeError, TypeError, ValueError) as exc:
-                self._handle_global_earnings_calendar_refresh_error(
-                    exc,
-                    reason="refresh_failed",
-                    cache_events=cache_events,
-                )
-        finally:
-            self._global_earnings_calendar_sync_running = False
 
     def _record_global_earnings_calendar_cache_ready(self) -> int:
         cache_started_at = time.perf_counter()

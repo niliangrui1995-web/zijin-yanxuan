@@ -3,8 +3,8 @@ from datetime import date as real_date
 
 import pytest
 
-from core import fund_holdings_sync as sync_module
 from core.task_errors import UserFacingTaskError
+from domains.fund_holdings import sync as sync_module
 
 
 def _fake_date(year, month, day):

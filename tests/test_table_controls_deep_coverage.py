@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import QFont, QHelpEvent, QPalette, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QTableView, QWidget
+from PyQt6.QtWidgets import QTableView, QVBoxLayout, QWidget
 
 from core.observability import metric_history
 from ui.components import table_controls as controls
+from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
+from ui.styles.global_qss import generate_global_qss
 
 
 def _render_widget(widget, qt_application, *, width=320, height=100):
@@ -21,6 +23,19 @@ def _render_widget(widget, qt_application, *, width=320, height=100):
     pixmap.fill(Qt.GlobalColor.transparent)
     widget.render(pixmap)
     return pixmap
+
+
+def test_vcp_table_view_enables_presentation_cache_on_source_model(qt_application):
+    source_model = StockTableModel(["代码", "名称"])
+    proxy_model = RtSortFilterProxyModel()
+    proxy_model.setSourceModel(source_model)
+    table = controls.VCPTableView()
+    try:
+        table.setModel(proxy_model)
+        assert source_model._presentation_cache_enabled is True
+    finally:
+        table.close()
+        table.deleteLater()
 
 
 def test_table_visual_glyphs_render_all_semantic_shapes(qt_application):
@@ -284,6 +299,30 @@ def test_vcp_table_view_keeps_opt_in_base_viewport_background_after_theme_restyl
     finally:
         table.close()
         table.deleteLater()
+
+
+def test_table_state_wrapper_restores_opt_in_viewport_background_after_reparent(qt_application):
+    previous_style_sheet = qt_application.styleSheet()
+    parent = QWidget()
+    layout = QVBoxLayout(parent)
+    table = controls.VCPTableView()
+    wrapper = None
+    try:
+        qt_application.setStyleSheet(generate_global_qss())
+        table.set_viewport_base_background_enabled(True)
+        wrapper = controls.TableStateWrapper(table)
+        layout.addWidget(wrapper)
+
+        viewport = table.viewport()
+        assert viewport.autoFillBackground() is True
+        assert viewport.backgroundRole() == QPalette.ColorRole.Base
+    finally:
+        if wrapper is not None:
+            wrapper.close()
+            wrapper.deleteLater()
+        parent.close()
+        parent.deleteLater()
+        qt_application.setStyleSheet(previous_style_sheet)
 
 
 def test_vcp_table_view_passive_metrics_keep_transition_context(qt_application):

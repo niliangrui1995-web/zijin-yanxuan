@@ -15,7 +15,9 @@ from app.services.asian_market_cache_service import (
 from app.services.asian_market_cache_service import (
     GLOBAL_ASIAN_RT_CACHE,
     load_latest_trade_dates,
+    merge_realtime_quote,
     read_mapping_cache,
+    snapshot_realtime_quotes,
     write_realtime_quote_cache,
 )
 from app.services.ui_event_service import domain_events as event_bus
@@ -596,9 +598,7 @@ class _AsianBackgroundPreloadMixin:
         try:
             payload = payload or {}
             for code, info in dict(payload.get("rt_updates") or {}).items():
-                if code not in GLOBAL_ASIAN_RT_CACHE:
-                    GLOBAL_ASIAN_RT_CACHE[code] = {}
-                GLOBAL_ASIAN_RT_CACHE[code].update(dict(info or {}))
+                merge_realtime_quote(GLOBAL_ASIAN_RT_CACHE, code, dict(info or {}))
 
             self.row_data = list(payload.get("rows") or [])
             self._sync_worker_codes()
@@ -1347,7 +1347,7 @@ class AsianMarketTab(_AsianBackgroundPreloadMixin, BaseStockTab):
         if hasattr(self, "table_state") and not getattr(self, "row_data", None):
             self.table_state.show_loading("正在加载本地缓存...", "请稍候")
 
-        existing_rt_cache = dict(GLOBAL_ASIAN_RT_CACHE or {})
+        existing_rt_cache = snapshot_realtime_quotes(GLOBAL_ASIAN_RT_CACHE)
         task_lifecycle_for(self, runner=task_manager).run_background(
             "local_cache_load",
             lambda _cancellation_token: build_asian_market_local_cache_payload(

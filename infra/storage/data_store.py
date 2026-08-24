@@ -312,6 +312,23 @@ class DataStore:
             store.close()
 
 
-# 全局单例
-data_store = DataStore()
+# 全局入口延迟到首次真实读写，避免仅导入存储接口就创建数据库并执行迁移。
+def get_data_store() -> DataStore:
+    return DataStore()
+
+
+class _LazyDataStore:
+    """Keep the legacy module-level store API without import-time SQLite work."""
+
+    def __getattr__(self, name: str):
+        return getattr(get_data_store(), name)
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __repr__(self) -> str:
+        return "<LazyDataStore>"
+
+
+data_store = _LazyDataStore()
 atexit.register(DataStore.close_all)

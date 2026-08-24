@@ -14,6 +14,7 @@ CANCELLABLE_IO_MAX_SLICE_SECONDS = 2.0
 _MIN_IO_TIMEOUT_SECONDS = 0.001
 _CANCELLATION_TOKEN_MARKER = "__accepts_cancellation_token__"
 _CallableT = TypeVar("_CallableT", bound=Callable[..., object])
+_RUNNER_OPERATION_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
 class TaskCancelledError(RuntimeError):
@@ -202,7 +203,7 @@ def bounded_wait_for_tasks_status(
             tuple(task_ids),
             timeout_ms=max(0, int(timeout_ms or 0)),
         )
-    except Exception:  # noqa: BLE001 - physical settlement must fail closed.
+    except _RUNNER_OPERATION_ERRORS:
         return None
     return result if type(result) is bool else None
 
@@ -217,7 +218,7 @@ def task_unsettled_status(runner, task_id: str) -> bool | None:
     if callable(probe):
         try:
             result = probe(task_id)
-        except Exception:  # noqa: BLE001 - physical probe failures remain unknown.
+        except _RUNNER_OPERATION_ERRORS:
             result = None
         if type(result) is bool:
             return result

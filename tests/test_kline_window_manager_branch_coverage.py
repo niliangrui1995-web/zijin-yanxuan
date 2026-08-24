@@ -249,6 +249,29 @@ def test_shutdown_closes_charts_and_cancels_delayed_prewarm():
     manager._shutting_down = False
 
 
+def test_application_lifecycle_owner_routes_quit_to_manager_shutdown(qt_application):
+    manager = _manager()
+    chart = _Chart()
+    view = _Page()
+    manager._charts = [chart]
+    manager._prewarm_view = view
+    manager._prewarm_started = True
+
+    manager_module._ensure_manager_application_lifecycle_owner(manager)
+
+    owner = manager._application_lifecycle_owner
+    assert owner is not None
+    assert owner.parent() is qt_application
+    owner._on_application_quit()
+
+    assert chart.closed is True
+    assert view.deleted is True
+    assert manager._shutting_down is True
+    assert manager.shutdown_diagnostics["clean"] is True
+    assert manager._application_lifecycle_owner is None
+    manager._shutting_down = False
+
+
 def test_webengine_preflight_cache_metrics_and_async_thread(monkeypatch):
     metrics = []
     monkeypatch.setattr(manager_module, "record_metric", lambda *args, **kwargs: metrics.append((args, kwargs)))

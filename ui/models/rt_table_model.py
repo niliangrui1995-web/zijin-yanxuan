@@ -155,12 +155,6 @@ class RtTableModel(QAbstractTableModel):
         self._data = rows
         self._flash_records.clear()
         self.layoutChanged.emit()
-        if self.rowCount() and self.columnCount():
-            self.dataChanged.emit(
-                self.index(0, 0),
-                self.index(self.rowCount() - 1, self.columnCount() - 1),
-                self._flash_roles(),
-            )
 
     def update_rows_incremental(self, new_data):
         _prune_flash_records(self._flash_records)

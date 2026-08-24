@@ -375,7 +375,7 @@ def test_primary_source_rate_limit_does_not_start_yahoo_cooldown(monkeypatch):
     assert marks == []
 
 
-def test_twse_history_uses_default_tls_verification(monkeypatch):
+def test_twse_history_uses_default_tls_verification(monkeypatch, public_dns_resolution):
     fetcher = _load_fetcher_module(monkeypatch)
 
     class _Response:
@@ -405,7 +405,7 @@ def test_twse_history_uses_default_tls_verification(monkeypatch):
     assert "verify" not in session.kwargs
 
 
-def test_twse_history_tls_failure_fails_closed(monkeypatch):
+def test_twse_history_tls_failure_fails_closed(monkeypatch, public_dns_resolution):
     fetcher = _load_fetcher_module(monkeypatch)
 
     class SSLError(Exception):
@@ -481,7 +481,7 @@ def test_tw_history_falls_back_to_yfinance_when_twse_transport_fails(monkeypatch
     assert rows == [{"date": "2026-08-19", "close": 1200.0}]
 
 
-def test_system_curl_official_transport_uses_strict_https_controls(monkeypatch):
+def test_system_curl_official_transport_uses_strict_https_controls(monkeypatch, public_dns_resolution):
     fetcher = _load_fetcher_module(monkeypatch)
     commands = []
 

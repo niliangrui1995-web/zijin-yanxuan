@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from app.services import asian_market_cache_service
 from app.services.kline_open_context import KlineOpenContext
 from app.services.ui_task_lifecycle_service import CancellationToken
 from ui import kline_window_runtime as runtime
@@ -781,8 +782,6 @@ def test_load_and_draw_empty_cn_history_reports_error(monkeypatch):
 def test_load_and_draw_asian_uses_same_background_snapshot_pipeline(monkeypatch, tmp_path):
     calls = _capture_submit(monkeypatch)
     queued = _capture_queue(monkeypatch)
-    import ui.tabs.asian_market_tab as asian_tab
-
     rows = []
     for index, date in enumerate(pd.date_range(end="2026-07-14", periods=30, freq="D")):
         close = 100.0 + index
@@ -801,8 +800,8 @@ def test_load_and_draw_asian_uses_same_background_snapshot_pipeline(monkeypatch,
         json.dumps({"stocks": [{"ticker": "2330.TW", "klines": rows}]}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(asian_tab, "JSON_CACHE", str(cache_path))
-    asian_tab.GLOBAL_ASIAN_RT_CACHE.pop("2330.TW", None)
+    monkeypatch.setattr(asian_market_cache_service, "ASIAN_KLINE_CACHE", str(cache_path))
+    asian_market_cache_service.GLOBAL_ASIAN_RT_CACHE.pop("2330.TW", None)
     monkeypatch.setattr(runtime.MarketCalendar, "get_latest_completed_trade_date", lambda market: dt.date(2026, 7, 14))
     fixture = _runtime_window(
         _Provider(),

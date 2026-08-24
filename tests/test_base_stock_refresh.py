@@ -135,8 +135,7 @@ def test_market_cap_batcher_prefers_local_tdx_capital(monkeypatch, tmp_path):
     assert owner.snapshots == [
         {
             "000001": {
-                "zongguben": 2_000_000_000,
-                "_zongguben": 2_000_000_000,
+                "total_shares": 2_000_000_000.0,
                 "finance_source": "tdx_base",
             }
         }
@@ -901,7 +900,6 @@ def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(m
 
 
 def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_path):
-    import core.json_cache as json_cache
     from ui.tabs import base_stock_refresh as refresh_module
 
     cache_file = tmp_path / "finance.json"
@@ -915,14 +913,14 @@ def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_
     )
 
     load_calls = []
-    original_load_json_file = json_cache.load_json_file
+    original_load_json_file = refresh_module.load_json_file
 
     def _counting_load(path):
         load_calls.append(path)
         return original_load_json_file(path)
 
     monkeypatch.setattr(refresh_module, "FINANCE_CACHE_FILE", str(cache_file))
-    monkeypatch.setattr(json_cache, "load_json_file", _counting_load)
+    monkeypatch.setattr(refresh_module, "load_json_file", _counting_load)
 
     refresh_module._FINANCE_CACHE_PATH = None
     refresh_module._FINANCE_CACHE_SIGNATURE = None
