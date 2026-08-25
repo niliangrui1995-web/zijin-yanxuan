@@ -39,6 +39,15 @@ def merge_asian_context_payload(vcp_data: dict, stock_payload: dict, refresh_hea
     refresh_header_context()
 
 
+def _set_asian_backfill_status(window, message: str, *, tone: str, cached_through=None) -> None:
+    window._set_status_message(message, tone=tone)
+    if cached_through is None:
+        return
+    set_pending_status = getattr(window, "_set_pending_chart_status", None)
+    if callable(set_pending_status):
+        set_pending_status(message, tone)
+
+
 def _load_asian_backfill(
     cancellation_token,
     *,
@@ -69,20 +78,47 @@ def _load_asian_backfill(
     return stock_payload, data_result
 
 
-def _apply_asian_backfill_result(result, *, window, request_code: str, request_generation: int) -> None:
+def _apply_asian_backfill_result(
+    result,
+    *,
+    window,
+    request_code: str,
+    request_generation: int,
+    cached_through=None,
+) -> None:
     with suppress(RuntimeError):
         if not _is_current_request(window, request_code, request_generation):
             return
         stock_payload, data_result = result or (None, None)
         frame = getattr(data_result, "frame", None)
         if not stock_payload or frame is None or frame.empty:
-            window._set_status_message("当前标的暂无历史日线数据", tone="warning")
+            if cached_through is None:
+                window._set_status_message("当前标的暂无历史日线数据", tone="warning")
+            else:
+                _set_asian_backfill_status(
+                    window,
+                    f"当前仍显示本地缓存（截至 {cached_through}）；补拉未返回可用历史日线",
+                    tone="warning",
+                    cached_through=cached_through,
+                )
             return
         if getattr(data_result, "degraded", False):
-            window._set_status_message("历史日线仍不完整（source_gap），未显示缺失 K 线", tone="warning")
+            if cached_through is None:
+                window._set_status_message("历史日线仍不完整（source_gap），未显示缺失 K 线", tone="warning")
+            else:
+                latest_trade_date = getattr(data_result, "latest_trade_date", None)
+                backfill_basis = f"补拉数据截至 {latest_trade_date}" if latest_trade_date else "补拉数据"
+                _set_asian_backfill_status(
+                    window,
+                    f"当前仍显示本地缓存（截至 {cached_through}）；{backfill_basis}未覆盖最近交易日（source_gap）",
+                    tone="warning",
+                    cached_through=cached_through,
+                )
             return
         merge_asian_context_payload(window.vcp_data, stock_payload, window._refresh_header_context)
-        window._set_status_message(f"已回源载入 · {len(frame)} 条日线", tone="success")
+        latest_trade_date = getattr(data_result, "latest_trade_date", None)
+        updated_to = f"已回源更新至 {latest_trade_date}" if latest_trade_date else "已回源载入"
+        window._set_status_message(f"{updated_to} · {len(frame)} 条日线", tone="success")
         window._render_chart(frame, loading=False)
 
 
@@ -92,10 +128,19 @@ def _report_asian_backfill_error(
     window,
     request_code: str,
     request_generation: int,
+    cached_through=None,
 ) -> None:
     with suppress(RuntimeError):
         if _is_current_request(window, request_code, request_generation):
-            window._set_status_message(f"历史日线拉取失败: {error_msg}", tone="error")
+            if cached_through is None:
+                window._set_status_message(f"历史日线拉取失败: {error_msg}", tone="error")
+            else:
+                _set_asian_backfill_status(
+                    window,
+                    f"当前仍显示本地缓存（截至 {cached_through}）；历史日线拉取失败: {error_msg}",
+                    tone="warning",
+                    cached_through=cached_through,
+                )
 
 
 def schedule_asian_history_backfill(
@@ -104,6 +149,7 @@ def schedule_asian_history_backfill(
     task_manager,
     fetch_single_kline,
     submit_owned_task=None,
+    cached_through=None,
 ):
     del task_manager
     if getattr(window, "_closing", False):
@@ -117,7 +163,19 @@ def schedule_asian_history_backfill(
     request_generation = identity.generation
     context = current_kline_open_context(window)
 
-    window._set_status_message("本地缓存缺少或已过期，正在单独补拉历史日线...", tone="loading")
+    if cached_through is None:
+        _set_asian_backfill_status(
+            window,
+            "本地缓存缺少或已过期，正在单独补拉历史日线...",
+            tone="loading",
+        )
+    else:
+        _set_asian_backfill_status(
+            window,
+            f"当前显示本地缓存（截至 {cached_through}），正在后台补拉历史日线...",
+            tone="warning",
+            cached_through=cached_through,
+        )
     if submit_owned_task is None:
         from ui.kline_window_runtime import _submit_owned_window_task
 
@@ -137,6 +195,7 @@ def schedule_asian_history_backfill(
             window=window,
             request_code=request_code,
             request_generation=request_generation,
+            cached_through=cached_through,
         ),
         controller.task_id("asian-history", identity=identity),
         120.0,
@@ -145,6 +204,7 @@ def schedule_asian_history_backfill(
             window=window,
             request_code=request_code,
             request_generation=request_generation,
+            cached_through=cached_through,
         ),
         identity=identity,
     )

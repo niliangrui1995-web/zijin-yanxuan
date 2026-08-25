@@ -825,11 +825,15 @@ def test_load_and_draw_asian_uses_same_background_snapshot_pipeline(monkeypatch,
     assert _payload(result.prepared)["data"]["klines"][-1][1] == 129.0
 
 
-def test_apply_history_load_result_backfills_degraded_asian_history(monkeypatch):
+def test_apply_history_load_result_renders_stale_asian_cache_then_backfills(monkeypatch):
     queued = _capture_queue(monkeypatch)
     fixture = _runtime_window(_Provider(), code="2330.TW", name="台积电", market="TW")
     backfills = []
-    monkeypatch.setattr(runtime, "_schedule_missing_asian_history", lambda window: backfills.append(window))
+    monkeypatch.setattr(
+        runtime,
+        "_schedule_missing_asian_history",
+        lambda window, *, cached_through=None: backfills.append((window, cached_through)),
+    )
     prepared = SimpleNamespace(display_frame=_frame("2026-08-14"))
     result = runtime._PreparedHistoryLoad(
         runtime.KlineDataResult(
@@ -848,11 +852,12 @@ def test_apply_history_load_result_backfills_degraded_asian_history(monkeypatch)
 
     runtime._apply_history_load_result(result, window=fixture.window, request=request)
 
-    assert queued == []
-    assert backfills == [fixture.window]
+    assert queued[-1].prepared is prepared
+    assert queued[-1].kwargs["loading"] is True
+    assert backfills == [(fixture.window, dt.date(2026, 8, 14))]
 
 
-def test_prepare_history_load_skips_realtime_quote_for_stale_asian_history(monkeypatch):
+def test_prepare_history_load_prepares_stale_asian_cache_without_realtime_quote(monkeypatch):
     fixture = _runtime_window(_Provider(), code="2330.TW", name="台积电", market="TW")
     frame = _frame("2026-08-14")
     stale_result = runtime.KlineDataResult(
@@ -888,7 +893,8 @@ def test_prepare_history_load_skips_realtime_quote_for_stale_asian_history(monke
     )
 
     pd.testing.assert_frame_equal(result.frame, frame)
-    assert result.prepared is None
+    assert result.prepared is not None
+    assert result.prepared.point_count == len(frame)
     assert quote_calls == []
 
 

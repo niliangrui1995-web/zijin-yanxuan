@@ -130,6 +130,42 @@ def test_schedule_asian_backfill_success_error_and_stale(monkeypatch):
     )
 
 
+def test_schedule_asian_backfill_keeps_cached_cutoff_visible_after_failure():
+    submission = _CapturedOwnedTask()
+    statuses = []
+    pending_statuses = []
+    controller = KlineLoadController(window_id="asian-cached-cutoff-window")
+    identity = controller.begin("2330.TW")
+    window = SimpleNamespace(
+        _closing=False,
+        _load_controller=controller,
+        code=identity.code,
+        name="台积电",
+        vcp_data={},
+        _refresh_header_context=lambda: None,
+        _set_status_message=lambda message, **kwargs: statuses.append((message, kwargs)),
+        _set_pending_chart_status=lambda message, tone: pending_statuses.append((message, tone)),
+    )
+
+    asian.schedule_asian_history_backfill(
+        window,
+        task_manager=object(),
+        fetch_single_kline=lambda *_args, **_kwargs: {},
+        submit_owned_task=submission,
+        cached_through=dt.date(2026, 8, 14),
+    )
+
+    expected_loading = "当前显示本地缓存（截至 2026-08-14），正在后台补拉历史日线..."
+    assert statuses == [(expected_loading, {"tone": "warning"})]
+    assert pending_statuses == [(expected_loading, "warning")]
+
+    submission.kwargs["on_error"]("network")
+
+    expected_failure = "当前仍显示本地缓存（截至 2026-08-14）；历史日线拉取失败: network"
+    assert statuses[-1] == (expected_failure, {"tone": "warning"})
+    assert pending_statuses[-1] == (expected_failure, "warning")
+
+
 def test_asian_backfill_does_not_render_stale_history(monkeypatch):
     controller = KlineLoadController(window_id="asian-stale-backfill-window")
     identity = controller.begin("2330.TW")

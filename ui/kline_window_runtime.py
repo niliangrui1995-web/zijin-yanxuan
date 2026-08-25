@@ -463,19 +463,23 @@ def _prepare_history_load(
     frame = result.frame
     if not result.has_data or frame is None:
         return _PreparedHistoryLoad(result, frame, None)
-    if result.market != "CN" and result.degraded:
+    stale_asian_cache = result.market != "CN" and result.degradation_reason == "asian_history_stale"
+    if result.market != "CN" and result.degraded and not stale_asian_cache:
         return _PreparedHistoryLoad(result, frame, None)
     raise_if_cancelled(cancellation_token)
-    frame, fetched_quote, quote_error = _merge_initial_quote(
-        frame,
-        result=result,
-        context=context,
-        data_provider=data_provider,
-        target_trade_date=target_trade_date,
-        cached_asian_quote=cached_asian_quote,
-        asian_quote_fetcher=asian_quote_fetcher,
-        cancellation_token=cancellation_token,
-    )
+    fetched_quote = None
+    quote_error = None
+    if not stale_asian_cache:
+        frame, fetched_quote, quote_error = _merge_initial_quote(
+            frame,
+            result=result,
+            context=context,
+            data_provider=data_provider,
+            target_trade_date=target_trade_date,
+            cached_asian_quote=cached_asian_quote,
+            asian_quote_fetcher=asian_quote_fetcher,
+            cancellation_token=cancellation_token,
+        )
     raise_if_cancelled(cancellation_token)
     prepared = KlineRenderPreparer(build_kline_echarts_payload).prepare(
         frame,
@@ -575,7 +579,7 @@ def _run_history_load(cancellation_token, *, request: _HistoryLoadRequest) -> _P
     )
 
 
-def _schedule_missing_asian_history(window) -> None:
+def _schedule_missing_asian_history(window, *, cached_through=None) -> None:
     from ui.kline_window_asian import schedule_asian_history_backfill
 
     schedule_asian_history_backfill(
@@ -583,6 +587,7 @@ def _schedule_missing_asian_history(window) -> None:
         task_manager=task_manager,
         fetch_single_kline=fetch_single_kline,
         submit_owned_task=_submit_owned_window_task,
+        cached_through=cached_through,
     )
 
 
@@ -599,6 +604,17 @@ def _apply_history_load_result(result, *, window, request: _HistoryLoadRequest) 
     if result.quote_error is not None:
         _handle_asian_quote_error(window, identity.code, result.quote_error)
     if request.market != "CN" and result.data_result.degraded:
+        if (
+            result.data_result.degradation_reason == "asian_history_stale"
+            and result.prepared is not None
+            and result.frame is not None
+        ):
+            rendered = queue_prepared_render(window, result.prepared, loading=True)
+            _schedule_missing_asian_history(
+                window,
+                cached_through=result.data_result.latest_trade_date if rendered else None,
+            )
+            return
         _schedule_missing_asian_history(window)
         return
     if result.prepared is not None and result.frame is not None:
