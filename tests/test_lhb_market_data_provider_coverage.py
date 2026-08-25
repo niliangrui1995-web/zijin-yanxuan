@@ -25,6 +25,7 @@ def test_akshare_lhb_http_adapter_uses_safe_bounded_request(monkeypatch) -> None
             "https://datacenter-web.eastmoney.com/api",
             {
                 "allowed_hosts": {"datacenter-web.eastmoney.com"},
+                "allow_reserved_tun_for_allowed_hosts": True,
                 "timeout": (5, 15),
                 "params": {"x": 1},
             },

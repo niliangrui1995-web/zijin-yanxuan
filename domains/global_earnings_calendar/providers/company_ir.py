@@ -26,7 +26,7 @@ from domains.global_earnings_calendar.rules import (
 from domains.global_earnings_calendar.rules import (
     text_has_any as _text_has_any,
 )
-from infra.http_safety import requests_get_https
+from infra.http_safety import https_url_host_allowlist, requests_get_https
 
 log = get_logger(__name__)
 
@@ -88,6 +88,7 @@ class CompanyIrEarningsCalendarProvider:
                     session=self.session,
                     headers={"User-Agent": "Mozilla/5.0"},
                     timeout=self.timeout,
+                    allowed_hosts=https_url_host_allowlist(url),
                 )
                 _raise_for_status(response)
                 events.extend(

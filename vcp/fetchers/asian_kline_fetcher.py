@@ -167,6 +167,11 @@ _JP_HISTORY_PAGE_SIZE = 20
 _KR_HISTORY_PAGE_SIZE = 20
 _SYSTEM_CURL_PATH = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "curl.exe")
 _SYSTEM_CURL_MAX_OUTPUT_BYTES = 1024 * 1024
+_TWSE_ALLOWED_HOSTS = frozenset({"www.twse.com.tw"})
+_TPEX_ALLOWED_HOSTS = frozenset({"www.tpex.org.tw"})
+_NAVER_STOCK_ALLOWED_HOSTS = frozenset({"m.stock.naver.com"})
+_YAHOO_JAPAN_ALLOWED_HOSTS = frozenset({"finance.yahoo.co.jp"})
+_TENCENT_HK_ALLOWED_HOSTS = frozenset({"web.ifzq.gtimg.cn"})
 
 
 def _history_request_timeout(cancellation_token=None, default_seconds: float = 20.0) -> float:
@@ -204,7 +209,11 @@ def _fetch_official_json_via_system_curl(
     cancellation_token=None,
 ) -> dict | None:
     """经 Windows Schannel 严格验签请求交易所官方 JSON，失败时不降级证书校验。"""
-    ensure_https_request(url, allowed_hosts=allowed_hosts)
+    ensure_https_request(
+        url,
+        allowed_hosts=allowed_hosts,
+        allow_reserved_tun_for_allowed_hosts=True,
+    )
     raise_if_cancelled(cancellation_token)
     if not os.path.isfile(_SYSTEM_CURL_PATH):
         return None
@@ -909,6 +918,8 @@ def _fetch_tw_history_twse(
                 session=http_session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.twse.com.tw/"},
                 timeout=_history_request_timeout(cancellation_token),
+                allowed_hosts=_TWSE_ALLOWED_HOSTS,
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             payload = _response_json(response, cancellation_token)
         except Exception as exc:
@@ -959,6 +970,8 @@ def _fetch_tw_history_tpex(
                 "Referer": "https://www.tpex.org.tw/en-us/mainboard/trading/info/stock-pricing.html",
             },
             timeout=_history_request_timeout(cancellation_token),
+            allowed_hosts=_TPEX_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         payload = _response_json(response, cancellation_token)
         if str(payload.get("stat") or "").lower() != "ok":
@@ -1042,6 +1055,8 @@ def _fetch_kr_history_naver(
                 "Referer": "https://m.stock.naver.com/",
             },
             timeout=_history_request_timeout(cancellation_token),
+            allowed_hosts=_NAVER_STOCK_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         payload = _response_json(response, cancellation_token) or []
         if not payload:
@@ -1089,6 +1104,8 @@ def _fetch_jp_history_yahoo_japan(
         session=http_session,
         headers={"User-Agent": "Mozilla/5.0", "Referer": history_url},
         timeout=_history_request_timeout(cancellation_token),
+        allowed_hosts=_YAHOO_JAPAN_ALLOWED_HOSTS,
+        allow_reserved_tun_for_allowed_hosts=True,
     )
     token_match = _YJ_JWT_TOKEN_RE.search(_response_text(response, cancellation_token))
     if not token_match:
@@ -1113,6 +1130,8 @@ def _fetch_jp_history_yahoo_japan(
                 "x-jwt-token": jwt_token,
             },
             timeout=_history_request_timeout(cancellation_token),
+            allowed_hosts=_YAHOO_JAPAN_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         payload = _response_json(api_response, cancellation_token)
         history = ((payload.get("response") or {}).get("history") or {}).get("histories") or []
@@ -1225,6 +1244,8 @@ def _fetch_hk_history_tencent(
             "Referer": "https://stockapp.finance.qq.com/",
         },
         timeout=_history_request_timeout(cancellation_token),
+        allowed_hosts=_TENCENT_HK_ALLOWED_HOSTS,
+        allow_reserved_tun_for_allowed_hosts=True,
     )
     payload = _response_json(response, cancellation_token)
     market_data = (payload.get("data") or {}).get(symbol) or {}

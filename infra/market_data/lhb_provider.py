@@ -17,7 +17,12 @@ log = get_logger(__name__)
 class _AkshareLhbHttp:
     def get(self, url, **kwargs):
         kwargs["timeout"] = (5, 15)
-        return requests_get_https(url, allowed_hosts={"datacenter-web.eastmoney.com"}, **kwargs)
+        return requests_get_https(
+            url,
+            allowed_hosts={"datacenter-web.eastmoney.com"},
+            allow_reserved_tun_for_allowed_hosts=True,
+            **kwargs,
+        )
 
 
 ak_lhb.requests = _AkshareLhbHttp()

@@ -11,7 +11,7 @@ from domains.global_earnings_calendar.constants import DEFAULT_LOOKAHEAD_DAYS
 from domains.global_earnings_calendar.event_ops import sorted_events
 from domains.global_earnings_calendar.models import EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.providers._utils import _collect_daemon_task_results
-from infra.http_safety import requests_get_https
+from infra.http_safety import https_url_host_allowlist, requests_get_https
 
 log = get_logger(__name__)
 
@@ -108,6 +108,8 @@ class NasdaqEarningsCalendarProvider:
                 "Referer": "https://www.nasdaq.com/",
             },
             timeout=self.timeout,
+            allowed_hosts=https_url_host_allowlist(self.base_url),
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         response.raise_for_status()
         return self._parse_payload(response.json(), day, universe, us_symbols)

@@ -15,6 +15,7 @@ from vcp.data_provider_quotes import (
     request_hithink_quote_batch,
     request_sina_quote_batch,
     request_tencent_quote_batch,
+    sanitize_hithink_error,
     to_eastmoney_secid,
 )
 from vcp.data_provider_realtime import fetch_eastmoney_quotes_with_split_retry, summarize_probe_error
@@ -45,6 +46,37 @@ def _network_probe_source_timeout(remaining_sec: float, remaining_sources: int, 
         fallback_reserve = min(NETWORK_PROBE_FALLBACK_RESERVE_SEC, remaining_sec / remaining_sources)
         return remaining_sec - fallback_reserve * (remaining_sources - 1)
     return remaining_sec / remaining_sources
+
+
+def _format_hithink_probe_system_log(probe: dict) -> tuple[str, str]:
+    status = str(probe.get("hithink_quote_probe") or "skip").strip()
+    if status == "ok":
+        return "info", "[网络] 同花顺盘中行情探针通过。"
+
+    if status == "skip":
+        detail = "未启用"
+    elif status == "empty":
+        detail = "返回空行情"
+    elif status == "deadline":
+        detail = "探针超时"
+    elif status.startswith("fail:"):
+        detail = sanitize_hithink_error(status[len("fail:") :]) or "未知异常"
+    else:
+        detail = sanitize_hithink_error(status) or "未知异常"
+
+    if bool(probe.get("ok")):
+        return "warn", f"[网络] 同花顺未通过，兼容回退可用：{detail}。"
+    return "warn", f"[网络] 同花顺未通过，兼容回退不可用：{detail}。"
+
+
+def _emit_hithink_probe_system_log(probe: dict) -> None:
+    level, message = _format_hithink_probe_system_log(probe)
+    try:
+        from domains.runtime import domain_events as event_bus
+
+        event_bus.sig_system_log.emit(level, message)
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _log.debug("[网络] 同花顺探针系统日志发送失败: %s", exc)
 
 
 def _cached_offline_quote_frames(provider, codes: tuple[str, ...]) -> dict:
@@ -141,7 +173,7 @@ class TdxDataProviderRealtimeMixin:
 
         _log.info("[网络] ✅ 同花顺主源及兼容回退的盘中实时行情状态已重置。")
 
-    def test_network(self, timeout=3):
+    def test_network(self, timeout=3, *, return_probe=False):
         """在一个总截止时间内测试实时行情 HTTP 回退链路。"""
         inferred_trade_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
         timeout_sec = max(0.1, float(timeout or 3))
@@ -209,7 +241,11 @@ class TdxDataProviderRealtimeMixin:
                     TypeError,
                     ValueError,
                 ) as quote_exc:
-                    detail = summarize_probe_error(quote_exc)
+                    detail = (
+                        sanitize_hithink_error(quote_exc)
+                        if source_name == "hithink"
+                        else summarize_probe_error(quote_exc)
+                    )
                     probe[f"{source_name}_quote_probe"] = f"fail:{detail}"
                     quote_failures.append(f"{source_name}:{detail}")
 
@@ -217,6 +253,7 @@ class TdxDataProviderRealtimeMixin:
             probe["ok"] = ok
             probe["elapsed_ms"] = round((time.monotonic() - started_at) * 1000.0, 3)
             self._rt_last_network_probe = probe
+            _emit_hithink_probe_system_log(probe)
             log_fn = _log.info if ok else _log.warning
             log_fn(
                 f"[网络] 盘中行情探针{'通过' if ok else '失败'} "
@@ -227,20 +264,26 @@ class TdxDataProviderRealtimeMixin:
                 f"| tencent={probe['tencent_quote_probe']} "
                 f"| batch={probe['batch_size']} | dedup={probe['dedup_window_sec']:.1f}s"
             )
-            return ok
+            return dict(probe) if return_probe else ok
         except (ConnectionError, KeyError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
             probe["quote_probe"] = f"fail:{summarize_probe_error(exc)}"
             probe["ok"] = False
             self._rt_last_network_probe = probe
+            _emit_hithink_probe_system_log(probe)
             _log.warning(
                 f"[网络] 盘中行情探针失败 "
                 f"| page={probe['page_probe']} | push2={probe['quote_probe']} "
                 f"| batch={probe['batch_size']} | dedup={probe['dedup_window_sec']:.1f}s"
             )
             _log.debug(f"[网络] 盘中实时行情连通性测试失败: {exc}")
-            return False
+            return dict(probe) if return_probe else False
         finally:
             self._rt_api_call_timeout_sec = previous_timeout
+
+    def test_network_with_probe(self, timeout=3) -> dict:
+        """返回本次实时行情探针的原子快照，供重置流程展示结果。"""
+        result = self.test_network(timeout=timeout, return_probe=True)
+        return dict(result) if isinstance(result, dict) else {"ok": bool(result)}
 
     def get_last_network_probe(self) -> dict:
         return dict(getattr(self, "_rt_last_network_probe", {}) or {})

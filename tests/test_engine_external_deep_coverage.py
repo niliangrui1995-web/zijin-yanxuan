@@ -53,8 +53,12 @@ def test_finance_small_helpers_cover_normalization_and_local_fallback(monkeypatc
 def test_fetch_finance_batches_filters_invalid_rows_and_closes(monkeypatch):
     responses = []
 
-    def fake_open(request, timeout):
+    def fake_open(request, timeout, **kwargs):
         assert timeout == 8
+        assert kwargs == {
+            "allowed_hosts": module._EASTMONEY_FINANCE_ALLOWED_HOSTS,
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
         responses.append(request.full_url)
         payload = {
             "rc": 0,
@@ -207,7 +211,11 @@ def test_market_cap_covers_missing_direct_and_share_capital_paths(monkeypatch):
 def test_institutional_shareholders_prefixes_and_no_data(monkeypatch, code, prefix):
     seen = []
 
-    def fake_open(request, timeout):
+    def fake_open(request, timeout, **kwargs):
+        assert kwargs == {
+            "allowed_hosts": module._EASTMONEY_SHAREHOLDER_ALLOWED_HOSTS,
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
         seen.append(request.full_url)
         return _Response({"sdltgd": []})
 

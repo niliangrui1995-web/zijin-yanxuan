@@ -31,6 +31,7 @@ from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _QFII_API_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 _RUIYUAN_API_URL = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
+_FUND_HOLDINGS_ALLOWED_HOSTS = frozenset({"datacenter-web.eastmoney.com", "fundf10.eastmoney.com"})
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _QFII_PAGE_SIZE = 500
 _QFII_MAX_PAGES = 20
@@ -101,7 +102,12 @@ def _fetch_text(url: str, *, params: dict | None = None, referer: str = "", canc
         },
     )
     try:
-        response = urlopen_https(request, timeout=15)
+        response = urlopen_https(
+            request,
+            timeout=15,
+            allowed_hosts=_FUND_HOLDINGS_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
         try:
             payload = _call_with_cancellation(
                 _read_limited_response,

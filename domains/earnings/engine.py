@@ -70,6 +70,7 @@ EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS = 60.0
 AI_CHAIN_BSE_EARNINGS_ENABLED_CODES = frozenset({"920045"})
 _EASTMONEY_BSE_QUICK_REPORT_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 _EASTMONEY_BSE_QUICK_REPORT_ALLOWED_HOSTS = frozenset({"datacenter.eastmoney.com"})
+_THS_FINANCIAL_BENEFIT_ALLOWED_HOSTS = frozenset({"basic.10jqka.com.cn"})
 _EASTMONEY_BSE_QUICK_REPORT_TIMEOUT = (5, 15)
 _BSE_QUICK_REPORT_COLUMNS = ["股票代码", "股票简称", "公告日期", "净利润-净利润"]
 
@@ -187,6 +188,7 @@ def _fetch_enabled_ai_chain_bse_quick_report_rows(report_date: str, stock_codes:
             params=params,
             timeout=_EASTMONEY_BSE_QUICK_REPORT_TIMEOUT,
             allowed_hosts=_EASTMONEY_BSE_QUICK_REPORT_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         if int(getattr(response, "status_code", 0) or 0) != 200:
             raise RuntimeError(f"东财北交所业绩快报 HTTP 状态异常: {getattr(response, 'status_code', None)}")
@@ -384,7 +386,13 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
     headers.setdefault("Referer", f"https://basic.10jqka.com.cn/new/{symbol}/finance.html")
 
     try:
-        response = requests_get_https(url, headers=headers, timeout=_THS_REQUEST_TIMEOUT)
+        response = requests_get_https(
+            url,
+            headers=headers,
+            timeout=_THS_REQUEST_TIMEOUT,
+            allowed_hosts=_THS_FINANCIAL_BENEFIT_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
     except requests.RequestException as exc:
         raise RuntimeError(f"THS 请求失败: symbol={symbol}, {exc}") from exc
 

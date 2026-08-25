@@ -15,6 +15,8 @@ from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError, Ne
 from infra.http_safety import requests_get_https
 
 _ISO_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+_TWSE_HOLIDAY_ALLOWED_HOSTS = frozenset({"www.twse.com.tw"})
+_NAGER_HOLIDAY_ALLOWED_HOSTS = frozenset({"date.nager.at"})
 
 
 def is_iso_date(text: str) -> bool:
@@ -232,7 +234,12 @@ def fetch_twse_holidays(year: int, include_keywords: tuple[str, ...], exclude_ke
 
     try:
         url = f"https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear={minguo_year}"
-        response = requests_get_https(url, timeout=20)
+        response = requests_get_https(
+            url,
+            timeout=20,
+            allowed_hosts=_TWSE_HOLIDAY_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
     except requests.RequestException as exc:
         raise NetworkServiceError(f"twse request failed: {year}") from exc
 
@@ -311,7 +318,12 @@ def fetch_public_holidays(
 
     try:
         url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
-        response = requests_get_https(url, timeout=15)
+        response = requests_get_https(
+            url,
+            timeout=15,
+            allowed_hosts=_NAGER_HOLIDAY_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
     except requests.RequestException as exc:
         raise NetworkServiceError(f"holiday api request failed: {country_code} {year}") from exc
 

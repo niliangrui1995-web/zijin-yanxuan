@@ -51,7 +51,7 @@ def test_batch_get_finance_info_uses_eastmoney_market_cap_fields(monkeypatch, tm
         },
     }
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **_kwargs):
         del timeout
         seen_urls.append(request.full_url)
         return _FakeResponse(payload)
@@ -96,7 +96,7 @@ def test_batch_get_finance_info_falls_back_to_last_close_when_latest_price_missi
 
     monkeypatch.setattr(engine_external, "FINANCE_CACHE_FILE", str(cache_file))
     monkeypatch.setattr(engine_external, "_load_local_tdx_finance_info", lambda codes: {})
-    monkeypatch.setattr(engine_external, "urlopen_https", lambda request, timeout=8: _FakeResponse(payload))
+    monkeypatch.setattr(engine_external, "urlopen_https", lambda request, timeout=8, **_kwargs: _FakeResponse(payload))
 
     result = engine_external.batch_get_finance_info(["600519"])
 
@@ -201,7 +201,7 @@ def test_batch_get_finance_info_uses_recent_cache_when_network_fails(monkeypatch
     monkeypatch.setattr(
         engine_external,
         "urlopen_https",
-        lambda request, timeout=8: (_ for _ in ()).throw(RuntimeError("network-down")),
+        lambda request, timeout=8, **_kwargs: (_ for _ in ()).throw(RuntimeError("network-down")),
     )
 
     result = engine_external.batch_get_finance_info(["000001", "000002"])

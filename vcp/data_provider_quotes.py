@@ -27,11 +27,10 @@ log = get_logger(__name__)
 _CN_TZ = timezone(timedelta(hours=8))
 _HITHINK_SNAPSHOT_URL = "https://fuyao.aicubes.cn/api/a-share/prices/snapshot"
 _HITHINK_ALLOWED_HOSTS = {"fuyao.aicubes.cn"}
-# Optional VPN TUN route only: 198.18.0.67 is IANA benchmarking-reserved, not
-# a public vendor IP pin.  The HTTP guard accepts this exact TUN resolution on
-# HTTPS/443, or an ordinary public IPv4/IPv6 resolution with normal TLS
-# hostname/certificate validation when the user connects directly in China.
-_HITHINK_RESERVED_TUN_HOST_ADDRESSES = {"fuyao.aicubes.cn": {"198.18.0.67"}}
+_EASTMONEY_REALTIME_HOSTS = ("push2.eastmoney.com", "88.push2.eastmoney.com")
+_EASTMONEY_REALTIME_ALLOWED_HOSTS = frozenset((*_EASTMONEY_REALTIME_HOSTS, "push2delay.eastmoney.com"))
+_SINA_REALTIME_ALLOWED_HOSTS = frozenset({"hq.sinajs.cn"})
+_TENCENT_REALTIME_ALLOWED_HOSTS = frozenset({"qt.gtimg.cn"})
 _HITHINK_RETRY_ATTEMPTS = 3
 _HITHINK_RETRY_DELAY_SEC = 0.15
 _HITHINK_RETRYABLE_CODES = frozenset((4001, 5001, 5002, 5003))
@@ -353,7 +352,7 @@ def _request_hithink_snapshot_payload(
                 request,
                 timeout=bounded_io_timeout(min(timeout_sec, remaining_sec), cancellation_token),
                 allowed_hosts=_HITHINK_ALLOWED_HOSTS,
-                reserved_tun_host_addresses=_HITHINK_RESERVED_TUN_HOST_ADDRESSES,
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             try:
                 payload = _read_json_response(response, cancellation_token)
@@ -614,7 +613,7 @@ def _request_hithink_ticker_search_payload(provider, code: str, *, cancellation_
                 request,
                 timeout=bounded_io_timeout(min(timeout_sec, remaining_sec), cancellation_token),
                 allowed_hosts=_HITHINK_ALLOWED_HOSTS,
-                reserved_tun_host_addresses=_HITHINK_RESERVED_TUN_HOST_ADDRESSES,
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             try:
                 payload = _read_json_response(response, cancellation_token)
@@ -712,15 +711,15 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str, *, 
         return {}
     fields = "f12,f13,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18,f124"
     secids = ",".join(to_eastmoney_secid(code) for code in normalized_codes)
-    hosts = list(
-        dict.fromkeys(
-            getattr(
-                provider,
-                "_rt_eastmoney_hosts",
-                ["push2.eastmoney.com", "88.push2.eastmoney.com"],
-            )
+    hosts = [
+        host
+        for raw_host in dict.fromkeys(
+            getattr(provider, "_rt_eastmoney_hosts", _EASTMONEY_REALTIME_HOSTS)
         )
-    )
+        if (host := str(raw_host or "").strip().lower()) in _EASTMONEY_REALTIME_ALLOWED_HOSTS
+    ]
+    if not hosts:
+        raise RuntimeError("东方财富实时报价未配置受信主机")
     timeout_sec = float(getattr(provider, "_rt_api_call_timeout_sec", 8.0) or 8.0)
     last_error = None
 
@@ -740,7 +739,12 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str, *, 
         )
 
         try:
-            resp = urlopen_https(req, timeout=bounded_io_timeout(timeout_sec, cancellation_token))
+            resp = urlopen_https(
+                req,
+                timeout=bounded_io_timeout(timeout_sec, cancellation_token),
+                allowed_hosts=_EASTMONEY_REALTIME_ALLOWED_HOSTS,
+                allow_reserved_tun_for_allowed_hosts=True,
+            )
             try:
                 payload = _read_json_response(resp, cancellation_token)
             finally:
@@ -819,7 +823,12 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str, *, cance
             "Connection": "close",
         },
     )
-    resp = urlopen_https(req, timeout=bounded_io_timeout(timeout_sec, cancellation_token))
+    resp = urlopen_https(
+        req,
+        timeout=bounded_io_timeout(timeout_sec, cancellation_token),
+        allowed_hosts=_SINA_REALTIME_ALLOWED_HOSTS,
+        allow_reserved_tun_for_allowed_hosts=True,
+    )
     try:
         text = _read_text_response(resp, "gbk", cancellation_token)
     finally:
@@ -885,7 +894,12 @@ def request_tencent_quote_batch(provider, codes, inferred_trade_date: str, *, ca
             "Connection": "close",
         },
     )
-    resp = urlopen_https(req, timeout=bounded_io_timeout(timeout_sec, cancellation_token))
+    resp = urlopen_https(
+        req,
+        timeout=bounded_io_timeout(timeout_sec, cancellation_token),
+        allowed_hosts=_TENCENT_REALTIME_ALLOWED_HOSTS,
+        allow_reserved_tun_for_allowed_hosts=True,
+    )
     try:
         text = _read_text_response(resp, "gbk", cancellation_token)
     finally:

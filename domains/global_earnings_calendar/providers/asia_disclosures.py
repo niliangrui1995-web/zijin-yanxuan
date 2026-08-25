@@ -28,7 +28,9 @@ from domains.global_earnings_calendar.http_utils import (
 from domains.global_earnings_calendar.http_utils import (
     redact_sensitive_text as _redact_sensitive_text,
 )
-from domains.global_earnings_calendar.http_utils import response_text as _response_text
+from domains.global_earnings_calendar.http_utils import (
+    response_text as _response_text,
+)
 from domains.global_earnings_calendar.models import CONFIRMED_STATUS, EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.providers._utils import _ensure_ascii_ca_bundle
 from domains.global_earnings_calendar.rules import (
@@ -49,7 +51,12 @@ from domains.global_earnings_calendar.rules import (
 from domains.global_earnings_calendar.rules import (
     text_has_any as _text_has_any,
 )
-from infra.http_safety import ensure_https_request, requests_get_https, requests_post_https
+from infra.http_safety import (
+    ensure_https_request,
+    https_url_host_allowlist,
+    requests_get_https,
+    requests_post_https,
+)
 
 log = get_logger(__name__)
 
@@ -77,7 +84,6 @@ _MOPS_EARNINGS_KEYWORDS = (
     "results",
 )
 
-_JPX_ALLOWED_HOSTS = frozenset({"www.jpx.co.jp"})
 _JPX_MAX_WORKBOOK_BYTES = 8 * 1024 * 1024
 _JPX_MAX_WORKBOOK_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 _JPX_MAX_WORKBOOK_FILES = 256
@@ -115,7 +121,8 @@ class JpxFinancialAnnouncementProvider:
             session=self.session,
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=self.timeout,
-            allowed_hosts=_JPX_ALLOWED_HOSTS,
+            allowed_hosts=https_url_host_allowlist(self.page_url),
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         _raise_for_status(response)
         workbook_links = self._parse_workbook_links(_response_text(response, encoding="utf-8"), self.page_url)
@@ -126,7 +133,8 @@ class JpxFinancialAnnouncementProvider:
                 session=self.session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": self.page_url},
                 timeout=self.timeout,
-                allowed_hosts=_JPX_ALLOWED_HOSTS,
+                allowed_hosts=https_url_host_allowlist(workbook_url),
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             _raise_for_status(workbook_response)
             events.extend(
@@ -148,7 +156,11 @@ class JpxFinancialAnnouncementProvider:
         for href in tree.xpath('//a[contains(translate(@href, "XLSX", "xlsx"), ".xlsx")]/@href'):
             full_url = urljoin(page_url, str(href))
             try:
-                ensure_https_request(full_url, allowed_hosts=_JPX_ALLOWED_HOSTS)
+                ensure_https_request(
+                    full_url,
+                    allowed_hosts=https_url_host_allowlist(page_url),
+                    allow_reserved_tun_for_allowed_hosts=True,
+                )
             except ValueError:
                 continue
             if full_url not in links:
@@ -306,6 +318,8 @@ class TdnetEarningsDisclosureProvider:
                 session=self.session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.release.tdnet.info/inbs/"},
                 timeout=self.timeout,
+                allowed_hosts=https_url_host_allowlist(url),
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             if int(getattr(response, "status_code", 200) or 200) == 404:
                 continue
@@ -425,6 +439,8 @@ class DartEarningsDisclosureProvider:
                     "sort_mth": "desc",
                 },
                 timeout=self.timeout,
+                allowed_hosts=https_url_host_allowlist(self.base_url),
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             _raise_for_status(response)
             payload = response.json()
@@ -541,6 +557,8 @@ class KindEarningsDisclosureProvider:
                     "Referer": "https://kind.krx.co.kr/disclosure/todaydisclosure.do?method=searchTodayDisclosureMain",
                 },
                 timeout=self.timeout,
+                allowed_hosts=https_url_host_allowlist(self.base_url),
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             _raise_for_status(response)
             events.extend(self.parse_html(_response_text(response, encoding="utf-8"), day, universe, kr_codes))
@@ -641,6 +659,8 @@ class MopsEarningsDisclosureProvider:
             return requests
 
     def _get(self, url: str, **kwargs):
+        kwargs.setdefault("allowed_hosts", https_url_host_allowlist(url))
+        kwargs.setdefault("allow_reserved_tun_for_allowed_hosts", True)
         try:
             return requests_get_https(url, session=self.session, impersonate="chrome", **kwargs)
         except TypeError:

@@ -12,6 +12,7 @@ import pytest
 
 from core.market_calendar import MarketCalendar
 from domains.quotes.snapshot import merge_quote_entry
+from domains.runtime.domain_events import domain_events
 from vcp import data_provider_quotes, data_provider_realtime, data_provider_realtime_mixin
 from vcp.data_provider import TdxDataProvider
 
@@ -122,15 +123,13 @@ def test_request_hithink_quote_batch_maps_snapshot_schema_and_preserves_volume_u
         request,
         timeout=8,
         allowed_hosts=None,
-        reserved_tun_host_addresses=None,
-        benchmark_resolver_addresses=None,
+        **kwargs,
     ):
         del timeout
         seen["url"] = request.full_url
         seen["api_key"] = request.get_header("X-api-key")
         seen["allowed_hosts"] = allowed_hosts
-        seen["reserved_tun_host_addresses"] = reserved_tun_host_addresses
-        seen["benchmark_resolver_addresses"] = benchmark_resolver_addresses
+        seen["allow_reserved_tun_for_allowed_hosts"] = kwargs.get("allow_reserved_tun_for_allowed_hosts")
         return _FakeHttpResponse(
             {
                 "code": 0,
@@ -166,8 +165,7 @@ def test_request_hithink_quote_batch_maps_snapshot_schema_and_preserves_volume_u
     assert parse_qs(urlsplit(seen["url"]).query) == {"thscodes": ["000001.SZ"]}
     assert seen["api_key"] == "unit-test-key"
     assert seen["allowed_hosts"] == {"fuyao.aicubes.cn"}
-    assert seen["reserved_tun_host_addresses"] == {"fuyao.aicubes.cn": {"198.18.0.67"}}
-    assert seen["benchmark_resolver_addresses"] is None
+    assert seen["allow_reserved_tun_for_allowed_hosts"] is True
     assert result == {
         "000001": {
             "open": 11.16,
@@ -189,6 +187,34 @@ def test_request_hithink_quote_batch_maps_snapshot_schema_and_preserves_volume_u
     assert merge_quote_entry({"name": "平安银行"}, result["000001"])["name"] == "平安银行"
 
 
+def test_hithink_ticker_search_uses_the_same_dynamic_tun_policy(monkeypatch):
+    provider = _make_provider()
+    seen = {}
+
+    def _fake_urlopen(
+        request,
+        timeout=8,
+        allowed_hosts=None,
+        **kwargs,
+    ):
+        del timeout
+        seen["url"] = request.full_url
+        seen["allowed_hosts"] = allowed_hosts
+        seen["allow_reserved_tun_for_allowed_hosts"] = kwargs.get("allow_reserved_tun_for_allowed_hosts")
+        return _FakeHttpResponse({"code": 0, "data": {"item": []}})
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "unit-test-key")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+
+    assert data_provider_quotes._request_hithink_ticker_search_payload(provider, "000001") == {
+        "code": 0,
+        "data": {"item": []},
+    }
+    assert urlsplit(seen["url"]).path == "/api/meta/tickers/search"
+    assert seen["allowed_hosts"] == {"fuyao.aicubes.cn"}
+    assert seen["allow_reserved_tun_for_allowed_hosts"] is True
+
+
 def test_request_hithink_quote_batch_rejects_nonzero_business_code_without_retry(monkeypatch):
     provider = _make_provider()
     calls = []
@@ -197,10 +223,9 @@ def test_request_hithink_quote_batch_rejects_nonzero_business_code_without_retry
         request,
         timeout=8,
         allowed_hosts=None,
-        reserved_tun_host_addresses=None,
-        benchmark_resolver_addresses=None,
+        **_kwargs,
     ):
-        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        del timeout, allowed_hosts
         calls.append(request.full_url)
         return _FakeHttpResponse(
             {
@@ -230,10 +255,9 @@ def test_request_hithink_quote_batch_retries_http_429_within_one_request_budget(
         request,
         timeout=8,
         allowed_hosts=None,
-        reserved_tun_host_addresses=None,
-        benchmark_resolver_addresses=None,
+        **_kwargs,
     ):
-        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        del timeout, allowed_hosts
         calls.append(request.full_url)
         if len(calls) == 1:
             raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", hdrs=None, fp=None)
@@ -285,10 +309,9 @@ def test_request_hithink_quote_batch_keeps_retry_timeout_inside_one_source_budge
         _request,
         timeout=8,
         allowed_hosts=None,
-        reserved_tun_host_addresses=None,
-        benchmark_resolver_addresses=None,
+        **_kwargs,
     ):
-        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        del timeout, allowed_hosts
         calls.append("hithink")
         clock[0] += 2.0
         raise TimeoutError("hithink timed out")
@@ -312,10 +335,9 @@ def test_request_hithink_quote_batch_hides_api_key_from_exception_traceback(monk
         _request,
         timeout=8,
         allowed_hosts=None,
-        reserved_tun_host_addresses=None,
-        benchmark_resolver_addresses=None,
+        **_kwargs,
     ):
-        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        del timeout, allowed_hosts
         raise OSError(f"proxy reflected X-api-key: {secret}")
 
     monkeypatch.setenv("HITHINK_FINANCE_API_KEY", secret)
@@ -674,10 +696,9 @@ def test_hithink_isolates_bad_code_without_cooling_down_the_valid_batch(monkeypa
         request,
         timeout=8,
         allowed_hosts=None,
-        reserved_tun_host_addresses=None,
-        benchmark_resolver_addresses=None,
+        **_kwargs,
     ):
-        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        del timeout, allowed_hosts
         thscodes = parse_qs(urlsplit(request.full_url).query)["thscodes"][0].split(",")
         if "000000.SZ" in thscodes:
             return _FakeHttpResponse({"code": 1002, "data": None})
@@ -828,6 +849,94 @@ def test_test_network_prefers_hithink_when_it_is_enabled(monkeypatch):
     assert probe["quote_probe"] == "ok"
 
 
+def test_test_network_emits_hithink_success_to_system_log(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    events: list[tuple[str, str]] = []
+
+    def _capture(level, message):
+        events.append((level, message))
+
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda codes, inferred_trade_date: {codes[0]: {"close": 11.19, "date": inferred_trade_date}},
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_eastmoney_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Hithink probe should short-circuit")),
+    )
+    domain_events.sig_system_log.connect(_capture)
+    try:
+        assert provider.test_network(timeout=3) is True
+    finally:
+        domain_events.sig_system_log.disconnect(_capture)
+
+    hithink_events = [event for event in events if event[1].startswith("[网络] 同花顺")]
+    assert hithink_events == [("info", "[网络] 同花顺盘中行情探针通过。")]
+
+
+def test_test_network_with_probe_returns_the_same_hithink_result(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda codes, inferred_trade_date: {codes[0]: {"close": 11.19, "date": inferred_trade_date}},
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_eastmoney_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Hithink probe should short-circuit")),
+    )
+
+    result = provider.test_network_with_probe(timeout=3)
+
+    assert result["ok"] is True
+    assert result["hithink_quote_probe"] == "ok"
+
+
+def test_test_network_emits_redacted_hithink_failure_to_system_log(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    secret = "unit-hithink-probe-secret"
+    events: list[tuple[str, str]] = []
+
+    def _capture(level, message):
+        events.append((level, message))
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", secret)
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(f"X-api-key={secret} route failed")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_eastmoney_quote_batch",
+        lambda codes, inferred_trade_date, **_kwargs: {
+            codes[0]: {"close": 11.19, "date": inferred_trade_date}
+        },
+    )
+    domain_events.sig_system_log.connect(_capture)
+    try:
+        assert provider.test_network(timeout=3) is True
+    finally:
+        domain_events.sig_system_log.disconnect(_capture)
+
+    hithink_events = [event for event in events if event[1].startswith("[网络] 同花顺")]
+    assert len(hithink_events) == 1
+    level, message = hithink_events[0]
+    probe = provider.get_last_network_probe()
+    assert level == "warn"
+    assert "同花顺未通过，兼容回退可用" in message
+    assert "***" in message
+    assert secret not in message
+    assert secret not in probe["hithink_quote_probe"]
+
+
 def _make_sina_quote_fetcher(seen):
     def _fetch(batch, inferred_trade_date):
         seen.append(tuple(batch))
@@ -929,8 +1038,12 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
         tz=dt.timezone(dt.timedelta(hours=8)),
     ).isoformat(timespec="seconds")
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **kwargs):
         del timeout
+        assert kwargs == {
+            "allowed_hosts": data_provider_quotes._EASTMONEY_REALTIME_ALLOWED_HOSTS,
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
         url = request.full_url
         assert "/api/qt/ulist/get" in url
         assert "/api/qt/ulist.np/get" not in url
@@ -1014,8 +1127,12 @@ def test_request_tencent_quote_batch_parses_realtime_payload(monkeypatch):
     provider = _make_provider()
     seen_urls = []
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **kwargs):
         del timeout
+        assert kwargs == {
+            "allowed_hosts": frozenset({"qt.gtimg.cn"}),
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
         seen_urls.append(request.full_url)
         return _FakeTextResponse(_tencent_line())
 
@@ -1123,7 +1240,7 @@ def test_fetch_realtime_quotes_batch_retries_backup_eastmoney_host(monkeypatch):
 
     seen_hosts = []
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **_kwargs):
         del timeout
         seen_hosts.append(request.full_url.split("/")[2])
         if len(seen_hosts) == 1:
@@ -1172,7 +1289,7 @@ def test_opening_warmup_pressure_fast_fails_eastmoney_backup_host(monkeypatch):
 
     provider._build_offline_quotes = _offline_quotes
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **_kwargs):
         del timeout
         seen_hosts.append(request.full_url.split("/")[2])
         raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", hdrs=None, fp=None)
@@ -1205,7 +1322,7 @@ def test_test_network_uses_eastmoney_http(monkeypatch):
     provider = _make_provider()
     seen_urls = []
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **_kwargs):
         del timeout
         seen_urls.append(request.full_url)
         return _FakeHttpResponse(
@@ -1242,7 +1359,7 @@ def test_test_network_uses_eastmoney_http(monkeypatch):
 def test_test_network_records_probe_detail(monkeypatch):
     provider = _make_provider()
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **_kwargs):
         del timeout
         if "gridlist.html" in request.full_url:
             return _FakeHttpResponse({"html": "ok"})
@@ -1278,7 +1395,7 @@ def test_test_network_records_probe_detail(monkeypatch):
 def test_test_network_accepts_tencent_when_primary_quote_sources_fail(monkeypatch):
     provider = _make_provider()
 
-    def _fake_urlopen(request, timeout=8):
+    def _fake_urlopen(request, timeout=8, **_kwargs):
         del timeout
         url = request.full_url
         if "gridlist.html" in url:

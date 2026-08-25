@@ -366,8 +366,9 @@ def test_network_ui_guards_and_force_reconnect_outcomes(monkeypatch):
     monkeypatch.setattr(toast_module, "show_toast", lambda *args, **kwargs: toasts.append((args, kwargs)))
 
     class Provider:
-        def __init__(self, online=True, ok=True, raises=False):
+        def __init__(self, online=True, ok=True, raises=False, probe=None):
             self.online, self.ok, self.raises = online, ok, raises
+            self.probe = probe if probe is not None else {"hithink_quote_probe": "ok" if ok else "fail:down"}
 
         def is_online(self):
             return self.online
@@ -379,6 +380,9 @@ def test_network_ui_guards_and_force_reconnect_outcomes(monkeypatch):
         def test_network(self, timeout):
             assert timeout == 3
             return self.ok
+
+        def get_last_network_probe(self):
+            return dict(self.probe)
 
     tones = []
     states = []
@@ -399,10 +403,11 @@ def test_network_ui_guards_and_force_reconnect_outcomes(monkeypatch):
         window.data_provider = provider
         network.force_reconnect(window)
         _, fn, kwargs = lifecycle.calls[-1]
-        assert fn(None) is expected_ok
-        kwargs["on_success"](expected_ok)
+        result = fn(None)
+        assert result["ok"] is expected_ok
+        kwargs["on_success"](result)
     assert tones == ["busy", "busy", "busy"]
-    assert states == [True, True, True]
+    assert states == [True, False, False]
     assert len(toasts) == 3
     assert "success" in toasts[0][0]
     assert all("error" in item[0] for item in toasts[1:])

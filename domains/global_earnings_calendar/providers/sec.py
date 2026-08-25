@@ -13,7 +13,7 @@ from domains.global_earnings_calendar.http_utils import raise_for_status as _rai
 from domains.global_earnings_calendar.models import CONFIRMED_STATUS, EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.rules import date_from_any as _date_from_any
 from domains.global_earnings_calendar.rules import text_has_any as _text_has_any
-from infra.http_safety import requests_get_https
+from infra.http_safety import https_url_host_allowlist, requests_get_https
 
 _SEC_6K_KEYWORDS = (
     "earnings",
@@ -84,6 +84,8 @@ class SecSixKEarningsProvider:
                 session=self.session,
                 headers=self._headers(),
                 timeout=self.timeout,
+                allowed_hosts=https_url_host_allowlist(self.submissions_url_template.format(cik=str(cik).zfill(10))),
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             _raise_for_status(response)
             events.extend(
@@ -107,6 +109,8 @@ class SecSixKEarningsProvider:
             session=self.session,
             headers={**self._headers(), "Host": "www.sec.gov"},
             timeout=self.timeout,
+            allowed_hosts=https_url_host_allowlist(self.company_tickers_url),
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         _raise_for_status(response)
         payload = response.json()

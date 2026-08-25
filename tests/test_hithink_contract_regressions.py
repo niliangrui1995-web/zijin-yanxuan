@@ -556,6 +556,127 @@ def test_force_reconnect_ui_describes_hithink_primary_not_legacy_eastmoney(monke
     assert "东方财富" not in messages[0]
 
 
+def test_force_reconnect_ui_distinguishes_hithink_recovery_fallback_and_total_failure(monkeypatch):
+    toasts: list[tuple[str, str]] = []
+    states: list[bool] = []
+
+    class _Lifecycle:
+        @staticmethod
+        def run_background(_name, fn, *, on_success, **_kwargs):
+            on_success(fn(None))
+
+    class _Provider:
+        def __init__(self, ok, probe):
+            self.ok = ok
+            self.probe = probe
+
+        @staticmethod
+        def is_online():
+            return True
+
+        @staticmethod
+        def force_reconnect_servers():
+            return None
+
+        def test_network(self, timeout):
+            assert timeout == 3
+            return self.ok
+
+        def get_last_network_probe(self):
+            return dict(self.probe)
+
+    import ui.components.toast_widget as toast_widget
+
+    monkeypatch.setattr(main_window_network, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    monkeypatch.setattr(
+        toast_widget,
+        "show_toast",
+        lambda message, level, *_args, **_kwargs: toasts.append((message, level)),
+    )
+    window = SimpleNamespace(
+        data_provider=None,
+        _status_bar_widget=SimpleNamespace(set_status_tone=lambda _tone: None),
+        _call_in_ui=lambda callback: callback(),
+        _update_network_ui=lambda online: states.append(online),
+    )
+
+    cases = (
+        (True, {"hithink_quote_probe": "ok"}, "同花顺已恢复", "success"),
+        (
+            True,
+            {"hithink_quote_probe": "fail:X-api-key=unit-hithink-probe-secret route failed"},
+            "同花顺未通过，兼容回退可用",
+            "warning",
+        ),
+        (
+            False,
+            {"hithink_quote_probe": "fail:route failed"},
+            "盘中实时行情全部失败",
+            "error",
+        ),
+    )
+    for ok, probe, expected_message, expected_level in cases:
+        window.data_provider = _Provider(ok, probe)
+        main_window_network.force_reconnect(window)
+        message, level = toasts[-1]
+        assert expected_message in message
+        assert level == expected_level
+        assert "unit-hithink-probe-secret" not in message
+
+    assert states == [True, True, False]
+
+
+def test_force_reconnect_prefers_atomic_probe_snapshot_over_legacy_last_probe(monkeypatch):
+    toasts: list[tuple[str, str]] = []
+
+    class _Lifecycle:
+        @staticmethod
+        def run_background(_name, fn, *, on_success, **_kwargs):
+            on_success(fn(None))
+
+    class _Provider:
+        @staticmethod
+        def is_online():
+            return True
+
+        @staticmethod
+        def force_reconnect_servers():
+            return None
+
+        @staticmethod
+        def test_network_with_probe(timeout):
+            assert timeout == 3
+            return {"ok": True, "hithink_quote_probe": "ok"}
+
+        @staticmethod
+        def test_network(timeout):
+            assert timeout == 3
+            return False
+
+        @staticmethod
+        def get_last_network_probe():
+            return {"hithink_quote_probe": "fail:stale result"}
+
+    import ui.components.toast_widget as toast_widget
+
+    monkeypatch.setattr(main_window_network, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    monkeypatch.setattr(
+        toast_widget,
+        "show_toast",
+        lambda message, level, *_args, **_kwargs: toasts.append((message, level)),
+    )
+    window = SimpleNamespace(
+        data_provider=_Provider(),
+        _status_bar_widget=SimpleNamespace(set_status_tone=lambda _tone: None),
+        _call_in_ui=lambda callback: callback(),
+        _update_network_ui=lambda _online: None,
+    )
+
+    main_window_network.force_reconnect(window)
+
+    assert toasts == [("同花顺已恢复，盘中实时行情主源可用。", "success")]
+
+
 def test_hithink_4001_retries_within_the_request_budget(monkeypatch):
     provider = SimpleNamespace(_rt_api_call_timeout_sec=1.0)
     attempts: list[str] = []

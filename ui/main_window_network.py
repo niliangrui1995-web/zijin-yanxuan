@@ -97,7 +97,21 @@ def force_reconnect(main_window):
     def _reconnect_task(_cancellation_token):
         try:
             provider.force_reconnect_servers()
-            return provider.test_network(timeout=3)
+            probe_runner = getattr(provider, "test_network_with_probe", None)
+            if callable(probe_runner):
+                snapshot = probe_runner(timeout=3)
+                if isinstance(snapshot, dict):
+                    return {"ok": bool(snapshot.get("ok")), "probe": dict(snapshot)}
+                return {"ok": bool(snapshot), "probe": {}}
+
+            ok = bool(provider.test_network(timeout=3))
+            probe_getter = getattr(provider, "get_last_network_probe", None)
+            try:
+                probe = probe_getter() if callable(probe_getter) else {}
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.debug("[网络] 读取重置探针明细失败: %s", exc)
+                probe = {}
+            return {"ok": ok, "probe": dict(probe) if isinstance(probe, dict) else {}}
         except (
             ConnectionError,
             OSError,
@@ -107,17 +121,28 @@ def force_reconnect(main_window):
             ValueError,
         ) as exc:
             log.error(f"强制重连异常: {exc}")
-            return False
+            return {"ok": False, "probe": {}}
 
-    def _on_done(ok):
-        main_window._update_network_ui(True)
+    def _on_done(result):
+        if isinstance(result, dict):
+            ok = bool(result.get("ok"))
+            probe = result.get("probe")
+        else:
+            ok = bool(result)
+            probe = {}
+        hithink_probe = str(probe.get("hithink_quote_probe") or "").strip() if isinstance(probe, dict) else ""
+        main_window._update_network_ui(ok)
         from ui.components.toast_widget import show_toast
 
-        if ok:
-            show_toast("同花顺主源及兼容回退行情连接已重置。", "success", main_window, duration=2500)
+        if ok and hithink_probe == "ok":
+            show_toast("同花顺已恢复，盘中实时行情主源可用。", "success", main_window, duration=2500)
             return
 
-        show_toast("盘中实时行情检测失败，请检查网络。", "error", main_window, duration=3500)
+        if ok:
+            show_toast("同花顺未通过，兼容回退可用。详情见系统日志。", "warning", main_window, duration=3500)
+            return
+
+        show_toast("盘中实时行情全部失败，请检查网络或查看系统日志。", "error", main_window, duration=3500)
 
     from app.services.ui_task_service import background_job_runner as task_manager
 

@@ -193,8 +193,12 @@ def test_fetch_public_holidays_parses_and_supplements(monkeypatch):
     ]
     seen = []
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         seen.append((url, timeout))
+        assert kwargs == {
+            "allowed_hosts": module._NAGER_HOLIDAY_ALLOWED_HOSTS,
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
         return _Response(payload)
 
     monkeypatch.setattr(module, "requests_get_https", fake_get)

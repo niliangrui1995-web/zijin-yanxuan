@@ -28,6 +28,8 @@ from vcp.utils import _load_tdx_local_config
 _log = get_logger(__name__)
 _LOCAL_TDX_FINANCE_READ_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 _EASTMONEY_FINANCE_FETCH_ERRORS = (json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError)
+_EASTMONEY_FINANCE_ALLOWED_HOSTS = frozenset({"push2.eastmoney.com", "push2delay.eastmoney.com"})
+_EASTMONEY_SHAREHOLDER_ALLOWED_HOSTS = frozenset({"emweb.securities.eastmoney.com"})
 
 
 def _to_eastmoney_secid(code: str) -> str:
@@ -100,7 +102,12 @@ def _fetch_eastmoney_finance_info(codes):
             },
         )
 
-        resp = urlopen_https(req, timeout=8)
+        resp = urlopen_https(
+            req,
+            timeout=8,
+            allowed_hosts=_EASTMONEY_FINANCE_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
         try:
             payload = json.loads(resp.read().decode("utf-8"))
         finally:
@@ -282,7 +289,12 @@ def check_institutional_shareholders(code):
                 "Referer": "https://emweb.securities.eastmoney.com/",
             },
         )
-        resp = urlopen_https(req, timeout=8)
+        resp = urlopen_https(
+            req,
+            timeout=8,
+            allowed_hosts=_EASTMONEY_SHAREHOLDER_ALLOWED_HOSTS,
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
         try:
             data = json.loads(resp.read().decode("utf-8"))
         finally:

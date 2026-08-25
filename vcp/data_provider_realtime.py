@@ -388,6 +388,8 @@ def _request_hithink_batch(provider, cancellation_token, codes, inferred_trade_d
 
 def _hithink_cooldown_seconds(reason: str) -> float | None:
     normalized = normalize_error_text(reason)
+    if is_disconnect_like_error(normalized) or "timeout" in normalized or "network transport error" in normalized:
+        return 5.0
     if "hithink_finance_api_key" in normalized or "code=200" in normalized:
         return 300.0
     return None
@@ -431,7 +433,7 @@ def _request_hithink_batch_with_in_request_retry(
         return _request_hithink_batch(provider, cancellation_token, codes, inferred_trade_date)
     except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
         reraise_task_cancellation(exc)
-        if not hithink_success_seen or not _is_hithink_transient_transport_failure(exc):
+        if not _is_hithink_transient_transport_failure(exc):
             raise
         wait_with_cancellation(_HITHINK_IN_REQUEST_RETRY_DELAY_SEC, cancellation_token)
         return _request_hithink_batch(provider, cancellation_token, codes, inferred_trade_date)
@@ -694,7 +696,8 @@ def _fetch_realtime_quote_batch_sources(
             safe_reason = sanitize_hithink_error(hithink_exc)
             failures.append(f"同花顺: {safe_reason}")
             isolated_transient_failure = (
-                hithink_success_seen and _is_hithink_transient_transport_failure(hithink_exc)
+                hithink_success_seen
+                and _is_hithink_transient_transport_failure(hithink_exc)
             )
             if batch_context is not None:
                 batch_context["hithink_transient_failure_isolated"] = isolated_transient_failure

@@ -193,7 +193,11 @@ def test_cn_realtime_http_receives_token_deadline_and_checks_after_body(monkeypa
         def close(self):
             return None
 
-    def _urlopen(_request, *, timeout):
+    def _urlopen(_request, *, timeout, **kwargs):
+        assert kwargs == {
+            "allowed_hosts": data_provider_quotes._EASTMONEY_REALTIME_ALLOWED_HOSTS,
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
         observed_timeouts.append(float(timeout))
         return _Response()
 

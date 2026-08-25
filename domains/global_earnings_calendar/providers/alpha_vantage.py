@@ -12,7 +12,7 @@ from domains.global_earnings_calendar.event_ops import sorted_events
 from domains.global_earnings_calendar.http_utils import raise_for_status as _raise_for_status
 from domains.global_earnings_calendar.models import EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.rules import market_from_ticker
-from infra.http_safety import requests_get_https
+from infra.http_safety import https_url_host_allowlist, requests_get_https
 
 
 class AlphaVantageEarningsCalendarProvider:
@@ -47,6 +47,8 @@ class AlphaVantageEarningsCalendarProvider:
                 "apikey": self.api_key,
             },
             timeout=self.timeout,
+            allowed_hosts=https_url_host_allowlist(self.base_url),
+            allow_reserved_tun_for_allowed_hosts=True,
         )
         _raise_for_status(response)
         return self.parse_csv(response.text or "", universe)

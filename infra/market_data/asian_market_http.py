@@ -70,6 +70,7 @@ def asian_market_get(
                 headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS),
                 timeout=bounded_io_timeout(timeout, cancellation_token),
                 allowed_hosts=ASIAN_MARKET_ALLOWED_HOSTS,
+                allow_reserved_tun_for_allowed_hosts=True,
             )
             raise_if_cancelled(cancellation_token)
             return response

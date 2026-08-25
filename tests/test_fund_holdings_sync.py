@@ -285,14 +285,23 @@ def test_fetch_text_closes_response_and_wraps_network_errors(monkeypatch):
             self.closed = True
 
     response = _Response()
-    monkeypatch.setattr(sync_module, "urlopen_https", lambda request, timeout=15: response)
+    def _fake_urlopen(request, timeout=15, **kwargs):
+        assert request.full_url.startswith(sync_module._QFII_API_URL)
+        assert timeout == 15
+        assert kwargs == {
+            "allowed_hosts": sync_module._FUND_HOLDINGS_ALLOWED_HOSTS,
+            "allow_reserved_tun_for_allowed_hosts": True,
+        }
+        return response
 
-    assert sync_module._fetch_text("https://example.test", params={"a": "1"}) == "成功"
+    monkeypatch.setattr(sync_module, "urlopen_https", _fake_urlopen)
+
+    assert sync_module._fetch_text(sync_module._QFII_API_URL, params={"a": "1"}) == "成功"
     assert response.closed is True
 
     monkeypatch.setattr(sync_module, "urlopen_https", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("down")))
     with pytest.raises(UserFacingTaskError):
-        sync_module._fetch_text("https://example.test")
+        sync_module._fetch_text(sync_module._QFII_API_URL)
 
 
 def test_fetch_text_rejects_oversized_response(monkeypatch):
@@ -303,11 +312,11 @@ def test_fetch_text_rejects_oversized_response(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(sync_module, "urlopen_https", lambda request, timeout=15: _Response())
+    monkeypatch.setattr(sync_module, "urlopen_https", lambda request, timeout=15, **_kwargs: _Response())
     monkeypatch.setattr(sync_module, "_MAX_RESPONSE_BYTES", 8)
 
     with pytest.raises(UserFacingTaskError):
-        sync_module._fetch_text("https://example.test")
+        sync_module._fetch_text(sync_module._RUIYUAN_API_URL)
 
 
 def test_fetch_json_wraps_decode_errors(monkeypatch):
