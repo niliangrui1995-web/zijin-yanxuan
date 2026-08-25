@@ -206,6 +206,9 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
     # it applies only to the immediate WindowDeactivate -> UpdateRequest burst
     # reproduced while opening an independent K-line window.
     NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS = 250
+    # K-line open/close can leave a bounded focus/layout tail after the first
+    # legitimate frame.  This remains source-scoped at the call site below.
+    KLINE_FOCUS_REPAINT_GUARD_ACTIVE_MS = 2_000
     _NATIVE_WINDOW_EVENT_SIGNALS = {
         QEvent.Type.WindowActivate: "window_activate",
         QEvent.Type.WindowDeactivate: "window_deactivate",
@@ -226,6 +229,17 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "window_activate",
             "window_expose",
             "window_layout_request",
+            "window_resize",
+            "window_show",
+            "window_hide",
+            "window_state_change",
+            "window_style_change",
+            "window_palette_change",
+        }
+    )
+    _NATIVE_WINDOW_REPAINT_GUARD_INVALIDATING_SIGNALS = frozenset(
+        {
+            "window_expose",
             "window_resize",
             "window_show",
             "window_hide",
@@ -823,6 +837,8 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         if signal in self._NATIVE_WINDOW_STRUCTURAL_SIGNALS:
             self._native_window_requires_full_paint = True
             self._native_window_paint_event = record
+        if signal in self._NATIVE_WINDOW_REPAINT_GUARD_INVALIDATING_SIGNALS:
+            self._invalidate_shell_nav_repaint_guard(f"native_{signal}")
 
     def _native_window_paint_provenance(self) -> dict[str, str]:
         now = time.monotonic()
@@ -922,6 +938,28 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             preserve_visible_frame=False,
         )
 
+    def prepare_kline_focus_repaint_guard(self, *, phase: str) -> bool:
+        """Bound K-line focus/layout tails without changing the first visible frame."""
+        phase_text = str(phase or "").strip()
+        if (
+            self._closing
+            or self._paint_metric_scope != "watchlist"
+            or phase_text not in {"open", "close"}
+        ):
+            return False
+        viewport = self.viewport()
+        if viewport is None or not self.isVisible() or not viewport.isVisible():
+            return False
+        self._arm_redundant_full_paint_guard(
+            workspace_load_reason=f"kline_{phase_text}",
+            metric_name="watchlist_kline_focus_repaint_guard",
+            retain_after_budget=True,
+            preserve_visible_frame=False,
+            active_ms=self.KLINE_FOCUS_REPAINT_GUARD_ACTIVE_MS,
+        )
+        self._activate_shell_nav_repaint_guard()
+        return self._active_shell_nav_repaint_guard() is not None
+
     def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
         """Protect an already rendered AI table from a nearby preload mount repaint burst."""
         load_reason_text = str(load_reason or "").strip()
@@ -945,12 +983,22 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         metric_name: str,
         retain_after_budget: bool,
         preserve_visible_frame: bool,
+        active_ms: int | None = None,
     ) -> None:
         now = time.monotonic()
+        active_window_ms = max(
+            1,
+            int(
+                self.SHELL_NAV_REPAINT_GUARD_ACTIVE_MS
+                if active_ms is None
+                else active_ms
+            ),
+        )
         guard = {
             "armed_until": now + self.SHELL_NAV_REPAINT_GUARD_ARM_MS / 1000.0,
             "active_until": 0.0,
             "active_started_at": 0.0,
+            "active_window_ms": active_window_ms,
             "first_full_seen": False,
             "viewport_size": None,
             "content_epoch": 0,
@@ -991,7 +1039,8 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             self._clear_shell_nav_repaint_guard()
             return
         guard["active_started_at"] = now
-        guard["active_until"] = now + self.SHELL_NAV_REPAINT_GUARD_ACTIVE_MS / 1000.0
+        active_window_ms = max(1, int(guard.get("active_window_ms", self.SHELL_NAV_REPAINT_GUARD_ACTIVE_MS) or 1))
+        guard["active_until"] = now + active_window_ms / 1000.0
 
     def _clear_shell_nav_repaint_guard(self) -> None:
         self._shell_nav_repaint_guard = None
@@ -1036,6 +1085,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
                 "decision": decision,
                 "workspace_load_reason": str(guard.get("workspace_load_reason", "shell_nav") or "shell_nav"),
                 "age_ms": f"{max(0.0, (time.monotonic() - started_at) * 1000.0):.3f}",
+                "active_window_ms": str(int(guard.get("active_window_ms", 0) or 0)),
                 "remaining": str(
                     max(0, self.SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS - int(guard.get("suppressed", 0) or 0))
                 ),

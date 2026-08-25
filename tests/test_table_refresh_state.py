@@ -699,6 +699,60 @@ def test_watchlist_native_deactivate_defers_only_untracked_full_viewport_paints(
         window.deleteLater()
 
 
+def test_watchlist_kline_focus_guard_suppresses_only_trailing_untracked_full_paints(
+    qt_application,
+    monkeypatch,
+):
+    """K 线焦点切换保留首帧，且不重复绘制未变更的自选股 viewport。"""
+    class RecordingTable(VCPTableView):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    window = QWidget()
+    table = RecordingTable(window)
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    try:
+        window.resize(640, 360)
+        table.resize(640, 360)
+        window.show()
+        table.show()
+        _process_events(qt_application)
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        assert table.prepare_kline_focus_repaint_guard(phase="open") is True
+        for signal_type in (
+            QEvent.Type.WindowActivate,
+            QEvent.Type.LayoutRequest,
+            QEvent.Type.WindowDeactivate,
+        ):
+            table._record_native_window_event(QEvent(signal_type))
+            table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
+            QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+
+        assert table.actual_paint_calls == 1
+        guards = [item for item in recorded if item[0] == "watchlist_kline_focus_repaint_guard"]
+        assert [item[2]["tags"]["decision"] for item in guards] == [
+            "first_full_allowed",
+            "suppress_redundant_full",
+            "suppress_redundant_full",
+        ]
+        assert {item[2]["tags"]["workspace_load_reason"] for item in guards} == {"kline_open"}
+    finally:
+        table.deleteLater()
+        window.deleteLater()
+
+
 def test_vcp_table_view_ai_preload_guard_skips_visible_redundant_full_paints(
     qt_application,
     monkeypatch,

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.kline_open_context import KlineOpenContext
 from ui.components import kline_window_manager as manager_module
 from ui.kline_load_controller import KLINE_OPEN_STAGE_ORDER, KlineLoadController
 from ui.kline_window_pool_lifecycle import KLinePoolState, kline_pool_state_of
@@ -882,3 +883,85 @@ def test_same_stock_reuses_physical_window_and_stale_generation_cannot_commit(
     assert reopened.browser.page() is browser_page
     assert browser.parent_changes == []
     assert browser.page_changes == []
+
+
+def test_watchlist_open_arms_focus_guard_before_kline_window_activation(
+    isolated_manager,
+    monkeypatch,
+):
+    class OrderedChart(_ReusableChart):
+        def show(self) -> None:
+            order.append("show")
+            super().show()
+
+    manager = isolated_manager
+    order = []
+    main_window = object()
+    context = KlineOpenContext(
+        code="000001",
+        name="平安银行",
+        source_tab_key="watchlist",
+    )
+    monkeypatch.setattr(manager_module, "_load_kline_window_class", lambda: OrderedChart)
+    monkeypatch.setattr(
+        manager_module,
+        "prepare_watchlist_kline_focus_repaint_guard",
+        lambda window, *, source_tab_key, phase: order.append(
+            (window, source_tab_key, phase)
+        )
+        or True,
+        raising=False,
+    )
+
+    chart = manager.open_chart(
+        main_window,
+        "000001",
+        "平安银行",
+        object(),
+        vcp_data={},
+        open_context=context,
+    )
+
+    assert chart is not None
+    assert order == [(main_window, "watchlist", "open"), "show"]
+
+
+def test_watchlist_open_arms_focus_guard_before_webengine_preflight_notice(
+    isolated_manager,
+    monkeypatch,
+):
+    manager = isolated_manager
+    manager._webengine_available = None
+    order = []
+    main_window = object()
+    context = KlineOpenContext(
+        code="000001",
+        name="平安银行",
+        source_tab_key="watchlist",
+    )
+    monkeypatch.setattr(manager, "_start_webengine_preflight_async", lambda: True)
+    monkeypatch.setattr(
+        manager,
+        "_notify_webengine_preparing",
+        lambda *_args: order.append("preparing"),
+    )
+    monkeypatch.setattr(
+        manager_module,
+        "prepare_watchlist_kline_focus_repaint_guard",
+        lambda window, *, source_tab_key, phase: order.append(
+            (window, source_tab_key, phase)
+        )
+        or True,
+        raising=False,
+    )
+
+    assert manager.open_chart(
+        main_window,
+        "000001",
+        "平安银行",
+        object(),
+        vcp_data={},
+        open_context=context,
+    ) is None
+
+    assert order == [(main_window, "watchlist", "open"), "preparing"]

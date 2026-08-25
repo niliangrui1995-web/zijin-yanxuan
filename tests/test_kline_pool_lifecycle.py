@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gc
 import weakref
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -129,6 +130,48 @@ def test_pool_state_transitions_are_explicit_and_legacy_flags_are_read_only():
         window.transition(KLinePoolState.ACTIVE, reason="invalid_reuse")
     with pytest.raises(AttributeError):
         window._pool_idle = True
+
+
+def test_watchlist_close_arms_focus_guard_before_qt_focus_return(monkeypatch):
+    class CloseProbe(KLineWindowPoolLifecycleMixin):
+        pass
+
+    events = []
+    probe = CloseProbe()
+    initialize_kline_pool_state(probe)
+    probe.code = "000001"
+    probe.main_window = object()
+    probe._open_context = SimpleNamespace(source_tab_key="watchlist")
+    probe._lease_signals_connected = False
+    probe._open_stages = SimpleNamespace(stop=lambda: (None, None))
+    probe._rt_timer = None
+
+    qt_api = SimpleNamespace(
+        _cancel_header_resize_refresh=lambda _window: None,
+        cancel_snapshot_render_confirmation=lambda _window: None,
+        _shutdown_kline_window_tasks=lambda _window: True,
+        log=SimpleNamespace(debug=lambda _message: None),
+    )
+    monkeypatch.setattr("ui.kline_window_pool_lifecycle._qt_api", lambda: qt_api)
+    monkeypatch.setattr("ui.kline_window_pool_lifecycle._recovery_cleanup_clean", lambda _window: True)
+    monkeypatch.setattr("ui.kline_window_pool_lifecycle._release_chart_to_pool", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "ui.kline_window_pool_lifecycle._call_next_close_event",
+        lambda _window, _event: events.append("qt_close"),
+    )
+    monkeypatch.setattr(
+        manager_module,
+        "prepare_watchlist_kline_focus_repaint_guard",
+        lambda window, *, source_tab_key, phase: events.append(
+            (window, source_tab_key, phase)
+        )
+        or True,
+        raising=False,
+    )
+
+    probe.closeEvent(object())
+
+    assert events == [(probe.main_window, "watchlist", "close"), "qt_close"]
 
 
 def test_one_qobject_survives_100_open_close_reuse_cycles_without_leaking(
