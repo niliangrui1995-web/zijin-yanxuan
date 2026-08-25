@@ -5,7 +5,7 @@ import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from app.services.scan_runtime_service import batch_check_market_cap, calculate_scan_indicators
-from app.services.ui_task_lifecycle_service import CancellationToken, TaskCancelledError
+from app.services.ui_task_lifecycle_service import CancellationToken, TaskCancelledError, invoke_with_cancellation
 from core.logger import get_logger
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
@@ -16,7 +16,7 @@ SCAN_STAGE_ERRORS = (AttributeError, IndexError, KeyError, OSError, RuntimeError
 
 def _run_cancellable_stage(worker, fn, *args, **kwargs):
     worker._raise_if_cancelled()
-    result = fn(*args, **kwargs)
+    result = invoke_with_cancellation(fn, worker.cancellation_token, *args, **kwargs)
     worker._raise_if_cancelled()
     return result
 
@@ -85,6 +85,7 @@ class ScanWorker(QThread):
         for d_rps in _cancellable_items(self, matrix.values()):
             candidate_codes.update(self._target_codes_for_day(d_rps))
         if candidate_codes:
+            # _run_cancellable_stage injects self.cancellation_token for providers that support it.
             self.data_provider.code2name = _run_cancellable_stage(
                 self,
                 self.data_provider.ensure_code_name_map,

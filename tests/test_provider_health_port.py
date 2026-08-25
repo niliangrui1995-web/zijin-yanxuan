@@ -23,6 +23,10 @@ def _snapshot(**overrides):
         "runtime_stats": {"state": "ready"},
         "eastmoney_cooldown_until": 123.5,
         "eastmoney_last_error": "edge timeout",
+        "quote_cooldown_until": 234.5,
+        "quote_last_error": "hithink timeout",
+        "hithink_cooldown_until": 234.5,
+        "hithink_last_error": "hithink timeout",
     }
     values.update(overrides)
     return snapshot_type(**values)
@@ -43,6 +47,10 @@ def test_provider_health_snapshot_is_deeply_read_only():
         "runtime_stats": {"state": "ready"},
         "eastmoney_cooldown_until": 123.5,
         "eastmoney_last_error": "edge timeout",
+        "quote_cooldown_until": 234.5,
+        "quote_last_error": "hithink timeout",
+        "hithink_cooldown_until": 234.5,
+        "hithink_last_error": "hithink timeout",
     }
 
 
@@ -64,10 +72,13 @@ def test_provider_health_snapshot_freezes_nested_collections():
 
 def test_tdx_provider_exposes_typed_provider_health_snapshot():
     provider = TdxDataProvider.__new__(TdxDataProvider)
+    provider._rt_hithink_enabled = True
     provider.get_quote_request_stats = lambda: {"recent_status": "network_success"}
     provider.get_realtime_runtime_stats = lambda: {"state": "ready", "inflight": 0}
     provider._rt_eastmoney_cooldown_until = 456.0
     provider._rt_eastmoney_last_error = ""
+    provider._rt_hithink_cooldown_until = 789.0
+    provider._rt_hithink_last_error = "hithink timeout"
 
     snapshot = provider.read_provider_health()
 
@@ -75,6 +86,11 @@ def test_tdx_provider_exposes_typed_provider_health_snapshot():
     assert snapshot.request_stats["recent_status"] == "network_success"
     assert snapshot.runtime_stats["inflight"] == 0
     assert snapshot.eastmoney_cooldown_until == 456.0
+    assert snapshot.hithink_cooldown_until == 789.0
+    assert snapshot.hithink_last_error == "hithink timeout"
+    assert snapshot.request_stats["quote_primary_source"] == "hithink"
+    assert snapshot.quote_cooldown_until == 789.0
+    assert snapshot.quote_last_error == "hithink timeout"
 
 
 def test_tdx_provider_exposes_public_adjustment_metadata_port():
@@ -130,6 +146,10 @@ def test_ui_quote_health_reader_returns_empty_snapshot_on_port_failure():
         "runtime_stats": {},
         "eastmoney_cooldown_until": 0.0,
         "eastmoney_last_error": "",
+        "quote_cooldown_until": 0.0,
+        "quote_last_error": "",
+        "hithink_cooldown_until": 0.0,
+        "hithink_last_error": "",
     }
 
 

@@ -22,10 +22,11 @@ from domains.quotes.tdx_name_map import (
     normalize_code_name_targets,
     parse_tnf_name_file,
 )
-from infra.tasks.lifecycle import TaskCancelledError, raise_if_cancelled
+from infra.tasks.lifecycle import TaskCancelledError, raise_if_cancelled, reraise_task_cancellation
 from infra.tasks.owner_lifecycle import invoke_with_cancellation
 from vcp.constants import DATE_FMT, INCREMENTAL_BARS, MARKET_SYNC_WORKERS, MAX_HISTORY_BARS
 from vcp.data_provider_cache import load_cache_from_disk
+from vcp.data_provider_quotes import request_hithink_ticker_names, sanitize_hithink_error
 from vcp.utils import ensure_pandas_dataframe
 
 _log = get_logger(__name__)
@@ -583,7 +584,7 @@ class TdxDataProviderHistoryMixin:
         _log.info(f"[离线模式] 已从 vipdoc 扫描 {len(stocks)} 只标的（其中 {has_names} 只有名称）")
         return stocks
 
-    def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+    def ensure_code_name_map(self, codes=None, *, refresh_missing=False, cancellation_token=None):
         from infra.storage.data_store import DataStore
 
         target_codes = self._normalize_code_name_targets(codes)
@@ -608,8 +609,14 @@ class TdxDataProviderHistoryMixin:
         ]
 
         if refresh_missing and missing_codes and not self._offline:
+            refreshed = {}
+            raise_if_cancelled(cancellation_token)
             try:
-                quotes = self.fetch_realtime_quotes_batch(missing_codes) or {}
+                quotes = invoke_with_cancellation(
+                    self.fetch_realtime_quotes_batch,
+                    cancellation_token,
+                    missing_codes,
+                ) or {}
             except (
                 AttributeError,
                 ConnectionError,
@@ -620,11 +627,12 @@ class TdxDataProviderHistoryMixin:
                 TypeError,
                 ValueError,
             ) as exc:
+                reraise_task_cancellation(exc)
                 _log.debug(f"[名称映射] 在线补名称失败: {exc}")
                 quotes = {}
 
-            refreshed = {}
             for raw_code, payload in dict(quotes).items():
+                raise_if_cancelled(cancellation_token)
                 code = str(raw_code or "").strip()
                 name = str((payload or {}).get("name") or "").strip()
                 if len(code) == 6 and code.isdigit() and not self._is_placeholder_name(code, name):
@@ -632,6 +640,30 @@ class TdxDataProviderHistoryMixin:
 
             if refreshed:
                 base_map.update(refreshed)
+
+            metadata_missing_codes = [
+                code for code in missing_codes if self._is_placeholder_name(code, base_map.get(code, ""))
+            ]
+            hithink_metadata_enabled = bool(getattr(self, "_rt_hithink_enabled", False))
+            if metadata_missing_codes and hithink_metadata_enabled:
+                try:
+                    metadata_names = request_hithink_ticker_names(
+                        self,
+                        metadata_missing_codes,
+                        cancellation_token=cancellation_token,
+                    )
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                    reraise_task_cancellation(exc)
+                    _log.debug(f"[名称映射] 同花顺元数据补名称失败: {sanitize_hithink_error(exc)}")
+                    metadata_names = {}
+                for raw_code, raw_name in dict(metadata_names).items():
+                    code = str(raw_code or "").strip()
+                    name = str(raw_name or "").strip()
+                    if len(code) == 6 and code.isdigit() and not self._is_placeholder_name(code, name):
+                        refreshed[code] = name
+                        base_map[code] = name
+
+            if refreshed:
                 try:
                     store = DataStore()
                     cached_map = store.load_json("vcp_code_names", {}) or {}
@@ -645,6 +677,12 @@ class TdxDataProviderHistoryMixin:
                     _log.info(f"[名称映射] 已在线补齐 {len(refreshed)} 只标的名称")
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
                     _log.debug(f"[名称映射] 持久化名称缓存失败: {exc}")
+
+            unresolved_codes = [
+                code for code in metadata_missing_codes if self._is_placeholder_name(code, base_map.get(code, ""))
+            ]
+            if unresolved_codes and hithink_metadata_enabled:
+                _log.debug(f"[名称映射] 元数据未覆盖 {len(unresolved_codes)} 只标的，保留待解析状态")
 
         self.code2name = base_map
         return dict(base_map)

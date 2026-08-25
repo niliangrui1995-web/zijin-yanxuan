@@ -378,8 +378,12 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
         {
             "request_stats": request_stats,
             "provider_runtime": provider_runtime,
+            "hithink_cooldown_until": health.hithink_cooldown_until,
+            "hithink_last_error": health.hithink_last_error,
             "eastmoney_cooldown_until": health.eastmoney_cooldown_until,
             "eastmoney_last_error": health.eastmoney_last_error,
+            "quote_cooldown_until": health.quote_cooldown_until,
+            "quote_last_error": health.quote_last_error,
         }
     )
     provider_degraded = bool(fault_tolerance.get("provider_degraded"))
@@ -395,6 +399,8 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
         "fallback_or_degraded": fallback_or_degraded,
         "last_network_error": last_network_error,
         "cooldown_seconds_left": fault_tolerance["cooldown_seconds_left"],
+        "hithink_cooldown_until": health.hithink_cooldown_until,
+        "hithink_last_error": health.hithink_last_error,
         "eastmoney_cooldown_seconds_left": fault_tolerance["eastmoney_cooldown_seconds_left"],
         "recent_triggered_network": fault_tolerance["recent_triggered_network"],
         "recent_cache_hit_count": fault_tolerance["recent_cache_hit_count"],

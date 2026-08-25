@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import ssl
 import urllib.request
 from collections.abc import Collection, Mapping
 from contextlib import suppress
@@ -10,6 +11,11 @@ from urllib.parse import urljoin, urlsplit
 DEFAULT_REQUESTS_USER_AGENT = "vcp-hunter/1.0"
 DEFAULT_MAX_HTTPS_REDIRECTS = 5
 _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+
+
+class BlockedHttpsHostError(ValueError):
+    """Raised when a HTTPS destination fails the non-local-address guard."""
 
 
 def _request_url(request) -> str:
@@ -41,6 +47,7 @@ def _is_blocked_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) 
             address.is_reserved,
             address.is_unspecified,
             isinstance(address, ipaddress.IPv4Address) and address in _CGNAT_NETWORK,
+            isinstance(address, ipaddress.IPv4Address) and address in _BENCHMARK_NETWORK,
         )
     )
 
@@ -65,18 +72,67 @@ def _resolved_host_addresses(hostname: str) -> tuple[ipaddress.IPv4Address | ipa
     return tuple(addresses)
 
 
-def _is_blocked_host(hostname: str) -> bool:
-    host = _normalized_host(hostname)
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
-        return True
+def _host_addresses(hostname: str) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...] | None:
     try:
-        return _is_blocked_address(ipaddress.ip_address(host))
+        return (ipaddress.ip_address(hostname),)
     except ValueError:
-        addresses = _resolved_host_addresses(host)
-        return not addresses or any(_is_blocked_address(address) for address in addresses)
+        return _resolved_host_addresses(hostname)
 
 
-def ensure_https_request(request, *, allowed_hosts: Collection[str] | str | None = None):
+def _effective_reserved_tun_host_addresses(
+    reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None,
+    benchmark_resolver_addresses: Mapping[str, Collection[str] | str] | None,
+) -> Mapping[str, Collection[str] | str] | None:
+    """Return the explicit reserved-TUN policy, preserving the former keyword as an alias."""
+    if reserved_tun_host_addresses is not None and benchmark_resolver_addresses is not None:
+        raise ValueError("reserved TUN policy must be provided only once")
+    return reserved_tun_host_addresses if reserved_tun_host_addresses is not None else benchmark_resolver_addresses
+
+
+def _configured_reserved_tun_addresses(
+    hostname: str,
+    *,
+    reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None,
+) -> set[ipaddress.IPv4Address] | None:
+    """Return one host's exact reserved-TUN address set, or no special-route policy."""
+    host = _normalized_host(hostname)
+    try:
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        pass
+    if not isinstance(reserved_tun_host_addresses, Mapping):
+        return None
+    configured_addresses = None
+    for configured_host, configured_value in reserved_tun_host_addresses.items():
+        if _normalized_host(str(configured_host)) == host:
+            configured_addresses = configured_value
+            break
+    if configured_addresses is None:
+        return None
+    if isinstance(configured_addresses, str):
+        configured_addresses = [configured_addresses]
+    expected_addresses: set[ipaddress.IPv4Address] = set()
+    try:
+        for raw_address in configured_addresses:
+            address = ipaddress.ip_address(str(raw_address).strip())
+            if not isinstance(address, ipaddress.IPv4Address) or address not in _BENCHMARK_NETWORK:
+                raise ValueError("reserved TUN policy must contain IPv4 benchmarking addresses")
+            expected_addresses.add(address)
+    except (TypeError, ValueError):
+        raise ValueError("reserved TUN policy is invalid") from None
+    if not expected_addresses:
+        raise ValueError("reserved TUN policy is empty")
+    return expected_addresses
+
+
+def ensure_https_request(
+    request,
+    *,
+    allowed_hosts: Collection[str] | str | None = None,
+    reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None = None,
+    benchmark_resolver_addresses: Mapping[str, Collection[str] | str] | None = None,
+):
     url = _request_url(request)
     parts = urlsplit(url)
     if parts.scheme.lower() != "https" or not parts.netloc:
@@ -84,16 +140,58 @@ def ensure_https_request(request, *, allowed_hosts: Collection[str] | str | None
     host = _normalized_host(parts.hostname)
     if not host:
         raise ValueError(f"HTTPS URL host is required: {url!r}")
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"HTTPS URL port is invalid: {url!r}") from exc
     allowed_host_set = _normalized_allowed_hosts(allowed_hosts)
     if allowed_host_set and host not in allowed_host_set:
         raise ValueError(f"HTTPS host is not allowed: {url!r}")
-    if _is_blocked_host(host):
-        raise ValueError(f"private or local HTTPS hosts are not allowed: {url!r}")
+
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        raise BlockedHttpsHostError(f"private or local HTTPS hosts are not allowed: {url!r}")
+    policy = _effective_reserved_tun_host_addresses(
+        reserved_tun_host_addresses,
+        benchmark_resolver_addresses,
+    )
+    expected_tun_addresses = _configured_reserved_tun_addresses(
+        host,
+        reserved_tun_host_addresses=policy,
+    )
+    if expected_tun_addresses is not None and host not in allowed_host_set:
+        raise BlockedHttpsHostError(f"private or local HTTPS hosts are not allowed: {url!r}")
+    addresses = _host_addresses(host)
+    if not addresses:
+        raise BlockedHttpsHostError(f"private or local HTTPS hosts are not allowed: {url!r}")
+    if expected_tun_addresses is not None:
+        # `198.18.0.0/15` is reserved for benchmarking, so it is accepted only
+        # as the exact VPN-TUN resolution on HTTPS/443.  A normal public DNS
+        # response is also valid for this allowlisted hostname; that route is
+        # protected by the local HTTPS handler's hostname/certificate checks,
+        # not by a claim that the public address is an IP pin.
+        if port in (None, 443) and set(addresses) == expected_tun_addresses:
+            return request
+        if port in (None, 443) and not any(_is_blocked_address(address) for address in addresses):
+            return request
+        raise BlockedHttpsHostError(f"private or local HTTPS hosts are not allowed: {url!r}")
+    if any(_is_blocked_address(address) for address in addresses):
+        raise BlockedHttpsHostError(f"private or local HTTPS hosts are not allowed: {url!r}")
     return request
 
 
-def _validated_https_url(url: str, *, allowed_hosts: Collection[str] | str | None = None) -> str:
-    ensure_https_request(url, allowed_hosts=allowed_hosts)
+def _validated_https_url(
+    url: str,
+    *,
+    allowed_hosts: Collection[str] | str | None = None,
+    reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None = None,
+    benchmark_resolver_addresses: Mapping[str, Collection[str] | str] | None = None,
+) -> str:
+    ensure_https_request(
+        url,
+        allowed_hosts=allowed_hosts,
+        reserved_tun_host_addresses=reserved_tun_host_addresses,
+        benchmark_resolver_addresses=benchmark_resolver_addresses,
+    )
     return url
 
 
@@ -102,24 +200,66 @@ def _validated_redirect_url(
     redirect_location: str,
     *,
     allowed_hosts: Collection[str] | str | None = None,
+    reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None = None,
+    benchmark_resolver_addresses: Mapping[str, Collection[str] | str] | None = None,
 ) -> str:
     redirect_url = urljoin(current_url, str(redirect_location or ""))
-    ensure_https_request(redirect_url, allowed_hosts=allowed_hosts)
+    ensure_https_request(
+        redirect_url,
+        allowed_hosts=allowed_hosts,
+        reserved_tun_host_addresses=reserved_tun_host_addresses,
+        benchmark_resolver_addresses=benchmark_resolver_addresses,
+    )
     return redirect_url
 
 
 class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def __init__(self, allowed_hosts: Collection[str] | str | None = None):
+    def __init__(
+        self,
+        allowed_hosts: Collection[str] | str | None = None,
+        reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None = None,
+        benchmark_resolver_addresses: Mapping[str, Collection[str] | str] | None = None,
+    ):
         self._allowed_hosts = allowed_hosts
+        self._reserved_tun_host_addresses = reserved_tun_host_addresses
+        self._benchmark_resolver_addresses = benchmark_resolver_addresses
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        redirect_url = _validated_redirect_url(req.full_url, newurl, allowed_hosts=self._allowed_hosts)
+        redirect_url = _validated_redirect_url(
+            req.full_url,
+            newurl,
+            allowed_hosts=self._allowed_hosts,
+            reserved_tun_host_addresses=self._reserved_tun_host_addresses,
+            benchmark_resolver_addresses=self._benchmark_resolver_addresses,
+        )
         return super().redirect_request(req, fp, code, msg, headers, redirect_url)
 
 
-def urlopen_https(request, *args, allowed_hosts: Collection[str] | str | None = None, **kwargs):
-    ensure_https_request(request, allowed_hosts=allowed_hosts)
-    opener = urllib.request.build_opener(_ValidatingRedirectHandler(allowed_hosts))
+def urlopen_https(
+    request,
+    *args,
+    allowed_hosts: Collection[str] | str | None = None,
+    reserved_tun_host_addresses: Mapping[str, Collection[str] | str] | None = None,
+    benchmark_resolver_addresses: Mapping[str, Collection[str] | str] | None = None,
+    **kwargs,
+):
+    ensure_https_request(
+        request,
+        allowed_hosts=allowed_hosts,
+        reserved_tun_host_addresses=reserved_tun_host_addresses,
+        benchmark_resolver_addresses=benchmark_resolver_addresses,
+    )
+    policy = _effective_reserved_tun_host_addresses(
+        reserved_tun_host_addresses,
+        benchmark_resolver_addresses,
+    )
+    tls_context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+    tls_context.verify_mode = ssl.CERT_REQUIRED
+    tls_context.check_hostname = True
+    opener = urllib.request.build_opener(
+        _ValidatingRedirectHandler(allowed_hosts, reserved_tun_host_addresses=policy),
+        urllib.request.HTTPSHandler(context=tls_context),
+    )
     # URL scheme is validated above; redirects are validated by the local opener handler.
     return opener.open(request, *args, **kwargs)
 

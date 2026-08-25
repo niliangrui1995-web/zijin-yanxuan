@@ -72,12 +72,12 @@ class IndicatorService:
             )
 
             if "amount" not in pldf.columns:
-                pldf = pldf.with_columns((pl.col("volume") * pl.col("close") * 100).alias("amount"))
+                pldf = pldf.with_columns((pl.col("volume") * pl.col("close")).alias("amount"))
             else:
                 pldf = pldf.with_columns(
                     [
                         pl.when(pl.col("amount").is_null() | (pl.col("amount") == 0))
-                        .then(pl.col("volume") * pl.col("close") * 100)
+                        .then(pl.col("volume") * pl.col("close"))
                         .otherwise(pl.col("amount"))
                         .alias("amount")
                     ]

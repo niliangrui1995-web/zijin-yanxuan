@@ -3,13 +3,16 @@ import http.client
 import json
 import threading
 import time
+import traceback
 import urllib.error
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 import pytest
 
 from core.market_calendar import MarketCalendar
-from vcp import data_provider_quotes, data_provider_realtime_mixin
+from domains.quotes.snapshot import merge_quote_entry
+from vcp import data_provider_quotes, data_provider_realtime, data_provider_realtime_mixin
 from vcp.data_provider import TdxDataProvider
 
 
@@ -66,12 +69,763 @@ def _offline_quotes(codes):
     }
 
 
+def _network_quote(code, inferred_trade_date, source):
+    return {
+        "open": 10.0,
+        "high": 10.1,
+        "low": 9.9,
+        "close": 10.0,
+        "volume": 1.0,
+        "amount": 2.0,
+        "last_close": 9.8,
+        "change": 0.2,
+        "pct": 2.04,
+        "date": inferred_trade_date,
+        "source": source,
+    }
+
+
 def test_quote_symbol_helpers_route_bse_code_to_bj_without_changing_shanghai_b_shares():
     assert data_provider_quotes.to_eastmoney_secid("920045") == "0.920045"
     assert data_provider_quotes.to_sina_symbol("920045") == "bj920045"
     assert data_provider_quotes.to_tencent_symbol("920045") == "bj920045"
     assert data_provider_quotes.to_eastmoney_secid("900001") == "1.900001"
     assert data_provider_quotes.to_sina_symbol("900001") == "sh900001"
+
+
+def test_hithink_symbol_helper_maps_a_share_exchanges_without_guessing_nonstandard_codes():
+    assert data_provider_quotes.to_hithink_thscode("000001") == "000001.SZ"
+    assert data_provider_quotes.to_hithink_thscode("600519") == "600519.SH"
+    assert data_provider_quotes.to_hithink_thscode("920045") == "920045.BJ"
+    assert data_provider_quotes.to_hithink_thscode("not-a-code") == ""
+
+
+def test_request_hithink_quote_batch_maps_snapshot_schema_and_preserves_volume_unit(monkeypatch):
+    provider = _make_provider()
+    quote_epoch = int(
+        dt.datetime(
+            2026,
+            4,
+            16,
+            10,
+            0,
+            tzinfo=dt.timezone(dt.timedelta(hours=8)),
+        ).timestamp()
+    )
+    quote_time = dt.datetime.fromtimestamp(
+        quote_epoch,
+        tz=dt.timezone(dt.timedelta(hours=8)),
+    ).isoformat(timespec="seconds")
+    seen = {}
+
+    def _fake_urlopen(
+        request,
+        timeout=8,
+        allowed_hosts=None,
+        reserved_tun_host_addresses=None,
+        benchmark_resolver_addresses=None,
+    ):
+        del timeout
+        seen["url"] = request.full_url
+        seen["api_key"] = request.get_header("X-api-key")
+        seen["allowed_hosts"] = allowed_hosts
+        seen["reserved_tun_host_addresses"] = reserved_tun_host_addresses
+        seen["benchmark_resolver_addresses"] = benchmark_resolver_addresses
+        return _FakeHttpResponse(
+            {
+                "code": 0,
+                "message": "ok",
+                "request_id": "unit-test-request",
+                "data": {
+                    "timestamp": quote_epoch * 1000,
+                    "item": [
+                        {
+                            "thscode": "000001.SZ",
+                            "ticker": "000001",
+                            "last_price": 11.19,
+                            "price_change": 0.02,
+                            "price_change_ratio_pct": 0.18,
+                            "open_price": 11.16,
+                            "high_price": 11.21,
+                            "low_price": 11.15,
+                            "prev_price": 11.17,
+                            "volume": 14_321_500,
+                            "turnover": 160_274_827.37,
+                        }
+                    ],
+                },
+            }
+        )
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "unit-test-key")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+
+    result = provider._request_hithink_quote_batch(["000001"], "2026-04-15")
+
+    assert urlsplit(seen["url"]).path == "/api/a-share/prices/snapshot"
+    assert parse_qs(urlsplit(seen["url"]).query) == {"thscodes": ["000001.SZ"]}
+    assert seen["api_key"] == "unit-test-key"
+    assert seen["allowed_hosts"] == {"fuyao.aicubes.cn"}
+    assert seen["reserved_tun_host_addresses"] == {"fuyao.aicubes.cn": {"198.18.0.67"}}
+    assert seen["benchmark_resolver_addresses"] is None
+    assert result == {
+        "000001": {
+            "open": 11.16,
+            "high": 11.21,
+            "low": 11.15,
+            "close": 11.19,
+            "volume": 14321500.0,
+            "amount": 160274827.37,
+            "last_close": 11.17,
+            "change": 0.02,
+            "pct": 0.18,
+            "date": "2026-04-15",
+            "source": "hithink",
+            "quote_time": quote_time,
+            "quote_freshness": "network",
+        }
+    }
+    assert "name" not in result["000001"]
+    assert merge_quote_entry({"name": "平安银行"}, result["000001"])["name"] == "平安银行"
+
+
+def test_request_hithink_quote_batch_rejects_nonzero_business_code_without_retry(monkeypatch):
+    provider = _make_provider()
+    calls = []
+
+    def _fake_urlopen(
+        request,
+        timeout=8,
+        allowed_hosts=None,
+        reserved_tun_host_addresses=None,
+        benchmark_resolver_addresses=None,
+    ):
+        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        calls.append(request.full_url)
+        return _FakeHttpResponse(
+            {
+                "code": 2003,
+                "message": "invalid key",
+                "request_id": "unit-test-request",
+                "data": None,
+            }
+        )
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "unit-test-key")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="code=2003"):
+        provider._request_hithink_quote_batch(["000001"], "2026-04-15")
+
+    assert len(calls) == 1
+
+
+def test_request_hithink_quote_batch_retries_http_429_within_one_request_budget(monkeypatch):
+    provider = _make_provider()
+    provider._rt_api_call_timeout_sec = 1.0
+    calls = []
+    waits = []
+
+    def _fake_urlopen(
+        request,
+        timeout=8,
+        allowed_hosts=None,
+        reserved_tun_host_addresses=None,
+        benchmark_resolver_addresses=None,
+    ):
+        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", hdrs=None, fp=None)
+        return _FakeHttpResponse(
+            {
+                "code": 0,
+                "data": {
+                    "timestamp": None,
+                    "item": [
+                        {
+                            "thscode": "000001.SZ",
+                            "last_price": 11.19,
+                            "price_change": 0.02,
+                            "price_change_ratio_pct": 0.18,
+                            "open_price": 11.16,
+                            "high_price": 11.21,
+                            "low_price": 11.15,
+                            "prev_price": 11.17,
+                            "volume": 14_321_500,
+                            "turnover": 160_274_827.37,
+                        }
+                    ],
+                },
+            }
+        )
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "unit-test-key")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(
+        data_provider_quotes,
+        "wait_with_cancellation",
+        lambda seconds, _token: waits.append(seconds),
+    )
+
+    result = provider._request_hithink_quote_batch(["000001"], "2026-04-15")
+
+    assert len(calls) == 2
+    assert waits == [pytest.approx(0.15)]
+    assert result["000001"]["source"] == "hithink"
+
+
+def test_request_hithink_quote_batch_keeps_retry_timeout_inside_one_source_budget(monkeypatch):
+    provider = _make_provider()
+    provider._rt_api_call_timeout_sec = 1.0
+    clock = [100.0]
+    calls = []
+
+    def _fake_urlopen(
+        _request,
+        timeout=8,
+        allowed_hosts=None,
+        reserved_tun_host_addresses=None,
+        benchmark_resolver_addresses=None,
+    ):
+        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        calls.append("hithink")
+        clock[0] += 2.0
+        raise TimeoutError("hithink timed out")
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "unit-test-key")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(data_provider_quotes, "wait_with_cancellation", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="同花顺实时报价请求失败"):
+        provider._request_hithink_quote_batch(["000001"], "2026-04-15")
+
+    assert calls == ["hithink"]
+
+
+def test_request_hithink_quote_batch_hides_api_key_from_exception_traceback(monkeypatch):
+    provider = _make_provider()
+    secret = "unit-test-key"
+
+    def _fake_urlopen(
+        _request,
+        timeout=8,
+        allowed_hosts=None,
+        reserved_tun_host_addresses=None,
+        benchmark_resolver_addresses=None,
+    ):
+        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        raise OSError(f"proxy reflected X-api-key: {secret}")
+
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", secret)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "wait_with_cancellation", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="同花顺实时报价请求失败") as captured:
+        provider._request_hithink_quote_batch(["000001"], "2026-04-15")
+
+    rendered = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
+    assert secret not in rendered
+
+
+def test_fetch_realtime_quotes_batch_prefers_hithink_and_does_not_touch_legacy_sources(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
+
+    def _hithink(batch, inferred_trade_date):
+        assert batch == ["000001", "600519"]
+        return {
+            code: {
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1.0,
+                "amount": 2.0,
+                "last_close": 9.8,
+                "change": 0.2,
+                "pct": 2.04,
+                "date": inferred_trade_date,
+                "source": "hithink",
+            }
+            for code in batch
+        }
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_hithink_quote_batch", _hithink)
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Hithink should cover the batch")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001", "600519"])
+
+    assert {code: quote["source"] for code, quote in result.items()} == {
+        "000001": "hithink",
+        "600519": "hithink",
+    }
+    assert provider.get_quote_request_stats()["recent_source_layers"] == ["hithink"]
+
+
+def test_fetch_realtime_quotes_batch_uses_legacy_only_for_hithink_missing_codes(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
+    eastmoney_batches = []
+
+    def _quote(code, inferred_trade_date, source):
+        return {
+            "open": 10.0,
+            "high": 10.1,
+            "low": 9.9,
+            "close": 10.0,
+            "volume": 1.0,
+            "amount": 2.0,
+            "last_close": 9.8,
+            "change": 0.2,
+            "pct": 2.04,
+            "date": inferred_trade_date,
+            "source": source,
+        }
+
+    def _hithink(batch, inferred_trade_date):
+        assert batch == ["000001", "600519"]
+        return {"000001": _quote("000001", inferred_trade_date, "hithink")}
+
+    def _eastmoney(batch, inferred_trade_date, min_batch_size):
+        del min_batch_size
+        eastmoney_batches.append(tuple(batch))
+        return {"600519": _quote("600519", inferred_trade_date, "eastmoney")}, []
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_hithink_quote_batch", _hithink)
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _eastmoney)
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy primary covers missing code")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001", "600519"])
+
+    assert eastmoney_batches == [("600519",)]
+    assert result["000001"]["source"] == "hithink"
+    assert result["600519"]["source"] == "eastmoney"
+    assert {result[code]["quote_freshness"] for code in result} == {"network"}
+    assert set(provider.get_quote_request_stats()["recent_source_layers"]) == {"eastmoney", "hithink"}
+
+
+def test_hithink_transient_failure_falls_back_with_live_quote_and_publishes_cooldown(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("hithink timed out")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda batch, inferred_trade_date, min_batch_size: (
+            {
+                code: {
+                    "close": 10.0,
+                    "last_close": 9.8,
+                    "date": inferred_trade_date,
+                    "source": "eastmoney",
+                }
+                for code in batch
+            },
+            [],
+        ),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert result["000001"]["source"] == "eastmoney"
+    assert result["000001"]["quote_freshness"] == "network"
+    assert provider._rt_hithink_cooldown_until > time.time()
+    stats = provider.get_quote_request_stats()
+    assert stats["quote_primary_source"] == "hithink"
+    assert stats["quote_cooldown_until"] == provider._rt_hithink_cooldown_until
+
+
+def test_large_hithink_request_retries_one_transient_batch_without_global_cooldown(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_size = 2
+    provider._rt_hithink_quote_batch_size = 2
+    provider._rt_quote_batch_pause_sec = 0.0
+    hithink_calls = []
+    attempts = {}
+
+    def _hithink(batch, inferred_trade_date):
+        key = tuple(batch)
+        hithink_calls.append(key)
+        attempts[key] = attempts.get(key, 0) + 1
+        if key == ("000003", "000004") and attempts[key] == 1:
+            raise TimeoutError("hithink timed out")
+        return {code: _network_quote(code, inferred_trade_date, "hithink") for code in batch}
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_hithink_quote_batch", _hithink)
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda batch, inferred_trade_date, _min_batch_size: (
+            {code: _network_quote(code, inferred_trade_date, "eastmoney") for code in batch},
+            [],
+        ),
+    )
+    monkeypatch.setattr(data_provider_realtime, "wait_with_cancellation", lambda *_args, **_kwargs: None)
+
+    result = provider.fetch_realtime_quotes_batch(
+        ["000001", "000002", "000003", "000004", "000005", "000006"]
+    )
+
+    assert hithink_calls == [
+        ("000001", "000002"),
+        ("000003", "000004"),
+        ("000003", "000004"),
+        ("000005", "000006"),
+    ]
+    assert {quote["source"] for quote in result.values()} == {"hithink"}
+    assert provider._rt_hithink_cooldown_until == 0.0
+
+
+def test_large_hithink_request_isolates_one_persistent_batch_and_continues_primary(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_size = 2
+    provider._rt_hithink_quote_batch_size = 2
+    provider._rt_quote_batch_pause_sec = 0.0
+    hithink_calls = []
+    eastmoney_batches = []
+
+    def _hithink(batch, inferred_trade_date):
+        key = tuple(batch)
+        hithink_calls.append(key)
+        if key == ("000003", "000004"):
+            raise TimeoutError("hithink timed out")
+        return {code: _network_quote(code, inferred_trade_date, "hithink") for code in batch}
+
+    def _eastmoney(batch, inferred_trade_date, _min_batch_size):
+        eastmoney_batches.append(tuple(batch))
+        return {code: _network_quote(code, inferred_trade_date, "eastmoney") for code in batch}, []
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_hithink_quote_batch", _hithink)
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _eastmoney)
+    monkeypatch.setattr(data_provider_realtime, "wait_with_cancellation", lambda *_args, **_kwargs: None)
+
+    result = provider.fetch_realtime_quotes_batch(
+        ["000001", "000002", "000003", "000004", "000005", "000006"]
+    )
+
+    assert hithink_calls == [
+        ("000001", "000002"),
+        ("000003", "000004"),
+        ("000003", "000004"),
+        ("000005", "000006"),
+    ]
+    assert eastmoney_batches == [("000003", "000004")]
+    assert {result[code]["source"] for code in ("000001", "000002", "000005", "000006")} == {"hithink"}
+    assert {result[code]["source"] for code in ("000003", "000004")} == {"eastmoney"}
+    assert provider._rt_hithink_cooldown_until == 0.0
+
+
+def test_hithink_primary_uses_100_code_blocks_while_legacy_fallback_stays_small(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_hithink_quote_batch_size = 100
+    provider._rt_quote_batch_size = 20
+    provider._rt_quote_batch_pause_sec = 0.0
+    hithink_batches = []
+    eastmoney_batches = []
+    codes = [f"{index:06d}" for index in range(1, 101)]
+
+    def _hithink(batch, _inferred_trade_date):
+        hithink_batches.append(tuple(batch))
+        return {}
+
+    def _eastmoney(batch, inferred_trade_date, _min_batch_size):
+        eastmoney_batches.append(tuple(batch))
+        return {code: _network_quote(code, inferred_trade_date, "eastmoney") for code in batch}, []
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_hithink_quote_batch", _hithink)
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _eastmoney)
+
+    result = provider.fetch_realtime_quotes_batch(codes)
+
+    assert hithink_batches == [tuple(codes)]
+    assert [len(batch) for batch in eastmoney_batches] == [20, 20, 20, 20, 20]
+    assert {quote["source"] for quote in result.values()} == {"eastmoney"}
+
+
+def test_tun_blocked_legacy_fallbacks_do_not_advance_runtime_cooldown(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_hithink_cooldown_until = time.time() + 60.0
+    provider._rt_quote_batch_size = 1
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = _offline_quotes
+    runtime_failures = []
+    blocked = "private or local HTTPS hosts are not allowed: 'https://push2.eastmoney.com/'"
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda *_args, **_kwargs: ({}, [blocked]),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(blocked)),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(blocked)),
+    )
+    monkeypatch.setattr(provider, "_register_realtime_failure", lambda reason: runtime_failures.append(reason))
+
+    for code in ("000001", "000002", "000003"):
+        result = provider.fetch_realtime_quotes_batch([code])
+        assert result[code]["source"] == "offline"
+
+    assert runtime_failures == []
+    assert provider._rt_runtime_cooldown_until == 0.0
+
+
+def test_hithink_enabled_bypasses_legacy_runtime_cooldown_gate(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_runtime_cooldown_until = time.time() + 300.0
+    provider._rt_quote_batch_pause_sec = 0.0
+    hithink_calls = []
+
+    def _hithink(batch, inferred_trade_date):
+        hithink_calls.append(tuple(batch))
+        return {code: _network_quote(code, inferred_trade_date, "hithink") for code in batch}
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(provider, "_request_hithink_quote_batch", _hithink)
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert hithink_calls == [("000001",)]
+    assert result["000001"]["source"] == "hithink"
+    assert provider._rt_runtime_cooldown_until == 0.0
+
+
+def test_hithink_enabled_does_not_register_legacy_runtime_failure(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = _offline_quotes
+    runtime_failures = []
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("hithink upstream unavailable")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda *_args, **_kwargs: ({}, ["eastmoney upstream unavailable"]),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sina upstream unavailable")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("tencent upstream unavailable")),
+    )
+    monkeypatch.setattr(provider, "_register_realtime_failure", lambda reason: runtime_failures.append(reason))
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert result["000001"]["source"] == "offline"
+    assert runtime_failures == []
+
+
+def test_hithink_isolates_bad_code_without_cooling_down_the_valid_batch(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+    legacy_batches = []
+
+    def _fake_urlopen(
+        request,
+        timeout=8,
+        allowed_hosts=None,
+        reserved_tun_host_addresses=None,
+        benchmark_resolver_addresses=None,
+    ):
+        del timeout, allowed_hosts, reserved_tun_host_addresses, benchmark_resolver_addresses
+        thscodes = parse_qs(urlsplit(request.full_url).query)["thscodes"][0].split(",")
+        if "000000.SZ" in thscodes:
+            return _FakeHttpResponse({"code": 1002, "data": None})
+        return _FakeHttpResponse(
+            {
+                "code": 0,
+                "data": {
+                    "timestamp": None,
+                    "item": [
+                        {
+                            "thscode": "000001.SZ",
+                            "last_price": 11.19,
+                            "price_change": 0.02,
+                            "price_change_ratio_pct": 0.18,
+                            "open_price": 11.16,
+                            "high_price": 11.21,
+                            "low_price": 11.15,
+                            "prev_price": 11.17,
+                            "volume": 14_321_500,
+                            "turnover": 160_274_827.37,
+                        }
+                    ],
+                },
+            }
+        )
+
+    def _eastmoney(batch, inferred_trade_date, min_batch_size):
+        del min_batch_size
+        legacy_batches.append(tuple(batch))
+        return {
+            "000000": {
+                "close": 10.0,
+                "last_close": 9.8,
+                "date": inferred_trade_date,
+                "source": "eastmoney",
+            }
+        }, []
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "unit-test-key")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _eastmoney)
+
+    result = provider.fetch_realtime_quotes_batch(["000001", "000000"])
+
+    assert result["000001"]["source"] == "hithink"
+    assert result["000000"]["source"] == "eastmoney"
+    assert legacy_batches == [("000000",)]
+    assert provider._rt_hithink_cooldown_until == 0.0
+
+
+def test_hithink_error_redacts_api_key_before_health_or_log_output(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+    secret = "unit-test-key"
+    logs = []
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.setenv("HITHINK_FINANCE_API_KEY", secret)
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(f"proxy\nX-api-key: {secret}")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda batch, inferred_trade_date, min_batch_size: (
+            {
+                code: {
+                    "close": 10.0,
+                    "last_close": 9.8,
+                    "date": inferred_trade_date,
+                    "source": "eastmoney",
+                }
+                for code in batch
+            },
+            [],
+        ),
+    )
+    monkeypatch.setattr(data_provider_quotes.log, "warning", lambda message: logs.append(str(message)))
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert result["000001"]["source"] == "eastmoney"
+    assert secret not in provider._rt_hithink_last_error
+    assert "\n" not in provider._rt_hithink_last_error
+    assert all(secret not in message for message in logs)
+    assert all(secret not in str(value) for value in provider.get_quote_request_stats().values())
+
+
+def test_missing_hithink_key_disables_primary_and_uses_legacy_fallback(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+    provider._rt_quote_batch_pause_sec = 0.0
+
+    _patch_open_market(monkeypatch)
+    monkeypatch.delenv("HITHINK_FINANCE_API_KEY", raising=False)
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("HITHINK_FINANCE_API_KEY 未配置")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda batch, inferred_trade_date, min_batch_size: (
+            {
+                code: {
+                    "close": 11.19,
+                    "last_close": 11.17,
+                    "date": inferred_trade_date,
+                    "source": "eastmoney",
+                    "quote_freshness": "network",
+                }
+                for code in batch
+            },
+            [],
+        ),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert result["000001"]["source"] == "eastmoney"
+    assert provider._rt_hithink_enabled is False
+    assert provider._rt_hithink_cooldown_until == 0.0
+
+
+def test_test_network_prefers_hithink_when_it_is_enabled(monkeypatch):
+    provider = _make_provider()
+    provider._rt_hithink_enabled = True
+
+    monkeypatch.setattr(
+        provider,
+        "_request_hithink_quote_batch",
+        lambda codes, inferred_trade_date: {codes[0]: {"close": 11.19, "date": inferred_trade_date}},
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_eastmoney_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Hithink probe should short-circuit")),
+    )
+
+    assert provider.test_network(timeout=3) is True
+    probe = provider.get_last_network_probe()
+    assert probe["hithink_quote_probe"] == "ok"
+    assert probe["quote_probe"] == "ok"
 
 
 def _make_sina_quote_fetcher(seen):
@@ -224,7 +978,7 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
             "high": 11.21,
             "low": 11.15,
             "close": 11.19,
-            "volume": 143215.0,
+            "volume": 14321500.0,
             "amount": 160274827.37,
             "last_close": 11.17,
             "change": 0.0,
@@ -241,7 +995,7 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
             "high": 1467.88,
             "low": 1442.0,
             "close": 1462.07,
-            "volume": 12052.0,
+            "volume": 1205200.0,
             "amount": 1754436217.0,
             "last_close": 1446.9,
             "change": 0.0,
@@ -276,7 +1030,7 @@ def test_request_tencent_quote_batch_parses_realtime_payload(monkeypatch):
             "high": 1401.17,
             "low": 1380.0,
             "close": 1384.79,
-            "volume": 52753.0,
+            "volume": 5275300.0,
             "amount": 7316111748.0,
             "last_close": 1401.17,
             "change": -16.38,
@@ -299,7 +1053,7 @@ def test_request_sina_quote_batch_preserves_exchange_quote_time(monkeypatch):
     fields[3] = "1384.79"
     fields[4] = "1401.17"
     fields[5] = "1380.00"
-    fields[8] = "52753"
+    fields[8] = "5275300"
     fields[9] = "7316111748"
     fields[30] = "2026-04-30"
     fields[31] = "14:24:06"
@@ -312,6 +1066,7 @@ def test_request_sina_quote_batch_preserves_exchange_quote_time(monkeypatch):
 
     result = provider._request_sina_quote_batch(["600519"], "2026-04-15")
 
+    assert result["600519"]["volume"] == 5275300.0
     assert result["600519"]["quote_time"] == "2026-04-30T14:24:06+08:00"
     assert result["600519"]["quote_freshness"] == "network"
 
@@ -581,7 +1336,7 @@ def test_test_network_uses_one_total_deadline_across_fallback_sources(monkeypatc
     )
 
     assert provider.test_network(timeout=2) is False
-    assert calls == [("eastmoney", 2.0)]
+    assert calls == [("eastmoney", pytest.approx(1.6))]
     probe = provider.get_last_network_probe()
     assert probe["sina_quote_probe"] == "deadline"
     assert probe["elapsed_ms"] == 2100.0
@@ -1362,12 +2117,14 @@ def test_fetch_realtime_quotes_batch_skips_eastmoney_when_in_cooldown(monkeypatc
     assert result["000001"]["source"] == "sina"
 
 
-def test_force_reconnect_servers_resets_eastmoney_state_without_tdx_speed_test(monkeypatch):
+def test_force_reconnect_servers_resets_hithink_and_eastmoney_state_without_tdx_speed_test(monkeypatch):
     provider = _make_provider()
     provider._offline = False
     provider._rt_runtime_cooldown_until = 123.0
     provider._rt_runtime_consecutive_failures = 2
     provider._rt_runtime_last_error = "old-error"
+    provider._rt_hithink_cooldown_until = 456.0
+    provider._rt_hithink_last_error = "old-hithink-error"
 
     called = []
     monkeypatch.setattr(provider, "_reset_realtime_runtime", lambda *args, **kwargs: called.append((args, kwargs)))
@@ -1377,9 +2134,11 @@ def test_force_reconnect_servers_resets_eastmoney_state_without_tdx_speed_test(m
     assert provider._rt_runtime_cooldown_until == 0.0
     assert provider._rt_runtime_consecutive_failures == 0
     assert provider._rt_runtime_last_error == ""
+    assert provider._rt_hithink_cooldown_until == 0.0
+    assert provider._rt_hithink_last_error == ""
     assert called == [
         (
-            ("强制刷新东方财富实时行情连接",),
+            ("强制刷新同花顺盘中实时行情连接",),
             {"log_warning": False, "penalize_server": False},
         )
     ]

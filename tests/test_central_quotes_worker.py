@@ -1105,6 +1105,7 @@ def test_central_quotes_service_limits_fallback_cooldown_full_fetch(monkeypatch)
                 request_stats={},
                 runtime_stats={},
                 eastmoney_cooldown_until=self._rt_eastmoney_cooldown_until,
+                quote_cooldown_until=self._rt_eastmoney_cooldown_until,
             )
 
         def is_online(self):
@@ -1489,6 +1490,7 @@ def test_central_quotes_service_heartbeat_counts_eastmoney_quote_cooldown(monkey
                 request_stats={},
                 runtime_stats={},
                 eastmoney_cooldown_until=self._rt_eastmoney_cooldown_until,
+                quote_cooldown_until=self._rt_eastmoney_cooldown_until,
             )
 
         def compact_runtime_caches(self):

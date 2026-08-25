@@ -83,11 +83,21 @@ def classify_provider_fault_tolerance(
     source_layers = _source_layers(request_stats)
     recent_status = _text(request_stats.get("recent_status"))
     last_error = _text(
-        runtime_stats.get("last_error") or status.get("last_network_error") or status.get("eastmoney_last_error")
+        runtime_stats.get("last_error")
+        or status.get("last_network_error")
+        or status.get("quote_last_error")
+        or status.get("eastmoney_last_error")
     )
     cooldown_until = _float_value(runtime_stats.get("cooldown_until") or status.get("cooldown_until"))
     eastmoney_cooldown_until = _float_value(status.get("eastmoney_cooldown_until"))
-    provider_degraded = bool(cooldown_until > current or eastmoney_cooldown_until > current)
+    quote_cooldown_until = _float_value(
+        status.get("quote_cooldown_until") or request_stats.get("quote_cooldown_until")
+    )
+    quote_primary_source = _text(request_stats.get("quote_primary_source") or status.get("quote_primary_source")).lower()
+    active_cooldown_until = (
+        quote_cooldown_until if quote_primary_source == "hithink" else max(cooldown_until, quote_cooldown_until)
+    )
+    provider_degraded = bool(active_cooldown_until > current)
     fallback_or_degraded = bool(
         provider_degraded
         or _contains_fault_token(source_layers, fallback_tokens)
@@ -98,7 +108,7 @@ def classify_provider_fault_tolerance(
         provider_degraded=provider_degraded,
         fallback_or_degraded=fallback_or_degraded,
         last_network_error=last_error,
-        cooldown_seconds_left=max(0, int(cooldown_until - current)),
+        cooldown_seconds_left=max(0, int(active_cooldown_until - current)),
         eastmoney_cooldown_seconds_left=max(0, int(eastmoney_cooldown_until - current)),
         recent_triggered_network=bool(request_stats.get("recent_triggered_network", False)),
         recent_cache_hit_count=_int_value(request_stats.get("recent_cache_hit_count")),

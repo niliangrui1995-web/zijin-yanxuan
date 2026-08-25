@@ -33,7 +33,7 @@ from app.services.ui_quote_service import (
     is_a_share_code,
     publish_rt_quotes,
 )
-from app.services.ui_task_lifecycle_service import task_lifecycle_for
+from app.services.ui_task_lifecycle_service import invoke_with_cancellation, task_lifecycle_for
 from app.services.ui_task_service import (
     SHARED_MARKET_CAPS,
     task_id_of,
@@ -1058,8 +1058,12 @@ def _submit_owner_quote_refresh(owner, task_manager, task_id: str, target_codes:
     owner_class_name = owner.__class__.__name__
     owner._runtime_network_triggered = True
 
-    def _bg_task(_cancellation_token):
-        return provider.fetch_realtime_quotes_batch(target_codes)
+    def _bg_task(cancellation_token):
+        return invoke_with_cancellation(
+            provider.fetch_realtime_quotes_batch,
+            cancellation_token,
+            target_codes,
+        )
 
     def _on_success(quotes):
         owner_obj = owner_ref()

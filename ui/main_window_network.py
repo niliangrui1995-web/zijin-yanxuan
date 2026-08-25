@@ -87,7 +87,7 @@ def update_network_ui(main_window, online: bool, detail: str = ""):
 
 
 def force_reconnect(main_window):
-    """主站强制重置东方财富实时行情连接。"""
+    """重置同花顺主源及兼容回退的盘中实时行情连接。"""
     provider = _runtime_data_provider(main_window)
     if provider is None or not provider.is_online():
         return
@@ -97,7 +97,7 @@ def force_reconnect(main_window):
     def _reconnect_task(_cancellation_token):
         try:
             provider.force_reconnect_servers()
-            return provider.test_network(timeout=2)
+            return provider.test_network(timeout=3)
         except (
             ConnectionError,
             OSError,
@@ -114,10 +114,10 @@ def force_reconnect(main_window):
         from ui.components.toast_widget import show_toast
 
         if ok:
-            show_toast("东方财富实时行情连接已重置。", "success", main_window, duration=2500)
+            show_toast("同花顺主源及兼容回退行情连接已重置。", "success", main_window, duration=2500)
             return
 
-        show_toast("东方财富实时行情检测失败，请检查网络。", "error", main_window, duration=3500)
+        show_toast("盘中实时行情检测失败，请检查网络。", "error", main_window, duration=3500)
 
     from app.services.ui_task_service import background_job_runner as task_manager
 

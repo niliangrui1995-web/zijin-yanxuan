@@ -27,6 +27,7 @@ RT_QUOTE_CACHE_TTL_SEC = 180.0
 RT_QUOTE_CACHE_MAX_ENTRIES = 4096
 RT_QUOTE_DEDUP_WINDOW_SEC = 8.5
 RT_QUOTE_BATCH_SIZE = 20
+RT_HITHINK_QUOTE_BATCH_SIZE = 100
 RT_QUOTE_MIN_BATCH_SIZE = 5
 RT_QUOTE_BATCH_PAUSE_SEC = 0.12
 
@@ -63,11 +64,31 @@ class _ProviderHealthMixin:
     def read_provider_health(self) -> ProviderHealthSnapshot:
         """Publish quote-provider health without exposing mutable internals."""
         source = cast(_ProviderPortSource, self)
+        hithink_enabled = bool(getattr(self, "_rt_hithink_enabled", False))
+        try:
+            eastmoney_cooldown_until = float(getattr(self, "_rt_eastmoney_cooldown_until", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            eastmoney_cooldown_until = 0.0
+        try:
+            hithink_cooldown_until = float(getattr(self, "_rt_hithink_cooldown_until", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            hithink_cooldown_until = 0.0
+        hithink_last_error = str(getattr(self, "_rt_hithink_last_error", "") or "")
+        eastmoney_last_error = str(getattr(self, "_rt_eastmoney_last_error", "") or "")
+        quote_primary_source = "hithink" if hithink_enabled else "eastmoney"
+        quote_cooldown_until = hithink_cooldown_until if hithink_enabled else eastmoney_cooldown_until
+        quote_last_error = hithink_last_error if hithink_enabled else eastmoney_last_error
+        request_stats = dict(source.get_quote_request_stats() or {})
+        request_stats["quote_primary_source"] = quote_primary_source
         return ProviderHealthSnapshot(
-            request_stats=source.get_quote_request_stats(),
+            request_stats=request_stats,
             runtime_stats=source.get_realtime_runtime_stats(),
-            eastmoney_cooldown_until=getattr(self, "_rt_eastmoney_cooldown_until", 0.0),
-            eastmoney_last_error=getattr(self, "_rt_eastmoney_last_error", ""),
+            eastmoney_cooldown_until=eastmoney_cooldown_until,
+            eastmoney_last_error=eastmoney_last_error,
+            quote_cooldown_until=quote_cooldown_until,
+            quote_last_error=quote_last_error,
+            hithink_cooldown_until=hithink_cooldown_until,
+            hithink_last_error=hithink_last_error,
         )
 
     def ensure_adjustment_metadata(self, *, force: bool = False) -> dict:
@@ -122,10 +143,14 @@ class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxData
         self._rt_runtime_thread_threshold = 4
         self._rt_runtime_dedup_window_sec = RT_QUOTE_DEDUP_WINDOW_SEC
         self._rt_quote_batch_size = RT_QUOTE_BATCH_SIZE
+        self._rt_hithink_quote_batch_size = RT_HITHINK_QUOTE_BATCH_SIZE
         self._rt_quote_min_batch_size = RT_QUOTE_MIN_BATCH_SIZE
         self._rt_quote_batch_pause_sec = RT_QUOTE_BATCH_PAUSE_SEC
         self._rt_last_network_probe = {}
         self._rt_last_pressure_log_at = 0.0
+        self._rt_hithink_enabled = bool(str(os.environ.get("HITHINK_FINANCE_API_KEY") or "").strip())
+        self._rt_hithink_cooldown_until = 0.0
+        self._rt_hithink_last_error = ""
         self._rt_eastmoney_cooldown_until = 0.0
         self._rt_eastmoney_last_error = ""
         self._rt_last_fallback_log_at = 0.0
@@ -158,8 +183,10 @@ class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxData
 
         if offline:
             _log.warning("[启动] 离线模式启动：跳过联网检测，使用本地数据")
+        elif self._rt_hithink_enabled:
+            _log.info("[启动] A股盘中实时行情使用同花顺金融数据主源，保留兼容回退链路")
         else:
-            _log.info("[启动] A股盘中实时行情改为东方财富接口，跳过旧通达信节点测速")
+            _log.warning("[启动] 未检测到 HITHINK_FINANCE_API_KEY，盘中行情暂用兼容回退链路")
 
     def _get_adjustment_service(self) -> AdjustmentService:
         return _get_or_create_service(self, "_adjustment_service", lambda: AdjustmentService(self))
@@ -460,6 +487,8 @@ class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxData
             "recent_duplicate_requested_codes": recent.get("duplicate_requested_codes", {}),
             "recent_triggered_network": bool(recent.get("triggered_network", False)),
             "recent_source_layers": list(recent.get("source_layers") or []),
+            "quote_cooldown_until": recent.get("quote_cooldown_until", 0.0),
+            "quote_primary_source": recent.get("quote_primary_source", ""),
             "recent_status": recent.get("status", ""),
             "network_batch_history_size": len(network_batches),
             "repeated_batch_signature_count": len(repeated_signatures),

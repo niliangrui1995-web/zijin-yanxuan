@@ -50,6 +50,13 @@ def test_quote_result_state_prefers_freshness_over_original_source():
         }
     )
     assert stale_state[-1] is True
+    hithink_state = worker_module._quote_result_state(
+        {
+            "quotes": {"000001": {"close": 10.0, "source": "hithink"}},
+            "provider_stats": failed_provider,
+        }
+    )
+    assert hithink_state[-1] is False
 
 
 def test_realtime_terminal_callbacks_are_applied_once_per_generation(monkeypatch):
@@ -672,7 +679,11 @@ def test_central_quote_fallback_code_rotation(monkeypatch, qt_application):
         monkeypatch.setattr(
             worker_module,
             "read_provider_health",
-            lambda _provider: SimpleNamespace(request_stats={}, eastmoney_cooldown_until=200),
+            lambda _provider: SimpleNamespace(
+                request_stats={},
+                quote_cooldown_until=200,
+                eastmoney_cooldown_until=0,
+            ),
         )
         assert service._quote_fallback_cooldown_left({"quote_cooldown_until": "bad"}, now=100) == 100
 
@@ -687,6 +698,85 @@ def test_central_quote_fallback_code_rotation(monkeypatch, qt_application):
         assert len(first) == len(second) == len(third) == 2
         assert service._fallback_pressure_codes(codes, provider_stats={}, market_status="开盘集合竞价") == codes
 
+    finally:
+        service.shutdown()
+
+
+def test_central_quote_cooldown_ignores_eastmoney_when_hithink_is_primary(monkeypatch):
+    service = _service()
+    try:
+        monkeypatch.setattr(
+            worker_module,
+            "read_provider_health",
+            lambda _provider: SimpleNamespace(
+                request_stats={"quote_primary_source": "hithink"},
+                quote_cooldown_until=0,
+                eastmoney_cooldown_until=200,
+            ),
+        )
+
+        assert service._quote_fallback_cooldown_left({"quote_cooldown_until": 0}, now=100) == 0
+    finally:
+        service.shutdown()
+
+
+def test_hithink_primary_bypasses_legacy_runtime_and_central_breaker_gates(monkeypatch):
+    service = _service()
+    source = {"name": "hithink"}
+    codes = {"000001", "600519"}
+    entered_cooldowns = []
+    try:
+        monkeypatch.setattr(
+            worker_module,
+            "read_provider_health",
+            lambda _provider: SimpleNamespace(
+                request_stats={"quote_primary_source": source["name"]},
+                quote_cooldown_until=0,
+                eastmoney_cooldown_until=0,
+            ),
+        )
+        monkeypatch.setattr(worker_module.time, "time", lambda: 100.0)
+        service._poller = SimpleNamespace(
+            get_runtime_stats=lambda: {"cooldown_until": 200.0},
+            enter_realtime_cooldown=lambda *args, **kwargs: entered_cooldowns.append((args, kwargs)),
+            compact_runtime_caches=lambda: {
+                "rt_quote_cache_size": 0,
+                "history_symbol_count": 0,
+                "rt_runtime": {"cooldown_until": 200.0, "worker_alive": False},
+            },
+            protect_against_thread_anomaly=lambda _count: True,
+        )
+        service._opening_warmup_codes = lambda value, **_kwargs: value
+        service._fallback_pressure_codes = lambda value, **_kwargs: value
+        monkeypatch.setattr(service, "_collect_thread_health", lambda: (1, 5))
+        service._tick_count = service._heartbeat_every_ticks
+        service._run_maintenance(active_codes_count=len(codes), quote_refreshable=True, market_status="交易中")
+        assert service._circuit_breaker_cooldown == 0
+        service._circuit_breaker_cooldown = 1
+
+        assert worker_module._prepare_realtime_fetch_codes(
+            service,
+            "timer",
+            codes,
+            "交易中",
+            {},
+        ) == codes
+        assert service._circuit_breaker_cooldown == 0
+
+        service._FAILURE_THRESHOLD = 2
+        service._record_failure("hithink unavailable")
+        service._record_failure("hithink unavailable")
+        assert entered_cooldowns == []
+        assert service._circuit_breaker_cooldown == 0
+
+        source["name"] = "eastmoney"
+        assert worker_module._prepare_realtime_fetch_codes(
+            service,
+            "timer",
+            codes,
+            "交易中",
+            {},
+        ) is None
     finally:
         service.shutdown()
 

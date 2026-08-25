@@ -18,7 +18,7 @@ from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_quote_service import get_total_shares, resolve_quote_metrics
-from app.services.ui_task_lifecycle_service import task_lifecycle_for
+from app.services.ui_task_lifecycle_service import invoke_with_cancellation, task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from app.services.watchlist_indicator_service import (
@@ -98,6 +98,18 @@ def _active_items(values, cancellation_token=None):
         if _task_cancelled(cancellation_token):
             return
         yield value
+
+
+def _resolve_a_share_name_in_background(provider, code: str, cancellation_token=None) -> dict:
+    ensure_name_map = getattr(provider, "ensure_code_name_map", None)
+    if not callable(ensure_name_map):
+        return {}
+    return invoke_with_cancellation(
+        ensure_name_map,
+        cancellation_token,
+        [code],
+        refresh_missing=True,
+    ) or {}
 
 
 def _format_watchlist_note(earnings: object = "", block_trade: object = "", lhb: object = "") -> str:
@@ -1441,6 +1453,20 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self._a_share_name_map = normalized_map
         return self._a_share_name_map
 
+    def _remember_resolved_a_share_name(self, code: str, name_map: dict) -> str:
+        for raw_code, raw_name in dict(name_map or {}).items():
+            refreshed_code = self._normalize_quote_code(raw_code).zfill(6)
+            if refreshed_code != code:
+                continue
+            name = str(raw_name or "").strip()
+            if not name or name == code:
+                return ""
+            current_map = dict(getattr(self, "_a_share_name_map", {}) or {})
+            current_map[code] = name
+            self._a_share_name_map = current_map
+            return name
+        return ""
+
     def _resolve_missing_a_share_name(self, code: str) -> str:
         provider = self.data_provider
         ensure_name_map = getattr(provider, "ensure_code_name_map", None)
@@ -1448,23 +1474,58 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
             return ""
 
         try:
-            refreshed_map = ensure_name_map([code], refresh_missing=True) or {}
+            refreshed_map = ensure_name_map([code], refresh_missing=False) or {}
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[关注池] 补齐股票名称失败({code}): {exc}")
             return ""
 
-        for raw_code, raw_name in dict(refreshed_map).items():
-            refreshed_code = self._normalize_quote_code(raw_code).zfill(6)
-            if refreshed_code != code:
-                continue
-            name = str(raw_name or "").strip()
-            if not name:
-                return ""
-            current_map = dict(getattr(self, "_a_share_name_map", {}) or {})
-            current_map[code] = name
-            self._a_share_name_map = current_map
-            return name
-        return ""
+        return WatchlistTab._remember_resolved_a_share_name(self, code, refreshed_map)
+
+    def _schedule_missing_a_share_name_resolution(self, code: str) -> None:
+        if getattr(self, "_closing", False):
+            return
+        provider = getattr(self, "data_provider", None)
+        if provider is None:
+            return
+        task_name = f"manual_stock_name_resolution:{code}"
+        task_key = task_registry.transient_window(f"watchlist_manual_stock_name_resolution:{code}")
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            task_name,
+            partial(_resolve_a_share_name_in_background, provider, code),
+            on_success=partial(self._on_missing_a_share_name_resolved, code),
+            on_error=partial(self._on_missing_a_share_name_resolution_error, code),
+            task_id=task_key,
+            timeout_sec=12,
+        )
+
+    def _on_missing_a_share_name_resolved(self, code: str, refreshed_map: dict) -> None:
+        if getattr(self, "_closing", False):
+            return
+        name = WatchlistTab._remember_resolved_a_share_name(self, code, refreshed_map)
+        if not name:
+            show_toast(f"{code} 未能核验为 A 股，请检查代码后重试", "warning", self)
+            return
+
+        if watchlist_vm.is_in_watchlist(code):
+            watchlist_vm.patch_entry(code, {"名称": name})
+            self.refresh_watchlist_names({code: name})
+            return
+
+        added = watchlist_vm.add_stock(
+            code,
+            name,
+            {"代码": code, "名称": name, "code": code, "name": name},
+            source_tags=["手动"],
+        )
+        if added:
+            show_toast(f"{name} 已自动加入关注池，正在刷新行情与附加列", "success", self)
+        else:
+            show_toast(f"{name} 已在关注池", "info", self)
+
+    def _on_missing_a_share_name_resolution_error(self, code: str, _error) -> None:
+        if getattr(self, "_closing", False):
+            return
+        show_toast(f"{code} 名称核验失败，可稍后重试", "warning", self)
 
     def _add_custom_stock(self):
         raw_code = self.add_stock_input.text() if hasattr(self, "add_stock_input") else ""
@@ -1478,13 +1539,16 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
         name_map = self._get_a_share_name_map()
         name = str(name_map.get(code, "") or "").strip()
-        if not name:
+        if not name or name == code:
             name = self._resolve_missing_a_share_name(code)
         if not name:
-            show_toast(f"{code} 不在当前 A 股股票列表中", "warning", self)
+            schedule_name_resolution = getattr(self, "_schedule_missing_a_share_name_resolution", None)
+            if callable(schedule_name_resolution):
+                schedule_name_resolution(code)
+            show_toast(f"正在后台核验 {code}，成功后将自动加入关注池", "info", self)
             if hasattr(self, "add_stock_input"):
+                self.add_stock_input.clear()
                 self.add_stock_input.setFocus()
-                self.add_stock_input.selectAll()
             return
 
         if watchlist_vm.is_in_watchlist(code):

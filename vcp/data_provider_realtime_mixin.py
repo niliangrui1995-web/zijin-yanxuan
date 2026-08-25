@@ -3,12 +3,16 @@ import time
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from infra.market_data.warehouse_quote_reader import read_latest_quotes
+from infra.tasks.lifecycle import CancellationToken, call_with_supported_kwargs
 from vcp.data_provider_local import build_offline_quotes
 from vcp.data_provider_quotes import (
     ensure_eastmoney_quote_state,
+    ensure_hithink_quote_state,
     enter_eastmoney_cooldown,
+    enter_hithink_cooldown,
     log_quote_fallback,
     request_eastmoney_quote_batch,
+    request_hithink_quote_batch,
     request_sina_quote_batch,
     request_tencent_quote_batch,
     to_eastmoney_secid,
@@ -23,11 +27,24 @@ RT_QUOTE_MIN_BATCH_SIZE = 5
 RT_QUOTE_BATCH_PAUSE_SEC = 0.12
 RT_QUOTE_DEDUP_WINDOW_SEC = 8.5
 RT_EASTMONEY_COOLDOWN_SEC = 120.0
+NETWORK_PROBE_FALLBACK_RESERVE_SEC = 0.2
 _WAREHOUSE_QUOTE_ERRORS = (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError)
 
 
 def _normalize_offline_quote_codes(codes) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(code or "").strip() for code in (codes or []) if str(code or "").strip()))
+
+
+def _network_probe_source_timeout(remaining_sec: float, remaining_sources: int, *, primary: bool) -> float:
+    """Give the primary probe first chance while reserving time for each fallback."""
+    remaining_sec = max(0.0, float(remaining_sec))
+    remaining_sources = max(1, int(remaining_sources))
+    if remaining_sources == 1:
+        return remaining_sec
+    if primary:
+        fallback_reserve = min(NETWORK_PROBE_FALLBACK_RESERVE_SEC, remaining_sec / remaining_sources)
+        return remaining_sec - fallback_reserve * (remaining_sources - 1)
+    return remaining_sec / remaining_sources
 
 
 def _cached_offline_quote_frames(provider, codes: tuple[str, ...]) -> dict:
@@ -86,7 +103,7 @@ class TdxDataProviderRealtimeMixin:
 
         if online and self._offline:
             self._offline = False
-            _log.info("[网络] ✅ 已切换到联网模式（东方财富实时行情）")
+            _log.info("[网络] ✅ 已切换到联网模式（同花顺实时行情主源）")
             event_bus.sig_network_status_changed.emit(True, "Online")
         elif not online and not self._offline:
             self._offline = True
@@ -94,12 +111,12 @@ class TdxDataProviderRealtimeMixin:
             event_bus.sig_network_status_changed.emit(False, "Offline")
 
     def force_reconnect_servers(self):
-        """重置东方财富实时行情状态，清理冷却与错误标记。"""
+        """重置盘中实时行情状态，清理主源与回退源的冷却和错误标记。"""
         if self._offline:
-            _log.info("[网络] 当前为离线模式，无法重置东方财富实时行情连接。")
+            _log.info("[网络] 当前为离线模式，无法重置盘中实时行情连接。")
             return
 
-        _log.info("[网络] 🌐 正在重置东方财富实时行情连接状态...")
+        _log.info("[网络] 🌐 正在重置同花顺盘中实时行情连接状态...")
 
         # 清除主线程的 API 以防后续历史联网补全沿用旧连接
         if hasattr(self.thread_local, "api"):
@@ -111,13 +128,18 @@ class TdxDataProviderRealtimeMixin:
         self._rt_runtime_cooldown_until = 0.0
         self._rt_runtime_consecutive_failures = 0
         self._rt_runtime_last_error = ""
+        self._rt_hithink_cooldown_until = 0.0
+        self._rt_hithink_last_error = ""
+        self._rt_eastmoney_cooldown_until = 0.0
+        self._rt_eastmoney_last_error = ""
+        self._rt_last_fallback_log_at = 0.0
         self._reset_realtime_runtime(
-            "强制刷新东方财富实时行情连接",
+            "强制刷新同花顺盘中实时行情连接",
             log_warning=False,
             penalize_server=False,
         )
 
-        _log.info("[网络] ✅ 东方财富实时行情状态已重置。")
+        _log.info("[网络] ✅ 同花顺主源及兼容回退的盘中实时行情状态已重置。")
 
     def test_network(self, timeout=3):
         """在一个总截止时间内测试实时行情 HTTP 回退链路。"""
@@ -139,22 +161,40 @@ class TdxDataProviderRealtimeMixin:
         try:
             ok = False
             quote_failures = []
+            probe["hithink_quote_probe"] = "skip"
             probe["eastmoney_quote_probe"] = "skip"
             probe["sina_quote_probe"] = "skip"
             probe["tencent_quote_probe"] = "skip"
-            for source_name, requester in (
-                ("eastmoney", self._request_eastmoney_quote_batch),
-                ("sina", self._request_sina_quote_batch),
-                ("tencent", self._request_tencent_quote_batch),
-            ):
+            quote_sources = []
+            if bool(getattr(self, "_rt_hithink_enabled", False)):
+                quote_sources.append(("hithink", self._request_hithink_quote_batch))
+            quote_sources.extend(
+                (
+                    ("eastmoney", self._request_eastmoney_quote_batch),
+                    ("sina", self._request_sina_quote_batch),
+                    ("tencent", self._request_tencent_quote_batch),
+                )
+            )
+            for source_index, (source_name, requester) in enumerate(quote_sources):
                 remaining_sec = deadline - time.monotonic()
                 if remaining_sec <= 0:
                     probe[f"{source_name}_quote_probe"] = "deadline"
                     quote_failures.append(f"{source_name}:deadline")
                     break
-                self._rt_api_call_timeout_sec = max(0.05, remaining_sec)
+                remaining_sources = len(quote_sources) - source_index
+                source_timeout_sec = _network_probe_source_timeout(
+                    remaining_sec,
+                    remaining_sources,
+                    primary=source_index == 0,
+                )
+                self._rt_api_call_timeout_sec = source_timeout_sec
                 try:
-                    quotes = requester(["000001"], inferred_trade_date)
+                    quotes = call_with_supported_kwargs(
+                        requester,
+                        ["000001"],
+                        inferred_trade_date,
+                        cancellation_token=CancellationToken.with_timeout(source_timeout_sec),
+                    )
                     source_ok = bool(quotes and quotes.get("000001"))
                     probe[f"{source_name}_quote_probe"] = "ok" if source_ok else "empty"
                     if source_ok:
@@ -179,8 +219,9 @@ class TdxDataProviderRealtimeMixin:
             self._rt_last_network_probe = probe
             log_fn = _log.info if ok else _log.warning
             log_fn(
-                f"[网络] 东方财富探针{'通过' if ok else '失败'} "
+                f"[网络] 盘中行情探针{'通过' if ok else '失败'} "
                 f"| page={probe['page_probe']} | quote={probe['quote_probe']} "
+                f"| hithink={probe['hithink_quote_probe']} "
                 f"| eastmoney={probe['eastmoney_quote_probe']} "
                 f"| sina={probe['sina_quote_probe']} "
                 f"| tencent={probe['tencent_quote_probe']} "
@@ -192,11 +233,11 @@ class TdxDataProviderRealtimeMixin:
             probe["ok"] = False
             self._rt_last_network_probe = probe
             _log.warning(
-                f"[网络] 东方财富探针失败 "
+                f"[网络] 盘中行情探针失败 "
                 f"| page={probe['page_probe']} | push2={probe['quote_probe']} "
                 f"| batch={probe['batch_size']} | dedup={probe['dedup_window_sec']:.1f}s"
             )
-            _log.debug(f"[网络] 东方财富实时行情连通性测试失败: {exc}")
+            _log.debug(f"[网络] 盘中实时行情连通性测试失败: {exc}")
             return False
         finally:
             self._rt_api_call_timeout_sec = previous_timeout
@@ -224,6 +265,9 @@ class TdxDataProviderRealtimeMixin:
     def _ensure_eastmoney_quote_state(self):
         ensure_eastmoney_quote_state(self)
 
+    def _ensure_hithink_quote_state(self):
+        ensure_hithink_quote_state(self)
+
     def _log_quote_fallback(
         self,
         message: str,
@@ -246,11 +290,27 @@ class TdxDataProviderRealtimeMixin:
             default_cooldown_sec=RT_EASTMONEY_COOLDOWN_SEC,
         )
 
+    def _enter_hithink_cooldown(self, reason: str, cooldown_sec: float | None = None):
+        enter_hithink_cooldown(
+            self,
+            reason,
+            cooldown_sec=cooldown_sec,
+            default_cooldown_sec=RT_EASTMONEY_COOLDOWN_SEC,
+        )
+
     def _to_eastmoney_secid(self, code: str) -> str:
         return to_eastmoney_secid(code)
 
     def _request_eastmoney_quote_batch(self, codes, inferred_trade_date: str, *, cancellation_token=None):
         return request_eastmoney_quote_batch(
+            self,
+            codes,
+            inferred_trade_date,
+            cancellation_token=cancellation_token,
+        )
+
+    def _request_hithink_quote_batch(self, codes, inferred_trade_date: str, *, cancellation_token=None):
+        return request_hithink_quote_batch(
             self,
             codes,
             inferred_trade_date,

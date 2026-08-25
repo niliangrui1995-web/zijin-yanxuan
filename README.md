@@ -2,9 +2,9 @@
 
 Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、关注池联动和多市场辅助观察构建。
 
-最后校验：2026-07-19（按当前源码、`docs/feature-tab-logic-map.md`、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
+最后全量架构校验：2026-07-19（按当前源码、`docs/feature-tab-logic-map.md`、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）；盘中同花顺主源接入校验：2026-08-25。
 
-当前代码基于本地通达信日线数据和 Parquet/SQLite 本地仓库运行，盘中实时行情通过东方财富 HTTP 链路获取，并在必要时回退到新浪、腾讯批量报价；海外、亚洲、龙虎榜、大宗交易、业绩和基金持仓页面各自维护独立抓取、清洗、缓存和展示链路。
+当前代码基于本地通达信日线数据和 Parquet/SQLite 本地仓库运行。配置 `HITHINK_FINANCE_API_KEY` 后，A 股盘中实时行情通过同花顺金融数据 HTTPS 快照链路获取；同花顺不可用、返回缺失代码或未配置密钥时，依次回退东方财富、新浪、腾讯批量报价。海外、亚洲、龙虎榜、大宗交易、业绩和基金持仓页面各自维护独立抓取、清洗、缓存和展示链路。
 
 > 注意
 >
@@ -94,7 +94,7 @@ K 线打开状态按 `shell_ready → browser_ready → data_ready → js_ready 
 - 拼音辅助：`pypinyin`
 - 桌面/系统联动：`pywin32`、`pyautogui`、`codex://` 深链接
 - A 股本地数据：通达信 `vipdoc` 日线文件
-- A 股实时行情：东方财富 HTTP，异常时回退新浪、腾讯批量报价
+- A 股实时行情：同花顺金融数据 HTTPS 快照（主源）；未配置或异常时回退东方财富、新浪、腾讯批量报价
 - 财务/股本补充：东方财富接口
 - 海外/亚洲辅助数据：AkShare、yfinance、Yahoo Japan、TWSE/TPEX、Naver、腾讯港股、requests、`curl_cffi`
 - 任务调度：`infra/tasks/task_scheduler.py` + `core/background_job_runner.py`
@@ -399,10 +399,14 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 | 能力 | 主来源 | 本地处理与缓存 | 主要代码 |
 | --- | --- | --- | --- |
 | 历史 K 线 | 本地通达信 `vipdoc` 日线文件 | 优先读取内存和 Parquet/SQLite 仓库，缺失时回退 `vipdoc`；F5 只写独立 generation，完整校验后事务切换 manifest | `infra/market_data/tdx_data_provider.py`、`infra/market_data/market_data_warehouse.py`、`infra/market_data/f5_market_snapshot_store.py`、`vcp/data_provider_local.py` |
-| 盘中实时报价 | 东方财富 `push2.eastmoney.com/api/qt/ulist/get` | 按中央报价站 30 秒轮询，运行时去重、冷却、单飞行任务；东方财富失败后回退新浪 `hq.sinajs.cn`，再回退腾讯 `qt.gtimg.cn` | `ui/workers/central_quotes_worker.py`、`vcp/data_provider_quotes.py`、`vcp/data_provider_realtime.py` |
+| 盘中实时报价 | 同花顺金融数据 `fuyao.aicubes.cn/api/a-share/prices/snapshot` | 按中央报价站 30 秒轮询，运行时去重、冷却、单飞行任务；同花顺不可用或只返回部分代码时，仅将缺失代码依次回退东方财富 `push2`、新浪 `hq.sinajs.cn`、腾讯 `qt.gtimg.cn` | `ui/workers/central_quotes_worker.py`、`vcp/data_provider_quotes.py`、`vcp/data_provider_realtime.py` |
 | 股本/市值补充 | 本地通达信股本快照优先，东方财富 `push2` 补充 | 用于表格市值动态重算和缺失 `_zongguben` 补齐，带磁盘缓存 | `app/services/central_quote_polling_service.py`、`vcp/engine_external.py`、`ui/tabs/base_stock_refresh.py` |
 | 十大流通股东/机构股东 | 东方财富 F10 `PC_HSF10/ShareholderResearch/PageAjax` | 本地识别机构关键字，结果缓存 90 天 | `vcp/engine_external.py` |
 | 交易日历 | AkShare 新浪交易日历、本地市场日历规则 | 统一判断报价刷新窗口、F5 日期、Tab 数据日期 | `domains/market_calendar/calendar_service.py`、`core/market_calendar.py` |
+
+#### 同花顺盘中实时行情配置
+
+在 Windows 的当前用户环境变量中设置 `HITHINK_FINANCE_API_KEY` 后重启应用。程序只在启动时从该环境变量读取密钥，不会将密钥写入 TOML、QSettings、日志或仓库；未配置、鉴权失败、限流或网络异常时，应用会保留旧的东方财富 → 新浪 → 腾讯回退链路。该链路只服务 A 股盘中快照，不替换本地日线、亚洲市场、基金持仓、龙虎榜、大宗交易或业绩异动的数据源。
 
 ### A 股情报源 Tab
 

@@ -37,12 +37,20 @@ class ProviderHealthSnapshot:
     runtime_stats: Mapping[str, Any]
     eastmoney_cooldown_until: float = 0.0
     eastmoney_last_error: str = ""
+    quote_cooldown_until: float = 0.0
+    quote_last_error: str = ""
+    hithink_cooldown_until: float = 0.0
+    hithink_last_error: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_stats", _freeze_health_value(dict(self.request_stats or {})))
         object.__setattr__(self, "runtime_stats", _freeze_health_value(dict(self.runtime_stats or {})))
         object.__setattr__(self, "eastmoney_cooldown_until", float(self.eastmoney_cooldown_until or 0.0))
         object.__setattr__(self, "eastmoney_last_error", str(self.eastmoney_last_error or ""))
+        object.__setattr__(self, "quote_cooldown_until", float(self.quote_cooldown_until or 0.0))
+        object.__setattr__(self, "quote_last_error", str(self.quote_last_error or ""))
+        object.__setattr__(self, "hithink_cooldown_until", float(self.hithink_cooldown_until or 0.0))
+        object.__setattr__(self, "hithink_last_error", str(self.hithink_last_error or ""))
 
     @classmethod
     def empty(cls) -> ProviderHealthSnapshot:
@@ -54,6 +62,10 @@ class ProviderHealthSnapshot:
             "runtime_stats": _thaw_health_value(self.runtime_stats),
             "eastmoney_cooldown_until": self.eastmoney_cooldown_until,
             "eastmoney_last_error": self.eastmoney_last_error,
+            "quote_cooldown_until": self.quote_cooldown_until,
+            "quote_last_error": self.quote_last_error,
+            "hithink_cooldown_until": self.hithink_cooldown_until,
+            "hithink_last_error": self.hithink_last_error,
         }
 
 
@@ -102,7 +114,13 @@ class DataProviderPort(ProviderHealthPort, OnlineStatusPort, RealtimeQuotePolicy
 
     def load_cache_from_disk(self) -> str: ...
 
-    def ensure_code_name_map(self, codes=None, *, refresh_missing: bool = True) -> dict[str, str]: ...
+    def ensure_code_name_map(
+        self,
+        codes=None,
+        *,
+        refresh_missing: bool = False,
+        cancellation_token=None,
+    ) -> dict[str, str]: ...
 
     def ensure_adjustment_metadata(self, *, force: bool = False) -> dict: ...
 

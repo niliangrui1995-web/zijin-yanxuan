@@ -229,7 +229,7 @@ def _execute_smart_startup(orchestrator) -> None:
             return
         log_process_snapshot("startup.smart.begin", logger=log)
         provider = orchestrator.host.data_provider
-        online = bool(provider and provider.test_network(timeout=2))
+        online = bool(provider and provider.test_network(timeout=3))
         if not orchestrator._alive():
             return
         if online and not _complete_smart_startup_online(orchestrator, provider):

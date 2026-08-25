@@ -62,6 +62,44 @@ def test_provider_fault_tolerance_accepts_runtime_health_provider_runtime_shape(
     assert result["eastmoney_cooldown_seconds_left"] == 45
 
 
+def test_provider_fault_tolerance_marks_hithink_cooldown_as_provider_degraded(monkeypatch):
+    monkeypatch.setattr(fault_tolerance_module.time, "time", lambda: NOW)
+
+    result = provider_fault_tolerance(
+        {
+            "request_stats": {"recent_source_layers": ["eastmoney"]},
+            "runtime_stats": {},
+            "quote_cooldown_until": NOW + 90,
+            "quote_last_error": "hithink timeout",
+        }
+    )
+
+    assert result["provider_degraded"] is True
+    assert result["fallback_or_degraded"] is True
+    assert result["last_network_error"] == "hithink timeout"
+    assert result["cooldown_seconds_left"] == 90
+    assert result["eastmoney_cooldown_seconds_left"] == 0
+
+
+def test_provider_fault_tolerance_ignores_legacy_and_eastmoney_cooldowns_when_hithink_is_healthy(monkeypatch):
+    monkeypatch.setattr(fault_tolerance_module.time, "time", lambda: NOW)
+
+    result = provider_fault_tolerance(
+        {
+            "request_stats": {"quote_primary_source": "hithink", "recent_source_layers": ["hithink"]},
+            "runtime_stats": {"cooldown_until": NOW + 90, "last_error": "legacy runtime cooldown"},
+            "quote_cooldown_until": 0,
+            "eastmoney_cooldown_until": NOW + 45,
+            "eastmoney_last_error": "eastmoney timeout",
+        }
+    )
+
+    assert result["provider_degraded"] is False
+    assert result["fallback_or_degraded"] is False
+    assert result["cooldown_seconds_left"] == 0
+    assert result["eastmoney_cooldown_seconds_left"] == 45
+
+
 def test_provider_fault_tolerance_handles_invalid_numeric_values(monkeypatch):
     monkeypatch.setattr(fault_tolerance_module.time, "time", lambda: NOW)
 

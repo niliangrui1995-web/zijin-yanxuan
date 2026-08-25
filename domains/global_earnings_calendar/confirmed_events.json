@@ -1547,6 +1547,24 @@
       "original_timezone": "America/Los_Angeles",
       "call_time_source_url": "https://investor.synopsys.com/news/news-details/2026/Synopsys-Announces-Earnings-Release-Date-for-Third-Quarter-Fiscal-Year-2026/default.aspx",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Marvell",
+      "ticker": "MRVL",
+      "sector": "AI加速芯片与定制ASIC",
+      "report_date": "2026-08-27",
+      "fiscal_period": "Jul/2026",
+      "time_label": "盘后",
+      "beijing_time": "2026-08-28 04:45",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "strategic_giant",
+      "conference_url": "https://investor.marvell.com/news-events/press-releases/detail/1029/marvell-technology-inc-announces-conference-call-to-review-second-quarter-of-fiscal-year-2027-financial-results-announces-investor-day-on-october-6-2026",
+      "market": "US",
+      "original_call_time_text": "Thursday, August 27, 2026 at 1:45 p.m. Pacific Time",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://investor.marvell.com/news-events/press-releases/detail/1029/marvell-technology-inc-announces-conference-call-to-review-second-quarter-of-fiscal-year-2027-financial-results-announces-investor-day-on-october-6-2026",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }

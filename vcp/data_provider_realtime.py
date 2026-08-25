@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import threading
 import time
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
 from core.market_calendar import MarketCalendar
 from infra.tasks.lifecycle import (
+    TaskCancelledError,
+    TaskDeadlineExceeded,
     raise_if_cancelled,
     reraise_task_cancellation,
     wait_with_cancellation,
 )
 from infra.tasks.owner_lifecycle import invoke_with_cancellation
+from vcp.data_provider_quotes import sanitize_hithink_error
 from vcp.realtime_quote_batch import (
     normalize_error_text,
     normalize_quote_codes,
@@ -23,14 +27,27 @@ FALLBACK_PRESSURE_MIN_PENDING = 40
 EASTMONEY_SPLIT_RETRY_MAX_FAILURES = 3
 _EASTMONEY_FAST_FAIL_ATTR = "_rt_eastmoney_fast_fail_on_edge_error"
 _EASTMONEY_SPLIT_RETRY_BUDGET_EXHAUSTED = "eastmoney split retry budget exhausted"
+_HITHINK_PRIMARY_BATCH_MAX_SIZE = 100
+_HITHINK_IN_REQUEST_RETRY_DELAY_SEC = 0.05
 _CN_TZ = timezone(timedelta(hours=8))
 _QUOTE_FRESHNESS_VALUES = ("network", "cache", "stale")
+_QUOTE_SINGLEFLIGHT_WAIT_SLICE_SEC = 0.05
+_QUOTE_SINGLEFLIGHT_INIT_LOCK = threading.RLock()
 _OPENING_WARMUP_STATUSES = frozenset(
     (
         "\u5f00\u76d8\u96c6\u5408\u7ade\u4ef7",
         "\u5f00\u5e02\u524d\u65f6\u6bb5",
     )
 )
+
+
+class _RealtimeQuoteFlight:
+    """One provider-local in-flight quote request shared by equivalent callers."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: dict | None = None
+        self.error: BaseException | None = None
 
 
 def _call_quote_source(fn, cancellation_token, *args):
@@ -109,6 +126,65 @@ def _duplicate_counts(codes: list[str]) -> dict[str, int]:
 
 def _batch_signature(codes: list[str]) -> str:
     return "|".join(sorted(dict.fromkeys(codes or [])))
+
+
+def _quote_singleflight_key(normalized_codes: list[str]) -> tuple[str, ...]:
+    return tuple(sorted(dict.fromkeys(normalized_codes or [])))
+
+
+def _quote_singleflight_registry(provider) -> tuple[threading.RLock, dict[tuple[str, ...], _RealtimeQuoteFlight]]:
+    with _QUOTE_SINGLEFLIGHT_INIT_LOCK:
+        lock = getattr(provider, "_rt_quote_singleflight_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            provider._rt_quote_singleflight_lock = lock
+        flights = getattr(provider, "_rt_quote_singleflight", None)
+        if not isinstance(flights, dict):
+            flights = {}
+            provider._rt_quote_singleflight = flights
+    return lock, flights
+
+
+def _start_or_join_quote_flight(provider, key: tuple[str, ...]) -> tuple[_RealtimeQuoteFlight, bool]:
+    lock, flights = _quote_singleflight_registry(provider)
+    with lock:
+        flight = flights.get(key)
+        if flight is not None:
+            return flight, False
+        flight = _RealtimeQuoteFlight()
+        flights[key] = flight
+        return flight, True
+
+
+def _copy_quote_result(result: dict | None) -> dict:
+    return {
+        code: dict(quote) if isinstance(quote, dict) else quote
+        for code, quote in dict(result or {}).items()
+    }
+
+
+def _complete_quote_flight(
+    provider,
+    key: tuple[str, ...],
+    flight: _RealtimeQuoteFlight,
+    *,
+    result: dict | None = None,
+    error: BaseException | None = None,
+) -> None:
+    flight.result = _copy_quote_result(result)
+    flight.error = error
+    flight.done.set()
+    lock, flights = _quote_singleflight_registry(provider)
+    with lock:
+        if flights.get(key) is flight:
+            flights.pop(key, None)
+
+
+def _wait_for_quote_flight(flight: _RealtimeQuoteFlight, cancellation_token=None) -> tuple[dict, BaseException | None]:
+    while not flight.done.wait(_QUOTE_SINGLEFLIGHT_WAIT_SLICE_SEC):
+        raise_if_cancelled(cancellation_token)
+    raise_if_cancelled(cancellation_token)
+    return _copy_quote_result(flight.result), flight.error
 
 
 def _record_quote_request(provider, stats: dict) -> None:
@@ -194,11 +270,23 @@ def _new_quote_request_stats(normalized_codes: list[str], *, raw_codes: list[str
     }
 
 
+def _quote_cooldown_until(provider) -> float:
+    attribute = "_rt_hithink_cooldown_until" if bool(getattr(provider, "_rt_hithink_enabled", False)) else (
+        "_rt_eastmoney_cooldown_until"
+    )
+    try:
+        return max(0.0, float(getattr(provider, attribute, 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _finish_quote_request(provider, stats: dict, *, status: str, result: dict | None = None) -> None:
     ended_at = time.time()
     payload = dict(stats or {})
     payload["status"] = status
     payload["ended_at"] = ended_at
+    payload["quote_cooldown_until"] = _quote_cooldown_until(provider)
+    payload["quote_primary_source"] = "hithink" if bool(getattr(provider, "_rt_hithink_enabled", False)) else "eastmoney"
     try:
         payload["elapsed_ms"] = round((ended_at - float(payload.get("started_at") or ended_at)) * 1000.0, 3)
     except (TypeError, ValueError):
@@ -275,6 +363,78 @@ def _request_eastmoney_split_batch(provider, cancellation_token, codes, inferred
         codes,
         inferred_trade_date,
     )
+
+
+def _hithink_quote_source_available(provider) -> bool:
+    return bool(getattr(provider, "_rt_hithink_enabled", False)) and (
+        time.time() >= float(getattr(provider, "_rt_hithink_cooldown_until", 0.0) or 0.0)
+    )
+
+
+def _primary_quote_source_available(provider, eastmoney_available: bool) -> bool:
+    if bool(getattr(provider, "_rt_hithink_enabled", False)):
+        return _hithink_quote_source_available(provider)
+    return eastmoney_available
+
+
+def _request_hithink_batch(provider, cancellation_token, codes, inferred_trade_date: str):
+    return _call_quote_source(
+        provider._request_hithink_quote_batch,
+        cancellation_token,
+        codes,
+        inferred_trade_date,
+    )
+
+
+def _hithink_cooldown_seconds(reason: str) -> float | None:
+    normalized = normalize_error_text(reason)
+    if "hithink_finance_api_key" in normalized or "code=200" in normalized:
+        return 300.0
+    return None
+
+
+def _hithink_configuration_error(reason: str) -> bool:
+    normalized = normalize_error_text(reason)
+    return "hithink_finance_api_key" in normalized or "code=2001" in normalized or "code=2003" in normalized
+
+
+def _is_hithink_transient_transport_failure(exc_or_text) -> bool:
+    normalized = normalize_error_text(exc_or_text)
+    return bool(normalized) and not _hithink_configuration_error(normalized) and (
+        is_disconnect_like_error(normalized)
+        or "timeout" in normalized
+        or "network transport error" in normalized
+    )
+
+
+def _is_local_https_policy_failure(exc_or_text) -> bool:
+    normalized = normalize_error_text(exc_or_text)
+    return any(
+        token in normalized
+        for token in (
+            "private or local https hosts are not allowed",
+            "https host is not allowed",
+            "only https urls are allowed",
+        )
+    )
+
+
+def _request_hithink_batch_with_in_request_retry(
+    provider,
+    cancellation_token,
+    codes,
+    inferred_trade_date: str,
+    *,
+    hithink_success_seen: bool,
+):
+    try:
+        return _request_hithink_batch(provider, cancellation_token, codes, inferred_trade_date)
+    except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+        reraise_task_cancellation(exc)
+        if not hithink_success_seen or not _is_hithink_transient_transport_failure(exc):
+            raise
+        wait_with_cancellation(_HITHINK_IN_REQUEST_RETRY_DELAY_SEC, cancellation_token)
+        return _request_hithink_batch(provider, cancellation_token, codes, inferred_trade_date)
 
 
 def _normalized_eastmoney_split_codes(codes, cancellation_token) -> list[str]:
@@ -386,12 +546,15 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
         return {"done": True, "result": result}
 
     if now < float(provider._rt_runtime_cooldown_until or 0):
-        fallback_res = _mark_quote_freshness(provider._build_offline_quotes(dedup_codes), "stale")
-        result.update(fallback_res)
-        request_stats["recent_codes_count"] = len(dedup_codes)
-        _add_quote_source(request_stats, "offline_runtime_cooldown")
-        _finish_quote_request(provider, request_stats, status="runtime_cooldown_offline", result=result)
-        return {"done": True, "result": result}
+        if bool(getattr(provider, "_rt_hithink_enabled", False)):
+            request_stats["legacy_runtime_cooldown_bypassed_for_hithink"] = True
+        else:
+            fallback_res = _mark_quote_freshness(provider._build_offline_quotes(dedup_codes), "stale")
+            result.update(fallback_res)
+            request_stats["recent_codes_count"] = len(dedup_codes)
+            _add_quote_source(request_stats, "offline_runtime_cooldown")
+            _finish_quote_request(provider, request_stats, status="runtime_cooldown_offline", result=result)
+            return {"done": True, "result": result}
 
     if provider._offline:
         fallback_res = _mark_quote_freshness(provider._build_offline_quotes(dedup_codes), "stale")
@@ -411,10 +574,14 @@ def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], requ
     }
 
 
-def _fetch_realtime_quote_batch_sources(
-    provider, batch: list[str], *, inferred_trade_date: str, min_batch_size: int,
+def _fetch_realtime_quote_legacy_batch_sources(
+    provider,
+    batch: list[str],
+    *,
+    inferred_trade_date: str,
+    min_batch_size: int,
     eastmoney_available: bool,
-    fast_fail_eastmoney_edge_error: bool = False,
+    fast_fail_eastmoney_edge_error: bool,
     cancellation_token=None,
 ) -> tuple[dict, list[str], bool, bool, bool]:
     quotes, failures = {}, []
@@ -425,15 +592,24 @@ def _fetch_realtime_quote_batch_sources(
         previous_fast_fail = getattr(provider, _EASTMONEY_FAST_FAIL_ATTR, fast_fail_sentinel)
         setattr(provider, _EASTMONEY_FAST_FAIL_ATTR, True)
     try:
-        if eastmoney_available:
-            quotes, failures = _call_quote_source(
+        missing_batch = [code for code in batch if code not in quotes]
+        if missing_batch and eastmoney_available:
+            eastmoney_quotes, eastmoney_failures = _call_quote_source(
                 provider._fetch_eastmoney_quotes_with_split_retry,
                 cancellation_token,
-                batch,
+                missing_batch,
                 inferred_trade_date,
                 min_batch_size,
             )
-            cooldown_reason = _eastmoney_cooldown_failure(failures)
+            quotes.update(
+                {
+                    code: quote
+                    for code, quote in (eastmoney_quotes or {}).items()
+                    if code in missing_batch and isinstance(quote, dict)
+                }
+            )
+            failures.extend(eastmoney_failures or [])
+            cooldown_reason = _eastmoney_cooldown_failure(eastmoney_failures or [])
             if cooldown_reason:
                 provider._enter_eastmoney_cooldown(cooldown_reason)
                 eastmoney_available = False
@@ -478,6 +654,96 @@ def _fetch_realtime_quote_batch_sources(
     return quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback
 
 
+def _fetch_realtime_quote_batch_sources(
+    provider,
+    batch: list[str],
+    *,
+    inferred_trade_date: str,
+    min_batch_size: int,
+    eastmoney_available: bool,
+    fallback_batch_size: int | None = None,
+    fallback_batch_pause_sec: float = 0.0,
+    hithink_success_seen: bool = False,
+    batch_context: dict | None = None,
+    fast_fail_eastmoney_edge_error: bool = False,
+    cancellation_token=None,
+) -> tuple[dict, list[str], bool, bool, bool]:
+    quotes, failures = {}, []
+    used_sina_fallback = False
+    used_tencent_fallback = False
+    hithink_available = _hithink_quote_source_available(provider)
+    if hithink_available:
+        try:
+            hithink_quotes = _request_hithink_batch_with_in_request_retry(
+                provider,
+                cancellation_token,
+                batch,
+                inferred_trade_date,
+                hithink_success_seen=hithink_success_seen,
+            )
+            hithink_quotes = {
+                code: quote
+                for code, quote in (hithink_quotes or {}).items()
+                if code in batch and isinstance(quote, dict)
+            }
+            quotes.update(hithink_quotes)
+            if hithink_quotes and batch_context is not None:
+                batch_context["hithink_succeeded"] = True
+        except (OSError, RuntimeError, TimeoutError, ValueError) as hithink_exc:
+            reraise_task_cancellation(hithink_exc)
+            safe_reason = sanitize_hithink_error(hithink_exc)
+            failures.append(f"同花顺: {safe_reason}")
+            isolated_transient_failure = (
+                hithink_success_seen and _is_hithink_transient_transport_failure(hithink_exc)
+            )
+            if batch_context is not None:
+                batch_context["hithink_transient_failure_isolated"] = isolated_transient_failure
+            if not isolated_transient_failure:
+                provider._enter_hithink_cooldown(
+                    safe_reason,
+                    cooldown_sec=_hithink_cooldown_seconds(safe_reason),
+                )
+                if _hithink_configuration_error(safe_reason):
+                    provider._rt_hithink_enabled = False
+                    provider._rt_hithink_cooldown_until = 0.0
+                hithink_available = False
+
+    missing_batch = [code for code in batch if code not in quotes]
+    if not missing_batch:
+        return quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback
+
+    try:
+        legacy_batch_size = max(1, int(fallback_batch_size or len(missing_batch)))
+    except (TypeError, ValueError):
+        legacy_batch_size = len(missing_batch)
+    try:
+        legacy_batch_pause_sec = max(0.0, float(fallback_batch_pause_sec or 0.0))
+    except (TypeError, ValueError):
+        legacy_batch_pause_sec = 0.0
+
+    for start in range(0, len(missing_batch), legacy_batch_size):
+        legacy_batch = missing_batch[start : start + legacy_batch_size]
+        legacy_quotes, legacy_failures, eastmoney_available, used_sina, used_tencent = (
+            _fetch_realtime_quote_legacy_batch_sources(
+                provider,
+                legacy_batch,
+                inferred_trade_date=inferred_trade_date,
+                min_batch_size=min_batch_size,
+                eastmoney_available=eastmoney_available,
+                fast_fail_eastmoney_edge_error=fast_fail_eastmoney_edge_error,
+                cancellation_token=cancellation_token,
+            )
+        )
+        quotes.update(legacy_quotes)
+        failures.extend(legacy_failures)
+        used_sina_fallback = used_sina_fallback or used_sina
+        used_tencent_fallback = used_tencent_fallback or used_tencent
+        if legacy_batch_pause_sec > 0 and (start + legacy_batch_size) < len(missing_batch):
+            wait_with_cancellation(legacy_batch_pause_sec, cancellation_token)
+
+    return quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback
+
+
 def _record_realtime_batch_sources(
     provider,
     request_stats: dict,
@@ -509,15 +775,23 @@ def _record_realtime_batch_sources(
         for source in sorted(sources):
             _add_quote_source(request_stats, source)
     if used_sina_fallback:
-        fallback_msg = provider._rt_eastmoney_last_error or "东方财富链路异常"
+        fallback_msg = (
+            getattr(provider, "_rt_hithink_last_error", "")
+            or provider._rt_eastmoney_last_error
+            or "主报价链路异常"
+        )
         provider._log_quote_fallback(
-            f"[实时行情] 已切换新浪批量报价，覆盖 {len(quotes)}/{len(batch)} 只: {fallback_msg}",
+            f"[实时行情] 已启用新浪兼容报价，覆盖 {len(quotes)}/{len(batch)} 只: {fallback_msg}",
             warning=False,
         )
     if used_tencent_fallback:
-        fallback_msg = provider._rt_eastmoney_last_error or "eastmoney realtime quote unavailable"
+        fallback_msg = (
+            getattr(provider, "_rt_hithink_last_error", "")
+            or provider._rt_eastmoney_last_error
+            or "主报价链路异常"
+        )
         provider._log_quote_fallback(
-            f"[realtime quotes] switched to Tencent fallback, covered {len(quotes)}/{len(batch)} codes: {fallback_msg}",
+            f"[实时行情] 已启用腾讯兼容报价，覆盖 {len(quotes)}/{len(batch)} 只: {fallback_msg}",
             warning=False,
         )
 
@@ -548,28 +822,41 @@ def _fetch_realtime_quote_sources(
     cancellation_token=None,
 ) -> dict:
     raise_if_cancelled(cancellation_token)
-    batch_size = int(getattr(provider, "_rt_quote_batch_size", batch_size_default) or batch_size_default)
+    fallback_batch_size = max(1, int(getattr(provider, "_rt_quote_batch_size", batch_size_default) or batch_size_default))
+    hithink_batch_size = min(
+        _HITHINK_PRIMARY_BATCH_MAX_SIZE,
+        max(
+            1,
+            int(getattr(provider, "_rt_hithink_quote_batch_size", fallback_batch_size) or fallback_batch_size),
+        ),
+    )
     min_batch_size = int(
         getattr(provider, "_rt_quote_min_batch_size", min_batch_size_default) or min_batch_size_default
     )
     batch_pause_sec = float(getattr(provider, "_rt_quote_batch_pause_sec", batch_pause_default) or batch_pause_default)
     batch_failures = 0
     failure_reasons = []
+    runtime_failure_reasons = []
     new_fetch = {}
     cache_hits = len(result)
     disconnect_failure_reason_logged = None
     eastmoney_available = time.time() >= float(provider._rt_eastmoney_cooldown_until or 0.0)
+    hithink_available = _hithink_quote_source_available(provider)
+    batch_size = hithink_batch_size if hithink_available else fallback_batch_size
+    hithink_success_seen = False
+    primary_available = _primary_quote_source_available(provider, eastmoney_available)
+    primary_source = "hithink" if bool(getattr(provider, "_rt_hithink_enabled", False)) else "eastmoney"
     pressure_fetch_limit = _fallback_pressure_fetch_limit(provider, len(dedup_codes))
     opening_warmup_pressure = bool(pressure_fetch_limit and _is_opening_warmup_quote_window())
     network_codes = list(dedup_codes)
     request_stats["triggered_network"] = True
-    if pressure_fetch_limit and not eastmoney_available:
+    if pressure_fetch_limit and not primary_available:
         network_codes = dedup_codes[:pressure_fetch_limit]
         request_stats["network_throttled"] = True
-        request_stats["network_throttle_reason"] = "eastmoney_cooldown"
+        request_stats["network_throttle_reason"] = f"{primary_source}_cooldown"
         _add_quote_source(request_stats, "network_throttled_fallback_pressure")
         log.info(
-            "[实时行情] 东方财富回退冷却中，本轮联网限量 "
+            f"[实时行情] {primary_source} 主源冷却中，本轮联网限量 "
             f"{len(network_codes)}/{len(dedup_codes)} 只；剩余标的使用缓存/离线兜底"
         )
     pressure_log_due = should_log_pressure(
@@ -595,6 +882,9 @@ def _fetch_realtime_quote_sources(
             "unique_codes_count": len(dict.fromkeys(batch)),
             "duplicate_codes": _duplicate_counts(batch),
             "signature": _batch_signature(batch),
+            "primary_source": primary_source,
+            "hithink_available_at_start": _hithink_quote_source_available(provider),
+            "hithink_transient_failure_isolated": False,
             "eastmoney_available_at_start": bool(eastmoney_available),
             "used_sina_fallback": False,
             "used_tencent_fallback": False,
@@ -604,6 +894,7 @@ def _fetch_realtime_quote_sources(
         }
         request_stats["batches"].append(batch_record)
         request_stats["network_attempted_count"] = int(request_stats.get("network_attempted_count") or 0) + len(batch)
+        batch_context = {}
         quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback = (
             _fetch_realtime_quote_batch_sources(
                 provider,
@@ -611,9 +902,17 @@ def _fetch_realtime_quote_sources(
                 inferred_trade_date=inferred_trade_date,
                 min_batch_size=min_batch_size,
                 eastmoney_available=eastmoney_available,
+                fallback_batch_size=fallback_batch_size,
+                fallback_batch_pause_sec=batch_pause_sec,
+                hithink_success_seen=hithink_success_seen,
+                batch_context=batch_context,
                 fast_fail_eastmoney_edge_error=opening_warmup_pressure,
                 cancellation_token=cancellation_token,
             )
+        )
+        hithink_success_seen = hithink_success_seen or bool(batch_context.get("hithink_succeeded"))
+        batch_record["hithink_transient_failure_isolated"] = bool(
+            batch_context.get("hithink_transient_failure_isolated")
         )
 
         new_fetch.update(quotes)
@@ -632,6 +931,19 @@ def _fetch_realtime_quote_sources(
         if failures and not batch_fully_covered:
             batch_failures += len(failures)
             failure_reasons.extend(failures)
+            isolated_hithink_failure = bool(batch_context.get("hithink_transient_failure_isolated"))
+            safety_policy_only = all(_is_local_https_policy_failure(reason) for reason in failures)
+            if isolated_hithink_failure:
+                log.warning(
+                    "[实时行情] 同花顺单批暂态失败已隔离，后续批次继续使用同花顺主源: "
+                    f"{failures[0]}"
+                )
+            elif safety_policy_only:
+                request_stats["runtime_cooldown_suppressed_by_safety_policy"] = True
+            else:
+                runtime_failure_reasons.extend(
+                    reason for reason in failures if not _is_local_https_policy_failure(reason)
+                )
             if not quotes and disconnect_failure_reason_logged is None:
                 disconnect_failure_reason_logged = next(
                     (reason for reason in failures if is_disconnect_like_error(reason)),
@@ -645,7 +957,8 @@ def _fetch_realtime_quote_sources(
         if batch_pause_sec > 0 and (start + batch_size) < len(dedup_codes):
             wait_with_cancellation(batch_pause_sec, cancellation_token)
 
-        fallback_pressure_active = (not eastmoney_available) or used_sina_fallback or used_tencent_fallback
+        primary_available = _primary_quote_source_available(provider, eastmoney_available)
+        fallback_pressure_active = (not primary_available) or used_sina_fallback or used_tencent_fallback
         attempted_count = int(request_stats.get("network_attempted_count") or 0)
         if (
             pressure_fetch_limit
@@ -675,7 +988,14 @@ def _fetch_realtime_quote_sources(
         if batch_failures:
             log.warning(f"[实时行情] {batch_failures} 个批次抓取失败: {failure_reasons[0]}")
     elif batch_failures:
-        provider._register_realtime_failure(failure_reasons[0] if failure_reasons else "全部实时行情批次失败")
+        if runtime_failure_reasons and not bool(getattr(provider, "_rt_hithink_enabled", False)):
+            provider._register_realtime_failure(runtime_failure_reasons[0])
+        elif bool(getattr(provider, "_rt_hithink_enabled", False)):
+            request_stats["legacy_runtime_cooldown_suppressed_for_hithink"] = True
+            log.warning("[实时行情] 同花顺主源启用中，兼容回退失败未计入旧运行时冷却")
+        else:
+            request_stats["runtime_cooldown_suppressed_by_safety_policy"] = True
+            log.warning("[实时行情] 兼容回退受本机 HTTPS 安全策略阻止，未计入实时运行时冷却")
 
     return {
         "batch_failures": batch_failures,
@@ -737,7 +1057,7 @@ def _finalize_realtime_quote_stats(
     _finish_quote_request(provider, request_stats, status=final_status, result=result)
 
 
-def fetch_realtime_quotes_batch(
+def _fetch_realtime_quotes_batch_once(
     provider,
     codes,
     *,
@@ -748,6 +1068,7 @@ def fetch_realtime_quotes_batch(
     cancellation_token=None,
 ):
     provider._ensure_eastmoney_quote_state()
+    provider._ensure_hithink_quote_state()
     raw_codes = [str(code).strip() for code in (codes or []) if str(code or "").strip()]
     normalized_codes = normalize_quote_codes(codes)
     if not normalized_codes:
@@ -789,3 +1110,52 @@ def fetch_realtime_quotes_batch(
         missing_codes=missing_codes,
     )
     return result
+
+
+def fetch_realtime_quotes_batch(
+    provider,
+    codes,
+    *,
+    log,
+    batch_size_default: int,
+    min_batch_size_default: int,
+    batch_pause_default: float,
+    cancellation_token=None,
+):
+    """Fetch one normalized quote batch once, sharing an equivalent in-flight request."""
+    raise_if_cancelled(cancellation_token)
+    normalized_codes = normalize_quote_codes(codes)
+    if not normalized_codes:
+        return {}
+    key = _quote_singleflight_key(normalized_codes)
+
+    while True:
+        flight, is_leader = _start_or_join_quote_flight(provider, key)
+        if is_leader:
+            result = None
+            error = None
+            try:
+                result = _fetch_realtime_quotes_batch_once(
+                    provider,
+                    codes,
+                    log=log,
+                    batch_size_default=batch_size_default,
+                    min_batch_size_default=min_batch_size_default,
+                    batch_pause_default=batch_pause_default,
+                    cancellation_token=cancellation_token,
+                )
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                _complete_quote_flight(provider, key, flight, result=result, error=error)
+            raise_if_cancelled(cancellation_token)
+            return result
+
+        result, error = _wait_for_quote_flight(flight, cancellation_token)
+        if error is None:
+            return result
+        if isinstance(error, (TaskCancelledError, TaskDeadlineExceeded)):
+            raise_if_cancelled(cancellation_token)
+            continue
+        raise error

@@ -367,7 +367,7 @@ def test_refresh_scan_result_names_repairs_placeholder_name(monkeypatch):
         refreshed = tab._refresh_scan_result_names([{"代码": "300093", "名称": "300093", "触发日期": "2026-04-17"}])
 
         assert refreshed[0]["名称"] == "*ST金刚"
-        assert provider.requests == [(("300093",), True)]
+        assert provider.requests == [(("300093",), False)]
     finally:
         tab.deleteLater()
 

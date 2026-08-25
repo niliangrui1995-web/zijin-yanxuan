@@ -628,7 +628,7 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
 
         return list(merged.values()), stats
 
-    def _refresh_scan_result_names(self, results: list, *, refresh_missing: bool = True) -> list:
+    def _refresh_scan_result_names(self, results: list, *, refresh_missing: bool = False) -> list:
         normalized_rows = []
         codes = []
         for row in results or []:
@@ -1095,9 +1095,9 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
         if self._scan_mode == "incremental":
             merged_results, merge_stats = self._merge_scan_results(self._current_results, incoming_results)
             self._last_incremental_stats = merge_stats
-            self._pending_scan_results = self._refresh_scan_result_names(merged_results)
+            self._pending_scan_results = self._refresh_scan_result_names(merged_results, refresh_missing=False)
         else:
-            self._pending_scan_results = self._refresh_scan_result_names(incoming_results)
+            self._pending_scan_results = self._refresh_scan_result_names(incoming_results, refresh_missing=False)
         self._current_results = self._pending_scan_results
         self._render_scan_table(self._pending_scan_results)
         event_bus.sig_scan_updated.emit()

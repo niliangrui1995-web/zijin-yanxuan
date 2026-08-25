@@ -294,11 +294,13 @@ def test_name_map_and_add_custom_stock_all_outcomes(monkeypatch):
         selectAll=lambda: actions.append("select"),
         clear=lambda: actions.append("clear"),
     )
+    scheduled_codes = []
     tab = SimpleNamespace(
         add_stock_input=input_box,
         _normalize_quote_code=lambda code: str(code or ""),
         _get_a_share_name_map=lambda: {"000001": "One"},
         _resolve_missing_a_share_name=lambda code: "",
+        _schedule_missing_a_share_name_resolution=lambda code: scheduled_codes.append(code),
         lbl_sp_status=SimpleNamespace(setText=lambda text: actions.append(text)),
         format_workspace_status=lambda *args, **kwargs: kwargs,
         model=SimpleNamespace(row_data=[]),
@@ -312,7 +314,8 @@ def test_name_map_and_add_custom_stock_all_outcomes(monkeypatch):
 
     input_box.text = lambda: "000002"
     watch.WatchlistTab._add_custom_stock(tab)
-    assert any("不在" in str(item) for item in actions)
+    assert scheduled_codes == ["000002"]
+    assert any("正在后台核验" in str(item) for item in actions)
 
     input_box.text = lambda: "000001"
     monkeypatch.setattr(watch.watchlist_vm, "is_in_watchlist", lambda code: True)

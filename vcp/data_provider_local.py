@@ -633,5 +633,6 @@ def build_offline_quotes(codes, get_data) -> dict:
             "amount": float(last_row.get("amount", 0)),
             "last_close": last_close,
             "date": _format_quote_date(quote_date_value),
+            "source": "offline_local",
         }
     return res

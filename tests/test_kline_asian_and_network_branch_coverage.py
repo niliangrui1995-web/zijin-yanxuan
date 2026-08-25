@@ -341,7 +341,7 @@ def test_network_ui_guards_and_force_reconnect_outcomes(monkeypatch):
                 raise OSError("down")
 
         def test_network(self, timeout):
-            assert timeout == 2
+            assert timeout == 3
             return self.ok
 
     tones = []

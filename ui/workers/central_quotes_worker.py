@@ -64,6 +64,17 @@ def _provider_request_stats(provider) -> dict:
     return stats if isinstance(stats, dict) else {}
 
 
+def _is_hithink_quote_primary(service, *, health=None) -> bool:
+    health = read_provider_health(service.data_provider) if health is None else health
+    request_stats = getattr(health, "request_stats", {})
+    source_getter = getattr(request_stats, "get", None)
+    source = str(source_getter("quote_primary_source") or "") if callable(source_getter) else ""
+    source = source.strip().lower()
+    if source:
+        return source == "hithink"
+    return bool(getattr(service.data_provider, "_rt_hithink_enabled", False))
+
+
 def _slow_fetch_threshold(provider, codes_count: int) -> float:
     request_policy = read_realtime_quote_request_policy(provider)
     expected_batches = max(1, (max(0, int(codes_count)) + request_policy.batch_size - 1) // request_policy.batch_size)
@@ -295,7 +306,7 @@ def _quote_is_live(quote: dict) -> bool:
     freshness = str(quote.get("quote_freshness") or "").strip().lower()
     if freshness:
         return freshness in {"network", "cache"}
-    return str(quote.get("source") or "").lower() in {"eastmoney", "sina", "tencent"}
+    return str(quote.get("source") or "").lower() in {"hithink", "eastmoney", "sina", "tencent"}
 
 
 def _has_live_quote_source(quotes: dict) -> bool:
@@ -666,12 +677,15 @@ def _prepare_realtime_fetch_codes(
 ) -> set[str] | None:
     codes = service._opening_warmup_codes(codes, market_status=market_status)
     provider_stats = service._poller.get_runtime_stats()
-    if time.time() < float(provider_stats.get("cooldown_until") or 0):
+    hithink_primary = _is_hithink_quote_primary(service)
+    if hithink_primary:
+        service._circuit_breaker_cooldown = 0
+    if not hithink_primary and time.time() < float(provider_stats.get("cooldown_until") or 0):
         service._circuit_breaker_cooldown = max(service._circuit_breaker_cooldown, service._COOLDOWN_TICKS)
         return None
     if _should_skip_post_cache_reload_duplicate(service, reason, codes, time.time()):
         return None
-    if _consume_circuit_breaker_tick(service):
+    if not hithink_primary and _consume_circuit_breaker_tick(service):
         return None
     codes = service._fallback_pressure_codes(
         codes,
@@ -971,6 +985,11 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         if failure_count < self._FAILURE_THRESHOLD:
             return
 
+        if _is_hithink_quote_primary(self):
+            self._circuit_breaker_cooldown = 0
+            log.warning("[报价站] 同花顺主源连续失败，保留源级冷却，不启用旧运行时冷却")
+            return
+
         self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
         log.error("[报价站] 连续失败达到阈值，进入 5 分钟冷却")
 
@@ -1218,7 +1237,8 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         cooldown_candidates = []
         if isinstance(provider_stats, dict):
             cooldown_candidates.append(provider_stats.get("quote_cooldown_until"))
-        cooldown_candidates.append(read_provider_health(self.data_provider).eastmoney_cooldown_until)
+        health = read_provider_health(self.data_provider)
+        cooldown_candidates.append(getattr(health, "quote_cooldown_until", 0.0))
 
         cooldown_until = 0.0
         for value in cooldown_candidates:
@@ -1261,7 +1281,7 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         if (now - self._last_fallback_pressure_log_at) >= _A_SHARE_POLL_INTERVAL_MS / 1000:
             self._last_fallback_pressure_log_at = now
             log.info(
-                f"[报价站] 东方财富回退冷却中，自动轮询限量 {len(selected)}/{len(ordered)} 只；"
+                f"[报价站] 盘中报价链路冷却中，自动轮询限量 {len(selected)}/{len(ordered)} 只；"
                 f"剩余冷却约 {cooldown_left}s，单批滚动覆盖以避开盘中扫描重活叠加"
             )
             if cooldown_left <= 0 and pressure_reason:
@@ -1282,8 +1302,12 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         if self._tick_count % self._heartbeat_every_ticks != 0:
             return stats
 
+        health = read_provider_health(self.data_provider)
+        hithink_primary = _is_hithink_quote_primary(self, health=health)
+        if hithink_primary:
+            self._circuit_breaker_cooldown = 0
         total_threads, pytdx_threads = self._collect_thread_health()
-        if self._poller.protect_against_thread_anomaly(pytdx_threads):
+        if not hithink_primary and self._poller.protect_against_thread_anomaly(pytdx_threads):
             self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
 
         runtime_stats = stats.get("rt_runtime", {})
@@ -1291,8 +1315,11 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         last_success_text = time.strftime("%H:%M:%S", time.localtime(last_success_at)) if last_success_at > 0 else "-"
         now_ts = time.time()
         runtime_cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
+        runtime_cooldown_left = 0 if hithink_primary else max(
+            0, int(runtime_cooldown_until - now_ts)
+        )
         cooldown_left = max(
-            max(0, int(runtime_cooldown_until - now_ts)),
+            runtime_cooldown_left,
             self._quote_fallback_cooldown_left(runtime_stats, now=now_ts),
         )
         if quote_refreshable is None:
