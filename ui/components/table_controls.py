@@ -66,6 +66,7 @@ _PAINT_REASON_PRIORITY = {
     "model_data_changed": 2,
     "quote_data_changed": 3,
     "preload_reveal": 4,
+    "viewport_refresh": 4,
     "model_layout_changed": 5,
     "model_reset": 6,
 }
@@ -355,6 +356,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         if not (self._restoring_refresh_state and self._paint_metric_scope == "lhb"):
             self._invalidate_shell_nav_repaint_guard("sort_changed")
         self._sorted_column = column
+        self._mark_pending_paint_metric("viewport_refresh", viewport_refresh_source="sort_indicator")
         self.viewport().update()
 
     def _on_shell_nav_header_geometry_changed(self, *_args) -> None:
@@ -399,6 +401,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         self.style().unpolish(self)
         self.style().polish(self)
         self.sync_viewport_base_background()
+        self._mark_pending_paint_metric("viewport_refresh", viewport_refresh_source="theme_changed")
         self.viewport().update()
 
     def set_viewport_base_background_enabled(self, enabled: bool) -> None:
@@ -726,6 +729,26 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
                 "threshold_exceeded": str(changed_indexes > update_threshold).lower(),
                 "includes_flash_role": str(includes_flash_role).lower(),
             }
+            if quote_changed:
+                viewport = self.viewport()
+                if viewport is not None:
+                    try:
+                        quote_region = self.visualRegionForSelection(
+                            QItemSelection(_args[0], _args[1])
+                        ).intersected(QRegion(viewport.rect()))
+                        if not quote_region.isEmpty():
+                            quote_ratio, quote_rects, quote_full = _paint_region_metrics(
+                                quote_region, viewport.rect()
+                            )
+                            metadata.update(
+                                {
+                                    "quote_dirty_bounding_area_ratio": f"{quote_ratio:.4f}",
+                                    "quote_dirty_region_rects": quote_rects,
+                                    "quote_dirty_region_full": quote_full,
+                                }
+                            )
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        pass
             self._mark_pending_paint_metric(reason, **metadata)
         if not includes_flash_role:
             return
@@ -1480,7 +1503,9 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "tab": scope,
         }
         native_window_provenance = self._native_window_paint_provenance()
-        if metric is None and delivered_full:
+        if delivered_full:
+            # A quote/model metric can coexist with a native full paint; do not
+            # discard the window provenance merely because a business metric is pending.
             tags.update(
                 {
                     "native_window_signal": native_window_provenance["signal"],
@@ -1504,6 +1529,10 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "requested_dirty_bounding_area_ratio",
             "requested_dirty_region_rects",
             "requested_full_viewport",
+            "quote_dirty_bounding_area_ratio",
+            "quote_dirty_region_rects",
+            "quote_dirty_region_full",
+            "viewport_refresh_source",
             "targeted_request_reason",
             "structural_reason",
         ):

@@ -1073,6 +1073,126 @@ def test_vcp_table_view_reports_full_region_after_targeted_request(qt_applicatio
         table.deleteLater()
 
 
+def test_vcp_table_view_records_full_quote_paint_provenance_through_proxy(
+    qt_application,
+    monkeypatch,
+):
+    """报价局部区与同轮全刷合并时，保留 proxy 与原生窗口归因。"""
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    proxy_model = RtSortFilterProxyModel(table)
+    proxy_model.setSourceModel(source_model)
+    table.setModel(proxy_model)
+    table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    source_model.update_data(
+        [{"代码": "600519", "名称": "贵州茅台", "现价": "10.00", "涨幅%": 0.0, "市值": "--"}]
+    )
+    table.resize(640, 360)
+    table.show()
+    _process_events(qt_application)
+
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        assert source_model.update_quotes({"600519": {"close": 11.0, "last_close": 10.0}}) == 1
+        table.viewport().update()
+        _process_events(qt_application)
+
+        paints = [item for item in recorded if item[0] == "watchlist_table_paint_ms"]
+        assert len(paints) == 1
+        tags = paints[0][2]["tags"]
+        assert tags["reason"] == "quote_data_changed"
+        assert tags["delivered_full_viewport"] == "true"
+        assert tags["delivery_kind"] == "full_viewport"
+        assert float(tags["quote_dirty_bounding_area_ratio"]) < 1.0
+        assert tags["quote_dirty_region_full"] == "false"
+        assert "native_window_signal" in tags
+        assert "native_window_last_event" in tags
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_keeps_full_quote_paint_over_update_threshold(
+    qt_application,
+    monkeypatch,
+):
+    """超过 Qt updateThreshold 的报价更新仍允许整表重绘。"""
+    table = VCPTableView()
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    table.setModel(model)
+    table.setUpdateThreshold(0)
+    table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    model.update_data(
+        [{"代码": "600519", "名称": "贵州茅台", "现价": "10.00", "涨幅%": 0.0, "市值": "--"}]
+    )
+    table.resize(640, 360)
+    table.show()
+    _process_events(qt_application)
+
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        assert model.update_quotes({"600519": {"close": 11.0, "last_close": 10.0}}) == 1
+        table.viewport().update()
+        _process_events(qt_application)
+
+        paints = [item for item in recorded if item[0] == "watchlist_table_paint_ms"]
+        assert len(paints) == 1
+        tags = paints[0][2]["tags"]
+        assert tags["reason"] == "quote_data_changed"
+        assert tags["threshold_exceeded"] == "true"
+        assert tags["delivered_full_viewport"] == "true"
+        assert tags["delivery_kind"] == "full_viewport"
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_keeps_explicit_viewport_refresh_over_quote_region(
+    qt_application,
+    monkeypatch,
+):
+    """排序等显式 viewport 刷新不能被报价局部回放吞掉。"""
+    table = VCPTableView()
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    table.setModel(model)
+    table.set_coalesced_flash_repaint_enabled(True)
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    model.update_data(
+        [{"代码": "600519", "名称": "贵州茅台", "现价": "10.00", "涨幅%": 0.0, "市值": "--"}]
+    )
+    table.resize(640, 360)
+    table.show()
+    _process_events(qt_application)
+
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        assert model.update_quotes({"600519": {"close": 11.0, "last_close": 10.0}}) == 1
+        table._on_sort_indicator_changed(2, Qt.SortOrder.AscendingOrder)
+        _process_events(qt_application)
+
+        paints = [item for item in recorded if item[0] == "watchlist_table_paint_ms"]
+        assert len(paints) == 1
+        tags = paints[0][2]["tags"]
+        assert tags["reason"] == "viewport_refresh"
+        assert tags["viewport_refresh_source"] == "sort_indicator"
+        assert tags["delivered_full_viewport"] == "true"
+        assert tags["delivery_kind"] == "full_viewport"
+    finally:
+        table.deleteLater()
+
+
 def test_paint_region_full_viewport_uses_coverage_not_bounding_span():
     viewport_rect = QRect(0, 0, 100, 100)
     sparse_corners = QRegion(QRect(0, 0, 8, 8)).united(QRegion(QRect(92, 92, 8, 8)))
