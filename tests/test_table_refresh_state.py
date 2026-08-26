@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import time
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
@@ -162,6 +163,22 @@ def _arm_visible_ai_preload_repaint_guard(table, app, *, load_reason: str = "bac
     table.show()
     _process_events(app)
     table.prepare_workspace_preload_repaint_guard(load_reason=load_reason)
+    assert table._shell_nav_repaint_guard is not None
+    assert table.viewport().isVisible()
+
+
+def _arm_visible_watchlist_preload_repaint_guard(
+    table,
+    app,
+    *,
+    load_reason: str = "background_prewarm",
+):
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    table.resize(640, 360)
+    table.show()
+    _process_events(app)
+    table.prepare_workspace_preload_repaint_guard(load_reason=load_reason)
+    table._activate_shell_nav_repaint_guard()
     assert table._shell_nav_repaint_guard is not None
     assert table.viewport().isVisible()
 
@@ -793,6 +810,145 @@ def test_vcp_table_view_ai_preload_guard_skips_visible_redundant_full_paints(
         assert {item[2]["tags"]["workspace_load_reason"] for item in recorded} == {
             "background_prewarm"
         }
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_watchlist_preload_guard_keeps_first_reveal_and_defers_layout_tail(
+    qt_application,
+    monkeypatch,
+):
+    """预热首帧必须绘制，随后无内容变化的布局尾帧可被安全延后。"""
+    class RecordingTable(VCPTableView):
+        def __init__(self):
+            super().__init__()
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    table = RecordingTable()
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        _arm_visible_watchlist_preload_repaint_guard(
+            table,
+            qt_application,
+            load_reason="restore_last_tab",
+        )
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        table.prepare_background_preload_reveal()
+        QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+        table._record_native_window_event(QEvent(QEvent.Type.LayoutRequest))
+        table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
+        QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+
+        assert table.actual_paint_calls == 1
+        guard_metrics = [
+            item for item in recorded if item[0] == "watchlist_preload_repaint_guard"
+        ]
+        assert [item[2]["tags"]["decision"] for item in guard_metrics] == [
+            "first_full_allowed",
+            "suppress_redundant_full",
+        ]
+        assert {item[2]["tags"]["workspace_load_reason"] for item in guard_metrics} == {
+            "restore_last_tab"
+        }
+        assert {item[2]["tags"]["active_window_ms"] for item in guard_metrics} == {"4000"}
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_watchlist_preload_guard_fails_open_for_model_and_geometry_changes(
+    qt_application,
+):
+    table = VCPTableView()
+    try:
+        _arm_visible_watchlist_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table._on_model_reset()
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+
+        _arm_visible_watchlist_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table._record_native_window_event(QEvent(QEvent.Type.Resize))
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_watchlist_preload_guard_fails_open_for_flash_expiry(
+    qt_application,
+):
+    table = VCPTableView()
+    try:
+        _arm_visible_watchlist_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table._mark_pending_paint_metric("flash_expiry")
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_watchlist_preload_guard_bounds_untracked_layout_tail(
+    qt_application,
+):
+    table = VCPTableView()
+    try:
+        _arm_visible_watchlist_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        for _ in range(table.WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS):
+            table._record_native_window_event(QEvent(QEvent.Type.LayoutRequest))
+            table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
+            assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
+
+        table._record_native_window_event(QEvent(QEvent.Type.LayoutRequest))
+        table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_watchlist_preload_guard_fails_open_for_other_native_full_paints(
+    qt_application,
+):
+    table = VCPTableView()
+    try:
+        _arm_visible_watchlist_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table._record_native_window_event(QEvent(QEvent.Type.WindowActivate))
+        table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_watchlist_preload_guard_expires_after_bounded_tail_window(
+    qt_application,
+):
+    table = VCPTableView()
+    try:
+        _arm_visible_watchlist_preload_repaint_guard(table, qt_application)
+        table._shell_nav_repaint_guard["active_until"] = time.monotonic() - 0.001
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
     finally:
         table.deleteLater()
 

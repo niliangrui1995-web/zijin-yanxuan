@@ -604,6 +604,11 @@ def _prepare_workspace_preload_repaint_guard(workspace, widget, load_reason: str
         if candidate is None or id(candidate) in seen:
             continue
         seen.add(id(candidate))
+        if candidate is not widget and getattr(candidate, "workspace_key", "") == "watchlist":
+            # Watchlist guards its own staged reveal only.  Unlike the AI
+            # table's visible-frame guard, an unrelated tab replacement must
+            # not create a Watchlist preload tail window.
+            continue
         prepare_guard = getattr(candidate, "prepare_workspace_preload_repaint_guard", None)
         if not callable(prepare_guard):
             continue
@@ -672,6 +677,10 @@ def _register_loaded_workspace_tab(
     spec["mounted"] = bool(mounted)
     workspace._tabs_by_key[key] = widget
     setattr(workspace, spec["attr"], widget)
+    if not mounted:
+        # Background VCP warmup can outlive the short-lived widget tag below.
+        # Keep the construction reason until the staged tab is actually mounted.
+        spec["_staged_preload_load_reason"] = load_reason
     _attach_workspace_tab_transition_context(workspace, index=index, spec=spec, key=key, widget=widget)
     workspace._mark_system_log_shell_nav(key, load_reason)
     workspace._lazy_loading_keys.discard(key)
@@ -842,6 +851,10 @@ def _mount_loaded_workspace_tab(workspace, spec: dict, key: str, index: int):
     widget = spec.get("widget")
     if widget is None or spec.get("mounted", True) is not False:
         return widget
+    load_reason = normalize_tab_load_reason(
+        spec.pop("_staged_preload_load_reason", "")
+        or getattr(widget, "_workspace_load_reason", "")
+    )
     with tab_transition_stage(
         widget,
         tab=key,
@@ -853,7 +866,14 @@ def _mount_loaded_workspace_tab(workspace, spec: dict, key: str, index: int):
         prepare_reveal = getattr(widget, "prepare_workspace_preload_reveal", None)
         if callable(prepare_reveal):
             prepare_reveal()
-        _replace_workspace_placeholder(workspace, spec, key, index, widget)
+        _replace_workspace_placeholder(
+            workspace,
+            spec,
+            key,
+            index,
+            widget,
+            load_reason=load_reason,
+        )
         if not copy_hooks_ready:
             workspace._schedule_workspace_table_copy_hooks(delay_ms=0)
         setattr(widget, "_workspace_preload_staged", False)

@@ -848,6 +848,12 @@ class _WatchlistBackgroundPreloadMixin:
         if callable(prepare):
             prepare()
 
+    def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+        table = getattr(self, "table_sp", None)
+        prepare = getattr(table, "prepare_workspace_preload_repaint_guard", None)
+        if callable(prepare):
+            prepare(load_reason=load_reason)
+
     def sync_workspace_viewport_background(self) -> None:
         table = getattr(self, "table_sp", None)
         sync = getattr(table, "sync_viewport_base_background", None)

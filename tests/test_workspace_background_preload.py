@@ -44,6 +44,14 @@ class _ViewportBackgroundPreloadTab(_ControlledPreloadTab):
         super().__init__(key, events, parent)
         self.workspace = parent
         self.viewport_background_sync_calls = 0
+        self.preload_reveal_calls = 0
+        self.guard_load_reasons = []
+
+    def prepare_workspace_preload_reveal(self) -> None:
+        self.preload_reveal_calls += 1
+
+    def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+        self.guard_load_reasons.append(load_reason)
 
     def sync_workspace_viewport_background(self) -> None:
         self.viewport_background_sync_calls += 1
@@ -1366,6 +1374,45 @@ def test_background_prewarm_placeholder_replacement_arms_current_ai_repaint_guar
         workspace.deleteLater()
 
 
+def test_background_prewarm_placeholder_replacement_does_not_arm_current_watchlist_reveal_guard(
+    qt_application,
+):
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _ViewportBackgroundPreloadTab(
+        "watchlist", events, workspace
+    )
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        blocked = workspace.tabs.blockSignals(True)
+        workspace.tabs.setCurrentIndex(watchlist_index)
+        workspace.tabs.blockSignals(blocked)
+        watchlist = workspace.ensure_tab_loaded(
+            "watchlist",
+            reason=TabLoadReason.USER.value,
+        )
+        assert workspace.tabs.currentWidget() is watchlist
+        assert watchlist.guard_load_reasons == []
+
+        workspace.ensure_tab_loaded(
+            "na_daily",
+            reason=TabLoadReason.BACKGROUND_PREWARM.value,
+        )
+
+        assert watchlist.guard_load_reasons == []
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 @pytest.mark.parametrize("target_key", ("asian_market", "na_daily"))
 def test_transition_tables_stay_staged_during_background_prewarm_until_activation(
     qt_application,
@@ -1614,6 +1661,10 @@ def test_staged_watchlist_mount_syncs_viewport_background_after_placeholder_repl
         assert isinstance(staged, _ViewportBackgroundPreloadTab)
         assert workspace.tabs.currentWidget() is placeholder
         assert staged.viewport_background_sync_calls == 0
+        assert staged.preload_reveal_calls == 0
+        # The transient widget tag is cleared while VCP warmup is still running;
+        # staged mount must retain its original preload reason separately.
+        staged._workspace_load_reason = ""
 
         staged.ready = True
         workspace._prewarm_next_tab()
@@ -1623,6 +1674,8 @@ def test_staged_watchlist_mount_syncs_viewport_background_after_placeholder_repl
         assert workspace.tabs.currentWidget() is staged
         assert watchlist_spec["mounted"] is True
         assert staged.viewport_background_sync_calls == 1
+        assert staged.preload_reveal_calls == 1
+        assert staged.guard_load_reasons == [TabLoadReason.BACKGROUND_PREWARM.value]
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -1662,6 +1715,8 @@ def test_direct_watchlist_restore_syncs_viewport_background_after_placeholder_re
         assert workspace.tabs.currentWidget() is not placeholder
         assert watchlist_spec["mounted"] is True
         assert tab.viewport_background_sync_calls == 1
+        assert tab.preload_reveal_calls == 0
+        assert tab.guard_load_reasons == [TabLoadReason.RESTORE_LAST_TAB.value]
     finally:
         workspace.shutdown()
         workspace.deleteLater()

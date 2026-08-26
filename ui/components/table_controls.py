@@ -210,6 +210,13 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
     # K-line open/close can leave a bounded focus/layout tail after the first
     # legitimate frame.  This remains source-scoped at the call site below.
     KLINE_FOCUS_REPAINT_GUARD_ACTIVE_MS = 2_000
+    # The staged Watchlist reveal can receive one delayed LayoutRequest tail
+    # after its required first viewport frame.  Keep the guard bounded, while
+    # model, geometry, input and flash changes continue to fail open below.
+    WATCHLIST_PRELOAD_REPAINT_GUARD_ACTIVE_MS = 4_000
+    WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS = 2
+    WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS = 1_000
+    WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS = 250
     _NATIVE_WINDOW_EVENT_SIGNALS = {
         QEvent.Type.WindowActivate: "window_activate",
         QEvent.Type.WindowDeactivate: "window_deactivate",
@@ -984,20 +991,35 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         return self._active_shell_nav_repaint_guard() is not None
 
     def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
-        """Protect an already rendered AI table from a nearby preload mount repaint burst."""
+        """Arm source-scoped guards for a bounded workspace preload repaint tail."""
         load_reason_text = str(load_reason or "").strip()
-        if (
-            self._closing
-            or self._paint_metric_scope != "ai_industry_chain"
-            or load_reason_text not in {"background_prewarm", "restore_last_tab"}
-        ):
+        if self._closing or load_reason_text not in {"background_prewarm", "restore_last_tab"}:
             return
-        self._arm_redundant_full_paint_guard(
-            workspace_load_reason=load_reason_text,
-            metric_name="ai_industry_chain_preload_repaint_guard",
-            retain_after_budget=True,
-            preserve_visible_frame=True,
-        )
+        if self._paint_metric_scope == "ai_industry_chain":
+            self._arm_redundant_full_paint_guard(
+                workspace_load_reason=load_reason_text,
+                metric_name="ai_industry_chain_preload_repaint_guard",
+                retain_after_budget=True,
+                preserve_visible_frame=True,
+            )
+            return
+        if self._paint_metric_scope == "watchlist":
+            self._arm_redundant_full_paint_guard(
+                workspace_load_reason=load_reason_text,
+                metric_name="watchlist_preload_repaint_guard",
+                retain_after_budget=True,
+                preserve_visible_frame=False,
+                active_ms=self.WATCHLIST_PRELOAD_REPAINT_GUARD_ACTIVE_MS,
+                max_suppressions=self.WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS,
+            )
+            guard = self._shell_nav_repaint_guard
+            if guard is not None:
+                guard.update(
+                    native_tail_signal="window_layout_request",
+                    native_tail_last_event="window_update_request",
+                    native_tail_signal_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS,
+                    native_tail_last_event_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS,
+                )
 
     def _arm_redundant_full_paint_guard(
         self,
@@ -1007,6 +1029,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         retain_after_budget: bool,
         preserve_visible_frame: bool,
         active_ms: int | None = None,
+        max_suppressions: int | None = None,
     ) -> None:
         now = time.monotonic()
         active_window_ms = max(
@@ -1035,6 +1058,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "metric_name": str(metric_name or ""),
             "retain_after_budget": bool(retain_after_budget),
             "rearm_after_required_full": bool(preserve_visible_frame),
+            "max_suppressions": None if max_suppressions is None else max(0, int(max_suppressions)),
         }
         self._shell_nav_repaint_guard = guard
         viewport = self.viewport()
@@ -1229,6 +1253,37 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
                 # Flash expiry has its own requested dirty region.  Let its paint
                 # event through rather than leaving a stale highlight on screen.
                 self._record_shell_nav_repaint_guard(guard, "allow_full_fallback", fallback_reason="flash_expiry")
+                self._clear_shell_nav_repaint_guard()
+                return False
+            expected_native_signal = str(guard.get("native_tail_signal", "") or "")
+            if expected_native_signal:
+                provenance = self._native_window_paint_provenance()
+                try:
+                    signal_age_ms = float(provenance.get("signal_age_ms", ""))
+                    last_event_age_ms = float(provenance.get("last_event_age_ms", ""))
+                except (TypeError, ValueError):
+                    signal_age_ms = last_event_age_ms = -1.0
+                if (
+                    provenance.get("signal") != expected_native_signal
+                    or provenance.get("last_event") != str(guard.get("native_tail_last_event", "") or "")
+                    or provenance.get("requires_full_paint") != "true"
+                    or not 0.0 <= signal_age_ms <= int(guard.get("native_tail_signal_max_age_ms", 0) or 0)
+                    or not 0.0 <= last_event_age_ms <= int(guard.get("native_tail_last_event_max_age_ms", 0) or 0)
+                ):
+                    self._record_shell_nav_repaint_guard(
+                        guard,
+                        "allow_full_fallback",
+                        fallback_reason="native_provenance",
+                    )
+                    self._clear_shell_nav_repaint_guard()
+                    return False
+            max_suppressions = guard.get("max_suppressions")
+            if max_suppressions is not None and int(guard.get("suppressed", 0) or 0) >= int(max_suppressions):
+                self._record_shell_nav_repaint_guard(
+                    guard,
+                    "allow_full_fallback",
+                    fallback_reason="suppression_budget",
+                )
                 self._clear_shell_nav_repaint_guard()
                 return False
             if (
