@@ -19,6 +19,7 @@ from ui.theme_tokens import build_ui_tokens
 SERIAL_HEADER = "序号"
 FLASH_DURATION_SECONDS = 0.5
 STOCK_CELL_RENDER_ROLE = int(Qt.ItemDataRole.UserRole) + 6
+STOCK_CELL_PRESENTATION_ROLE = int(Qt.ItemDataRole.UserRole) + 7
 _TABLE_DENSITY_CACHE_LOADED = False
 _TABLE_DENSITY_CACHE: str | None = None
 

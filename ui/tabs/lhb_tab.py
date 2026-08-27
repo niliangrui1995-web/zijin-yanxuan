@@ -1765,8 +1765,12 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         *,
         defer_sort: bool = False,
         skip_sort: bool = False,
+        record_flash: bool = True,
     ):
-        result = super()._apply_quote_snapshot(quotes)
+        if record_flash:
+            result = super()._apply_quote_snapshot(quotes)
+        else:
+            result = super()._apply_quote_snapshot(quotes, record_flash=False)
         if skip_sort:
             return result
         if defer_sort:
@@ -1778,11 +1782,13 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
     def _apply_quote_snapshot(
         self,
         quotes: Mapping[str, Mapping[str, object]] | None,
+        *,
+        record_flash: bool = True,
     ):
-        if quotes is not None and self._should_defer_visible_quote_snapshot(quotes):
+        if record_flash and quotes is not None and self._should_defer_visible_quote_snapshot(quotes):
             self._queue_visible_quote_snapshot(quotes)
             return None
-        return self._apply_quote_snapshot_now(quotes)
+        return self._apply_quote_snapshot_now(quotes, record_flash=record_flash)
 
     def get_watchlist_radar_rows(self) -> list[dict]:
         """给关注池读取已展示的龙虎榜信号；冷缓存由工作区快照后台预热。"""

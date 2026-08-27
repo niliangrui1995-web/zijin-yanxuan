@@ -16,6 +16,7 @@ from ui.models import rt_table_model as rt_module
 from ui.models import stock_table_model as stock_module
 from ui.models import table_cell_renderers as renderers
 from ui.models import table_model_helpers as helpers
+from ui.models import table_model_views as table_views
 from ui.models.rt_table_model import RtTableModel
 from ui.models.stock_table_model import StockTableModel
 from ui.models.table_model_views import RtSortFilterProxyModel, StockItemDelegate
@@ -708,6 +709,49 @@ def test_stock_presentation_cache_reuses_roles_invalidates_changed_row_and_prese
     assert model.data(quote_index, helpers.STOCK_CELL_RENDER_ROLE)[2] is None
 
 
+def test_stock_presentation_cache_reuses_stable_render_payload_but_not_live_flash(monkeypatch):
+    model = _stock(["代码", "名称", "现价", "涨幅%"], [{"代码": "1", "名称": "A", "现价": "10", "涨幅%": "1"}])
+    model.set_presentation_cache_enabled(True)
+    index = model.index(0, model.headers.index("名称"))
+    calls = {"count": 0}
+    original = model._cell_render_payload
+
+    def counted(*args):
+        calls["count"] += 1
+        return original(*args)
+
+    monkeypatch.setattr(model, "_cell_render_payload", counted)
+
+    model.data(index, helpers.STOCK_CELL_RENDER_ROLE)
+    model.data(index, helpers.STOCK_CELL_RENDER_ROLE)
+    assert calls["count"] == 1
+
+    quote_index = model.index(0, model.headers.index("现价"))
+    assert model.set_cell_value(0, "现价", "11")
+    model.data(quote_index, helpers.STOCK_CELL_RENDER_ROLE)
+    model.data(quote_index, helpers.STOCK_CELL_RENDER_ROLE)
+    assert calls["count"] == 3
+
+
+def test_hidden_quote_projection_clears_flash_metadata_and_keeps_plain_render_payload():
+    model = _stock(
+        ["代码", "现价", "涨幅%"],
+        [{"代码": "000001", "现价": "10.00", "涨幅%": "0.00"}],
+    )
+    price_column = model.headers.index("现价")
+    price_index = model.index(0, price_column)
+    assert model.set_cell_value(0, "现价", "10.10")
+    assert model.data(price_index, helpers.STOCK_CELL_RENDER_ROLE)[2] is not None
+
+    assert model.update_quotes(
+        {"000001": {"close": 10.2, "last_close": 10.0}},
+        record_flash=False,
+    ) == 1
+
+    assert model._flash_records == {}
+    assert model.data(price_index, helpers.STOCK_CELL_RENDER_ROLE)[2] is None
+
+
 def test_rt_model_identity_update_guards_and_public_accessors():
     model = RtTableModel([{"\u4ee3\u7801": "1", "\u540d\u79f0": "A"}, {"\u4ee3\u7801": "2", "\u540d\u79f0": "B"}])
     assert model.row_data is model._data
@@ -967,6 +1011,72 @@ def test_delegate_simple_paint_path_restores_painter(qt_application):
     finally:
         painter.end()
         widget.deleteLater()
+
+
+def test_stock_delegate_skips_full_render_context_for_plain_stock_cell(monkeypatch, qt_application):
+    model = _stock(["代码", "名称"], [{"代码": "000001", "名称": "普通单元格"}])
+    index = model.index(0, model.headers.index("名称"))
+    widget = _PaintWidget(QModelIndex(), -1)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 120, 30)
+    option.widget = widget
+    image = QImage(120, 30, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.white)
+    painter = QPainter(image)
+    monkeypatch.setattr(
+        table_views,
+        "build_stock_cell_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("plain cell should use fast path")),
+    )
+    try:
+        StockItemDelegate(widget).paint(painter, option, index)
+        assert painter.isActive()
+    finally:
+        painter.end()
+        widget.deleteLater()
+
+
+def test_stock_delegate_plain_cell_reads_single_compound_presentation_payload(monkeypatch, qt_application):
+    class RoleRecordingStockTableModel(StockTableModel):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.requested_roles = []
+
+        def data(self, index, role):
+            self.requested_roles.append(int(role))
+            return super().data(index, role)
+
+    model = RoleRecordingStockTableModel(["代码", "名称"])
+    model.update_data([{"代码": "000001", "名称": "普通单元格"}], hydrate_latest_quotes=False)
+    model.set_presentation_cache_enabled(True)
+    index = model.index(0, model.headers.index("名称"))
+    payload = model.data(index, helpers.STOCK_CELL_PRESENTATION_ROLE)
+    assert payload[0] == "普通单元格"
+    assert payload[-1][2] is None
+    model.requested_roles.clear()
+
+    widget = _PaintWidget(QModelIndex(), -1)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 120, 30)
+    option.widget = widget
+    option.font = widget.font()
+    option.palette = widget.palette()
+    image = QImage(120, 30, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.white)
+    painter = QPainter(image)
+    monkeypatch.setattr(
+        StockItemDelegate,
+        "initStyleOption",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("plain cell should not query each Qt role")),
+    )
+    try:
+        StockItemDelegate(widget).paint(painter, option, index)
+        assert painter.isActive()
+    finally:
+        painter.end()
+        widget.deleteLater()
+
+    assert model.requested_roles == [helpers.STOCK_CELL_PRESENTATION_ROLE]
 
 
 class _PaintWidget(QWidget):

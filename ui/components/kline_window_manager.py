@@ -608,13 +608,6 @@ def _defer_open_while_preparing(
     manager, main_window, code: str, name: str, pending_request
 ) -> bool:
     _queue_pending_open(manager, pending_request)
-    prepare_watchlist_kline_focus_repaint_guard(
-        main_window,
-        source_tab_key=str(
-            getattr(getattr(pending_request, "open_context", None), "source_tab_key", "") or ""
-        ),
-        phase="open",
-    )
     manager._notify_webengine_preparing(main_window, code, name)
     return True
 
@@ -706,28 +699,6 @@ def _activate_chart(chart) -> bool:
     except (AttributeError, OSError, TypeError, ValueError) as exc:
         log.debug(f"[K线管理] 置前激活窗口失败: {exc}")
     return True
-
-
-def prepare_watchlist_kline_focus_repaint_guard(
-    main_window,
-    *,
-    source_tab_key: str,
-    phase: str,
-) -> bool:
-    """Arm only the visible Watchlist table for one K-line focus transition."""
-    if str(source_tab_key or "").strip() != "watchlist":
-        return False
-    try:
-        workspace = getattr(main_window, "_workspace", None)
-        get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
-        if not callable(get_loaded_tab):
-            return False
-        watchlist_tab = get_loaded_tab("watchlist")
-        table = getattr(watchlist_tab, "table_sp", None)
-        prepare = getattr(table, "prepare_kline_focus_repaint_guard", None)
-        return bool(prepare(phase=phase)) if callable(prepare) else False
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        return False
 
 
 def _record_chart_open(manager, chart, code: str, name: str, started_at: float) -> None:
@@ -1592,11 +1563,6 @@ def _open_manager_chart(
         constructed_at=constructed_at,
     )
     _install_chart_destroyed_hook(manager, chart)
-    prepare_watchlist_kline_focus_repaint_guard(
-        arguments.main_window,
-        source_tab_key=str(getattr(arguments.open_context, "source_tab_key", "") or ""),
-        phase="open",
-    )
     if not _activate_managed_chart(chart):
         return None
     _finish_chart_open(manager, chart, arguments, constructed_at)

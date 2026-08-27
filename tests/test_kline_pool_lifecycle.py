@@ -132,7 +132,7 @@ def test_pool_state_transitions_are_explicit_and_legacy_flags_are_read_only():
         window._pool_idle = True
 
 
-def test_watchlist_close_arms_focus_guard_before_qt_focus_return(monkeypatch):
+def test_watchlist_close_returns_to_qt_without_repaint_guard(monkeypatch):
     class CloseProbe(KLineWindowPoolLifecycleMixin):
         pass
 
@@ -140,8 +140,6 @@ def test_watchlist_close_arms_focus_guard_before_qt_focus_return(monkeypatch):
     probe = CloseProbe()
     initialize_kline_pool_state(probe)
     probe.code = "000001"
-    probe.main_window = object()
-    probe._open_context = SimpleNamespace(source_tab_key="watchlist")
     probe._lease_signals_connected = False
     probe._open_stages = SimpleNamespace(stop=lambda: (None, None))
     probe._rt_timer = None
@@ -159,19 +157,9 @@ def test_watchlist_close_arms_focus_guard_before_qt_focus_return(monkeypatch):
         "ui.kline_window_pool_lifecycle._call_next_close_event",
         lambda _window, _event: events.append("qt_close"),
     )
-    monkeypatch.setattr(
-        manager_module,
-        "prepare_watchlist_kline_focus_repaint_guard",
-        lambda window, *, source_tab_key, phase: events.append(
-            (window, source_tab_key, phase)
-        )
-        or True,
-        raising=False,
-    )
-
     probe.closeEvent(object())
 
-    assert events == [(probe.main_window, "watchlist", "close"), "qt_close"]
+    assert events == ["qt_close"]
 
 
 def test_one_qobject_survives_100_open_close_reuse_cycles_without_leaking(

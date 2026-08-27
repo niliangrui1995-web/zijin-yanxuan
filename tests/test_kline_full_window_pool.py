@@ -885,10 +885,7 @@ def test_same_stock_reuses_physical_window_and_stale_generation_cannot_commit(
     assert browser.page_changes == []
 
 
-def test_watchlist_open_arms_focus_guard_before_kline_window_activation(
-    isolated_manager,
-    monkeypatch,
-):
+def test_watchlist_open_activates_chart_without_repaint_guard(isolated_manager, monkeypatch):
     class OrderedChart(_ReusableChart):
         def show(self) -> None:
             order.append("show")
@@ -903,16 +900,6 @@ def test_watchlist_open_arms_focus_guard_before_kline_window_activation(
         source_tab_key="watchlist",
     )
     monkeypatch.setattr(manager_module, "_load_kline_window_class", lambda: OrderedChart)
-    monkeypatch.setattr(
-        manager_module,
-        "prepare_watchlist_kline_focus_repaint_guard",
-        lambda window, *, source_tab_key, phase: order.append(
-            (window, source_tab_key, phase)
-        )
-        or True,
-        raising=False,
-    )
-
     chart = manager.open_chart(
         main_window,
         "000001",
@@ -923,13 +910,10 @@ def test_watchlist_open_arms_focus_guard_before_kline_window_activation(
     )
 
     assert chart is not None
-    assert order == [(main_window, "watchlist", "open"), "show"]
+    assert order == ["show"]
 
 
-def test_watchlist_open_arms_focus_guard_before_webengine_preflight_notice(
-    isolated_manager,
-    monkeypatch,
-):
+def test_watchlist_open_preflight_does_not_arm_repaint_guard(isolated_manager, monkeypatch):
     manager = isolated_manager
     manager._webengine_available = None
     order = []
@@ -945,16 +929,6 @@ def test_watchlist_open_arms_focus_guard_before_webengine_preflight_notice(
         "_notify_webengine_preparing",
         lambda *_args: order.append("preparing"),
     )
-    monkeypatch.setattr(
-        manager_module,
-        "prepare_watchlist_kline_focus_repaint_guard",
-        lambda window, *, source_tab_key, phase: order.append(
-            (window, source_tab_key, phase)
-        )
-        or True,
-        raising=False,
-    )
-
     assert manager.open_chart(
         main_window,
         "000001",
@@ -964,4 +938,4 @@ def test_watchlist_open_arms_focus_guard_before_webengine_preflight_notice(
         open_context=context,
     ) is None
 
-    assert order == [(main_window, "watchlist", "open"), "preparing"]
+    assert order == ["preparing"]

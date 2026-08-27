@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtCore import QObject, QPoint, QRect, Qt
 from PyQt6.QtGui import QRegion
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -1827,7 +1827,7 @@ class _NativeProfileController:
         self.QTimer.singleShot(25, self._poll_shell_nav_outbound)
 
     def _capture_shell_nav_visual_artifacts(self, cycle: int, table) -> dict[str, dict]:
-        """Save read-only screenshots for the shell-nav result without changing acceptance."""
+        """Save visual evidence without causing a second QWidget render pass."""
         artifact_dir = Path(self.activation_profile_path).parent
         paths = {
             "main_window": artifact_dir / f"shell_nav_cycle_{cycle}_main_window.png",
@@ -1841,33 +1841,51 @@ class _NativeProfileController:
                 for name, path in paths.items()
             }
 
-        viewport_getter = getattr(table, "viewport", None)
+        window = self.window
+        screen_getter = getattr(window, "screen", None)
         try:
-            viewport = viewport_getter() if callable(viewport_getter) else None
+            screen = screen_getter() if callable(screen_getter) else None
         except (AttributeError, RuntimeError, TypeError, ValueError):
-            viewport = None
-        widgets = {
-            "main_window": self.window,
-            "watchlist_viewport": viewport,
-        }
-        artifacts: dict[str, dict] = {}
-        for name, widget in widgets.items():
-            path = paths[name]
-            artifact = {"path": str(path), "saved": False}
-            try:
-                if widget is None:
-                    artifact["error"] = "unavailable"
-                else:
-                    pixmap = widget.grab()
-                    if pixmap is None or pixmap.isNull():
-                        artifact["error"] = "empty_grab"
-                    elif not bool(pixmap.save(str(path), "PNG")):
-                        artifact["error"] = "save_failed"
-                    else:
-                        artifact["saved"] = True
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                artifact["error"] = str(exc)
-            artifacts[name] = artifact
+            screen = None
+        artifacts = {name: {"path": str(path), "saved": False} for name, path in paths.items()}
+        if screen is None:
+            for artifact in artifacts.values():
+                artifact["error"] = "screen_capture_unavailable"
+            return artifacts
+
+        try:
+            win_id = int(window.winId())
+            pixmap = screen.grabWindow(win_id)
+            if pixmap is None or pixmap.isNull():
+                raise RuntimeError("empty_screen_grab")
+            if not bool(pixmap.save(str(paths["main_window"]), "PNG")):
+                raise RuntimeError("main_window_save_failed")
+            artifacts["main_window"]["saved"] = True
+
+            viewport_getter = getattr(table, "viewport", None)
+            viewport = viewport_getter() if callable(viewport_getter) else None
+            if viewport is None:
+                artifacts["watchlist_viewport"]["error"] = "unavailable"
+                return artifacts
+            origin = viewport.mapTo(window, QPoint(0, 0))
+            dpr = max(1.0, float(pixmap.devicePixelRatio()))
+            viewport_rect = QRect(
+                round(origin.x() * dpr),
+                round(origin.y() * dpr),
+                round(viewport.width() * dpr),
+                round(viewport.height() * dpr),
+            ).intersected(pixmap.rect())
+            viewport_pixmap = pixmap.copy(viewport_rect)
+            if viewport_pixmap.isNull():
+                artifacts["watchlist_viewport"]["error"] = "empty_viewport_crop"
+            elif not bool(viewport_pixmap.save(str(paths["watchlist_viewport"]), "PNG")):
+                artifacts["watchlist_viewport"]["error"] = "save_failed"
+            else:
+                artifacts["watchlist_viewport"]["saved"] = True
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            for artifact in artifacts.values():
+                if not artifact["saved"] and "error" not in artifact:
+                    artifact["error"] = str(exc)
         return artifacts
 
     def _finish_shell_nav_cycle(self) -> None:

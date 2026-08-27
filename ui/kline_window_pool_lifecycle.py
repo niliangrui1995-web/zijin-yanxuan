@@ -436,14 +436,4 @@ class KLineWindowPoolLifecycleMixin:
             pooled=pooled, browser_clean=browser_clean,
         )
         qt_api.log.debug(f"[K线] {self.code} 窗口关闭")
-        try:
-            from ui.components.kline_window_manager import prepare_watchlist_kline_focus_repaint_guard
-
-            prepare_watchlist_kline_focus_repaint_guard(
-                getattr(self, "main_window", None),
-                source_tab_key=str(getattr(getattr(self, "_open_context", None), "source_tab_key", "") or ""),
-                phase="close",
-            )
-        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
-            pass
         _call_next_close_event(self, event)

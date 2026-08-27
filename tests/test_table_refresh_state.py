@@ -4,7 +4,7 @@ import time
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
-from PyQt6.QtGui import QHelpEvent, QPaintEvent, QRegion, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import QFocusEvent, QHelpEvent, QPaintEvent, QRegion, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QWidget
 
 import ui.components.table_controls as table_controls_module
@@ -146,7 +146,7 @@ def _process_events(app, rounds: int = 4):
         app.processEvents()
 
 
-def _arm_visible_shell_nav_repaint_guard(table, app, *, scope: str = "watchlist"):
+def _arm_visible_shell_nav_repaint_guard(table, app, *, scope: str = "lhb"):
     table.set_targeted_flash_repaint_enabled(True, metric_scope=scope)
     table.resize(640, 360)
     table.show()
@@ -540,7 +540,7 @@ def test_vcp_table_view_queued_legacy_flash_tick_skips_hidden_viewport(qt_applic
         table.deleteLater()
 
 
-def test_vcp_table_view_shell_nav_guard_keeps_suppressing_redundant_full_paints_within_active_window(
+def test_lhb_shell_nav_guard_bounds_redundant_full_paint_suppression_within_active_window(
     qt_application,
     monkeypatch,
 ):
@@ -556,16 +556,49 @@ def test_vcp_table_view_shell_nav_guard_keeps_suppressing_redundant_full_paints_
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
-        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
-        assert table._shell_nav_repaint_guard is not None
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
 
         decisions = [item[2]["tags"]["decision"] for item in recorded]
         assert decisions == [
             "first_full_allowed",
             "suppress_redundant_full",
             "suppress_redundant_full",
-            "suppress_redundant_full_after_budget",
         ]
+    finally:
+        table.deleteLater()
+
+
+def test_watchlist_shell_nav_does_not_arm_viewport_paint_guard(qt_application):
+    """Watchlist 的 StackOne 首帧必须由 Qt 正常完成，不能在 viewport 吞掉。"""
+    table = VCPTableView()
+    try:
+        table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+        table.resize(640, 360)
+        table.show()
+        _process_events(qt_application)
+
+        table.prepare_shell_nav_repaint_guard()
+
+        assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_watchlist_reveal_batch_releases_updates_for_required_first_frame():
+    """隐藏关注池只在同步切换期合并更新，随后必须恢复 Qt 首帧。"""
+    table = VCPTableView()
+    try:
+        table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+
+        assert table.updatesEnabled() is True
+        assert table.begin_workspace_reveal_batch() is True
+        assert table.updatesEnabled() is False
+
+        table.finish_workspace_reveal_batch()
+
+        assert table.updatesEnabled() is True
+        assert table._workspace_reveal_batch_active is False
     finally:
         table.deleteLater()
 
@@ -594,13 +627,12 @@ def test_vcp_table_view_shell_nav_guard_blocks_post_budget_full_paint_event(qt_a
         for _ in range(4):
             QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
 
-        assert table.actual_paint_calls == 1
+        assert table.actual_paint_calls == 2
         decisions = [item[2]["tags"]["decision"] for item in recorded]
         assert decisions == [
             "first_full_allowed",
             "suppress_redundant_full",
             "suppress_redundant_full",
-            "suppress_redundant_full_after_budget",
         ]
     finally:
         table.deleteLater()
@@ -716,55 +748,49 @@ def test_watchlist_native_deactivate_defers_only_untracked_full_viewport_paints(
         window.deleteLater()
 
 
-def test_watchlist_kline_focus_guard_suppresses_only_trailing_untracked_full_paints(
-    qt_application,
-    monkeypatch,
-):
-    """K 线焦点切换保留首帧，且不重复绘制未变更的自选股 viewport。"""
-    class RecordingTable(VCPTableView):
-        def __init__(self, parent):
-            super().__init__(parent)
-            self.actual_paint_calls = 0
+def test_watchlist_focus_transition_updates_only_current_row(qt_application):
+    """K 线抢走焦点时，关注池只失效当前行而非整个 viewport。"""
+    class RecordingViewport(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.update_calls = []
 
-        def paintEvent(self, event):  # noqa: N802 - Qt API naming
-            self.actual_paint_calls += 1
-            return super().paintEvent(event)
+        def update(self, *args):  # noqa: N802 - Qt API naming
+            self.update_calls.append(args)
+            return super().update(*args)
 
     window = QWidget()
-    table = RecordingTable(window)
-    recorded = []
-    monkeypatch.setattr(
-        "core.observability.record_metric",
-        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
-    )
-    table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+    table = VCPTableView(window)
+    viewport = RecordingViewport()
+    table.setViewport(viewport)
+    model = QStandardItemModel(3, 2)
+    for row in range(model.rowCount()):
+        for column in range(model.columnCount()):
+            model.setItem(row, column, QStandardItem(f"{row}-{column}"))
+    table.setModel(model)
+    table.set_focus_transition_repaint_enabled(False)
     try:
         window.resize(640, 360)
         table.resize(640, 360)
         window.show()
         table.show()
         _process_events(qt_application)
-        table.actual_paint_calls = 0
-        recorded.clear()
+        table.setCurrentIndex(model.index(1, 0))
+        viewport.update_calls.clear()
 
-        assert table.prepare_kline_focus_repaint_guard(phase="open") is True
-        for signal_type in (
-            QEvent.Type.WindowActivate,
-            QEvent.Type.LayoutRequest,
-            QEvent.Type.WindowDeactivate,
-        ):
-            table._record_native_window_event(QEvent(signal_type))
-            table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
-            QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+        QCoreApplication.sendEvent(
+            table,
+            QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.ActiveWindowFocusReason),
+        )
+        QCoreApplication.sendEvent(
+            table,
+            QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.ActiveWindowFocusReason),
+        )
 
-        assert table.actual_paint_calls == 1
-        guards = [item for item in recorded if item[0] == "watchlist_kline_focus_repaint_guard"]
-        assert [item[2]["tags"]["decision"] for item in guards] == [
-            "first_full_allowed",
-            "suppress_redundant_full",
-            "suppress_redundant_full",
-        ]
-        assert {item[2]["tags"]["workspace_load_reason"] for item in guards} == {"kline_open"}
+        assert viewport.update_calls
+        assert all(len(args) == 1 for args in viewport.update_calls)
+        dirty_regions = [args[0] for args in viewport.update_calls]
+        assert all(isinstance(region, QRegion) and region.boundingRect() != viewport.rect() for region in dirty_regions)
     finally:
         table.deleteLater()
         window.deleteLater()
@@ -1075,13 +1101,13 @@ def test_vcp_table_view_shell_nav_guard_turns_data_changed_into_visible_partial_
         table.deleteLater()
 
 
-def test_vcp_table_view_shell_nav_guard_fails_open_after_structure_change_or_hide(qt_application):
+def test_lhb_shell_nav_guard_rearms_after_structure_change_and_clears_when_hidden(qt_application):
     table = VCPTableView()
     try:
         _arm_visible_shell_nav_repaint_guard(table, qt_application)
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
         table._on_model_layout_changed()
-        assert table._shell_nav_repaint_guard is None
+        assert table._shell_nav_repaint_guard is not None
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
 
         _arm_visible_shell_nav_repaint_guard(table, qt_application)

@@ -102,8 +102,32 @@ class SmoothTabWidget(QTabWidget):
         return inserted
 
     def setCurrentIndex(self, index: int) -> None:  # noqa: N802 - Qt API naming
-        self._prepare_transition(int(index))
-        super().setCurrentIndex(index)
+        target_index = int(index)
+        self._prepare_transition(target_index)
+        target_widget = self.widget(target_index) if 0 <= target_index < self.count() else None
+        begin_reveal_batch = getattr(target_widget, "begin_workspace_reveal_batch", None)
+        finish_reveal_batch = getattr(target_widget, "finish_workspace_reveal_batch", None)
+        reveal_batch_started = False
+        if callable(begin_reveal_batch):
+            try:
+                reveal_batch_started = bool(begin_reveal_batch())
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                log.debug("tab reveal batch skipped: %s", exc)
+        try:
+            super().setCurrentIndex(target_index)
+        finally:
+            if reveal_batch_started and callable(finish_reveal_batch):
+                def _finish_reveal_batch() -> None:
+                    try:
+                        finish_reveal_batch()
+                    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                        log.debug("tab reveal batch release skipped: %s", exc)
+
+                # QStackedLayout completes show/layout synchronously, then
+                # posts its coalescible update requests.  Releasing on the
+                # next event-loop turn lets those requests collapse into the
+                # single update implicitly queued by setUpdatesEnabled(True).
+                QTimer.singleShot(0, _finish_reveal_batch)
 
     def prewarm_pages(self) -> None:
         for idx in range(self.count()):

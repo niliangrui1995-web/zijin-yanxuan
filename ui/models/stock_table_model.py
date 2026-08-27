@@ -12,6 +12,7 @@ from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_p
 from core.observability import record_metric
 from ui.models.table_model_helpers import (
     SERIAL_HEADER,
+    STOCK_CELL_PRESENTATION_ROLE,
     STOCK_CELL_RENDER_ROLE,
     _active_flash_record,
     _alignment_for_cell,
@@ -57,6 +58,8 @@ _PRESENTATION_CACHE_ROLES = frozenset(
         int(Qt.ItemDataRole.FontRole),
         int(Qt.ItemDataRole.ForegroundRole),
         int(Qt.ItemDataRole.BackgroundRole),
+        STOCK_CELL_RENDER_ROLE,
+        STOCK_CELL_PRESENTATION_ROLE,
     }
 )
 _ROW_CHANGE_DEPENDENCIES = {
@@ -482,6 +485,10 @@ class StockTableModel(QAbstractTableModel):
         self._flash_records.setdefault(row, {})[col] = flash_record
         return True
 
+    def _clear_flash_records_for_rows(self, rows) -> None:
+        for row in set(rows or ()):
+            self._flash_records.pop(row, None)
+
     def _clear_sort_value_cache(self) -> None:
         self._sort_value_cache.clear()
 
@@ -548,6 +555,7 @@ class StockTableModel(QAbstractTableModel):
             Qt.ItemDataRole.UserRole + 4,
             Qt.ItemDataRole.UserRole + 5,
             STOCK_CELL_RENDER_ROLE,
+            STOCK_CELL_PRESENTATION_ROLE,
         ]
         if include_flash:
             roles.insert(7, Qt.ItemDataRole.UserRole + 1)
@@ -689,16 +697,14 @@ class StockTableModel(QAbstractTableModel):
         return Qt.DropAction.MoveAction
 
     def flags(self, index):
-        default_flags = super().flags(index)
         if index.isValid():
             return (
-                default_flags
+                Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsEnabled
                 | Qt.ItemFlag.ItemIsDragEnabled
                 | Qt.ItemFlag.ItemIsDropEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsEnabled
             )
-        return default_flags | Qt.ItemFlag.ItemIsDropEnabled
+        return Qt.ItemFlag.ItemIsDropEnabled
 
     def mimeTypes(self):
         return ["application/x-watchlist-row"]
@@ -777,7 +783,12 @@ class StockTableModel(QAbstractTableModel):
                 self.dataChanged.emit(idx, idx, self._flash_roles(include_flash=flash_recorded))
         return flash_recorded
 
-    def update_quotes(self, quotes: Mapping[str, Mapping[str, Any]]) -> int:
+    def update_quotes(
+        self,
+        quotes: Mapping[str, Mapping[str, Any]],
+        *,
+        record_flash: bool = True,
+    ) -> int:
         started_at = time.perf_counter()
         payload_codes = len(quotes or {})
         scanned_rows = 0
@@ -804,18 +815,45 @@ class StockTableModel(QAbstractTableModel):
             if price_text is not None:
                 for price_key in ("现价", "市价"):
                     if price_key in self._headers and item_dict.get(price_key) != price_text:
-                        flash_recorded = self.set_cell_value(row, price_key, price_text, emit_signal=False) or flash_recorded
+                        flash_recorded = (
+                            self.set_cell_value(
+                                row,
+                                price_key,
+                                price_text,
+                                emit_signal=False,
+                                record_flash=record_flash,
+                            )
+                            or flash_recorded
+                        )
                         row_changed = True
             if pct is not None:
                 for pct_key in ("涨幅%", "涨幅"):
                     if pct_key in self._headers and item_dict.get(pct_key) != pct:
-                        flash_recorded = self.set_cell_value(row, pct_key, pct, emit_signal=False) or flash_recorded
+                        flash_recorded = (
+                            self.set_cell_value(
+                                row,
+                                pct_key,
+                                pct,
+                                emit_signal=False,
+                                record_flash=record_flash,
+                            )
+                            or flash_recorded
+                        )
                         row_changed = True
 
             if "市值" in self._headers:
                 cap_text = metrics.get("market_cap_text")
                 if cap_text and item_dict.get("市值") != cap_text:
-                    flash_recorded = self.set_cell_value(row, "市值", cap_text, emit_signal=False) or flash_recorded
+                    flash_recorded = (
+                        self.set_cell_value(
+                            row,
+                            "市值",
+                            cap_text,
+                            emit_signal=False,
+                            record_flash=record_flash,
+                        )
+                        or flash_recorded
+                    )
                     row_changed = True
 
             if row_changed:
@@ -857,8 +895,23 @@ class StockTableModel(QAbstractTableModel):
                     )
 
                 if pos_str != item_dict.get("买点", ""):
-                    flash_recorded = self.set_cell_value(row, "买点", pos_str, emit_signal=False) or flash_recorded
+                    flash_recorded = (
+                        self.set_cell_value(
+                            row,
+                            "买点",
+                            pos_str,
+                            emit_signal=False,
+                            record_flash=record_flash,
+                        )
+                        or flash_recorded
+                    )
                     changed_row_set.add(row)
+
+        if not record_flash:
+            # A hidden projection has no user-visible delta.  Drop prior flash
+            # metadata for touched rows so it cannot revive on the next tab
+            # reveal and force the expensive custom-paint path.
+            self._clear_flash_records_for_rows(changed_row_set)
 
         if changed_row_set and start_col is not None and end_col is not None:
             if buy_point_col >= 0:
@@ -887,6 +940,7 @@ class StockTableModel(QAbstractTableModel):
                 "payload_codes": str(payload_codes),
                 "scanned_rows": str(scanned_rows),
                 "changed_rows": str(changed_row_count),
+                "record_flash": str(bool(record_flash)).lower(),
             },
         )
         return changed_row_count
@@ -1190,6 +1244,17 @@ class StockTableModel(QAbstractTableModel):
             self._visual_payload(key, raw_val, item_dict),
         )
 
+    def _cell_presentation_payload(self, row, col, key, raw_val, item_dict):
+        render_payload = self._cell_render_payload(row, col, key, raw_val, item_dict)
+        return (
+            self._display_value(row, key, raw_val, item_dict),
+            self._alignment_value(key, raw_val),
+            self._font_value(key, raw_val, item_dict),
+            self._foreground_value(key, raw_val, item_dict),
+            self._background_value(key, raw_val),
+            render_payload,
+        )
+
     def data(self, index, role):
         if not index.isValid():
             return None
@@ -1218,6 +1283,21 @@ class StockTableModel(QAbstractTableModel):
             return self._cache_presentation_value(row, col, role_value, self._background_value(key, raw_val))
         if role == Qt.ItemDataRole.UserRole:
             return self._sort_value(row, col, key, raw_val, item_dict)
+        if role == STOCK_CELL_RENDER_ROLE:
+            # Flash metadata is time-sensitive. Stable cells, which dominate a
+            # full Watchlist return paint, can safely reuse the combined
+            # delegate payload; live flashes keep their original dynamic path.
+            payload = self._cell_render_payload(row, col, key, raw_val, item_dict)
+            if payload[2] is None:
+                return self._cache_presentation_value(row, col, role_value, payload)
+            return payload
+        if role == STOCK_CELL_PRESENTATION_ROLE:
+            # A stable cell can hand every native-paint input to the delegate
+            # in one model/proxy round trip. Live flashes remain dynamic.
+            payload = self._cell_presentation_payload(row, col, key, raw_val, item_dict)
+            if payload[-1][2] is None:
+                return self._cache_presentation_value(row, col, role_value, payload)
+            return payload
         custom_value = _custom_cell_role_value(self, role, row, col, key, raw_val, item_dict)
         return None if custom_value is _UNHANDLED_ROLE else custom_value
 

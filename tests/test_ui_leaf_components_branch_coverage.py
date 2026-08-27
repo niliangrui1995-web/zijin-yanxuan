@@ -922,6 +922,23 @@ def test_workspace_navigation_selects_staged_tab_without_preferred_lazy_load():
     assert lazy_loads == []
 
 
+def test_workspace_navigation_uses_workspace_activation_lifecycle_before_direct_tab_switch():
+    current = _SelectableTab(code_result=False)
+    target = _SelectableTab(code_result=True)
+    tabs = _Tabs([current, target], current=0)
+    activations = []
+    workspace = SimpleNamespace(
+        _tab_specs=[{"key": "current"}, {"key": "watchlist"}],
+        tabs=tabs,
+        get_loaded_tab=lambda key: target if key == "watchlist" else current,
+        activate_tab=lambda index, *, reason: activations.append((index, reason)) or True,
+    )
+
+    assert WorkspaceNavigationService(workspace).select_code_row("600519", preferred_tab_index=1) is True
+    assert activations == [(1, "stock_signal_source")]
+    assert tabs.changes == []
+
+
 def test_workspace_navigation_rejects_empty_missing_and_unselectable_tabs():
     service = WorkspaceNavigationService(SimpleNamespace(tabs=_Tabs([])))
     assert service.select_code_row("") is False

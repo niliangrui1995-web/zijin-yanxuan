@@ -588,6 +588,120 @@ def test_refresh_table_from_latest_snapshot_defers_hidden_async_snapshot_until_v
         _reset_cache_snapshot_apply_queue(refresh_module)
 
 
+def test_refresh_table_from_latest_snapshot_projects_hidden_watchlist_without_deferral(monkeypatch):
+    """关注池隐藏时允许静默投影报价，避免回切后批量 dataChanged。"""
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    calls = []
+
+    class DummyModel:
+        row_data = [{"代码": "000001"}]
+
+    class DummyOwner:
+        _runtime_cleanup_done = False
+
+        def isVisible(self):
+            return False
+
+        def accepts_hidden_quote_projection(self):
+            return True
+
+        def _resolve_active_quote_model(self):
+            return DummyModel()
+
+        def _apply_quote_snapshot(self, payload):
+            calls.append(dict(payload or {}))
+            return 1
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(
+        "core.global_store.global_store.get_latest_quotes",
+        lambda: {"000001": {"close": 10.0}},
+    )
+
+    owner = DummyOwner()
+    refresh_module.refresh_table_from_latest_snapshot(owner, async_local=True)
+
+    assert calls == [{"000001": {"close": 10.0}}]
+    assert not getattr(owner, "_deferred_quote_refresh", False)
+    assert not refresh_module.CacheSnapshotApplyQueue.is_pending(owner)
+
+
+def test_hidden_watchlist_quote_signal_projects_model_without_showevent_replay(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    applied = []
+
+    class DummyOwner:
+        _runtime_cleanup_done = False
+        _deferred_quote_refresh = False
+
+        def isVisible(self):
+            return False
+
+        def accepts_hidden_quote_projection(self):
+            return True
+
+        def _apply_quote_snapshot(self, payload):
+            applied.append(dict(payload or {}))
+
+    refresh_module.on_rt_quotes_direct(DummyOwner(), {"000001": {"close": 11.0}})
+
+    assert applied == [{"000001": {"close": 11.0}}]
+
+
+def test_hidden_watchlist_projection_is_applied_without_a_visible_flash():
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    applied = []
+
+    class DummyOwner:
+        _runtime_cleanup_done = False
+        _deferred_quote_refresh = False
+        _workspace_active = False
+
+        def isVisible(self):
+            return False
+
+        def accepts_hidden_quote_projection(self):
+            return True
+
+        def _apply_quote_snapshot(self, payload, *, record_flash=True):
+            applied.append((dict(payload or {}), record_flash))
+
+    refresh_module.on_rt_quotes_direct(DummyOwner(), {"000001": {"close": 11.0}})
+
+    assert applied == [({"000001": {"close": 11.0}}, False)]
+
+
+def test_active_watchlist_projection_keeps_visible_quote_flash():
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    applied = []
+
+    class DummyOwner:
+        _runtime_cleanup_done = False
+        _workspace_active = True
+
+        def isVisible(self):
+            return True
+
+        def accepts_hidden_quote_projection(self):
+            return True
+
+        def _apply_quote_snapshot(self, payload, *, record_flash=True):
+            applied.append((dict(payload or {}), record_flash))
+
+    refresh_module.on_rt_quotes_direct(DummyOwner(), {"000001": {"close": 11.0}})
+
+    assert applied == [({"000001": {"close": 11.0}}, True)]
+
+
 def test_refresh_table_from_latest_snapshot_defers_visible_async_snapshots_by_tab(monkeypatch):
     from ui.tabs import base_stock_refresh as refresh_module
 

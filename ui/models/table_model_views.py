@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QMimeData, QModelIndex, QSortFilterProxyModel, Qt
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ui.components import SearchFilter
@@ -12,6 +12,8 @@ from ui.models.table_cell_renderers import build_stock_cell_context, can_use_nat
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
+    STOCK_CELL_PRESENTATION_ROLE,
+    STOCK_CELL_RENDER_ROLE,
     _c,
 )
 
@@ -22,6 +24,32 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         self.setSortRole(Qt.ItemDataRole.UserRole)
         self._filter_text = ""
         self._exact_column_filters = {}
+        self._serial_column = -1
+
+    def setSourceModel(self, source_model):  # noqa: N802 - Qt API naming
+        super().setSourceModel(source_model)
+        self._serial_column = self._find_serial_column(source_model)
+
+    @staticmethod
+    def _find_serial_column(source_model) -> int:
+        if source_model is None:
+            return -1
+        try:
+            column_count = int(source_model.columnCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return -1
+        for column in range(max(0, column_count)):
+            try:
+                header = source_model.headerData(
+                    column,
+                    Qt.Orientation.Horizontal,
+                    Qt.ItemDataRole.DisplayRole,
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return -1
+            if header == SERIAL_HEADER:
+                return column
+        return -1
 
     def setColumnFilter(self, col_name, text):
         self.setColumnFilters(col_name, [text] if text else [])
@@ -38,13 +66,7 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         if not index.isValid():
             return None
 
-        source = self.sourceModel()
-        header = (
-            source.headerData(index.column(), Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
-            if source
-            else None
-        )
-        if header == SERIAL_HEADER:
+        if index.column() == self._serial_column:
             if role == Qt.ItemDataRole.DisplayRole:
                 return str(index.row() + 1)
             if role == Qt.ItemDataRole.UserRole:
@@ -55,16 +77,15 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
                 return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             if role == Qt.ItemDataRole.ForegroundRole:
                 return QColor(_c("TEXT_SECONDARY"))
+            if role == STOCK_CELL_PRESENTATION_ROLE:
+                payload = super().data(index, role)
+                if isinstance(payload, tuple) and len(payload) == 6:
+                    return (str(index.row() + 1), *payload[1:])
         return super().data(index, role)
 
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):
-        if column >= 0:
-            source = self.sourceModel()
-            header = (
-                source.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) if source else None
-            )
-            if header == SERIAL_HEADER:
-                return
+        if column >= 0 and column == self._serial_column:
+            return
         super().sort(column, order)
 
     def lessThan(self, left, right):
@@ -225,14 +246,87 @@ class StockItemDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.flash_duration = FLASH_DURATION_SECONDS
 
+    @staticmethod
+    def _payload_requires_custom_paint(payload, option: QStyleOptionViewItem, index, widget) -> bool:
+        """Avoid constructing a full VCP render context for ordinary table cells."""
+        if not isinstance(payload, tuple) or len(payload) != 5:
+            return True
+        rail_color, skip_sorted_overlay, flash_data, pill_color, visual_payload = payload
+        if bool(option.state & QStyle.StateFlag.State_Selected):
+            return True
+        if pill_color or isinstance(visual_payload, dict) or isinstance(flash_data, dict):
+            return True
+        suppress_left_rails = bool(widget and widget.property("suppressLeftRails"))
+        if rail_color and index.column() == 0 and not suppress_left_rails:
+            return True
+        if not skip_sorted_overlay and widget and hasattr(widget, "sorted_column"):
+            try:
+                if int(widget.sorted_column()) == index.column():
+                    return True
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return True
+        if widget and widget.property("showCurrentCellIndicator") and hasattr(widget, "currentIndex"):
+            try:
+                current_index = widget.currentIndex()
+                if current_index.isValid() and current_index == index:
+                    return True
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return True
+        return False
+
+    @staticmethod
+    def _apply_plain_presentation(opt: QStyleOptionViewItem, presentation) -> object:
+        if not isinstance(presentation, tuple) or len(presentation) != 6:
+            return None
+        text, alignment, font, foreground, background, render_payload = presentation
+        if not isinstance(font, QFont):
+            return None
+
+        opt.text = "" if text is None else str(text)
+        try:
+            opt.displayAlignment = Qt.AlignmentFlag(int(alignment))
+        except (TypeError, ValueError):
+            return None
+        opt.font = font
+        opt.fontMetrics = QFontMetrics(font)
+        opt.features &= ~QStyleOptionViewItem.ViewItemFeature.HasDisplay
+        if opt.text:
+            opt.features |= QStyleOptionViewItem.ViewItemFeature.HasDisplay
+
+        palette = QPalette(opt.palette)
+        if isinstance(foreground, QColor) and foreground.isValid():
+            palette.setColor(QPalette.ColorRole.Text, foreground)
+        opt.palette = palette
+        opt.backgroundBrush = QBrush(background) if isinstance(background, QColor) and background.isValid() else QBrush()
+        return render_payload
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         painter.save()
 
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
         widget = option.widget
         style = widget.style() if widget else QApplication.style()
+        presentation = index.data(STOCK_CELL_PRESENTATION_ROLE)
+        opt = QStyleOptionViewItem(option)
+        render_payload = self._apply_plain_presentation(opt, presentation)
+        if render_payload is not None and not self._payload_requires_custom_paint(render_payload, option, index, widget):
+            opt.state &= ~QStyle.StateFlag.State_HasFocus
+            opt.state &= ~QStyle.StateFlag.State_FocusAtBorder
+            opt.state &= ~QStyle.StateFlag.State_KeyboardFocusChange
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+            painter.restore()
+            return
+
+        self.initStyleOption(opt, index)
         if widget and widget.property("simpleCellPaint"):
+            opt.state &= ~QStyle.StateFlag.State_HasFocus
+            opt.state &= ~QStyle.StateFlag.State_FocusAtBorder
+            opt.state &= ~QStyle.StateFlag.State_KeyboardFocusChange
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+            painter.restore()
+            return
+
+        render_payload = index.data(STOCK_CELL_RENDER_ROLE)
+        if not self._payload_requires_custom_paint(render_payload, option, index, widget):
             opt.state &= ~QStyle.StateFlag.State_HasFocus
             opt.state &= ~QStyle.StateFlag.State_FocusAtBorder
             opt.state &= ~QStyle.StateFlag.State_KeyboardFocusChange
@@ -248,6 +342,7 @@ class StockItemDelegate(QStyledItemDelegate):
             style=style,
             widget=widget,
             flash_duration=self.flash_duration,
+            render_payload=render_payload,
         )
         if can_use_native_cell_paint(ctx):
             opt.state &= ~QStyle.StateFlag.State_HasFocus

@@ -90,13 +90,17 @@ def build_stock_cell_context(
     style: QStyle,
     widget: object,
     flash_duration: float,
+    render_payload=None,
 ) -> _StockCellRenderContext:
     table_tokens = _theme_table_tokens()
     is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
     is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
     suppress_left_rails = bool(widget and widget.property("suppressLeftRails"))
     show_current_cell_indicator = bool(widget and widget.property("showCurrentCellIndicator"))
-    rail_color, skip_sorted_overlay, flash_data, pill_color, visual_payload = _stock_render_payload(index)
+    payload = render_payload if isinstance(render_payload, tuple) and len(render_payload) == 5 else None
+    rail_color, skip_sorted_overlay, flash_data, pill_color, visual_payload = (
+        payload if payload is not None else _stock_render_payload(index)
+    )
     if suppress_left_rails:
         rail_color = None
     show_accent_rail = bool(rail_color) and index.column() == 0 and not suppress_left_rails

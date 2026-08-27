@@ -866,6 +866,17 @@ class _WatchlistBackgroundPreloadMixin:
         if callable(prepare):
             prepare()
 
+    def begin_workspace_reveal_batch(self) -> bool:
+        table = getattr(self, "table_sp", None)
+        begin = getattr(table, "begin_workspace_reveal_batch", None)
+        return bool(begin()) if callable(begin) else False
+
+    def finish_workspace_reveal_batch(self) -> None:
+        table = getattr(self, "table_sp", None)
+        finish = getattr(table, "finish_workspace_reveal_batch", None)
+        if callable(finish):
+            finish()
+
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
             self._vcp_task_generation += 1
@@ -928,6 +939,9 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
     POST_SHOW_VCP_CALC_DELAY_MS = 2_000
     POST_SHOW_VCP_APPLY_SETTLE_MS = 2_500
     FOREGROUND_VCP_APPLY_DELAY_MS = 150
+    # Data may stay current while this QWidget is hidden; expensive VCP work
+    # and user-facing updates remain gated by the separate logical-active state.
+    _hidden_quote_projection_enabled = True
     _schedule_initial_loading_overlay = _schedule_initial_loading_overlay
     _show_initial_loading_if_pending = _show_initial_loading_if_pending
     _finish_initial_data_loading = _finish_initial_data_loading
@@ -1046,6 +1060,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
+        if self._is_current_workspace_tab():
+            self.set_workspace_active(True)
         self._last_vcp_tab_shown_at = time.monotonic()
         if self._deferred_vcp_payload and self._is_active_workspace_tab_for_vcp():
             payload = self._deferred_vcp_payload
@@ -1061,6 +1077,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
     def hideEvent(self, event):  # noqa: N802 - Qt API naming
         super().hideEvent(event)
+        self.set_workspace_active(False)
+        self.prime_hidden_quote_projection()
         timer = getattr(self, "_vcp_calc_timer", None)
         if timer is not None and timer.isActive():
             if not self._vcp_calc_allow_noninteractive:
@@ -1157,6 +1175,7 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
+        self.table_sp.set_focus_transition_repaint_enabled(False)
         self.table_state = TableStateWrapper(self.table_sp, empty_title="暂无关注池数据", loading_title="加载中...")
 
         # 接收模型发出的手动排序完成信号
@@ -1619,10 +1638,17 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
     def _apply_quote_snapshot(
         self,
         quotes: Mapping[str, Mapping[str, object]] | None,
+        *,
+        record_flash: bool = True,
     ):
         apply_snapshot = super()._apply_quote_snapshot
+        def _apply():
+            if record_flash:
+                return apply_snapshot(quotes)
+            return apply_snapshot(quotes, record_flash=False)
+
         return self._run_coalesced_model_update(
-            lambda: apply_snapshot(quotes),
+            _apply,
             changed_headers={"现价", "市价", "涨幅%", "涨幅", "市值", "买点"},
             reason="quote_snapshot",
         )
@@ -2010,6 +2036,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         )
 
     def _is_active_workspace_tab_for_vcp(self) -> bool:
+        if not bool(getattr(self, "_workspace_active", False)):
+            return False
         if not self._is_current_workspace_tab():
             return False
         try:

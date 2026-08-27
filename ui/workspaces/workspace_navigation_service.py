@@ -75,7 +75,9 @@ class WorkspaceNavigationService:
                 continue
             if isinstance(tab, CodeRowSelectionCapability) and tab.select_code_row(code_text):
                 if tab_index != current_index:
-                    tab_widget.setCurrentIndex(tab_index)
+                    activate_tab = getattr(self._workspace, "activate_tab", None)
+                    if not callable(activate_tab) or not activate_tab(tab_index, reason="stock_signal_source"):
+                        tab_widget.setCurrentIndex(tab_index)
                 return True
 
         return False

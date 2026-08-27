@@ -73,16 +73,68 @@ def _is_owner_runtime_active(owner) -> bool:
     return not _is_qt_object_deleted(owner) and not bool(getattr(owner, "_runtime_cleanup_done", False))
 
 
+def _owner_accepts_hidden_quote_projection(owner) -> bool:
+    """Whether a tab keeps its model current while its widget is hidden.
+
+    Ordinary tabs retain the historical defer-until-visible behavior.  Watchlist
+    opts in explicitly so a tab return has one coherent model frame instead of
+    a required show paint followed by a bulk quote repaint.
+    """
+    if not _is_owner_runtime_active(owner):
+        return False
+    checker = getattr(owner, "accepts_hidden_quote_projection", None)
+    if callable(checker):
+        try:
+            return bool(checker())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+    return bool(getattr(owner, "_hidden_quote_projection_enabled", False))
+
+
+def _owner_is_visible(owner) -> bool:
+    is_visible = getattr(owner, "isVisible", None)
+    if not callable(is_visible):
+        return True
+    try:
+        return bool(is_visible())
+    except (RuntimeError, TypeError):
+        return False
+
+
+def _owner_is_presentation_active(owner) -> bool:
+    """Return whether a quote delta is allowed to create visible effects."""
+    if not _owner_is_visible(owner):
+        return False
+    if not _owner_accepts_hidden_quote_projection(owner):
+        return True
+    return bool(getattr(owner, "_workspace_active", False))
+
+
+def _apply_owner_quote_snapshot(owner, payload, *, record_flash: bool | None = None):
+    """Apply a quote payload with presentation effects only on an active tab."""
+    if record_flash is None:
+        record_flash = (
+            True
+            if not _owner_accepts_hidden_quote_projection(owner)
+            else _owner_is_presentation_active(owner)
+        )
+    apply_snapshot = getattr(owner, "_apply_quote_snapshot", None)
+    if not callable(apply_snapshot):
+        return None
+    if record_flash:
+        return apply_snapshot(payload)
+    try:
+        return apply_snapshot(payload, record_flash=False)
+    except TypeError:
+        # Keep compatible with unrelated legacy tab implementations.  The only
+        # opt-in production tab is Watchlist, whose model honors this contract.
+        return apply_snapshot(payload)
+
+
 def _should_prime_local_snapshot(owner, *, async_local: bool) -> bool:
     if not async_local:
         return True
-    is_visible = getattr(owner, "isVisible", None)
-    if callable(is_visible):
-        try:
-            return bool(is_visible())
-        except (RuntimeError, TypeError):
-            return False
-    return True
+    return _owner_is_visible(owner) or _owner_accepts_hidden_quote_projection(owner)
 
 
 def _latest_quote_snapshot() -> Mapping[str, Mapping[str, object]]:
@@ -562,7 +614,7 @@ def _local_quote_task_callbacks(owner, target_codes: list[str], latest_target_qu
         if not published:
             return
         try:
-            owner_obj._apply_quote_snapshot(published)
+            _apply_owner_quote_snapshot(owner_obj, published)
             _invoke_after_market_caps_updated(owner_obj)
         except RuntimeError:
             pass
@@ -621,15 +673,8 @@ def _should_defer_cache_snapshot_apply(owner, *, async_local: bool, force_apply:
         return False
 
     is_f5_refresh = bool(force_apply or getattr(owner, "_f5_cache_snapshot_apply", False))
-    if not is_f5_refresh:
-        is_visible = getattr(owner, "isVisible", None)
-        if not callable(is_visible):
-            return False
-        try:
-            if not is_visible():
-                return False
-        except (RuntimeError, TypeError):
-            return False
+    if not is_f5_refresh and not _owner_is_visible(owner) and not _owner_accepts_hidden_quote_projection(owner):
+        return False
 
     app = QCoreApplication.instance()
     return not (app is None or app.closingDown())
@@ -642,13 +687,7 @@ def _should_defer_cache_snapshot_until_visible(owner, *, async_local: bool, forc
     if bool(force_apply or getattr(owner, "_f5_cache_snapshot_apply", False)):
         return False
 
-    is_visible = getattr(owner, "isVisible", None)
-    if not callable(is_visible):
-        return False
-    try:
-        return not bool(is_visible())
-    except (RuntimeError, TypeError):
-        return False
+    return not _owner_is_visible(owner) and not _owner_accepts_hidden_quote_projection(owner)
 
 
 _QUOTE_SNAPSHOT_APPLY_CHUNK_SIZE = 48
@@ -787,7 +826,13 @@ def _split_payload_chunk(payload: dict, chunk_size: int) -> tuple[dict, dict]:
     return chunk, remaining
 
 
-def _apply_cache_snapshot_payload(owner, payload: dict, *, signal: str) -> None:
+def _apply_cache_snapshot_payload(
+    owner,
+    payload: dict,
+    *,
+    signal: str,
+    record_flash: bool | None = None,
+) -> None:
     filtered_payload = _filter_unchanged_cache_snapshot_payload(owner, payload)
     if not filtered_payload:
         return
@@ -799,7 +844,11 @@ def _apply_cache_snapshot_payload(owner, payload: dict, *, signal: str) -> None:
         tab=owner.__class__.__name__,
         signal=signal,
     ):
-        result = owner._apply_quote_snapshot(filtered_payload)
+        result = _apply_owner_quote_snapshot(
+            owner,
+            filtered_payload,
+            record_flash=record_flash,
+        )
     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
     changed_rows = _extract_changed_rows(result)
     record_metric(
@@ -832,6 +881,18 @@ class CacheSnapshotApplyQueue:
             force_apply=force_apply,
         ):
             return False
+
+        if not _owner_is_visible(owner) and _owner_accepts_hidden_quote_projection(owner):
+            # Never leave hidden Watchlist work in an event-loop queue: a quick
+            # return would otherwise turn its first required reveal into a
+            # second data-driven full repaint.
+            _apply_cache_snapshot_payload(
+                owner,
+                payload,
+                signal="hidden_cache_snapshot",
+                record_flash=False,
+            )
+            return True
 
         owner_id = id(owner)
         pending = cls._pending.get(owner_id)
@@ -885,7 +946,16 @@ class CacheSnapshotApplyQueue:
             chunk, remaining = _split_payload_chunk(payload, _cache_snapshot_apply_chunk_size())
             if remaining:
                 cls._pending[owner_id] = (owner_ref, remaining, force_apply)
-            _apply_cache_snapshot_payload(owner, chunk, signal="cache_snapshot")
+            hidden_projection = not _owner_is_visible(owner) and _owner_accepts_hidden_quote_projection(owner)
+            if hidden_projection:
+                _apply_cache_snapshot_payload(
+                    owner,
+                    chunk,
+                    signal="hidden_cache_snapshot",
+                    record_flash=False,
+                )
+            else:
+                _apply_cache_snapshot_payload(owner, chunk, signal="cache_snapshot")
 
         if cls._pending:
             cls._schedule(cls._continue_interval_ms)
@@ -950,7 +1020,7 @@ class MarketCapRefreshBatcher:
                 continue
             owner_payload = {code: payload[code] for code in requested_codes if code in payload}
             if owner_payload:
-                owner._apply_quote_snapshot(owner_payload)
+                _apply_owner_quote_snapshot(owner, owner_payload)
             _invoke_after_market_caps_updated(owner)
 
     @classmethod
@@ -1070,7 +1140,7 @@ def _submit_owner_quote_refresh(owner, task_manager, task_id: str, target_codes:
         if not _is_owner_runtime_active(owner_obj) or not quotes:
             return
         published = owner_obj._publish_quote_payload(quotes, source=f"{owner_class_name}.quotes")
-        owner_obj._apply_quote_snapshot(published or quotes)
+        _apply_owner_quote_snapshot(owner_obj, published or quotes)
 
     def _on_error(error_message: str):
         if error_message:
@@ -1118,7 +1188,7 @@ def refresh_table_quotes_and_market_caps(
 
     quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
     if quote_subset:
-        owner._apply_quote_snapshot(quote_subset)
+        _apply_owner_quote_snapshot(owner, quote_subset)
 
     owner.async_update_market_caps()
 
@@ -1141,13 +1211,24 @@ def refresh_table_quotes_and_market_caps(
     _submit_owner_quote_refresh(owner, task_manager, task_id, target_codes)
 
 
-def refresh_table_from_latest_snapshot(owner, current_model=None, *, async_local: bool = True) -> None:
+def refresh_table_from_latest_snapshot(
+    owner,
+    current_model=None,
+    *,
+    async_local: bool = True,
+    prime_local: bool = True,
+) -> None:
     with ui_stall_span(
         "BaseStockRefresh.refresh_table_from_latest_snapshot",
         tab=owner.__class__.__name__,
         signal="cache_snapshot",
     ):
-        _refresh_table_from_latest_snapshot_impl(owner, current_model=current_model, async_local=async_local)
+        _refresh_table_from_latest_snapshot_impl(
+            owner,
+            current_model=current_model,
+            async_local=async_local,
+            prime_local=prime_local,
+        )
 
 
 def _prepare_snapshot_refresh(owner, current_model, async_local: bool, prime_local: bool):
@@ -1200,6 +1281,18 @@ def _refresh_table_from_latest_snapshot_impl(
                 "signal": "cache_snapshot",
                 "reason": "hidden",
             },
+        )
+        return
+
+    # Hidden Watchlist data is intentionally applied as one coherent model
+    # projection. Chunking it across later event-loop turns would reintroduce
+    # a post-show quote burst when the user returns quickly.
+    if not _owner_is_visible(owner) and _owner_accepts_hidden_quote_projection(owner):
+        _apply_cache_snapshot_payload(
+            owner,
+            quote_subset,
+            signal="hidden_cache_snapshot",
+            record_flash=False,
         )
         return
 
@@ -1380,8 +1473,8 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
         except (AttributeError, RuntimeError, TypeError, ValueError):
             snapshot = {}
         if snapshot:
-            if owner.isVisible():
-                model.update_quotes(snapshot)
+            if _owner_is_visible(owner) or _owner_accepts_hidden_quote_projection(owner):
+                _apply_owner_quote_snapshot(owner, snapshot)
             else:
                 owner._deferred_quote_refresh = True
 
@@ -1411,11 +1504,11 @@ def on_rt_quotes_direct(
         tab=owner.__class__.__name__,
         signal="sig_rt_quotes",
     ):
-        if not owner.isVisible():
+        if not _owner_is_visible(owner) and not _owner_accepts_hidden_quote_projection(owner):
             owner._deferred_quote_refresh = True
             return
 
-        owner._apply_quote_snapshot(quotes)
+        _apply_owner_quote_snapshot(owner, quotes)
 
 
 def replay_deferred_quotes(owner) -> None:
@@ -1432,7 +1525,7 @@ def replay_deferred_quotes(owner) -> None:
         if model is None or not hasattr(model, "row_data"):
             snapshot = _latest_quote_snapshot()
             if snapshot:
-                owner._apply_quote_snapshot(snapshot)
+                _apply_owner_quote_snapshot(owner, snapshot)
             return
         _refresh_table_from_latest_snapshot_impl(
             owner,
@@ -1464,7 +1557,7 @@ def async_update_market_caps(owner) -> None:
         latest_quotes = {}
 
     if latest_quotes:
-        owner._apply_quote_snapshot(latest_quotes)
+        _apply_owner_quote_snapshot(owner, latest_quotes)
 
     codes_need_cap = collect_missing_finance_codes(owner, model)
     if not codes_need_cap:

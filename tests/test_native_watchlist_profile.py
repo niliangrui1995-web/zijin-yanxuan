@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QPoint, QRect
 
 from scripts import native_watchlist_profile
 from scripts.native_watchlist_profile import (
@@ -975,14 +976,40 @@ def test_native_watchlist_profile_captures_shell_nav_visual_artifacts(tmp_path):
             Path(path).write_bytes(b"fake-png")
             return True
 
-    class _Widget:
-        def grab(self):
+        def devicePixelRatio(self):
+            return 1.0
+
+        def rect(self):
+            return QRect(0, 0, 120, 80)
+
+        def copy(self, _rect):
+            return self
+
+    class _Screen:
+        def grabWindow(self, _win_id):
             return _Pixmap()
+
+    class _Widget:
+        def screen(self):
+            return _Screen()
+
+        def winId(self):
+            return 1
+
+    class _Viewport:
+        def mapTo(self, _window, _point):
+            return QPoint(0, 0)
+
+        def width(self):
+            return 20
+
+        def height(self):
+            return 10
 
     controller = object.__new__(_NativeProfileController)
     controller.window = _Widget()
     controller.activation_profile_path = tmp_path / "watchlist_activation.prof"
-    table = SimpleNamespace(viewport=lambda: _Widget())
+    table = SimpleNamespace(viewport=lambda: _Viewport())
 
     artifacts = controller._capture_shell_nav_visual_artifacts(2, table)
 

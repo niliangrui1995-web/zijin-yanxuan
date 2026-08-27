@@ -37,6 +37,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QAbstractScrollArea,
     QApplication,
     QFrame,
     QGraphicsOpacityEffect,
@@ -207,9 +208,6 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
     # it applies only to the immediate WindowDeactivate -> UpdateRequest burst
     # reproduced while opening an independent K-line window.
     NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS = 250
-    # K-line open/close can leave a bounded focus/layout tail after the first
-    # legitimate frame.  This remains source-scoped at the call site below.
-    KLINE_FOCUS_REPAINT_GUARD_ACTIVE_MS = 2_000
     # The staged Watchlist reveal can receive one delayed LayoutRequest tail
     # after its required first viewport frame.  Keep the guard bounded, while
     # model, geometry, input and flash changes continue to fail open below.
@@ -273,6 +271,14 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes: set[QPersistentModelIndex] = set()
         self._shell_nav_repaint_guard: dict[str, object] | None = None
+        # A hidden QTableView needs one genuine first frame when Qt exposes it
+        # again.  This flag only batches the synchronous StackOne transition;
+        # it never consumes Paint events after the fact.
+        self._workspace_reveal_batch_active = False
+        # Watchlist's delegate deliberately paints without a focus frame.  It
+        # can therefore update only the affected row when a separate K-line
+        # window takes or returns focus instead of invalidating the viewport.
+        self._focus_transition_repaint_enabled = True
         self._shell_nav_guard_selection_model = None
         self._native_window_event_source = None
         self._native_window_last_event: dict[str, object] | None = None
@@ -806,6 +812,46 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             self._native_window_last_event = None
             self._install_native_window_event_filter()
 
+    def set_focus_transition_repaint_enabled(self, enabled: bool) -> None:
+        """Select whether Qt focus changes invalidate the whole viewport."""
+        self._focus_transition_repaint_enabled = bool(enabled)
+
+    def _update_focus_transition_region(self) -> None:
+        """Invalidate only the current row when a focus cue must change."""
+        viewport = self.viewport()
+        model = self.model()
+        current = self.currentIndex()
+        if viewport is None or model is None or not current.isValid():
+            return
+        try:
+            parent = current.parent()
+            last_column = int(model.columnCount(parent)) - 1
+            if last_column < 0:
+                return
+            first = model.index(current.row(), 0, parent)
+            last = model.index(current.row(), last_column, parent)
+            region = self.visualRegionForSelection(QItemSelection(first, last)).intersected(QRegion(viewport.rect()))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if not region.isEmpty():
+            viewport.update(region)
+
+    def focusInEvent(self, event):  # noqa: N802 - Qt API naming
+        if self._focus_transition_repaint_enabled:
+            return super().focusInEvent(event)
+        QAbstractScrollArea.focusInEvent(self, event)
+        selection_model = self.selectionModel()
+        current = self.currentIndex()
+        if selection_model is not None and current.isValid():
+            selection_model.setCurrentIndex(current, QItemSelectionModel.SelectionFlag.NoUpdate)
+        self._update_focus_transition_region()
+
+    def focusOutEvent(self, event):  # noqa: N802 - Qt API naming
+        if self._focus_transition_repaint_enabled:
+            return super().focusOutEvent(event)
+        QAbstractScrollArea.focusOutEvent(self, event)
+        self._update_focus_transition_region()
+
     def _install_native_window_event_filter(self) -> None:
         source = self.window()
         if source is self._native_window_event_source:
@@ -961,6 +1007,12 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         """Arm a short guard for redundant shell-nav full paints on data tables."""
         if self._closing or self._paint_metric_scope not in {"watchlist", "lhb"}:
             return
+        if self._paint_metric_scope == "watchlist":
+            # A Watchlist page has been hidden by QStackedLayout::StackOne.
+            # Its post-show native paints are part of Qt's first-frame chain,
+            # so suppressing them in viewportEvent can leave the body blank.
+            # The owner batches the source transition instead.
+            return
         self._arm_redundant_full_paint_guard(
             workspace_load_reason="shell_nav",
             metric_name=f"{self._paint_metric_scope}_shell_nav_repaint_guard",
@@ -968,27 +1020,36 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             preserve_visible_frame=False,
         )
 
-    def prepare_kline_focus_repaint_guard(self, *, phase: str) -> bool:
-        """Bound K-line focus/layout tails without changing the first visible frame."""
-        phase_text = str(phase or "").strip()
-        if (
-            self._closing
-            or self._paint_metric_scope != "watchlist"
-            or phase_text not in {"open", "close"}
-        ):
+    def begin_workspace_reveal_batch(self) -> bool:
+        """Coalesce a hidden Watchlist page's synchronous StackOne reveal.
+
+        Qt may post several UpdateRequest events while QTabWidget hides the
+        old page, shows this table, and settles its layout.  Dropping those
+        completed Paint events is unsafe: QAbstractItemView can still need
+        them to populate the viewport.  Updates are therefore paused only
+        across the synchronous switch and released once, letting Qt schedule
+        one normal final frame.
+        """
+        if self._closing or self._paint_metric_scope != "watchlist":
+            return False
+        if self._workspace_reveal_batch_active:
             return False
         viewport = self.viewport()
-        if viewport is None or not self.isVisible() or not viewport.isVisible():
+        if viewport is None or self.isVisible() or viewport.isVisible():
             return False
-        self._arm_redundant_full_paint_guard(
-            workspace_load_reason=f"kline_{phase_text}",
-            metric_name="watchlist_kline_focus_repaint_guard",
-            retain_after_budget=True,
-            preserve_visible_frame=False,
-            active_ms=self.KLINE_FOCUS_REPAINT_GUARD_ACTIVE_MS,
-        )
-        self._activate_shell_nav_repaint_guard()
-        return self._active_shell_nav_repaint_guard() is not None
+        self._clear_shell_nav_repaint_guard()
+        self._workspace_reveal_batch_active = True
+        self.setUpdatesEnabled(False)
+        return True
+
+    def finish_workspace_reveal_batch(self) -> None:
+        """Release a reveal batch and let Qt request its required final frame."""
+        if not self._workspace_reveal_batch_active:
+            return
+        self._workspace_reveal_batch_active = False
+        if self._closing:
+            return
+        self.setUpdatesEnabled(True)
 
     def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
         """Arm source-scoped guards for a bounded workspace preload repaint tail."""

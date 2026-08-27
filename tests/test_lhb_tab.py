@@ -1153,6 +1153,80 @@ def test_lhb_visible_quote_snapshot_is_coalesced_before_apply(monkeypatch, qt_ap
         tab.deleteLater()
 
 
+def test_lhb_store_snapshot_honors_base_quote_flash_contract(monkeypatch):
+    """本地报价快照必须能透传基类的 record_flash 合约。"""
+    applied = []
+
+    def capture_apply(self, quotes):
+        applied.append(dict(quotes or {}))
+        return "applied"
+
+    monkeypatch.setattr(BaseStockTab, "_apply_quote_snapshot", capture_apply)
+    monkeypatch.setattr(
+        "ui.tabs.base_stock_tab.latest_quote_snapshot",
+        lambda: {"300750": {"close": 10.0, "last_close": 9.5}},
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "300750", "涨幅%": 0.0}], hydrate_latest_quotes=False)
+    try:
+        tab._apply_quote_store_snapshot()
+
+        assert applied == [{"300750": {"close": 10.0, "last_close": 9.5}}]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_cache_only_pool_display_applies_store_snapshot(monkeypatch):
+    """覆盖缓存池加载到本地报价快照的完整回调链。"""
+    applied = []
+
+    def capture_apply(self, quotes):
+        applied.append(dict(quotes or {}))
+        return "applied"
+
+    monkeypatch.setattr(BaseStockTab, "_apply_quote_snapshot", capture_apply)
+    monkeypatch.setattr(
+        "ui.tabs.base_stock_tab.latest_quote_snapshot",
+        lambda: {"300750": {"close": 10.0, "last_close": 9.5}},
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    try:
+        tab._display_pool(
+            [{"代码": "300750", "名称": "宁德时代"}],
+            refresh_quotes=False,
+            trigger="pool_bootstrap",
+        )
+
+        assert applied == [{"300750": {"close": 10.0, "last_close": 9.5}}]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_silent_quote_snapshot_does_not_enter_visible_flash_queue(monkeypatch):
+    applied = []
+
+    def capture_apply(self, quotes, *, record_flash=True):
+        applied.append((dict(quotes or {}), record_flash))
+        return "applied"
+
+    monkeypatch.setattr(BaseStockTab, "_apply_quote_snapshot", capture_apply)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._is_current_workspace_tab = lambda: True
+    tab.isVisible = lambda: True
+    try:
+        assert tab._apply_quote_snapshot({"300750": {"close": 10.0}}, record_flash=False) == "applied"
+
+        assert applied == [({"300750": {"close": 10.0}}, False)]
+        assert tab._pending_quote_snapshot == {}
+        assert not tab._quote_apply_timer.isActive()
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_opening_warmup_display_pool_uses_snapshot_only(monkeypatch):
     quote_calls = []
     snapshot_calls = []

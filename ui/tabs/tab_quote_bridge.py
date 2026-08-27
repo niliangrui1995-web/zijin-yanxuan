@@ -67,7 +67,12 @@ def _quote_subset_for_model(
     return subset
 
 
-def apply_quote_snapshot(owner, quotes: Mapping[str, Mapping[str, Any]] | None) -> dict:
+def apply_quote_snapshot(
+    owner,
+    quotes: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    record_flash: bool = True,
+) -> dict:
     model = resolve_active_quote_model(owner)
     stats = {
         "payload_codes": len(quotes or {}),
@@ -84,7 +89,16 @@ def apply_quote_snapshot(owner, quotes: Mapping[str, Mapping[str, Any]] | None) 
 
     stats["applied_codes"] = len(quote_subset)
     started_at = time.perf_counter()
-    changed_rows = model.update_quotes(quote_subset)
+    if record_flash:
+        changed_rows = model.update_quotes(quote_subset)
+    else:
+        try:
+            changed_rows = model.update_quotes(quote_subset, record_flash=False)
+        except TypeError:
+            # Models predating the presentation contract have no flash layer;
+            # retain their normal data behavior rather than rejecting a hidden
+            # Watchlist projection.
+            changed_rows = model.update_quotes(quote_subset)
     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
     stats["elapsed_ms"] = elapsed_ms
     if changed_rows is not None:
@@ -102,6 +116,7 @@ def apply_quote_snapshot(owner, quotes: Mapping[str, Mapping[str, Any]] | None) 
             "payload_codes": str(stats["payload_codes"]),
             "applied_codes": str(stats["applied_codes"]),
             "changed_rows": str(stats["changed_rows"]),
+            "record_flash": str(bool(record_flash)).lower(),
         },
     )
     return stats

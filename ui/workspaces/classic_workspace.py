@@ -287,7 +287,38 @@ def _load_queued_tab(workspace, key: str, reason: str) -> None:
         return
     if key not in workspace._lazy_loading_keys:
         return
+    if _is_stale_queued_navigation_load(workspace, key, reason):
+        # The user left before this zero-delay/later shell callback ran.  Do
+        # not construct an unrelated page under a newly visible Watchlist:
+        # its layout and cache initialization can still post MainWindow
+        # UpdateRequests even when the page is never mounted.
+        workspace._lazy_loading_keys.discard(key)
+        return
     workspace.ensure_tab_loaded(key, reason=reason)
+
+
+def _is_stale_queued_navigation_load(workspace, key: str, reason: object) -> bool:
+    """Whether a delayed navigation request was superseded before construction."""
+    navigation_reasons = {
+        TabLoadReason.TAB_SWITCH.value,
+        TabLoadReason.USER.value,
+        TabLoadReason.RESTORE_LAST_TAB.value,
+        TabLoadReason.SHELL_NAV.value,
+    }
+    if normalize_tab_load_reason(reason) not in navigation_reasons:
+        return False
+    tab_index_for_key = getattr(workspace, "_tab_index_for_key", None)
+    tabs = getattr(workspace, "tabs", None)
+    if not callable(tab_index_for_key) or tabs is None:
+        return False
+    current_index = getattr(tabs, "currentIndex", None)
+    if not callable(current_index):
+        return False
+    try:
+        target_index = int(tab_index_for_key(key))
+        return target_index >= 0 and int(current_index()) != target_index
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def _tab_runtime_dependencies_ready(workspace, spec: dict) -> bool:
@@ -591,6 +622,33 @@ def _configure_loaded_tab_widget(workspace, widget, key: str, load_reason: str) 
     )
 
 
+def _set_workspace_tab_activity(workspace, active_key: str) -> None:
+    """Drive logical tab activity independently of QWidget show/hide churn."""
+    selected_key = str(active_key or "").strip()
+    for spec in getattr(workspace, "_tab_specs", ()) or ():
+        if not bool(spec.get("loaded")):
+            continue
+        widget = spec.get("widget")
+        setter = getattr(widget, "set_workspace_active", None)
+        if not callable(setter):
+            continue
+        try:
+            setter(str(spec.get("key") or "").strip() == selected_key)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug("skip workspace tab activity update: %s", exc)
+
+
+def _prepare_workspace_tab_reveal(widget) -> None:
+    """Finish a hidden data projection before QStackedLayout exposes its page."""
+    prepare = getattr(widget, "prepare_workspace_reveal", None)
+    if not callable(prepare):
+        return
+    try:
+        prepare()
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        log.debug("skip workspace tab reveal preparation: %s", exc)
+
+
 def _prepare_workspace_preload_repaint_guard(workspace, widget, load_reason: str) -> None:
     load_reason_text = normalize_tab_load_reason(load_reason)
     if load_reason_text not in {
@@ -692,6 +750,7 @@ def _register_loaded_workspace_tab(
         if started_at > 0:
             workspace._initial_tab_ready_elapsed_ms = (time.perf_counter() - started_at) * 1000.0
     if workspace.tabs.currentWidget() is widget:
+        _set_workspace_tab_activity(workspace, key)
         workspace._startup_last_allowed_index = index
         coordinator = getattr(workspace, "_background_preload_coordinator", None)
         defer_activation = getattr(coordinator, "defers_interactive_activation", None)
@@ -712,6 +771,39 @@ def _should_stage_background_tab_mount(workspace, key: str, load_reason: str) ->
         load_reason == TabLoadReason.BACKGROUND_PREWARM.value
         and key in _BACKGROUND_PREWARM_STAGED_TAB_KEYS
         and key == str(getattr(workspace, "_background_prewarm_active_key", "") or "")
+    )
+
+
+def _should_stage_stale_queued_tab_mount(workspace, key: str, load_reason: str) -> bool:
+    """Keep a superseded lazy load out of the live QTabWidget hierarchy.
+
+    A shell-navigation click can queue construction of a cold page, then the
+    user can return to Watchlist before that callback runs.  Replacing the
+    inactive placeholder at that point posts a MainWindow LayoutRequest, which
+    invalidates the newly visible Watchlist backing store even though its data
+    did not change.  Stage only that stale queued load; the next intentional
+    activation mounts it before it is shown.
+    """
+    if normalize_tab_load_reason(load_reason) not in INTERACTIVE_TAB_LOAD_REASONS:
+        return False
+    if key not in set(getattr(workspace, "_lazy_loading_keys", set()) or ()):
+        return False
+    index_getter = getattr(workspace, "_tab_index_for_key", None)
+    current_index = getattr(getattr(workspace, "tabs", None), "currentIndex", None)
+    if not callable(index_getter) or not callable(current_index):
+        return False
+    try:
+        target_index = int(index_getter(key))
+        return target_index >= 0 and int(current_index()) != target_index
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _should_stage_workspace_tab_mount(workspace, key: str, load_reason: str) -> bool:
+    return _should_stage_background_tab_mount(workspace, key, load_reason) or _should_stage_stale_queued_tab_mount(
+        workspace,
+        key,
+        load_reason,
     )
 
 
@@ -801,7 +893,14 @@ def _attach_workspace_tab_transition_context(workspace, *, index: int, spec: dic
 def _ensure_background_preload_staging_host(workspace):
     host = getattr(workspace, "_background_preload_staging_host", None)
     if host is None:
-        host = QWidget(workspace, Qt.WindowType.Tool)
+        # Never attach a cold/stale page constructor to the live workspace
+        # tree.  A child insertion there posts LayoutRequest to MainWindow and
+        # invalidates an unrelated, newly visible Watchlist viewport.
+        #
+        # The host is intentionally parentless and explicitly disposed during
+        # workspace shutdown.  Runtime services are mirrored below so staged
+        # tabs retain the same construction contract as live workspace tabs.
+        host = QWidget()
         host.setObjectName("backgroundPreloadStagingHost")
         host.hide()
         workspace._background_preload_staging_host = host
@@ -817,6 +916,24 @@ def _ensure_background_preload_staging_host(workspace):
         if runtime_host is not None and hasattr(runtime_host, name):
             setattr(host, name, getattr(runtime_host, name))
     return host
+
+
+def _dispose_background_preload_staging_host(workspace) -> None:
+    """Release the parentless staging host after its staged tabs shut down."""
+    host = getattr(workspace, "_background_preload_staging_host", None)
+    workspace._background_preload_staging_host = None
+    if host is None:
+        return
+    try:
+        setattr(host, "_is_closing", True)
+        # The host is parentless and temporarily points back to its workspace
+        # so staged tabs can resolve runtime services.  Break that link before
+        # deferred Qt deletion to avoid retaining a dead workspace tree.
+        setattr(host, "_workspace", None)
+        host.close()
+        host.deleteLater()
+    except (AttributeError, RuntimeError, TypeError):
+        pass
 
 
 def _stage_loaded_workspace_tab(workspace, widget) -> None:
@@ -1048,7 +1165,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         reason_text = normalize_tab_load_reason(reason)
         first_visible_load = reason_text in self.INTERACTIVE_LOAD_REASONS
         runtime_kwargs = _runtime_kwargs_for_definition(definition, reason_text, first_visible_load, self)
-        if _should_stage_background_tab_mount(self, key, reason_text):
+        if _should_stage_workspace_tab_mount(self, key, reason_text):
             runtime_kwargs["_workspace_parent_override"] = _ensure_background_preload_staging_host(self)
         return factory(**runtime_kwargs)
 
@@ -1147,7 +1264,11 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         if spec.get("loaded"):
             self._mark_system_log_shell_nav(key, load_reason)
             widget = spec.get("widget")
-            if spec.get("mounted", True) is False and load_reason in self.INTERACTIVE_LOAD_REASONS:
+            if (
+                spec.get("mounted", True) is False
+                and load_reason in self.INTERACTIVE_LOAD_REASONS
+                and not _should_stage_stale_queued_tab_mount(self, key, load_reason)
+            ):
                 index = self._tab_index_for_key(key)
                 if index >= 0:
                     widget = _mount_loaded_workspace_tab(self, spec, key, index)
@@ -1173,9 +1294,14 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             return widget
 
         _configure_loaded_tab_widget(self, widget, key, load_reason)
-        if _should_stage_background_tab_mount(self, key, load_reason):
+        if _should_stage_workspace_tab_mount(self, key, load_reason):
             _stage_loaded_workspace_tab(self, widget)
             setattr(widget, "_workspace_preload_staged", True)
+            if _should_stage_stale_queued_tab_mount(self, key, load_reason):
+                # Construction originated from an interactive request, but the
+                # request is no longer current.  Do not start timers or visible
+                # refresh work until a later deliberate activation mounts it.
+                setattr(widget, "_workspace_noninteractive_loaded", True)
             _register_loaded_workspace_tab(
                 self,
                 spec,
@@ -1215,6 +1341,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         if spec is not None and key:
             _attach_workspace_tab_transition_context(self, index=index, spec=spec, key=key, widget=widget)
             self._last_observed_tab_key = key
+            _set_workspace_tab_activity(self, key)
         with tab_transition_stage(
             widget,
             tab=key,
@@ -1380,6 +1507,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             if spec is None or not key:
                 return True
             _pause_interactive_handoff_for_visible_watchlist(self, key, reason_text)
+            _set_workspace_tab_activity(self, key)
             if spec.get("loaded"):
                 self._mark_system_log_shell_nav(key, reason_text)
                 widget = spec.get("widget")
@@ -1405,6 +1533,8 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         if spec is not None and key and spec.get("loaded") and spec.get("mounted", True) is False:
             if not self._defer_interactive_activation_until_preload_ready(key, reason_text):
                 _mount_loaded_workspace_tab(self, spec, key, target_index)
+        if spec is not None and spec.get("loaded"):
+            _prepare_workspace_tab_reveal(spec.get("widget"))
         if (
             key in {"watchlist", "lhb"}
             and reason_text == TabLoadReason.SHELL_NAV.value
@@ -1849,3 +1979,4 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         _shutdown_stock_detail_dialogs(self)
         _shutdown_workspace_facade(self)
         _shutdown_loaded_workspace_tabs(self)
+        _dispose_background_preload_staging_host(self)

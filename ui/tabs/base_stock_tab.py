@@ -285,6 +285,8 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         super().__init__(parent)
         self.data_provider = data_provider
         self._deferred_quote_refresh = False
+        self._workspace_active = False
+        self._hidden_quote_projection_primed = False
         self._missing_quote_publisher_warned = False
         self._header_state_savers = []
         self._quote_terminal_launcher = ExternalTerminalNavigator(self)
@@ -294,6 +296,24 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
 
     def _is_current_workspace_tab(self) -> bool:
         return _is_direct_workspace_tab(self)
+
+    def set_workspace_active(self, active: bool) -> None:
+        """Receive the workspace's logical-active lifecycle independently of QWidget visibility."""
+        self._workspace_active = bool(active)
+
+    def accepts_hidden_quote_projection(self) -> bool:
+        """Whether quote data may update this tab's model while its page is hidden."""
+        return bool(getattr(self, "_hidden_quote_projection_enabled", False))
+
+    @staticmethod
+    def _accepts_hidden_quote_projection(owner) -> bool:
+        checker = getattr(owner, "accepts_hidden_quote_projection", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return False
+        return bool(getattr(owner, "_hidden_quote_projection_enabled", False))
 
     def _should_start_interactive_runtime_on_show(self) -> bool:
         is_current = self._is_current_workspace_tab()
@@ -320,8 +340,10 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
     def _apply_quote_snapshot(
         self,
         quotes: Mapping[str, Mapping[str, object]] | None,
+        *,
+        record_flash: bool = True,
     ):
-        return apply_quote_snapshot(self, quotes)
+        return apply_quote_snapshot(self, quotes, record_flash=record_flash)
 
     def _publish_quote_payload(self, payload, *, source: str, require_valid: bool = False) -> dict:
         return publish_quote_payload(self, payload, source=source, require_valid=require_valid)
@@ -358,8 +380,19 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
     def prime_local_quote_snapshot(self, current_model=None):
         return warm_local_quote_snapshot(self, current_model=current_model)
 
-    def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True):
-        refresh_quotes_from_latest_snapshot(self, current_model=current_model, async_local=async_local)
+    def refresh_table_from_latest_snapshot(
+        self,
+        current_model=None,
+        *,
+        async_local: bool = True,
+        prime_local: bool = True,
+    ):
+        refresh_quotes_from_latest_snapshot(
+            self,
+            current_model=current_model,
+            async_local=async_local,
+            prime_local=prime_local,
+        )
 
     def _prime_visible_local_quote_snapshot(self, current_model=None) -> bool:
         if getattr(self, "_runtime_cleanup_done", False):
@@ -369,6 +402,9 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
         if reason and not is_interactive_tab_load_reason(reason):
             return False
+        accepts_hidden_projection = BaseStockTab._accepts_hidden_quote_projection(self)
+        if accepts_hidden_projection and bool(getattr(self, "_hidden_quote_projection_primed", False)):
+            return False
         visible = self.isVisible()
         if not visible and not _should_prime_f5_local_snapshot(self, current_model):
             return False
@@ -376,7 +412,34 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
             refresh_preloaded_quote_snapshot(self, current_model=current_model)
             return True
         self.refresh_table_from_latest_snapshot(current_model=current_model, async_local=True)
+        if accepts_hidden_projection:
+            self._hidden_quote_projection_primed = True
         return True
+
+    def prime_hidden_quote_projection(self, current_model=None) -> bool:
+        """Refresh an opt-in hidden model before it is revealed again."""
+        try:
+            runtime_cleanup_done = bool(getattr(self, "_runtime_cleanup_done", False))
+        except RuntimeError:
+            return False
+        if runtime_cleanup_done or not BaseStockTab._accepts_hidden_quote_projection(self):
+            return False
+        try:
+            self.refresh_table_from_latest_snapshot(
+                current_model=current_model,
+                async_local=True,
+                prime_local=False,
+            )
+        except TypeError:
+            # Preserve compatibility with lightweight tab doubles and legacy
+            # subclasses while production Watchlist uses the no-IO path.
+            self.refresh_table_from_latest_snapshot(current_model=current_model, async_local=True)
+        self._hidden_quote_projection_primed = True
+        return True
+
+    def prepare_workspace_reveal(self) -> bool:
+        """Apply the latest hidden quote projection before this page is shown."""
+        return self.prime_hidden_quote_projection()
 
     def _apply_quote_store_snapshot(self, current_model=None):
         if current_model is not None:
@@ -394,7 +457,19 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
 
         quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
         if quote_subset:
-            self._apply_quote_snapshot(quote_subset)
+            record_flash = True
+            if BaseStockTab._accepts_hidden_quote_projection(self):
+                try:
+                    record_flash = bool(self._workspace_active and self.isVisible())
+                except RuntimeError:
+                    record_flash = False
+            # ``record_flash=True`` is the long-standing default.  Keep that
+            # call shape compatible with existing tab overrides, while the
+            # explicit silent projection path opts into the extended contract.
+            if record_flash:
+                self._apply_quote_snapshot(quote_subset)
+            else:
+                self._apply_quote_snapshot(quote_subset, record_flash=False)
 
     def get_row_data(self, current_model=None) -> list[dict]:
         model = current_model or self._resolve_active_quote_model()

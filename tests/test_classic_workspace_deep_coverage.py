@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from PyQt6.QtWidgets import QWidget
+
 from app.services.stock_context_model_service import StockSignal
 from ui.workspaces import classic_workspace as workspace_module
 
@@ -23,6 +25,116 @@ class _Tabs:
     def setCurrentIndex(self, index):
         self._current = index
         self.changes.append(index)
+
+
+def test_classic_workspace_tracks_logical_activity_and_prepares_hidden_reveal():
+    calls = []
+
+    class Watchlist:
+        def set_workspace_active(self, active):
+            calls.append(("active", active))
+
+        def prepare_workspace_reveal(self):
+            calls.append(("prepare",))
+
+    class OtherTab:
+        def set_workspace_active(self, active):
+            calls.append(("other", active))
+
+    watchlist = Watchlist()
+    workspace = SimpleNamespace(
+        _tab_specs=[
+            {"key": "watchlist", "loaded": True, "widget": watchlist},
+            {"key": "scan", "loaded": True, "widget": OtherTab()},
+            {"key": "lazy", "loaded": False, "widget": object()},
+        ]
+    )
+
+    workspace_module._set_workspace_tab_activity(workspace, "watchlist")
+    workspace_module._prepare_workspace_tab_reveal(watchlist)
+
+    assert calls == [("active", True), ("other", False), ("prepare",)]
+
+
+def test_workspace_staging_host_is_detached_from_live_workspace_layout(qt_application):
+    """过期的懒加载页不能作为主工作区子树的一部分完成构造。"""
+    workspace = QWidget()
+    workspace.host = None
+    workspace._background_preload_staging_host = None
+    host = workspace_module._ensure_background_preload_staging_host(workspace)
+    try:
+        assert host.parentWidget() is None
+        assert host.parent() is None
+        assert getattr(host, "_workspace", None) is workspace
+
+        workspace_module._dispose_background_preload_staging_host(workspace)
+
+        assert workspace._background_preload_staging_host is None
+        assert getattr(host, "_workspace", object()) is None
+    finally:
+        host.close()
+        host.deleteLater()
+        workspace.close()
+        workspace.deleteLater()
+        qt_application.processEvents()
+
+
+def test_stale_interactive_lazy_load_is_cancelled_before_widget_construction():
+    calls = []
+    stale_workspace = SimpleNamespace(
+        _shutting_down=False,
+        _lazy_loading_keys={"scan"},
+        tabs=_Tabs(count=2, current=0),
+        _tab_index_for_key=lambda _key: 1,
+        ensure_tab_loaded=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    workspace_module._load_queued_tab(stale_workspace, "scan", "shell_nav")
+
+    assert calls == []
+    assert stale_workspace._lazy_loading_keys == set()
+
+    current_workspace = SimpleNamespace(
+        _shutting_down=False,
+        _lazy_loading_keys={"scan"},
+        tabs=_Tabs(count=2, current=1),
+        _tab_index_for_key=lambda _key: 1,
+        ensure_tab_loaded=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    workspace_module._load_queued_tab(current_workspace, "scan", "shell_nav")
+
+    assert calls == [(('scan',), {'reason': 'shell_nav'})]
+
+
+def test_background_lazy_load_is_not_cancelled_when_its_tab_is_not_selected():
+    calls = []
+    workspace = SimpleNamespace(
+        _shutting_down=False,
+        _lazy_loading_keys={"scan"},
+        tabs=_Tabs(count=2, current=0),
+        _tab_index_for_key=lambda _key: 1,
+        ensure_tab_loaded=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    workspace_module._load_queued_tab(workspace, "scan", "background_prewarm")
+
+    assert calls == [(('scan',), {'reason': 'background_prewarm'})]
+
+
+def test_explicit_placeholder_load_is_not_cancelled_when_its_tab_is_not_selected():
+    calls = []
+    workspace = SimpleNamespace(
+        _shutting_down=False,
+        _lazy_loading_keys={"scan"},
+        tabs=_Tabs(count=2, current=0),
+        _tab_index_for_key=lambda _key: 1,
+        ensure_tab_loaded=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    workspace_module._load_queued_tab(workspace, "scan", "placeholder_action")
+
+    assert calls == [(('scan',), {'reason': 'placeholder_action'})]
 
 
 def test_classic_workspace_resolve_lazy_placeholder_and_shutdown_errors(monkeypatch, qt_application):

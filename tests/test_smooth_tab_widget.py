@@ -23,6 +23,34 @@ def test_smooth_tab_widget_keeps_qtabwidget_contract_when_hidden():
     finally:
         tabs.deleteLater()
 
+
+def test_smooth_tab_widget_releases_target_reveal_batch_after_switch():
+    app = QApplication.instance() or QApplication([])
+    tabs = SmoothTabWidget()
+    events = []
+
+    class RevealBatchWidget(QWidget):
+        def begin_workspace_reveal_batch(self):
+            events.append("begin")
+            return True
+
+        def finish_workspace_reveal_batch(self):
+            events.append("finish")
+
+    try:
+        tabs.addTab(QWidget(), "A")
+        tabs.addTab(RevealBatchWidget(), "B")
+
+        tabs.setCurrentIndex(1)
+        app.processEvents()
+        app.processEvents()
+
+        assert tabs.currentIndex() == 1
+        assert events == ["begin", "finish"]
+    finally:
+        tabs.deleteLater()
+
+
 def test_smooth_tab_widget_skips_expensive_snapshots_when_visible():
     app = QApplication.instance() or QApplication([])
     tabs = SmoothTabWidget()
