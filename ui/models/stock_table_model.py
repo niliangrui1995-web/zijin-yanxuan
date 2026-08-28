@@ -219,7 +219,7 @@ class StockTableModel(QAbstractTableModel):
         super().__init__()
         self._headers = _with_serial_header(headers)
         self._data = data or []
-        self._code_row_index = _build_code_row_index(self._data)
+        self._rebuild_code_row_index()
         self._flash_records = {}
         self._sort_value_cache = {}
         self._presentation_cache_enabled = False
@@ -350,6 +350,10 @@ class StockTableModel(QAbstractTableModel):
 
     def _clear_money_bar_max_abs_cache(self) -> None:
         self._money_bar_max_abs_cache.clear()
+
+    def _rebuild_code_row_index(self) -> None:
+        """Keep the quote lookup index synchronized with the backing rows."""
+        self._code_row_index = _build_code_row_index(self._data)
 
     def _money_bar_max_abs(self, header: str) -> float:
         if header in self._money_bar_max_abs_cache:
@@ -583,7 +587,7 @@ class StockTableModel(QAbstractTableModel):
             return []
 
         if codes_changed:
-            self._code_row_index = _build_code_row_index(self._data)
+            self._rebuild_code_row_index()
         self._clear_sort_value_cache_for_rows(changed_rows)
         self._clear_presentation_cache_for_rows(changed_rows)
         for (start_col, end_col), span_rows in sorted(changed_rows_by_span.items()):
@@ -601,7 +605,7 @@ class StockTableModel(QAbstractTableModel):
         _sync_serial_values(rows)
         self.layoutAboutToBeChanged.emit()
         self._data = rows
-        self._code_row_index = _build_code_row_index(self._data)
+        self._rebuild_code_row_index()
         self._flash_records.clear()
         self._clear_sort_value_cache()
         self.clear_presentation_cache()
@@ -621,7 +625,7 @@ class StockTableModel(QAbstractTableModel):
             self.beginRemoveRows(QModelIndex(), row, row)
             self._data.pop(row)
             self.endRemoveRows()
-        self._code_row_index = _build_code_row_index(self._data)
+        self._rebuild_code_row_index()
         self._emit_incremental_rows(rows)
 
     def update_data(
@@ -629,6 +633,7 @@ class StockTableModel(QAbstractTableModel):
         new_data,
         *,
         hydrate_latest_quotes: bool = True,
+        record_flash: bool = True,
         allow_single_row_membership_delta: bool = False,
         membership_reconcile_source: str = "",
     ):
@@ -638,12 +643,15 @@ class StockTableModel(QAbstractTableModel):
         if self._can_update_incrementally(rows):
             changed_rows = self._emit_incremental_rows(rows)
             if hydrate_latest_quotes:
-                self._hydrate_latest_quotes_from_store(_changed_row_codes(rows, changed_rows))
+                self._hydrate_latest_quotes_from_store(
+                    _changed_row_codes(rows, changed_rows),
+                    record_flash=record_flash,
+                )
             return
         if self._can_reorder_incrementally(rows):
             self._emit_reordered_rows(rows)
             if hydrate_latest_quotes:
-                self._hydrate_latest_quotes_from_store()
+                self._hydrate_latest_quotes_from_store(record_flash=record_flash)
             return
         membership_delta = None
         if allow_single_row_membership_delta and len(rows) != len(self._data):
@@ -662,21 +670,58 @@ class StockTableModel(QAbstractTableModel):
         if membership_delta is not None:
             self._emit_single_row_membership_delta(rows, membership_delta)
             if hydrate_latest_quotes:
-                self._hydrate_latest_quotes_from_store()
+                self._hydrate_latest_quotes_from_store(record_flash=record_flash)
             return
 
         self.beginResetModel()
         self._data = rows
-        self._code_row_index = _build_code_row_index(self._data)
+        self._rebuild_code_row_index()
         _sync_serial_values(self._data)
         self._flash_records.clear()
         self._clear_sort_value_cache()
         self.clear_presentation_cache()
         self.endResetModel()
         if hydrate_latest_quotes:
-            self._hydrate_latest_quotes_from_store()
+            self._hydrate_latest_quotes_from_store(record_flash=record_flash)
 
-    def _hydrate_latest_quotes_from_store(self, codes: set[str] | None = None):
+    def append_rows(
+        self,
+        new_data,
+        *,
+        hydrate_latest_quotes: bool = True,
+        record_flash: bool = False,
+    ) -> int:
+        """Append rows through the model-owned structural-change contract."""
+        rows = list(new_data or [])
+        if not rows:
+            return 0
+
+        start_row = len(self._data)
+        serial_header = self._headers[0]
+        quote_codes = set()
+        for row_number, row in enumerate(rows, start_row + 1):
+            if not isinstance(row, dict):
+                continue
+            row[serial_header] = row_number
+            code = str(row.get("代码") or "").strip()
+            if code:
+                quote_codes.add(code)
+
+        self._clear_money_bar_max_abs_cache()
+        self.beginInsertRows(QModelIndex(), start_row, start_row + len(rows) - 1)
+        self._data.extend(rows)
+        self._rebuild_code_row_index()
+        self.endInsertRows()
+        if hydrate_latest_quotes and quote_codes:
+            self._hydrate_latest_quotes_from_store(quote_codes, record_flash=record_flash)
+        return len(rows)
+
+    def _hydrate_latest_quotes_from_store(
+        self,
+        codes: set[str] | None = None,
+        *,
+        record_flash: bool = True,
+    ):
         if not self._data or "代码" not in self._headers:
             return
         if not any(header in self._headers for header in ("现价", "市价", "涨幅%", "涨幅", "市值", "买点")):
@@ -691,7 +736,10 @@ class StockTableModel(QAbstractTableModel):
         if not snapshot:
             return
 
-        self.update_quotes(_quotes_for_codes(snapshot, self._code_row_index, codes))
+        self.update_quotes(
+            _quotes_for_codes(snapshot, self._code_row_index, codes),
+            record_flash=record_flash,
+        )
 
     def supportedDropActions(self):
         return Qt.DropAction.MoveAction
@@ -764,7 +812,7 @@ class StockTableModel(QAbstractTableModel):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
             if col_name == "代码" and old_val != new_val:
-                self._code_row_index = _build_code_row_index(self._data)
+                self._rebuild_code_row_index()
             self._clear_presentation_cache_for_rows((row,))
             if col_name in _MONEY_BAR_HEADERS:
                 _clear_money_bar_cache_for_changed_value(self, old_val, new_val)

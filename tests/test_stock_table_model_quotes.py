@@ -354,6 +354,32 @@ def test_stock_table_model_update_data_can_skip_latest_global_quotes(monkeypatch
     assert model.row_data[0]["市值"] == "--"
 
 
+def test_stock_table_model_append_rows_hydrates_existing_quote_snapshot_for_duplicate_codes(monkeypatch):
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {"000002": {"close": 10.5, "last_close": 10.0, "total_shares": 1_000_000_000}},
+    )
+
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    model.update_data(
+        [{"代码": "000001", "名称": "首批", "现价": "--", "涨幅%": "--", "市值": "--"}],
+        hydrate_latest_quotes=False,
+    )
+
+    appended = model.append_rows(
+        [
+            {"代码": "000002", "名称": "追加甲", "现价": "--", "涨幅%": "--", "市值": "--"},
+            {"代码": "000002", "名称": "追加乙", "现价": "--", "涨幅%": "--", "市值": "--"},
+        ]
+    )
+
+    assert appended == 2
+    assert [row["现价"] for row in model.row_data[1:]] == ["10.50", "10.50"]
+    assert all(row["涨幅%"] == pytest.approx(5.0) for row in model.row_data[1:])
+    assert [row["市值"] for row in model.row_data[1:]] == ["105亿", "105亿"]
+
+
 def test_stock_table_model_supports_shijia_header(monkeypatch):
     monkeypatch.setattr(
         global_store,

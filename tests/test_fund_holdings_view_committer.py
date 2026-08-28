@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import pytest
 from PyQt6.QtCore import QItemSelectionModel, Qt
 
 from ui.tabs.fund_holdings_tab import FundHoldingsTab
@@ -92,6 +93,64 @@ def test_large_fund_holdings_payload_is_committed_in_bounded_gui_batches(monkeyp
         assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in rows]
         assert [row[tab.model.headers[0]] for row in tab.model.row_data] == list(range(1, len(rows) + 1))
         assert completed == [[row["代码"] for row in rows]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_chunked_fund_holdings_commit_updates_all_duplicate_quote_rows_after_first_batch(monkeypatch):
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    rows = _view_rows(tab.VIEW_ROW_CHUNK_SIZE + 2)
+    first_row = 0
+    appended_row = tab.VIEW_ROW_CHUNK_SIZE
+    rows[first_row]["代码"] = "600000"
+    rows[appended_row]["代码"] = "600000"
+    try:
+        tab._apply_view_rows_and_finish(rows, defer_finish=False)
+        _drain_committer(tab)
+
+        changed_rows = tab.model.update_quotes(
+            {"600000": {"close": 10.5, "last_close": 10.0, "total_shares": 1_000_000_000}}
+        )
+
+        assert changed_rows == 2
+        for row_index in (first_row, appended_row):
+            row = tab.model.get_row_data(row_index)
+            assert row["市价"] == "10.50"
+            assert row["涨幅%"] == pytest.approx(5.0)
+            assert row["市值"] == "105亿"
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_chunked_fund_holdings_commit_hydrates_snapshot_that_precedes_later_duplicate_rows(monkeypatch):
+    from core.global_store import global_store
+
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {"600000": {"close": 10.5, "last_close": 10.0, "total_shares": 1_000_000_000}},
+    )
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    rows = _view_rows(tab.VIEW_ROW_CHUNK_SIZE + 2)
+    first_row = 0
+    appended_row = tab.VIEW_ROW_CHUNK_SIZE
+    rows[first_row]["代码"] = "600000"
+    rows[appended_row]["代码"] = "600000"
+    try:
+        tab._apply_view_rows_and_finish(rows, defer_finish=False)
+        _drain_committer(tab)
+
+        for row_index in (first_row, appended_row):
+            row = tab.model.get_row_data(row_index)
+            assert row["市价"] == "10.50"
+            assert row["涨幅%"] == pytest.approx(5.0)
+            assert row["市值"] == "105亿"
     finally:
         tab.shutdown()
         tab.deleteLater()

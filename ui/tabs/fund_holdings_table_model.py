@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QItemSelectionModel, QModelIndex, QObject, Qt, QTimer
+from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, QTimer
 
 from app.services.ui_diagnostics_service import ui_stall_span
 from ui.models.table_models import StockTableModel
@@ -11,22 +11,6 @@ from ui.models.table_models import StockTableModel
 
 class FundHoldingsTableModel(StockTableModel):
     """Stock model that can expose already-built rows in bounded GUI batches."""
-
-    def append_rows(self, rows) -> int:
-        new_rows = list(rows or [])
-        if not new_rows:
-            return 0
-
-        start_row = len(self._data)
-        serial_header = self._headers[0]
-        for row_number, row in enumerate(new_rows, start_row + 1):
-            if isinstance(row, dict):
-                row[serial_header] = row_number
-
-        self.beginInsertRows(QModelIndex(), start_row, start_row + len(new_rows) - 1)
-        self._data.extend(new_rows)
-        self.endInsertRows()
-        return len(new_rows)
 
 
 def apply_fund_holdings_view_rows(
@@ -312,7 +296,11 @@ class FundHoldingsViewCommitter(QObject):
             tab="fund_holdings",
             signal=f"chunk:1/{len(view_rows)}",
         ):
-            self._tab.model.update_data(view_rows[: self._chunk_size], hydrate_latest_quotes=False)
+            self._tab.model.update_data(
+                view_rows[: self._chunk_size],
+                hydrate_latest_quotes=True,
+                record_flash=False,
+            )
         self._selection_baseline = _capture_view_selection(self._tab)
         self._timer.start()
 

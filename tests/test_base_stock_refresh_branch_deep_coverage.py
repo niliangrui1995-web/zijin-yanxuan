@@ -359,6 +359,20 @@ def test_defer_signatures_filtering_and_apply_metrics(monkeypatch):
     assert len(metrics) == 1
 
 
+def test_cache_snapshot_signature_reapplies_unchanged_quote_after_duplicate_row_is_added():
+    owner = _Owner()
+    owner._active_model_ref = SimpleNamespace(
+        row_data=[{"代码": "000001", "现价": "10.50", "涨幅%": 5.0, "市值": "105亿"}],
+        headers=["代码", "现价", "涨幅%", "市值"],
+    )
+    payload = {"000001": {"close": 10.5, "last_close": 10.0, "total_shares": 1_000_000_000}}
+
+    refresh._remember_cache_snapshot_payload(owner, payload)
+    owner._active_model_ref.row_data.append({"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"})
+
+    assert refresh._filter_unchanged_cache_snapshot_payload(owner, payload) == payload
+
+
 def test_cache_snapshot_queue_merges_chunks_and_handles_shutdown(monkeypatch):
     scheduled = []
     app = SimpleNamespace(closingDown=lambda: False)

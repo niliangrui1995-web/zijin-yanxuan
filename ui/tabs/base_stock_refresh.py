@@ -733,7 +733,7 @@ def _row_signature_by_code(owner, model, payload: dict) -> dict[str, tuple]:
     row_data = getattr(model, "row_data", None) or []
     headers = list(getattr(model, "headers", None) or getattr(model, "_headers", None) or [])
     wanted_codes = set(payload or {})
-    signatures: dict[str, tuple] = {}
+    signatures: dict[str, list[tuple]] = {}
 
     for row in row_data:
         if not isinstance(row, dict):
@@ -746,7 +746,7 @@ def _row_signature_by_code(owner, model, payload: dict) -> dict[str, tuple]:
                     break
             if matched_code:
                 break
-        if not matched_code or matched_code in signatures:
+        if not matched_code:
             continue
 
         display_values = tuple((header, _stable_signature_value(row.get(header))) for header in headers)
@@ -754,11 +754,9 @@ def _row_signature_by_code(owner, model, payload: dict) -> dict[str, tuple]:
             ("total_shares", _stable_signature_value(get_total_shares(row))),
             ("_history_date", _stable_signature_value(row.get("_history_date"))),
         )
-        signatures[matched_code] = display_values + internal_values
-        if len(signatures) == len(wanted_codes):
-            break
+        signatures.setdefault(matched_code, []).append(display_values + internal_values)
 
-    return signatures
+    return {code: tuple(row_signatures) for code, row_signatures in signatures.items()}
 
 
 def _payload_signature_for_codes(owner, payload: dict) -> dict[str, tuple]:
