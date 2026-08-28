@@ -172,6 +172,32 @@ def test_workspace_lineage_does_not_mask_missing_network_evidence_after_getter_e
     assert asian_lineage["lineage_error"] is True
 
 
+def test_runtime_health_exposes_central_quote_universe_coverage():
+    central = SimpleNamespace(
+        get_quote_coverage_snapshot=lambda: {
+            "total_unique": 225,
+            "duplicate_dropped": 17,
+            "by_source": {
+                "watchlist": {"added_unique": 53, "origin": "loaded_tab"},
+                "lhb": {"added_unique": 47, "origin": "headless_cache"},
+            },
+            "degraded_reasons": ["lhb:lhb_rps_unavailable_keep_base_pool"],
+        }
+    )
+
+    snapshot = runtime_health._central_quotes_snapshot(central)
+
+    assert snapshot["quote_coverage"] == {
+        "total_unique": 225,
+        "duplicate_dropped": 17,
+        "by_source": {
+            "watchlist": {"added_unique": 53, "origin": "loaded_tab"},
+            "lhb": {"added_unique": 47, "origin": "headless_cache"},
+        },
+        "degraded_reasons": ["lhb:lhb_rps_unavailable_keep_base_pool"],
+    }
+
+
 def test_workspace_lineage_uses_latched_runtime_network_evidence():
     tab = SimpleNamespace(_runtime_network_triggered=False)
     workspace = SimpleNamespace(
@@ -438,6 +464,13 @@ def test_runtime_health_quote_and_market_data_fallbacks():
     quote = runtime_health._quote_snapshot(SimpleNamespace(data_provider=provider, central_quotes_svc=None))
     assert quote["request_stats"] == {}
     assert quote["provider_runtime"] == {}
+    central_snapshot = runtime_health._central_quotes_snapshot(
+        SimpleNamespace(get_quote_coverage_snapshot=_raise_runtime)
+    )
+    assert central_snapshot["quote_coverage"] == {
+        "available": False,
+        "degraded_reasons": ["coverage_snapshot_unavailable"],
+    }
 
     assert runtime_health._market_data_snapshot(SimpleNamespace())["data_status"] == "provider_missing"
 

@@ -729,3 +729,31 @@ def test_na_daily_shutdown_cancels_queued_runtime_read(qt_application, monkeypat
     assert calls == []
     assert tab._runtime_start_timer.isActive() is False
     tab.deleteLater()
+
+
+def test_na_daily_realtime_quote_projection_preserves_authoritative_empty_after_ready(monkeypatch):
+    tab = _build_tab(monkeypatch, DummyProvider())
+    try:
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "pending",
+            "reason": "na_daily_tab_deferred",
+        }
+
+        tab._apply_na_daily_rows([], [], "", emit_event=False, refresh_quotes=False)
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "registered_empty",
+            "reason": "",
+        }
+
+        tab._realtime_quote_projection_state = "error"
+        tab._realtime_quote_projection_reason = "na_daily_tab_refresh_failed"
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "error",
+            "reason": "na_daily_tab_refresh_failed",
+        }
+    finally:
+        tab.shutdown()
+        tab.deleteLater()

@@ -6,7 +6,9 @@ from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 import domains.stock_context.signal_builders as stock_context_module
+import app.services.stock_context_snapshot_service as stock_context_snapshot_module
 import ui.workspaces.classic_workspace as classic_workspace_module
+import ui.workspaces.quote_universe_service as quote_universe_module
 import ui.workspaces.stock_context_service as stock_context_runtime_module
 from app.services.stock_context_model_service import StockSignal
 from infra.tasks.task_scheduler import task_manager
@@ -206,7 +208,7 @@ def test_workspace_collects_loaded_information_tabs_for_f5_off_market_quotes():
     }
 
 
-def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
+def test_workspace_quote_universe_does_not_instantiate_lazy_tabs(monkeypatch):
     loaded_tabs = {
         "watchlist": _make_quote_tab({"000001"}),
     }
@@ -219,6 +221,11 @@ def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
         get_loaded_tab=lambda key: loaded_tabs.get(key),
         get_tab=lambda key: get_tab_calls.append(key) or _make_quote_tab({key}),
     )
+    monkeypatch.setattr(
+        quote_universe_module,
+        "load_lhb_cached_realtime_projection",
+        lambda: {"codes": (), "status": "degraded", "reason": "lhb_cache_missing"},
+    )
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
@@ -226,7 +233,7 @@ def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
     assert get_tab_calls == []
 
 
-def test_workspace_quote_universe_uses_only_visible_tab_until_preload_finishes():
+def test_workspace_quote_universe_keeps_all_loaded_realtime_tabs_registered_during_preload():
     loaded_tabs = {
         "watchlist": _make_quote_tab({"000001"}),
         "lhb": _make_quote_tab({"601318"}),
@@ -240,7 +247,11 @@ def test_workspace_quote_universe_uses_only_visible_tab_until_preload_finishes()
         "finished": finished[0],
     }
 
-    assert ClassicWorkspace.get_realtime_quote_codes(workspace) == {"000001"}
+    assert ClassicWorkspace.get_realtime_quote_codes(workspace) == {
+        "000001",
+        "601318",
+        "002415",
+    }
 
     finished[0] = True
 
@@ -249,6 +260,270 @@ def test_workspace_quote_universe_uses_only_visible_tab_until_preload_finishes()
         "601318",
         "002415",
     }
+
+
+def test_quote_universe_registers_unloaded_realtime_tabs_from_headless_cache_without_loading_widgets():
+    loaded_tabs = {
+        "watchlist": _make_quote_tab({"000001", "300001"}),
+    }
+    lazy_load_attempts = []
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [
+            get_tab_definition(key).runtime_spec_metadata()
+            for key in ("watchlist", "lhb", "na_daily", "stock_candidates")
+        ],
+        get_loaded_tab=lambda key: loaded_tabs.get(key),
+        get_tab=lambda key: lazy_load_attempts.append(key) or _make_quote_tab({key}),
+    )
+    service = quote_universe_module.QuoteUniverseService(
+        workspace,
+        headless_source_readers={
+            "lhb": lambda: {
+                "codes": ("601318", "000001"),
+                "status": "registered_degraded",
+                "reason": "lhb_rps_unavailable_keep_base_pool",
+            },
+            "na_daily": lambda: {
+                "codes": ("002415", "bad"),
+                "status": "registered",
+                "reason": "",
+            },
+            "stock_candidates": lambda: {
+                "codes": ("300750", "002415"),
+                "status": "registered",
+                "reason": "",
+            },
+        },
+    )
+
+    coverage = service.collect_realtime_quote_coverage()
+
+    assert set(coverage["codes"]) == {"000001", "300001", "601318", "002415", "300750"}
+    assert coverage["total_unique"] == 5
+    assert coverage["duplicate_dropped"] == 2
+    assert coverage["by_source"]["lhb"] == {
+        "origin": "headless_cache",
+        "status": "registered_degraded",
+        "reason": "lhb_rps_unavailable_keep_base_pool",
+        "raw_count": 2,
+        "valid_count": 2,
+        "unique_count": 2,
+        "invalid_count": 0,
+        "source_duplicate_dropped": 0,
+        "cross_source_duplicate_count": 1,
+        "added_unique": 1,
+    }
+    assert coverage["by_source"]["na_daily"]["invalid_count"] == 1
+    assert coverage["by_source"]["stock_candidates"]["cross_source_duplicate_count"] == 1
+    assert coverage["degraded_reasons"] == ["lhb:lhb_rps_unavailable_keep_base_pool"]
+    assert lazy_load_attempts == []
+
+
+def test_quote_universe_precisely_invalidates_changed_headless_sources():
+    read_counts = {"lhb": 0, "na_daily": 0, "stock_candidates": 0}
+
+    def _reader(key, first_code, refreshed_code):
+        def _read():
+            read_counts[key] += 1
+            code = first_code if read_counts[key] == 1 else refreshed_code
+            return {"codes": (code,), "status": "registered", "reason": ""}
+
+        return _read
+
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [
+            get_tab_definition(key).runtime_spec_metadata()
+            for key in ("lhb", "na_daily", "stock_candidates")
+        ],
+        get_loaded_tab=lambda _key: None,
+    )
+    service = quote_universe_module.QuoteUniverseService(
+        workspace,
+        headless_source_readers={
+            "lhb": _reader("lhb", "601318", "601398"),
+            "na_daily": _reader("na_daily", "002415", "000001"),
+            "stock_candidates": _reader("stock_candidates", "300750", "002594"),
+        },
+    )
+
+    assert set(service.collect_realtime_quote_coverage()["codes"]) == {"601318", "002415", "300750"}
+    assert service.invalidate_headless_cache({"na_daily", "stock_candidates"}) == (
+        "na_daily",
+        "stock_candidates",
+    )
+    assert set(service.collect_realtime_quote_coverage()["codes"]) == {"601318", "000001", "002594"}
+    assert read_counts == {"lhb": 1, "na_daily": 2, "stock_candidates": 2}
+
+
+def test_quote_universe_keeps_headless_registration_while_loaded_realtime_tabs_report_pending():
+    def _pending_tab(reason):
+        return SimpleNamespace(
+            get_realtime_quote_codes=lambda: set(),
+            get_realtime_quote_source_projection=lambda: {
+                "codes": (),
+                "status": "pending",
+                "reason": reason,
+            },
+        )
+
+    loaded_tabs = {
+        "watchlist": _make_quote_tab({"000001"}),
+        "lhb": _pending_tab("lhb_tab_deferred"),
+        "na_daily": _pending_tab("na_daily_tab_loading"),
+        "stock_candidates": _pending_tab("stock_candidates_tab_pending"),
+    }
+    lazy_load_attempts = []
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [
+            get_tab_definition(key).runtime_spec_metadata()
+            for key in ("watchlist", "lhb", "na_daily", "stock_candidates")
+        ],
+        get_loaded_tab=lambda key: loaded_tabs.get(key),
+        get_tab=lambda key: lazy_load_attempts.append(key) or _make_quote_tab({key}),
+    )
+    service = quote_universe_module.QuoteUniverseService(
+        workspace,
+        headless_source_readers={
+            "lhb": lambda: {
+                "codes": ("601318",),
+                "status": "registered_degraded",
+                "reason": "lhb_rps_unavailable_keep_base_pool",
+            },
+            "na_daily": lambda: {"codes": ("002415",), "status": "registered", "reason": ""},
+            "stock_candidates": lambda: {"codes": ("300750",), "status": "registered", "reason": ""},
+        },
+    )
+
+    coverage = service.collect_realtime_quote_coverage()
+
+    assert set(coverage["codes"]) == {"000001", "601318", "002415", "300750"}
+    assert coverage["total_unique"] == 4
+    for key in ("lhb", "na_daily", "stock_candidates"):
+        assert coverage["by_source"][key]["origin"] == "loaded_tab_pending_headless_cache"
+        assert coverage["by_source"][key]["status"] == "registered_degraded"
+        assert "headless_cache_fallback" in coverage["by_source"][key]["reason"]
+    assert "lhb:lhb_tab_deferred;headless_cache_fallback;lhb_rps_unavailable_keep_base_pool" in coverage[
+        "degraded_reasons"
+    ]
+    assert lazy_load_attempts == []
+
+
+def test_quote_universe_does_not_reuse_headless_cache_for_authoritative_loaded_empty_source():
+    loaded_tabs = {
+        "watchlist": _make_quote_tab({"000001"}),
+        "lhb": SimpleNamespace(
+            get_realtime_quote_codes=lambda: set(),
+            get_realtime_quote_source_projection=lambda: {
+                "codes": (),
+                "status": "registered_empty",
+                "reason": "",
+            },
+        ),
+    }
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [
+            get_tab_definition(key).runtime_spec_metadata()
+            for key in ("watchlist", "lhb")
+        ],
+        get_loaded_tab=lambda key: loaded_tabs.get(key),
+    )
+    service = quote_universe_module.QuoteUniverseService(
+        workspace,
+        headless_source_readers={
+            "lhb": lambda: {"codes": ("601318",), "status": "registered", "reason": ""},
+        },
+    )
+
+    coverage = service.collect_realtime_quote_coverage()
+
+    assert set(coverage["codes"]) == {"000001"}
+    assert coverage["by_source"]["lhb"]["origin"] == "loaded_tab"
+    assert coverage["by_source"]["lhb"]["status"] == "registered_empty"
+
+
+@pytest.mark.parametrize("status", ("error", "degraded", "unknown"))
+def test_quote_universe_does_not_reuse_headless_cache_for_loaded_nonpending_empty_source(status):
+    loaded_tabs = {
+        "watchlist": _make_quote_tab({"000001"}),
+        "lhb": SimpleNamespace(
+            get_realtime_quote_codes=lambda: set(),
+            get_realtime_quote_source_projection=lambda: {
+                "codes": (),
+                "status": status,
+                "reason": f"lhb_tab_{status}",
+            },
+        ),
+    }
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [
+            get_tab_definition(key).runtime_spec_metadata()
+            for key in ("watchlist", "lhb")
+        ],
+        get_loaded_tab=lambda key: loaded_tabs.get(key),
+    )
+    service = quote_universe_module.QuoteUniverseService(
+        workspace,
+        headless_source_readers={
+            "lhb": lambda: {"codes": ("601318",), "status": "registered", "reason": ""},
+        },
+    )
+
+    coverage = service.collect_realtime_quote_coverage()
+
+    assert set(coverage["codes"]) == {"000001"}
+    assert coverage["by_source"]["lhb"]["origin"] == "loaded_tab"
+    assert coverage["by_source"]["lhb"]["status"] == status
+
+
+def test_lhb_headless_quote_projection_reads_cache_without_constructing_pool_manager(monkeypatch):
+    monkeypatch.setattr(
+        stock_context_snapshot_module.LhbPoolRepository,
+        "default_paths",
+        staticmethod(lambda: ("current.json", "legacy.json", "old.json")),
+    )
+    monkeypatch.setattr(
+        stock_context_snapshot_module.LhbPoolRepository,
+        "load_state",
+        classmethod(
+            lambda _cls, _current, _legacy: (
+                {
+                    "daily_data": {
+                        "20260828": [
+                            {
+                                "代码": "601318",
+                                "名称": "中国平安",
+                                "net_buy_wan": 100.0,
+                                "institution_net_buy_wan": 1.0,
+                            },
+                            {
+                                "代码": "000001",
+                                "名称": "平安银行",
+                                "net_buy_wan": -1.0,
+                                "institution_net_buy_wan": 1.0,
+                            },
+                        ]
+                    }
+                },
+                "current.json",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        stock_context_snapshot_module,
+        "load_cached_ai_industry_chain_stock_codes",
+        lambda: {"601318", "000001"},
+    )
+
+    projection = stock_context_snapshot_module.load_lhb_cached_realtime_projection()
+
+    assert projection["codes"] == ("601318",)
+    assert projection["status"] == "registered_degraded"
+    assert projection["reason"] == "lhb_rps_unavailable_keep_base_pool"
 
 
 def test_workspace_primes_watchlist_with_public_startup_hook():
@@ -940,6 +1215,67 @@ def test_workspace_fund_holding_update_primes_only_fund_snapshot():
     ClassicWorkspace._on_fund_holdings_source_updated(workspace)
 
     assert calls == [{"force": True, "include_lhb": False}]
+
+
+def test_workspace_na_daily_and_lhb_updates_invalidate_precise_quote_sources(monkeypatch):
+    invalidated = []
+    monkeypatch.setattr(
+        classic_workspace_module,
+        "_invalidate_workspace_realtime_quote_coverage",
+        lambda _workspace, sources=None: invalidated.append(set(sources or ())) or (),
+    )
+    workspace = SimpleNamespace(_shutting_down=False)
+
+    ClassicWorkspace._on_na_daily_source_updated(workspace)
+    ClassicWorkspace._on_lhb_pool_source_updated(workspace)
+
+    assert invalidated == [
+        {"na_daily", "stock_candidates"},
+        {"lhb", "stock_candidates"},
+    ]
+
+
+def test_workspace_wires_na_daily_and_lhb_events_for_quote_coverage_invalidation(monkeypatch):
+    import app.services.ui_event_service as event_module
+
+    class _Signal:
+        def __init__(self):
+            self.slots = []
+
+        def connect(self, slot):
+            self.slots.append(slot)
+
+        def disconnect(self, slot):
+            self.slots.remove(slot)
+
+    signals = SimpleNamespace(
+        sig_ai_industry_chain_updated=_Signal(),
+        sig_fund_holdings_updated=_Signal(),
+        sig_na_daily_updated=_Signal(),
+        sig_lhb_pool_updated=_Signal(),
+        sig_cache_bootstrap_ready=_Signal(),
+        sig_stock_context_snapshot_updated=_Signal(),
+    )
+    monkeypatch.setattr(event_module, "domain_events", signals)
+    workspace = SimpleNamespace(
+        _on_ai_industry_chain_source_updated=lambda *_args: None,
+        _on_fund_holdings_source_updated=lambda *_args: None,
+        _on_na_daily_source_updated=lambda *_args: None,
+        _on_lhb_pool_source_updated=lambda *_args: None,
+        _on_startup_cache_bootstrap_ready=lambda *_args: None,
+        _on_stock_context_snapshot_updated=lambda *_args: None,
+    )
+
+    ClassicWorkspace._connect_workspace_events(workspace)
+
+    assert workspace._workspace_events_connected is True
+    assert signals.sig_na_daily_updated.slots == [workspace._on_na_daily_source_updated]
+    assert signals.sig_lhb_pool_updated.slots == [workspace._on_lhb_pool_source_updated]
+
+    ClassicWorkspace._disconnect_workspace_events(workspace)
+
+    assert signals.sig_na_daily_updated.slots == []
+    assert signals.sig_lhb_pool_updated.slots == []
 
 
 def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):

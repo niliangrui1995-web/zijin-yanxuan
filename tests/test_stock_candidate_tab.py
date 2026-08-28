@@ -1232,3 +1232,32 @@ def test_stock_candidate_refresh_skips_model_update_when_rows_unchanged(monkeypa
     finally:
         _close_and_delete(tab)
         workspace.deleteLater()
+
+
+def test_stock_candidate_realtime_quote_projection_only_falls_back_while_initially_pending(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    try:
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "pending",
+            "reason": "stock_candidates_tab_deferred",
+        }
+
+        tab._realtime_quote_projection_state = "ready"
+        tab._realtime_quote_projection_reason = ""
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "registered_empty",
+            "reason": "",
+        }
+
+        tab._realtime_quote_projection_state = "error"
+        tab._realtime_quote_projection_reason = "stock_candidates_tab_refresh_failed"
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "error",
+            "reason": "stock_candidates_tab_refresh_failed",
+        }
+    finally:
+        _close_and_delete(tab)

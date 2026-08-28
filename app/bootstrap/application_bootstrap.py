@@ -64,7 +64,9 @@ class ApplicationBootstrap:
             self._window.central_quotes_svc = None
             return None
 
-        code_supplier = getattr(self._window, "get_realtime_quote_codes", None)
+        code_supplier = getattr(self._window, "get_realtime_quote_coverage", None)
+        if not callable(code_supplier):
+            code_supplier = getattr(self._window, "get_realtime_quote_codes", None)
         if not callable(code_supplier):
             code_supplier = None
         self._window.central_quotes_svc = self._call_host(

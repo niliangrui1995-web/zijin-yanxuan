@@ -133,6 +133,16 @@ def _cancel_facade_stock_context_snapshots(facade, *, reason: str) -> bool:
     return bool(facade._stock_context_service.cancel_async_snapshots(reason=reason))
 
 
+def _invalidate_facade_realtime_quote_coverage(facade, sources=None) -> tuple[str, ...]:
+    invalidator = getattr(facade._quote_universe_service, "invalidate_headless_cache", None)
+    if not callable(invalidator):
+        return ()
+    try:
+        return tuple(invalidator(sources=sources) or ())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ()
+
+
 class WorkspaceFacade:
     """ClassicWorkspace 的跨 Tab 聚合与编排门面。"""
 
@@ -143,6 +153,7 @@ class WorkspaceFacade:
     prime_stock_context_snapshots = _prime_facade_stock_context
     stock_context_snapshots_settled = _facade_stock_context_snapshots_settled
     cancel_stock_context_snapshots = _cancel_facade_stock_context_snapshots
+    invalidate_realtime_quote_coverage = _invalidate_facade_realtime_quote_coverage
 
     def __init__(self, workspace):
         self._workspace = workspace
@@ -150,8 +161,14 @@ class WorkspaceFacade:
         self._shutdown_result = False
         self._workspace_navigation_service = WorkspaceNavigationService(workspace)
         self._workspace_table_service = WorkspaceTableService(workspace)
-        self._quote_universe_service = QuoteUniverseService(workspace)
         self._stock_context_service = StockContextService(workspace)
+        self._quote_universe_service = QuoteUniverseService(
+            workspace,
+            context_snapshot_reader=lambda: self.capture_stock_context_snapshot(
+                include_rps_bundle=False,
+            ),
+            context_snapshot_primer=self.prime_stock_context_snapshots,
+        )
 
     def _get_tab(self, key: str):
         get_tab = getattr(self._workspace, "get_tab", None)
@@ -184,6 +201,7 @@ class WorkspaceFacade:
 
     def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
         self._stock_context_service.prepare_post_f5_refresh()
+        self.invalidate_realtime_quote_coverage()
         self._workspace_table_service.refresh_all_tabs_after_f5(skip_cache_reload_tabs=skip_cache_reload_tabs)
 
     def refresh_all_tabs_after_f5_scheduled(
@@ -194,6 +212,7 @@ class WorkspaceFacade:
         skip_cache_reload_tabs: bool = False,
     ) -> bool:
         self._stock_context_service.prepare_post_f5_refresh()
+        self.invalidate_realtime_quote_coverage()
         return self._workspace_table_service.refresh_all_tabs_after_f5_scheduled(
             on_finished=on_finished,
             interval_ms=interval_ms,
@@ -377,6 +396,9 @@ class WorkspaceFacade:
 
     def get_realtime_quote_codes(self) -> set[str]:
         return self._quote_universe_service.collect_realtime_quote_codes()
+
+    def get_realtime_quote_coverage(self) -> dict:
+        return self._quote_universe_service.collect_realtime_quote_coverage()
 
     def get_f5_off_market_quote_codes(self) -> set[str]:
         return self._quote_universe_service.collect_f5_off_market_quote_codes()

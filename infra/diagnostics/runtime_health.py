@@ -343,6 +343,32 @@ def _read_provider_health(provider: object | None) -> ProviderHealthSnapshot:
     return health
 
 
+def _central_quote_coverage_snapshot(central: object | None) -> dict[str, Any]:
+    """Read the optional universe breakdown without letting diagnostics break the UI."""
+    try:
+        coverage_getter = getattr(central, "get_quote_coverage_snapshot", None)
+        coverage = coverage_getter() if callable(coverage_getter) else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return {
+            "available": False,
+            "degraded_reasons": ["coverage_snapshot_unavailable"],
+        }
+    if coverage is None:
+        return {}
+    if not isinstance(coverage, Mapping):
+        return {
+            "available": False,
+            "degraded_reasons": ["coverage_snapshot_invalid"],
+        }
+    try:
+        return dict(coverage)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return {
+            "available": False,
+            "degraded_reasons": ["coverage_snapshot_invalid"],
+        }
+
+
 def _central_quotes_snapshot(central: object | None) -> dict[str, Any]:
     runtime_state_getter = getattr(central, "runtime_state_snapshot", None)
     try:
@@ -364,6 +390,7 @@ def _central_quotes_snapshot(central: object | None) -> dict[str, Any]:
             getattr(central, "_post_cache_reload_quiet_until", 0.0)
         ),
         "post_cache_reload_codes": len(getattr(central, "_post_cache_reload_signature", ()) or ()),
+        "quote_coverage": _central_quote_coverage_snapshot(central),
     }
 
 

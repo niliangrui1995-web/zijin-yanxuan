@@ -93,6 +93,8 @@ class StockCandidateTab(BaseStockTab):
         )
         self._last_candidate_result = None
         self._last_candidate_signature = ""
+        self._realtime_quote_projection_state = "pending"
+        self._realtime_quote_projection_reason = "stock_candidates_tab_deferred"
         self._context_refresh_pending = False
         self._candidate_refresh_running = False
         self._candidate_refresh_pending = False
@@ -122,14 +124,20 @@ class StockCandidateTab(BaseStockTab):
         if self._initial_refresh_started:
             return
         self._initial_refresh_started = True
+        if self._realtime_quote_projection_state == "pending":
+            self._realtime_quote_projection_reason = "stock_candidates_tab_start_scheduled"
         QTimer.singleShot(self._runtime_start_delay_ms, self._refresh_candidates_if_current)
 
     def _refresh_candidates_if_current(self) -> None:
         if not self._is_current_visible_workspace_tab():
             self._context_refresh_pending = True
+            if self._realtime_quote_projection_state == "pending":
+                self._realtime_quote_projection_reason = "stock_candidates_tab_context_pending"
             return
         if not self._should_start_runtime_on_show():
             self._context_refresh_pending = True
+            if self._realtime_quote_projection_state == "pending":
+                self._realtime_quote_projection_reason = "stock_candidates_tab_context_pending"
             return
         self.refresh_candidates()
 
@@ -165,6 +173,8 @@ class StockCandidateTab(BaseStockTab):
         if not self._background_preload_requested:
             self._background_preload_requested = True
             self._background_preload_error = ""
+            if self._realtime_quote_projection_state == "pending":
+                self._realtime_quote_projection_reason = "stock_candidates_tab_background_pending"
             self._background_preload_reuses_ready_sources = self._preloaded_snapshot_sources_ready()
             if not self._background_preload_reuses_ready_sources:
                 self._prime_stock_context_snapshots(self._workspace())
@@ -230,6 +240,8 @@ class StockCandidateTab(BaseStockTab):
             return False
         if not self._stock_context_snapshots_settled():
             self._background_preload_waiting_snapshots = True
+            if self._realtime_quote_projection_state == "pending":
+                self._realtime_quote_projection_reason = "stock_candidates_tab_snapshot_pending"
             self._schedule_background_dependency_poll()
             return False
         self._background_dependency_timer.stop()
@@ -268,6 +280,8 @@ class StockCandidateTab(BaseStockTab):
             self._background_preload_reuses_ready_sources = False
             self._initial_refresh_started = False
             self._context_refresh_pending = False
+            self._realtime_quote_projection_state = "unknown"
+            self._realtime_quote_projection_reason = "stock_candidates_tab_preload_cancelled"
 
         return cancel_background_preload_tasks(
             self,
@@ -361,6 +375,8 @@ class StockCandidateTab(BaseStockTab):
         self._context_refresh_pending = False
         self._candidate_refresh_pending = False
         self._candidate_refresh_followup_scheduled = False
+        self._realtime_quote_projection_state = "unknown"
+        self._realtime_quote_projection_reason = "stock_candidates_tab_runtime_stopped"
         dependency_timer = getattr(self, "_background_dependency_timer", None)
         if dependency_timer is not None:
             dependency_timer.stop()
@@ -521,6 +537,8 @@ class StockCandidateTab(BaseStockTab):
             return
         self._candidate_refresh_running = True
         self._candidate_refresh_pending = False
+        if self._realtime_quote_projection_state == "pending":
+            self._realtime_quote_projection_reason = "stock_candidates_tab_loading"
         tab_titles = self._tab_titles()
         provider_status = self._read_provider_status()
         workspace = self._workspace()
@@ -584,6 +602,8 @@ class StockCandidateTab(BaseStockTab):
         self._candidate_refresh_running = False
         if getattr(self, "_runtime_cleanup_done", False):
             return
+        self._realtime_quote_projection_state = "error"
+        self._realtime_quote_projection_reason = "stock_candidates_tab_refresh_failed"
         self._status_primary = "综合候选加载失败"
         self._status_freshness = str(message or "").strip() or "后台刷新异常"
         self._refresh_status()
@@ -596,6 +616,8 @@ class StockCandidateTab(BaseStockTab):
 
     def _apply_candidate_result(self, result) -> None:
         self._last_candidate_result = result
+        self._realtime_quote_projection_state = "ready"
+        self._realtime_quote_projection_reason = ""
         rows = result.rows
         rows_changed = result.signature != self._last_candidate_signature
         if rows_changed:
@@ -674,6 +696,33 @@ class StockCandidateTab(BaseStockTab):
         from ui.components.stock_context_menu import build_stock_context_menu
 
         build_stock_context_menu(self, code, name, vcp_data=row)
+
+    def get_realtime_quote_source_projection(self) -> dict:
+        """Distinguish an initial pending candidate build from a real empty pool."""
+
+        if getattr(self, "_runtime_cleanup_done", False):
+            return {"codes": (), "status": "degraded", "reason": "stock_candidates_tab_runtime_stopped"}
+
+        state = str(getattr(self, "_realtime_quote_projection_state", "unknown") or "unknown")
+        reason = str(getattr(self, "_realtime_quote_projection_reason", "") or "").strip()
+        codes = tuple(sorted(self.get_realtime_quote_codes()))
+        if codes:
+            if state in {"error", "unknown"}:
+                return {"codes": codes, "status": "registered_degraded", "reason": reason}
+            return {"codes": codes, "status": "registered", "reason": ""}
+        if self.get_row_data():
+            return {
+                "codes": (),
+                "status": "degraded",
+                "reason": "stock_candidates_tab_no_valid_a_share_codes",
+            }
+        if state == "pending":
+            return {"codes": (), "status": "pending", "reason": reason or "stock_candidates_tab_deferred"}
+        if state == "ready":
+            return {"codes": (), "status": "registered_empty", "reason": ""}
+        if state == "error":
+            return {"codes": (), "status": "error", "reason": reason or "stock_candidates_tab_refresh_failed"}
+        return {"codes": (), "status": "degraded", "reason": reason or "stock_candidates_tab_projection_unknown"}
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
         return super().get_realtime_quote_codes(current_model=current_model or self.model)

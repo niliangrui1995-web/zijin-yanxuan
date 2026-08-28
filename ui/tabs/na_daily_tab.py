@@ -75,6 +75,8 @@ def _run_scheduled_runtime_start(owner) -> None:
     if getattr(owner, "_closing", False) or not getattr(owner, "_runtime_start_pending", False):
         return
     _cancel_scheduled_runtime_start(owner)
+    if getattr(owner, "_realtime_quote_projection_state", "") == "pending":
+        owner._realtime_quote_projection_reason = "na_daily_tab_loading"
     with tab_transition_stage(
         owner,
         tab="na_daily",
@@ -242,6 +244,8 @@ class _NADailyBackgroundPreloadMixin:
         _cancel_scheduled_runtime_start(self)
         self._runtime_started = True
         self._background_prime_loading = True
+        if self._realtime_quote_projection_state == "pending":
+            self._realtime_quote_projection_reason = "na_daily_tab_background_loading"
         scheduled = self._load_na_daily_report()
         if not scheduled:
             self._background_prime_loading = False
@@ -265,6 +269,8 @@ class _NADailyBackgroundPreloadMixin:
             self._background_prime_loading = False
             self._background_prime_done = False
             self._runtime_started = False
+            self._realtime_quote_projection_state = "unknown"
+            self._realtime_quote_projection_reason = "na_daily_tab_preload_cancelled"
 
         return cancel_background_preload_tasks(
             self,
@@ -296,6 +302,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         self._handling_na_daily_event = False
         self._na_daily_refresh_task_active = False
         self._na_daily_refresh_generation = 0
+        self._realtime_quote_projection_state = "pending"
+        self._realtime_quote_projection_reason = "na_daily_tab_deferred"
         self._closing = False
         self._runtime_start_pending = False
         self._history_dialog: NADailyHistoryDialog | None = None
@@ -318,6 +326,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             return
         self._runtime_started = True
         self._runtime_start_pending = True
+        if self._realtime_quote_projection_state == "pending":
+            self._realtime_quote_projection_reason = "na_daily_tab_start_scheduled"
         self._runtime_start_timer.start(self._runtime_start_delay_ms)
 
     def showEvent(self, event):
@@ -601,6 +611,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         emit_event: bool = True,
         refresh_quotes: bool = True,
     ):
+        self._realtime_quote_projection_state = "ready"
+        self._realtime_quote_projection_reason = ""
         self._current_report_files = list(report_files or [])
 
         if not report_files:
@@ -675,6 +687,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         if service is None:
             self._background_prime_loading = False
             self._background_prime_done = True
+            self._realtime_quote_projection_state = "unknown"
+            self._realtime_quote_projection_reason = "na_daily_service_unavailable"
             return
         try:
             with tab_transition_stage(
@@ -700,6 +714,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         self._na_daily_refresh_task_active = False
         self._background_prime_loading = False
         self._background_prime_done = True
+        self._realtime_quote_projection_state = "error"
+        self._realtime_quote_projection_reason = "na_daily_tab_refresh_failed"
         msg = str(error_message or "").strip() or "战报加载失败"
         self._set_report_status("北美战报刷新失败", msg, freshness=self._latest_report_freshness(), next_step="点击刷新重试")
         if hasattr(self, "table_state"):
@@ -716,6 +732,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         )
         service = getattr(self, "_na_daily_service", None)
         if service is not None:
+            if self._realtime_quote_projection_state == "pending":
+                self._realtime_quote_projection_reason = "na_daily_tab_loading"
             if run_in_background:
                 if self._na_daily_refresh_task_active:
                     self._set_report_status(
@@ -740,6 +758,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
             service.refresh_full(emit_event=False)
             self._apply_na_daily_rows(service.rows, service.report_files, service.report_signature)
             return True
+        self._realtime_quote_projection_state = "unknown"
+        self._realtime_quote_projection_reason = "na_daily_service_unavailable"
         return False
 
     def run_post_online_refresh(self) -> bool:
@@ -750,6 +770,8 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         if getattr(self, "_closing", False):
             return
         self._closing = True
+        self._realtime_quote_projection_state = "unknown"
+        self._realtime_quote_projection_reason = "na_daily_tab_runtime_stopped"
         _cancel_scheduled_runtime_start(self)
         self._na_daily_refresh_generation += 1
         self._na_daily_refresh_task_active = False
@@ -792,3 +814,29 @@ class NADailyTab(_NADailyBackgroundPreloadMixin, BaseStockTab):
         from ui.components.stock_context_menu import build_stock_context_menu
 
         build_stock_context_menu(self, code, name, vcp_data=row_data)
+
+    def get_realtime_quote_source_projection(self) -> dict:
+        """Distinguish initial NA Daily loading from a completed empty result."""
+
+        if getattr(self, "_closing", False) or getattr(self, "_runtime_cleanup_done", False):
+            return {"codes": (), "status": "degraded", "reason": "na_daily_tab_runtime_stopped"}
+
+        state = str(getattr(self, "_realtime_quote_projection_state", "unknown") or "unknown")
+        reason = str(getattr(self, "_realtime_quote_projection_reason", "") or "").strip()
+        codes = tuple(sorted(self.get_realtime_quote_codes()))
+        if codes:
+            if state in {"error", "unknown"}:
+                return {"codes": codes, "status": "registered_degraded", "reason": reason}
+            return {"codes": codes, "status": "registered", "reason": ""}
+        if self.get_row_data():
+            return {"codes": (), "status": "degraded", "reason": "na_daily_tab_no_valid_a_share_codes"}
+        if state == "pending":
+            return {"codes": (), "status": "pending", "reason": reason or "na_daily_tab_deferred"}
+        if state == "ready":
+            return {"codes": (), "status": "registered_empty", "reason": ""}
+        if state == "error":
+            return {"codes": (), "status": "error", "reason": reason or "na_daily_tab_refresh_failed"}
+        return {"codes": (), "status": "degraded", "reason": reason or "na_daily_tab_projection_unknown"}
+
+    def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        return super().get_realtime_quote_codes(current_model=current_model or self.model)

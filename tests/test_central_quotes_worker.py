@@ -692,6 +692,43 @@ def test_central_quotes_service_normalizes_codes_from_supplier():
         main_window.deleteLater()
 
 
+def test_central_quotes_service_preserves_structured_universe_coverage_after_deduplication():
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    class DummyProvider:
+        pass
+
+    service = CentralQuotesService(
+        main_window,
+        DummyProvider(),
+        code_supplier=lambda: {
+            "codes": ("600000", "600000", "000001", "bad"),
+            "total_unique": 2,
+            "duplicate_dropped": 1,
+            "by_source": {
+                "watchlist": {"added_unique": 2, "origin": "loaded_tab"},
+            },
+            "degraded_reasons": ["lhb:lhb_rps_unavailable_keep_base_pool"],
+        },
+    )
+    try:
+        assert service._get_all_active_codes() == {"600000", "000001"}
+        assert service.get_quote_coverage_snapshot() == {
+            "total_unique": 2,
+            "supplier_total_unique": 2,
+            "duplicate_dropped": 1,
+            "by_source": {
+                "watchlist": {"added_unique": 2, "origin": "loaded_tab"},
+            },
+            "degraded_reasons": ["lhb:lhb_rps_unavailable_keep_base_pool"],
+        }
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_refreshes_code_supplier_via_public_setter():
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
@@ -787,10 +824,15 @@ def test_central_quotes_service_heartbeat_marks_market_closed_pause(monkeypatch)
     monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
 
     try:
+        assert service._get_all_active_codes() == {"000001"}
         service._tick_count = service._heartbeat_every_ticks
         service._run_maintenance(active_codes_count=163, quote_refreshable=False)
 
         heartbeat = next(message for message in messages if "[报价站] 心跳" in message)
+        assert "覆盖总数=1" in heartbeat
+        assert "来源拆分=无" in heartbeat
+        assert "去重=0" in heartbeat
+        assert "降级原因=无" in heartbeat
         assert "实时缓存=0" in heartbeat
         assert "工作线程存活" not in heartbeat
         assert "市场=盘后" in heartbeat

@@ -2307,3 +2307,39 @@ def test_lhb_watchlist_radar_rows_stays_on_display_snapshot_without_bootstrap(mo
         assert rows[0]["_最近上榜_raw"] == "20260420"
     finally:
         tab.deleteLater()
+
+
+def test_lhb_realtime_quote_projection_distinguishes_pending_staged_and_terminal_empty():
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "pending",
+            "reason": "lhb_tab_deferred",
+        }
+
+        tab._pending_lhb_display = {"row_data": [{"代码": "300750", "名称": "宁德时代"}]}
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": ("300750",),
+            "status": "registered",
+            "reason": "",
+        }
+
+        tab._pending_lhb_display = {"row_data": []}
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "registered_empty",
+            "reason": "",
+        }
+
+        tab._pending_lhb_display = None
+        tab._realtime_quote_projection_state = "error"
+        tab._realtime_quote_projection_reason = "lhb_pool_load_failed"
+        assert tab.get_realtime_quote_source_projection() == {
+            "codes": (),
+            "status": "error",
+            "reason": "lhb_pool_load_failed",
+        }
+    finally:
+        tab.shutdown()
+        tab.deleteLater()

@@ -5,7 +5,8 @@ import sys
 import threading
 import time
 from bisect import bisect_left
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
+from copy import deepcopy
 from functools import partial
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
@@ -48,6 +49,201 @@ _FALLBACK_PRESSURE_RECENT_SEC = 90.0
 _FALLBACK_PRESSURE_MIN_PENDING = 100
 _FALLBACK_PRESSURE_MIN_ELAPSED_MS = 10000.0
 _FALLBACK_PRESSURE_SOURCE_TOKENS = ("sina", "tencent", "fallback", "offline", "stale")
+
+
+def _empty_quote_coverage() -> dict[str, object]:
+    return {
+        "total_unique": 0,
+        "supplier_total_unique": 0,
+        "duplicate_dropped": 0,
+        "by_source": {},
+        "degraded_reasons": [],
+    }
+
+
+def _non_negative_int(value, fallback: int) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return max(0, int(fallback))
+
+
+def _quote_code_items(value) -> Iterable[object]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    try:
+        iter(value)
+    except TypeError:
+        return ()
+    return value
+
+
+def _copy_quote_coverage(coverage: dict[str, object]) -> dict[str, object]:
+    """Keep diagnostics callers from mutating the worker's last coverage state."""
+    try:
+        return deepcopy(coverage)
+    except (TypeError, ValueError, RuntimeError):
+        snapshot = {
+            "total_unique": _non_negative_int(coverage.get("total_unique"), 0),
+            "supplier_total_unique": _non_negative_int(coverage.get("supplier_total_unique"), 0),
+            "duplicate_dropped": _non_negative_int(coverage.get("duplicate_dropped"), 0),
+            "by_source": dict(coverage.get("by_source") or {}),
+            "degraded_reasons": list(coverage.get("degraded_reasons") or ()),
+        }
+        excluded_by_policy = coverage.get("excluded_by_policy")
+        if isinstance(excluded_by_policy, Mapping):
+            snapshot["excluded_by_policy"] = dict(excluded_by_policy)
+        return snapshot
+
+
+def _normalize_quote_coverage_payload(payload) -> tuple[set[str], dict[str, object]]:
+    """Normalize legacy code iterables and the structured workspace universe payload."""
+    coverage_keys = frozenset(
+        {
+            "codes",
+            "total_unique",
+            "by_source",
+            "duplicate_dropped",
+            "degraded_reasons",
+            "excluded_by_policy",
+        }
+    )
+    structured_payload = (
+        payload
+        if isinstance(payload, Mapping) and any(key in payload for key in coverage_keys)
+        else None
+    )
+    raw_codes = structured_payload.get("codes") if structured_payload is not None else payload
+    codes: set[str] = set()
+    locally_deduplicated = 0
+    for code in _quote_code_items(raw_codes):
+        normalized = str(code).strip()
+        if not _A_SHARE_CODE_RE.match(normalized):
+            continue
+        if normalized in codes:
+            locally_deduplicated += 1
+            continue
+        codes.add(normalized)
+
+    coverage = _empty_quote_coverage()
+    coverage["total_unique"] = len(codes)
+    coverage["supplier_total_unique"] = len(codes)
+    coverage["duplicate_dropped"] = locally_deduplicated
+    if structured_payload is None:
+        return codes, coverage
+
+    supplied_total = structured_payload.get("total_unique")
+    if supplied_total is not None:
+        coverage["supplier_total_unique"] = _non_negative_int(supplied_total, len(codes))
+    supplied_duplicates = structured_payload.get("duplicate_dropped")
+    if supplied_duplicates is not None:
+        coverage["duplicate_dropped"] = max(
+            locally_deduplicated,
+            _non_negative_int(supplied_duplicates, locally_deduplicated),
+        )
+
+    source_detail = structured_payload.get("by_source")
+    if isinstance(source_detail, Mapping):
+        try:
+            coverage["by_source"] = deepcopy(dict(source_detail))
+        except (TypeError, ValueError, RuntimeError):
+            coverage["by_source"] = {}
+
+    excluded_by_policy = structured_payload.get("excluded_by_policy")
+    if isinstance(excluded_by_policy, Mapping):
+        try:
+            coverage["excluded_by_policy"] = deepcopy(dict(excluded_by_policy))
+        except (TypeError, ValueError, RuntimeError):
+            coverage["excluded_by_policy"] = {}
+
+    raw_reasons = structured_payload.get("degraded_reasons")
+    if isinstance(raw_reasons, str):
+        reasons = (raw_reasons,)
+    elif raw_reasons is None:
+        reasons = ()
+    else:
+        try:
+            iter(raw_reasons)
+        except TypeError:
+            reasons = ()
+        else:
+            reasons = raw_reasons
+    coverage["degraded_reasons"] = list(
+        dict.fromkeys(
+            str(reason).strip()
+            for reason in reasons
+            if str(reason).strip()
+        )
+    )
+    return codes, coverage
+
+
+def _quote_coverage_source_text(by_source) -> str:
+    if not isinstance(by_source, Mapping) or not by_source:
+        return "无"
+
+    def _detail_count(detail: Mapping) -> int | None:
+        for key in ("unique_count", "total_unique", "code_count", "count", "added_unique"):
+            if key in detail:
+                return _non_negative_int(detail.get(key), 0)
+        return None
+
+    source_text = []
+    for source, detail in sorted(by_source.items(), key=lambda item: str(item[0])):
+        source_name = str(source).strip() or "unknown"
+        if not isinstance(detail, Mapping):
+            source_text.append(f"{source_name}={detail}")
+            continue
+        detail_count = _detail_count(detail)
+        segment = f"{source_name}={detail_count if detail_count is not None else '-'}"
+        if "added_unique" in detail:
+            segment += f"(新增{_non_negative_int(detail.get('added_unique'), 0)})"
+        if "source_duplicate_dropped" in detail:
+            segment += f"(源去重{_non_negative_int(detail.get('source_duplicate_dropped'), 0)})"
+        if "cross_source_duplicate_count" in detail:
+            segment += f"(跨源重叠{_non_negative_int(detail.get('cross_source_duplicate_count'), 0)})"
+        else:
+            for duplicate_key in ("duplicate_dropped", "cross_source_duplicates", "duplicate_count"):
+                if duplicate_key in detail:
+                    segment += f"(去重{_non_negative_int(detail.get(duplicate_key), 0)})"
+                    break
+        if "invalid_count" in detail:
+            segment += f"(无效{_non_negative_int(detail.get('invalid_count'), 0)})"
+        origin = str(detail.get("origin") or "").strip()
+        if origin:
+            segment += f"[{origin}]"
+        status = str(detail.get("status") or "").strip()
+        if status:
+            segment += f"{{{status}}}"
+        reason = str(detail.get("reason") or "").strip()
+        if reason:
+            segment += f"<{reason}>"
+        source_text.append(segment)
+    return ";".join(source_text)
+
+
+def _quote_coverage_reasons_text(reasons) -> str:
+    if isinstance(reasons, str):
+        reasons = (reasons,)
+    try:
+        return ";".join(
+            str(reason).strip()
+            for reason in (reasons or ())
+            if str(reason).strip()
+        ) or "无"
+    except (TypeError, ValueError):
+        return "无法读取"
+
+
+def _quote_coverage_exclusions_text(excluded_by_policy) -> str:
+    if not isinstance(excluded_by_policy, Mapping) or not excluded_by_policy:
+        return "无"
+    return ";".join(
+        f"{str(key).strip() or 'unknown'}:{str(reason).strip() or '-'}"
+        for key, reason in sorted(excluded_by_policy.items(), key=lambda item: str(item[0]))
+    )
 
 
 def _provider_request_stats(provider) -> dict:
@@ -848,8 +1044,10 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
     def __init__(self, main_window, data_provider, code_supplier=None):
         super().__init__(main_window)
         self.data_provider = data_provider
-        self._code_supplier: Callable[[], Iterable[object] | None] | None = code_supplier
+        self._code_supplier: Callable[[], Iterable[object] | Mapping[str, object] | None] | None = code_supplier
         self._missing_code_supplier_warned = False
+        self._quote_coverage_lock = threading.RLock()
+        self._last_quote_coverage = _empty_quote_coverage()
         self._fetch_submission_lock = threading.RLock()
         self._closed = False
         self._task_lifecycle = TaskLifecycleGroup(task_manager)
@@ -898,6 +1096,13 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
     def set_code_supplier(self, code_supplier) -> None:
         self._code_supplier = code_supplier
         self._missing_code_supplier_warned = False
+        with self._quote_coverage_lock:
+            self._last_quote_coverage = _empty_quote_coverage()
+
+    def get_quote_coverage_snapshot(self) -> dict[str, object]:
+        """Return the latest normalized real-time universe and its source diagnostics."""
+        with self._quote_coverage_lock:
+            return _copy_quote_coverage(self._last_quote_coverage)
 
     @pyqtSlot()
     def refresh_after_cache_reload(self):
@@ -946,22 +1151,27 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         return publish_rt_quotes(payload, source=source, require_valid=require_valid)
 
     def _get_all_active_codes(self) -> set[str]:
-        def _normalize_a_code(code):
-            code = str(code).strip()
-            return code if _A_SHARE_CODE_RE.match(code) else None
-
         if not callable(self._code_supplier):
             if not self._missing_code_supplier_warned:
                 self._missing_code_supplier_warned = True
                 log.warning("[报价站] 未注入 code_supplier，跳过本轮行情轮询")
+            coverage = _empty_quote_coverage()
+            coverage["degraded_reasons"] = ["code_supplier_missing"]
+            with self._quote_coverage_lock:
+                self._last_quote_coverage = coverage
             return set()
 
         self._missing_code_supplier_warned = False
-        codes = set()
-        for code in self._code_supplier() or []:
-            normalized = _normalize_a_code(code)
-            if normalized:
-                codes.add(normalized)
+        try:
+            payload = self._code_supplier()
+            codes, coverage = _normalize_quote_coverage_payload(payload)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[报价站] code_supplier 返回异常，跳过本轮行情轮询: {exc}")
+            codes = set()
+            coverage = _empty_quote_coverage()
+            coverage["degraded_reasons"] = [f"code_supplier_error:{type(exc).__name__}"]
+        with self._quote_coverage_lock:
+            self._last_quote_coverage = coverage
         return codes
 
     def _fetch_quote_payload(self, codes: set[str], *, cancellation_token=None) -> dict:
@@ -1340,8 +1550,19 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         )
         rt_cache_text = self._rt_cache_status_text(int(rt_quote_cache_size or 0), runtime_state)
         owner_thread_text = self._owner_thread_status_text(runtime_stats, owner_thread_alive)
+        coverage = self.get_quote_coverage_snapshot()
+        coverage_total = _non_negative_int(coverage.get("total_unique"), 0)
+        coverage_duplicates = _non_negative_int(coverage.get("duplicate_dropped"), 0)
+        coverage_sources_text = _quote_coverage_source_text(coverage.get("by_source"))
+        coverage_reasons_text = _quote_coverage_reasons_text(coverage.get("degraded_reasons"))
+        coverage_exclusions_text = _quote_coverage_exclusions_text(coverage.get("excluded_by_policy"))
         heartbeat_signature = (
             active_codes_count if active_codes_count is not None else "-",
+            coverage_total,
+            coverage_sources_text,
+            coverage_duplicates,
+            coverage_reasons_text,
+            coverage_exclusions_text,
             rt_quote_cache_size,
             stats.get("history_symbol_count", 0),
             runtime_stats.get("inflight", 0),
@@ -1370,6 +1591,11 @@ class CentralQuotesService(QuoteRuntimeStateCompatMixin, QObject):
         log.info(
             "[报价站] 心跳 "
             f"标的={active_codes_count if active_codes_count is not None else '-'} "
+            f"覆盖总数={coverage_total} "
+            f"来源拆分={coverage_sources_text} "
+            f"去重={coverage_duplicates} "
+            f"降级原因={coverage_reasons_text} "
+            f"策略排除={coverage_exclusions_text} "
             f"实时缓存={rt_cache_text} "
             f"历史缓存={stats.get('history_symbol_count', 0)} "
             f"飞行中={runtime_stats.get('inflight', 0)} "

@@ -64,6 +64,19 @@ class QuoteUniverseCapability(Protocol):
 
 
 @runtime_checkable
+class RealtimeQuoteSourceProjectionCapability(Protocol):
+    """Stateful registration view for a loaded real-time quote source.
+
+    ``pending`` is reserved for an explicit transient state in which the
+    workspace may temporarily retain a read-only headless-cache projection.
+    Ready-empty, error, and unknown states must use another status so stale
+    cache rows cannot be silently re-registered.
+    """
+
+    def get_realtime_quote_source_projection(self) -> Mapping: ...
+
+
+@runtime_checkable
 class F5OffMarketQuoteUniverseCapability(Protocol):
     def get_f5_off_market_quote_codes(self) -> set[str]: ...
 

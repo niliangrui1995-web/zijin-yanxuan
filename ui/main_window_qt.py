@@ -987,7 +987,10 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         service = getattr(self, "central_quotes_svc", None)
         if service is None:
             return
-        code_supplier = getattr(getattr(self, "_workspace", None), "get_realtime_quote_codes", None)
+        workspace = getattr(self, "_workspace", None)
+        code_supplier = getattr(workspace, "get_realtime_quote_coverage", None)
+        if not callable(code_supplier):
+            code_supplier = getattr(workspace, "get_realtime_quote_codes", None)
         setter = getattr(service, "set_code_supplier", None)
         if callable(setter):
             setter(code_supplier)

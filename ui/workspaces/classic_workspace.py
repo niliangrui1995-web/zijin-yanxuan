@@ -238,6 +238,20 @@ def _resolve_workspace_facade(workspace) -> WorkspaceFacade:
     return facade
 
 
+def _invalidate_workspace_realtime_quote_coverage(workspace, sources=None) -> tuple[str, ...]:
+    invalidator = getattr(
+        _resolve_workspace_facade(workspace),
+        "invalidate_realtime_quote_coverage",
+        None,
+    )
+    if not callable(invalidator):
+        return ()
+    try:
+        return tuple(invalidator(sources=sources) or ())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ()
+
+
 def _workspace_stock_context_snapshots_settled(workspace) -> bool:
     return bool(_resolve_workspace_facade(workspace).stock_context_snapshots_settled())
 
@@ -250,6 +264,7 @@ def _handle_startup_cache_bootstrap_ready(workspace, *_args) -> None:
     if getattr(workspace, "_shutting_down", False):
         return
     workspace._startup_cache_bootstrap_ready = True
+    _invalidate_workspace_realtime_quote_coverage(workspace)
     coordinator = getattr(workspace, "_background_preload_coordinator", None)
     priority_pending = bool(getattr(coordinator, "_priority_reasons", None))
     if workspace._initial_real_tab_activated or priority_pending:
@@ -1563,7 +1578,10 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
 
             event_bus.sig_ai_industry_chain_updated.connect(self._on_ai_industry_chain_source_updated)
             event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_source_updated)
+            event_bus.sig_na_daily_updated.connect(self._on_na_daily_source_updated)
+            event_bus.sig_lhb_pool_updated.connect(self._on_lhb_pool_source_updated)
             event_bus.sig_cache_bootstrap_ready.connect(self._on_startup_cache_bootstrap_ready)
+            event_bus.sig_stock_context_snapshot_updated.connect(self._on_stock_context_snapshot_updated)
             self._workspace_event_bus = event_bus
             self._workspace_events_connected = True
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -1582,18 +1600,44 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
         try:
+            event_bus.sig_na_daily_updated.disconnect(self._on_na_daily_source_updated)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            event_bus.sig_lhb_pool_updated.disconnect(self._on_lhb_pool_source_updated)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
             event_bus.sig_cache_bootstrap_ready.disconnect(self._on_startup_cache_bootstrap_ready)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            event_bus.sig_stock_context_snapshot_updated.disconnect(self._on_stock_context_snapshot_updated)
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
         self._workspace_events_connected = False
 
     @_skip_if_workspace_stopping()
     def _on_ai_industry_chain_source_updated(self, *_args) -> None:
+        _invalidate_workspace_realtime_quote_coverage(self, {"lhb", "stock_candidates"})
         _resolve_workspace_facade(self).refresh_tabs_after_ai_industry_chain_update()
 
     @_skip_if_workspace_stopping()
     def _on_fund_holdings_source_updated(self, *_args) -> None:
+        _invalidate_workspace_realtime_quote_coverage(self, {"stock_candidates"})
         self.prime_stock_context_snapshots(force=True, include_lhb=False)
+
+    @_skip_if_workspace_stopping()
+    def _on_na_daily_source_updated(self, *_args) -> None:
+        _invalidate_workspace_realtime_quote_coverage(self, {"na_daily", "stock_candidates"})
+
+    @_skip_if_workspace_stopping()
+    def _on_lhb_pool_source_updated(self, *_args) -> None:
+        _invalidate_workspace_realtime_quote_coverage(self, {"lhb", "stock_candidates"})
+
+    @_skip_if_workspace_stopping()
+    def _on_stock_context_snapshot_updated(self, *_args) -> None:
+        _invalidate_workspace_realtime_quote_coverage(self, {"stock_candidates"})
 
     _on_startup_cache_bootstrap_ready = _handle_startup_cache_bootstrap_ready
 
@@ -1765,6 +1809,12 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
 
     def get_realtime_quote_codes(self) -> set[str]:
         return _resolve_workspace_facade(self).get_realtime_quote_codes()
+
+    def get_realtime_quote_coverage(self) -> dict:
+        return _resolve_workspace_facade(self).get_realtime_quote_coverage()
+
+    def invalidate_realtime_quote_coverage(self, sources=None) -> tuple[str, ...]:
+        return _invalidate_workspace_realtime_quote_coverage(self, sources=sources)
 
     def get_f5_off_market_quote_codes(self) -> set[str]:
         return _resolve_workspace_facade(self).get_f5_off_market_quote_codes()

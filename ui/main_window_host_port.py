@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 
@@ -27,6 +28,15 @@ class MainWindowHostPortMixin:
         workspace = self.current_workspace()
         supplier = getattr(workspace, "get_realtime_quote_codes", None)
         return set(cast(Any, supplier)() or ()) if callable(supplier) else set()
+
+    def get_realtime_quote_coverage(self) -> dict:
+        workspace = self.current_workspace()
+        supplier = getattr(workspace, "get_realtime_quote_coverage", None)
+        if callable(supplier):
+            payload = cast(Any, supplier)() or {}
+            if isinstance(payload, Mapping):
+                return dict(payload)
+        return {"codes": tuple(sorted(self.get_realtime_quote_codes()))}
 
     def refresh_code_count_label_from_provider(self) -> int:
         return int(cast(Any, self)._refresh_code_count_label_from_provider())

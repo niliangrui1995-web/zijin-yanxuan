@@ -418,11 +418,18 @@ def test_classic_workspace_event_wiring_prewarm_prime_and_copy_hook_errors(monke
     monkeypatch.setattr(
         event_module,
         "domain_events",
-        SimpleNamespace(sig_ai_industry_chain_updated=_BadSignal(), sig_fund_holdings_updated=_BadSignal()),
+        SimpleNamespace(
+            sig_ai_industry_chain_updated=_BadSignal(),
+            sig_fund_holdings_updated=_BadSignal(),
+            sig_na_daily_updated=_BadSignal(),
+            sig_lhb_pool_updated=_BadSignal(),
+        ),
     )
     fake = SimpleNamespace(
         _on_ai_industry_chain_source_updated=lambda *_args: None,
         _on_fund_holdings_source_updated=lambda *_args: None,
+        _on_na_daily_source_updated=lambda *_args: None,
+        _on_lhb_pool_source_updated=lambda *_args: None,
     )
     workspace_module.ClassicWorkspace._connect_workspace_events(fake)
     fake._workspace_event_bus = event_module.domain_events

@@ -460,6 +460,8 @@ def _initialize_lhb_background_preload_state(owner) -> None:
     owner._background_preload_done = False
     owner._background_preload_cache_only = False
     owner._pending_lhb_display = None
+    owner._realtime_quote_projection_state = "pending"
+    owner._realtime_quote_projection_reason = "lhb_tab_deferred"
 
 
 def _lhb_hide_event(owner, event) -> None:
@@ -566,6 +568,8 @@ def _complete_lhb_backfill_success(owner, results) -> None:
     validated_results = payload.get("validated", {})
     if not fetched_results and not validated_results:
         owner._pending_pool_refresh = bool(owner._pending_pool_refresh or had_pending_pool_refresh)
+        owner._realtime_quote_projection_state = "error"
+        owner._realtime_quote_projection_reason = "lhb_backfill_no_valid_result"
         owner._set_pool_status(
             "同步失败",
             freshness="远端失败沿用" if _has_lhb_display_rows(owner) else "待回补",
@@ -654,6 +658,8 @@ def _complete_lhb_backfill_success(owner, results) -> None:
 def _complete_lhb_backfill_error(owner, error_message: str) -> None:
     had_pending_pool_refresh = _clear_active_lhb_backfill(owner)
     owner._pending_pool_refresh = bool(owner._pending_pool_refresh or had_pending_pool_refresh)
+    owner._realtime_quote_projection_state = "error"
+    owner._realtime_quote_projection_reason = "lhb_backfill_failed"
     owner._set_pool_status(
         "抓取异常",
         error_message,
@@ -673,13 +679,19 @@ def _mark_lhb_pool_load_complete(owner) -> None:
 def _handle_missing_lhb_calendar(owner, *, cache_only: bool) -> None:
     if cache_only:
         owner._pool_bootstrap_started = False
+        if getattr(owner, "_realtime_quote_projection_state", "") == "pending":
+            owner._realtime_quote_projection_reason = "lhb_tab_cache_deferred"
         owner._set_pool_status("交易日历未就绪", freshness="本地缓存", next_step="进入页面后重试")
         return
     owner._calendar_retry_count += 1
     if owner._calendar_retry_count <= 3:
+        if getattr(owner, "_realtime_quote_projection_state", "") == "pending":
+            owner._realtime_quote_projection_reason = "lhb_tab_retry_pending"
         owner._set_pool_status("交易日历未就绪", f"第{owner._calendar_retry_count}次重试")
         owner._schedule_pool_retry()
         return
+    owner._realtime_quote_projection_state = "error"
+    owner._realtime_quote_projection_reason = "lhb_calendar_unavailable"
     owner._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
 
 
@@ -736,6 +748,8 @@ def _deliver_or_stage_lhb_pool(
 ) -> bool:
     rows = [dict(row) for row in (row_data or [])]
     pool_rows = [dict(row) for row in (pool or [])]
+    owner._realtime_quote_projection_state = "ready"
+    owner._realtime_quote_projection_reason = ""
     if _is_lhb_display_active(owner):
         owner._pending_lhb_display = None
         owner._display_pool(
@@ -863,6 +877,8 @@ def _complete_lhb_pool_load(owner, payload, *, emit_event: bool) -> None:
         _handle_missing_lhb_calendar(owner, cache_only=cache_only)
         return
     pool, row_data = _adopt_lhb_pool_payload(owner, normalized_payload)
+    owner._realtime_quote_projection_state = "ready"
+    owner._realtime_quote_projection_reason = ""
     _display_loaded_lhb_pool(owner, pool, row_data, cache_only=cache_only, emit_event=emit_event)
     if owner._pending_pool_refresh:
         owner._schedule_pending_pool_refresh()
@@ -878,6 +894,8 @@ def _complete_lhb_pool_load(owner, payload, *, emit_event: bool) -> None:
 def _complete_lhb_pool_error(owner, error_message: str) -> None:
     _mark_lhb_pool_load_complete(owner)
     owner._pool_bootstrap_started = False
+    owner._realtime_quote_projection_state = "error"
+    owner._realtime_quote_projection_reason = "lhb_pool_load_failed"
     owner._set_pool_status(
         "龙虎榜池加载失败",
         error_message,
@@ -935,6 +953,8 @@ class _LhbBackgroundPreloadMixin:
             self._pool_bootstrap_generation += 1
             self._pool_load_in_progress = False
             self._pool_bootstrap_started = False
+            self._realtime_quote_projection_state = "unknown"
+            self._realtime_quote_projection_reason = "lhb_tab_preload_cancelled"
             self._pool_bootstrap_not_before = 0.0
             self._post_f5_pool_defer_until = 0.0
             self._post_f5_pool_pending = False
@@ -1107,6 +1127,8 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         if self._pool_bootstrap_started:
             return
         self._pool_bootstrap_started = True
+        if self._realtime_quote_projection_state == "pending":
+            self._realtime_quote_projection_reason = "lhb_tab_deferred"
         self._pool_bootstrap_generation = int(getattr(self, "_pool_bootstrap_generation", 0)) + 1
         generation = self._pool_bootstrap_generation
         if delay_ms is None:
@@ -1476,6 +1498,8 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
             return
         _stop_lhb_pool_refresh_timers(self)
         self._pending_pool_refresh = False
+        if self._realtime_quote_projection_state == "pending":
+            self._realtime_quote_projection_reason = "lhb_tab_loading"
         self._pool_load_in_progress = True
         cache_only = bool(getattr(self, "_background_preload_cache_only", False))
         if (
@@ -1800,6 +1824,36 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
             return [dict(row) for row in rows]
         return []
 
+    def get_realtime_quote_source_projection(self) -> dict:
+        """Return the current LHB registration state for the central worker.
+
+        A staged row set is newer than the visible model and therefore wins.
+        Once this source has produced a ready-empty or error terminal state,
+        later retry scheduling must not revive an old headless-cache pool.
+        """
+
+        if getattr(self, "_runtime_cleanup_done", False):
+            return {"codes": (), "status": "degraded", "reason": "lhb_tab_runtime_stopped"}
+
+        pending_display = getattr(self, "_pending_lhb_display", None)
+        rows = self.get_watchlist_radar_rows()
+        codes = tuple(row.get("代码") for row in rows if isinstance(row, Mapping))
+        state = str(getattr(self, "_realtime_quote_projection_state", "unknown") or "unknown")
+        reason = str(getattr(self, "_realtime_quote_projection_reason", "") or "").strip()
+        if rows:
+            if state in {"error", "unknown"}:
+                return {"codes": codes, "status": "registered_degraded", "reason": reason}
+            return {"codes": codes, "status": "registered", "reason": ""}
+        if isinstance(pending_display, dict):
+            return {"codes": (), "status": "registered_empty", "reason": ""}
+        if state == "ready":
+            return {"codes": (), "status": "registered_empty", "reason": ""}
+        if state == "pending":
+            return {"codes": (), "status": "pending", "reason": reason or "lhb_tab_deferred"}
+        if state == "error":
+            return {"codes": (), "status": "error", "reason": reason or "lhb_tab_load_failed"}
+        return {"codes": (), "status": "degraded", "reason": reason or "lhb_tab_projection_unknown"}
+
     def _display_pool(
         self,
         pool: list[dict],
@@ -1982,6 +2036,8 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
     def shutdown(self) -> None:
         self._pool_bootstrap_generation = int(getattr(self, "_pool_bootstrap_generation", 0)) + 1
         self._pool_bootstrap_started = False
+        self._realtime_quote_projection_state = "unknown"
+        self._realtime_quote_projection_reason = "lhb_tab_runtime_stopped"
         self._pool_bootstrap_not_before = 0.0
         self._post_f5_pool_defer_until = 0.0
         self._post_f5_pool_pending = False
