@@ -199,22 +199,9 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
 
     SHELL_NAV_REPAINT_GUARD_ARM_MS = 750
     SHELL_NAV_REPAINT_GUARD_ACTIVE_MS = 750
-    # Watchlist treats this as an observability threshold because Qt can deliver
-    # more than two redundant full paints inside one bounded native burst.
     # LHB retains its existing post-budget fail-open behavior.
     SHELL_NAV_REPAINT_GUARD_MAX_SUPPRESSIONS = 2
     NATIVE_WINDOW_PROVENANCE_MAX_AGE_MS = 10_000
-    # The guard below is intentionally much narrower than provenance retention:
-    # it applies only to the immediate WindowDeactivate -> UpdateRequest burst
-    # reproduced while opening an independent K-line window.
-    NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS = 250
-    # The staged Watchlist reveal can receive one delayed LayoutRequest tail
-    # after its required first viewport frame.  Keep the guard bounded, while
-    # model, geometry, input and flash changes continue to fail open below.
-    WATCHLIST_PRELOAD_REPAINT_GUARD_ACTIVE_MS = 4_000
-    WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS = 2
-    WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS = 1_000
-    WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS = 250
     _NATIVE_WINDOW_EVENT_SIGNALS = {
         QEvent.Type.WindowActivate: "window_activate",
         QEvent.Type.WindowDeactivate: "window_deactivate",
@@ -243,18 +230,6 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "window_palette_change",
         }
     )
-    _NATIVE_WINDOW_REPAINT_GUARD_INVALIDATING_SIGNALS = frozenset(
-        {
-            "window_expose",
-            "window_resize",
-            "window_show",
-            "window_hide",
-            "window_state_change",
-            "window_style_change",
-            "window_palette_change",
-        }
-    )
-
     def __init__(self, parent=None, default_row_height: int = None):
         super().__init__(parent)
         self._base_row_height = None
@@ -913,9 +888,6 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         if signal in self._NATIVE_WINDOW_STRUCTURAL_SIGNALS:
             self._native_window_requires_full_paint = True
             self._native_window_paint_event = record
-        if signal in self._NATIVE_WINDOW_REPAINT_GUARD_INVALIDATING_SIGNALS:
-            self._invalidate_shell_nav_repaint_guard(f"native_{signal}")
-
     def _native_window_paint_provenance(self) -> dict[str, str]:
         now = time.monotonic()
         paint_event = self._native_window_paint_event or {}
@@ -935,73 +907,6 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "window_inactive": str(bool(self._native_window_inactive)).lower(),
             "requires_full_paint": str(bool(self._native_window_requires_full_paint)).lower(),
         }
-
-    def _maybe_defer_inactive_window_full_paint(self, event) -> bool:
-        """Skip only the known inactive-window full-paint burst; otherwise fail open."""
-        if self._closing or self._paint_metric_scope != "watchlist":
-            return False
-        if self._pending_paint_metric is not None:
-            # Quote/model and flash paints carry a business reason and must
-            # remain visible even while an independent window owns focus.
-            return False
-        try:
-            if event.type() != QEvent.Type.Paint:
-                return False
-            if not bool(event.spontaneous()):
-                return False
-            viewport = self.viewport()
-            if viewport is None or not viewport.isVisible() or not viewport.updatesEnabled():
-                return False
-            dirty_ratio, dirty_rects, full_viewport = _paint_region_metrics(
-                event.region(), viewport.rect()
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return False
-        if not full_viewport:
-            return False
-
-        provenance = self._native_window_paint_provenance()
-        try:
-            signal_age_ms = float(provenance["signal_age_ms"])
-            last_event_age_ms = float(provenance["last_event_age_ms"])
-        except (KeyError, TypeError, ValueError):
-            return False
-        if (
-            provenance["signal"] != "window_deactivate"
-            or provenance["last_event"] != "window_update_request"
-            or provenance["window_inactive"] != "true"
-            or provenance["requires_full_paint"] != "false"
-            or self._native_window_is_active() is not False
-            or not 0.0 <= signal_age_ms <= self.NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS
-            or not 0.0 <= last_event_age_ms <= self.NATIVE_WINDOW_DEACTIVATE_GUARD_MAX_AGE_MS
-        ):
-            return False
-
-        try:
-            from core.observability import record_metric
-
-            record_metric(
-                "watchlist_inactive_window_full_paint_guard",
-                1,
-                unit="count",
-                tags={
-                    "decision": "defer_untracked_full",
-                    "tab": self._paint_metric_scope,
-                    "reason": "other",
-                    "signal": provenance["signal"],
-                    "signal_age_ms": provenance["signal_age_ms"],
-                    "last_event": provenance["last_event"],
-                    "last_event_age_ms": provenance["last_event_age_ms"],
-                    "window_inactive": provenance["window_inactive"],
-                    "requires_full_paint": provenance["requires_full_paint"],
-                    "dirty_bounding_area_ratio": f"{dirty_ratio:.4f}",
-                    "dirty_region_rects": str(dirty_rects),
-                    "paint_event_spontaneous": str(bool(event.spontaneous())).lower(),
-                },
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug("skip inactive-window repaint guard metric: %s", exc)
-        return True
 
     def prepare_shell_nav_repaint_guard(self) -> None:
         """Arm a short guard for redundant shell-nav full paints on data tables."""
@@ -1052,7 +957,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         return True
 
     def finish_workspace_reveal_batch(self) -> None:
-        """Release a reveal batch and let Qt request its required final frame."""
+        """Release a reveal batch and request the required complete viewport frame."""
         if not self._workspace_reveal_batch_active:
             return
         self._workspace_reveal_batch_active = False
@@ -1061,30 +966,13 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         self.setUpdatesEnabled(True)
         if self._paint_metric_scope != "watchlist":
             return
-        # StackOne has now completed the synchronous part of the reveal.  The
-        # next full frame remains mandatory, but a later LayoutRequest /
-        # UpdateRequest pair with no model, geometry, input, or flash change is
-        # merely a native layout tail.  Reuse the existing fail-open guard so
-        # only that bounded tail is deferred.
-        self._arm_redundant_full_paint_guard(
-            workspace_load_reason="workspace_reveal_batch",
-            metric_name="watchlist_workspace_reveal_layout_tail_guard",
-            retain_after_budget=True,
-            preserve_visible_frame=False,
-            active_ms=self.WATCHLIST_PRELOAD_REPAINT_GUARD_ACTIVE_MS,
-            max_suppressions=self.WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS,
-        )
-        guard = self._shell_nav_repaint_guard
-        if guard is not None:
-            guard.update(
-                native_tail_signal="window_layout_request",
-                native_tail_last_event="window_update_request",
-                native_tail_signal_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS,
-                native_tail_last_event_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS,
-            )
         viewport = self.viewport()
-        if self.isVisible() and viewport is not None and viewport.isVisible():
-            self._activate_shell_nav_repaint_guard()
+        if viewport is not None:
+            # QAbstractItemView paints its contents on the viewport.  This
+            # queues one coalescible, complete frame after the synchronous
+            # StackOne switch; it must not be replaced by a later per-row
+            # invalidation or a viewportEvent paint suppression guard.
+            viewport.update()
 
     def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
         """Arm source-scoped guards for a bounded workspace preload repaint tail."""
@@ -1100,22 +988,10 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             )
             return
         if self._paint_metric_scope == "watchlist":
-            self._arm_redundant_full_paint_guard(
-                workspace_load_reason=load_reason_text,
-                metric_name="watchlist_preload_repaint_guard",
-                retain_after_budget=True,
-                preserve_visible_frame=False,
-                active_ms=self.WATCHLIST_PRELOAD_REPAINT_GUARD_ACTIVE_MS,
-                max_suppressions=self.WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS,
-            )
-            guard = self._shell_nav_repaint_guard
-            if guard is not None:
-                guard.update(
-                    native_tail_signal="window_layout_request",
-                    native_tail_last_event="window_update_request",
-                    native_tail_signal_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS,
-                    native_tail_last_event_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS,
-                )
+            # A warm Watchlist retains its model and hidden quote projection,
+            # but any visible QTableView paint can still be required to fill
+            # newly exposed rows.  Never arm a post-prewarm full-paint guard.
+            self._clear_shell_nav_repaint_guard()
             return
         if self._paint_metric_scope == "lhb":
             # LHB's staged cache payload already reset/sorted its model inside
@@ -1333,6 +1209,12 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
 
     def _maybe_defer_shell_nav_full_paint(self, event) -> bool:
         """Fail open unless this is a bounded, redundant post-reveal full paint."""
+        if self._paint_metric_scope == "watchlist":
+            # QTableView may need every complete Paint event after StackOne
+            # exposure.  Consuming one here leaves the backing store only
+            # partially populated until a mouse/scroll dirty region arrives.
+            self._clear_shell_nav_repaint_guard()
+            return False
         guard = self._active_shell_nav_repaint_guard()
         if guard is None:
             return False
@@ -1798,15 +1680,19 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         ):
             super().paintEvent(event)
         if delivered_full:
-            # A real full viewport paint has restored the Base background and
-            # current table frame, so a later inactive-window burst can be
-            # considered for the narrow guard again.
+            # Preserve an explicit telemetry boundary for the completed
+            # native frame.  Watchlist never consumes a later PaintEvent.
             self._native_window_requires_full_paint = False
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
 
-        if metric is not None or elapsed_ms >= 25.0:
+        if metric is not None or elapsed_ms >= 25.0 or (scope == "watchlist" and delivered_full):
             from core.observability import record_metric
 
+            # A complete Watchlist PaintEvent is a display-correctness
+            # boundary, even when it is fast and has no business metric.  The
+            # native profile compares this evidence with the incoming viewport
+            # PaintEvents so a future guard cannot silently consume a full
+            # frame and leave rows to be revealed by mouse movement.
             record_metric(f"{scope}_table_paint_ms", elapsed_ms, unit="ms", tags=tags)
             scheduled_value = (metric or {}).get("scheduled_at", 0.0)
             scheduled_at = float(scheduled_value) if isinstance(scheduled_value, (int, float)) else 0.0
@@ -1824,8 +1710,8 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         if self._closing:
             return
         if self._paint_metric_scope == "watchlist":
-            # A just-shown table must render one full frame before any native
-            # inactive-window suppression is considered.
+            # Reset native provenance for diagnostics. Visible Watchlist
+            # PaintEvents always continue to QTableView.paintEvent.
             self._native_window_requires_full_paint = True
             self._native_window_inactive = False
             self._native_window_paint_event = None
@@ -1898,10 +1784,9 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
     def viewportEvent(self, event):
         event_type = event.type()
         if event_type == QEvent.Type.Paint:
-            if self._maybe_defer_shell_nav_full_paint(event):
-                return True
-            if self._maybe_defer_inactive_window_full_paint(event):
-                return True
+            if self._paint_metric_scope != "watchlist":
+                if self._maybe_defer_shell_nav_full_paint(event):
+                    return True
         elif event_type in {
             QEvent.Type.Resize,
             QEvent.Type.StyleChange,

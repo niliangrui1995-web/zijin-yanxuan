@@ -398,9 +398,10 @@ def _pause_interactive_handoff_for_visible_watchlist(
     key: str,
     reason: object,
 ) -> bool:
-    if key != "watchlist":
-        return False
     coordinator = getattr(workspace, "_background_preload_coordinator", None)
+    if key != "watchlist":
+        resume = getattr(coordinator, "resume_foreground_hold_after_watchlist", None)
+        return bool(callable(resume) and resume())
     pause = getattr(coordinator, "pause_interactive_handoff_for_watchlist", None)
     return bool(callable(pause) and pause(reason))
 
@@ -482,6 +483,7 @@ def _initialize_workspace_runtime_state(workspace, *, controlled_startup_probe_g
     workspace._background_prewarm_visible_watchlist_at = 0.0
     workspace._background_prewarm_visible_watchlist_detail = ""
     workspace._background_prewarm_interaction_quiet_until = 0.0
+    workspace._background_prewarm_foreground_hold_reason = ""
     workspace._background_prewarm_enabled = False
     workspace._background_prewarm_timer = None
     workspace._background_prewarm_active_key = ""
@@ -598,6 +600,7 @@ def _clear_workspace_pending_state(workspace) -> None:
     workspace._background_prewarm_visible_watchlist_at = 0.0
     workspace._background_prewarm_visible_watchlist_detail = ""
     workspace._background_prewarm_interaction_quiet_until = 0.0
+    workspace._background_prewarm_foreground_hold_reason = ""
     workspace._copy_hook_refresh_queued = False
     restore_timer = getattr(workspace, "_restore_last_tab_timer", None)
     if restore_timer is None:
@@ -920,14 +923,20 @@ def _attach_workspace_tab_transition_context(workspace, *, index: int, spec: dic
 def _ensure_background_preload_staging_host(workspace):
     host = getattr(workspace, "_background_preload_staging_host", None)
     if host is None:
-        # Never attach a cold/stale page constructor to the live workspace
-        # tree.  A child insertion there posts LayoutRequest to MainWindow and
-        # invalidates an unrelated, newly visible Watchlist viewport.
-        #
-        # The host is intentionally parentless and explicitly disposed during
-        # workspace shutdown.  Runtime services are mirrored below so staged
-        # tabs retain the same construction contract as live workspace tabs.
-        host = QWidget()
+        # Keep staged pages out of the live QTabWidget hierarchy, but avoid a
+        # parentless hidden QWidget: on Windows it is an independent top-level
+        # window and can emit activation/layout tail events that invalidate the
+        # visible Watchlist backing store.  A non-activating owned tool window
+        # retains the staging isolation without participating in the workspace
+        # layout or appearing on screen.
+        host = QWidget(
+            workspace,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus,
+        )
+        host.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        host.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         host.setObjectName("backgroundPreloadStagingHost")
         host.hide()
         workspace._background_preload_staging_host = host
@@ -946,15 +955,15 @@ def _ensure_background_preload_staging_host(workspace):
 
 
 def _dispose_background_preload_staging_host(workspace) -> None:
-    """Release the parentless staging host after its staged tabs shut down."""
+    """Release the hidden non-activating staging host after its staged tabs shut down."""
     host = getattr(workspace, "_background_preload_staging_host", None)
     workspace._background_preload_staging_host = None
     if host is None:
         return
     try:
         setattr(host, "_is_closing", True)
-        # The host is parentless and temporarily points back to its workspace
-        # so staged tabs can resolve runtime services.  Break that link before
+        # The owned tool host temporarily points back to its workspace so
+        # staged tabs can resolve runtime services.  Break that link before
         # deferred Qt deletion to avoid retaining a dead workspace tree.
         setattr(host, "_workspace", None)
         host.close()
@@ -1077,6 +1086,11 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
     BACKGROUND_PREWARM_POLL_INTERVAL_MS = 80
+    # After Watchlist has reached its required first frame, it is the most
+    # frequently used foreground surface.  Keep ordinary hidden-widget
+    # construction paused while it remains active; any deliberate navigation
+    # releases the hold and continues the same serial prewarm queue.
+    BACKGROUND_PREWARM_WATCHLIST_HOLD_POLL_MS = 1_000
     # QWidget construction is synchronous on the GUI thread.  Continue the
     # staged preload only after a short quiet window so a normal background
     # step cannot land in the middle of a user's consecutive tab switches.

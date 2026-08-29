@@ -44,6 +44,11 @@ SHELL_NAV_REPAINT_METRICS = (
     "watchlist_membership_reconcile",
     "ui_event_loop_stall_ms",
 )
+# The product deliberately leaves ordinary background prewarm parked for one
+# second while Watchlist is the foreground tab. Hold the native probe slightly
+# longer so a report proves the policy rather than merely observing its first
+# status tick before immediately navigating away.
+FOREGROUND_WATCHLIST_HOLD_MIN_MS = 1_100
 
 
 def _native_platform_error(*, requested: str, actual: str, system: str | None = None) -> str:
@@ -57,6 +62,16 @@ def _native_platform_error(*, requested: str, actual: str, system: str | None = 
     if actual_name != "windows":
         return f"Qt platform plugin must be windows, actual={actual_name or 'unknown'}"
     return ""
+
+
+def _foreground_watchlist_hold_remaining_ms(
+    elapsed_ms: float,
+    *,
+    minimum_hold_ms: int = FOREGROUND_WATCHLIST_HOLD_MIN_MS,
+) -> int:
+    """Return the whole-millisecond wait still needed for a foreground hold."""
+    remaining = max(0.0, float(minimum_hold_ms) - max(0.0, float(elapsed_ms)))
+    return max(0, int(remaining + 0.999))
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -343,6 +358,7 @@ def _background_prewarm_acceptance(
     mounted_keys: list[str] | None = None,
     staged_keys: list[str] | None = None,
     lazy_keys: list[str] | None = None,
+    foreground_mounted_key: str = "",
 ) -> dict:
     """Validate the completed all-tab hidden-staging contract.
 
@@ -361,15 +377,38 @@ def _background_prewarm_acceptance(
     ]
     ready_keys = [str(key or "") for key in status.get("ready_keys", ()) or ()]
     expected_mounted_keys = ["watchlist"] if planned_order[:1] == ["watchlist"] else []
-    expected_staged_keys = planned_order[1:] if expected_mounted_keys else []
+    foreground_key = str(foreground_mounted_key or "").strip()
+    if foreground_key:
+        if foreground_key not in planned_order or foreground_key == "watchlist":
+            violations.append(f"foreground_mounted_key={foreground_key!r} invalid")
+        elif expected_mounted_keys:
+            expected_mounted_keys.append(foreground_key)
+    expected_staged_keys = [
+        key for key in planned_order if key not in set(expected_mounted_keys)
+    ]
     if not bool(status.get("finished")):
         violations.append("prewarm_not_finished")
     if planned_count <= 0 or len(planned_order) != planned_count:
         violations.append(f"planned={len(planned_order)}/{planned_count}")
-    if start_order != planned_order:
-        violations.append(f"start_order={start_order}")
-    if completion_order != planned_order:
-        violations.append(f"completion_order={completion_order}")
+    if foreground_key:
+        if (
+            len(start_order) != len(planned_order)
+            or set(start_order) != set(planned_order)
+            or start_order[:1] != planned_order[:1]
+        ):
+            violations.append(f"start_order={start_order}")
+        if (
+            len(completion_order) != len(planned_order)
+            or set(completion_order) != set(planned_order)
+            or completion_order[:1] != planned_order[:1]
+            or completion_order != start_order
+        ):
+            violations.append(f"completion_order={completion_order}")
+    else:
+        if start_order != planned_order:
+            violations.append(f"start_order={start_order}")
+        if completion_order != planned_order:
+            violations.append(f"completion_order={completion_order}")
     if startup_lazy_handoff_keys:
         violations.append(
             "startup_lazy_handoff_keys="
@@ -404,8 +443,34 @@ def _background_prewarm_acceptance(
     return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
-def _watchlist_reveal_acceptance(paint_metrics: dict, *, viewport_background: dict | None = None) -> dict:
-    """Inspect actual VCPTableView paint metrics, not raw QPaintEvent observations."""
+def _foreground_watchlist_hold_acceptance(
+    *,
+    observed: bool,
+    paint_region: dict,
+    metrics: dict,
+) -> dict:
+    """Validate that the active Watchlist receives no hidden-prewarm full frame."""
+    violations: list[str] = []
+    if not observed:
+        violations.append("watchlist_foreground_hold_not_observed")
+    incoming_full = int((paint_region or {}).get("full_viewport_count", 0) or 0)
+    delivered_full = int(
+        ((metrics or {}).get("paint", {}) or {}).get("full_viewport_count", 0) or 0
+    )
+    if incoming_full:
+        violations.append(f"watchlist_foreground_hold_full_viewport_input={incoming_full}")
+    if delivered_full:
+        violations.append(f"watchlist_foreground_hold_full_viewport_delivered={delivered_full}")
+    return {"status": "pass" if not violations else "fail", "violations": violations}
+
+
+def _watchlist_reveal_acceptance(
+    paint_metrics: dict,
+    *,
+    paint_region: dict | None = None,
+    viewport_background: dict | None = None,
+) -> dict:
+    """Require the initial complete Watchlist frame without rejecting later native frames."""
     violations: list[str] = []
     paint_count = int((paint_metrics.get("durations") or {}).get("count", 0) or 0)
     if paint_count <= 0:
@@ -417,14 +482,13 @@ def _watchlist_reveal_acceptance(paint_metrics: dict, *, viewport_background: di
         violations.append(
             f"watchlist_first_reveal_reason={str(first_paint.get('reason', '')).strip()!r}"
         )
-    after_first = paint_metrics.get("after_first", {}) or {}
-    full_after_first = int(after_first.get("full_viewport_count", 0) or 0)
-    if full_after_first:
-        violations.append(f"watchlist_full_viewport_after_reveal={full_after_first}")
-    other_full_after_first = int(after_first.get("other_full_viewport_count", 0) or 0)
-    if other_full_after_first:
-        violations.append(
-            f"watchlist_other_full_viewport_after_reveal={other_full_after_first}"
+    if paint_region is not None:
+        violations.extend(
+            _full_viewport_delivery_violations(
+                paint_region,
+                paint_metrics,
+                label="watchlist_reveal",
+            )
         )
     if viewport_background and bool(viewport_background.get("available")):
         if not bool(viewport_background.get("auto_fill_background")):
@@ -435,6 +499,25 @@ def _watchlist_reveal_acceptance(paint_metrics: dict, *, viewport_background: di
                 f"{str(viewport_background.get('background_role', ''))!r}"
             )
     return {"status": "pass" if not violations else "fail", "violations": violations}
+
+
+def _full_viewport_delivery_violations(
+    paint_region: dict,
+    paint_metrics: dict,
+    *,
+    label: str,
+) -> list[str]:
+    """Ensure every native full viewport invalidation reached VCPTableView.paintEvent."""
+    incoming_full_count = int((paint_region or {}).get("full_viewport_count", 0) or 0)
+    delivered_full_count = int((paint_metrics or {}).get("full_viewport_count", 0) or 0)
+    if incoming_full_count <= 0:
+        return [f"{label} full_viewport_paint_missing"]
+    if delivered_full_count < incoming_full_count:
+        return [
+            f"{label} full_viewport_paint_dropped="
+            f"{delivered_full_count}/{incoming_full_count}"
+        ]
+    return []
 
 
 def _shell_nav_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
@@ -462,20 +545,36 @@ def _shell_nav_repaint_acceptance(results: list[dict], *, expected_cycles: int |
             violations.append(
                 f"cycle={cycle} tab_count={int(result.get('tab_count', -1) or -1)} expected={int(expected_tab_count)}"
             )
-        # The QApplication event filter records incoming QPaintEvents before
-        # VCPTableView.viewportEvent can consume one. Keep paint_region in the
-        # report as a native invalidation diagnostic, but judge the regression
-        # only from the table's actual paintEvent metric below.
-        if int(paint_metrics.get("count", 0) or 0) < 1:
-            violations.append(f"cycle={cycle} actual_paint_metric_missing")
-        if int(paint_metrics.get("full_viewport_count", 0) or 0) > 1:
-            violations.append(f"cycle={cycle} actual_full_viewport_metric_budget")
-        if int(paint_metrics.get("full_viewport_after_first_count", 0) or 0) != 0:
-            violations.append(f"cycle={cycle} actual_full_viewport_after_first")
-        if int(paint_metrics.get("other_full_viewport_count", 0) or 0) > 1:
-            violations.append(f"cycle={cycle} other_full_viewport_metric_budget")
-        if int(paint_metrics.get("other_full_viewport_after_first_count", 0) or 0) != 0:
-            violations.append(f"cycle={cycle} other_full_viewport_after_first")
+        paint_region = result.get("paint_region", {}) or {}
+        # QApplication sees a viewport PaintEvent before viewportEvent.  A
+        # Watchlist return is valid only when every complete invalidation also
+        # reaches VCPTableView.paintEvent; suppressing it leaves rows blank
+        # until later pointer-driven partial updates happen.
+        violations.extend(
+            _full_viewport_delivery_violations(
+                paint_region,
+                paint_metrics,
+                label=f"cycle={cycle}",
+            )
+        )
+        guard_counts = (result.get("repaint_guard", {}) or {}).get("decision_counts", {}) or {}
+        suppressed_full_paints = sum(
+            max(0, int(value or 0))
+            for decision, value in guard_counts.items()
+            if str(decision).startswith("suppress")
+        )
+        if suppressed_full_paints:
+            violations.append(
+                f"cycle={cycle} watchlist_full_viewport_paint_suppressed={suppressed_full_paints}"
+            )
+        visual_artifacts = result.get("visual_artifacts")
+        if isinstance(visual_artifacts, dict):
+            for artifact_name, artifact in visual_artifacts.items():
+                if not isinstance(artifact, dict) or not bool(artifact.get("saved")):
+                    detail = str((artifact or {}).get("error") or "not_saved")
+                    violations.append(
+                        f"cycle={cycle} visual_artifact={artifact_name} error={detail}"
+                    )
         if not bool(stalls.get("installed")):
             violations.append(f"cycle={cycle} stall_probe_missing")
         elif int(stalls.get("event_loop_critical_count", 0) or 0) != 0:
@@ -522,12 +621,13 @@ def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | 
         snapshot = metrics.get("snapshot", {})
         visible_return = action == "lhb_to_watchlist"
         if visible_return:
-            paint_full_count = int(paint.get("full_viewport_count", 0) or 0)
-            region_full_count = int(paint_region.get("full_viewport_count", 0) or 0)
-            if paint_full_count < 1 or paint_full_count > 2:
-                violations.append(f"cycle={cycle} action={action} full_viewport_paint_budget")
-            if region_full_count < 1 or region_full_count > 2:
-                violations.append(f"cycle={cycle} action={action} full_viewport_region_budget")
+            violations.extend(
+                _full_viewport_delivery_violations(
+                    paint_region,
+                    paint,
+                    label=f"cycle={cycle} action={action}",
+                )
+            )
             first_paint = paint.get("first") or {}
             if first_paint.get("reason") != "native_profile_tab_return":
                 violations.append(f"cycle={cycle} action={action} first_paint_reason")
@@ -1340,6 +1440,14 @@ class _NativeProfileController:
         self._background_prewarm_started_at = 0.0
         self._background_prewarm_offsets: dict[str, float] | None = None
         self._background_prewarm_first_hidden_key = ""
+        self._foreground_watchlist_hold_started_at = 0.0
+        self._foreground_watchlist_hold_offsets: dict[str, int] | None = None
+        self._foreground_watchlist_hold_observed = False
+        self._foreground_watchlist_hold_status: dict | None = None
+        self._foreground_watchlist_hold_released_at = 0.0
+        self._foreground_watchlist_release_requested = False
+        self._foreground_watchlist_release_key = ""
+        self._foreground_watchlist_return_pending = False
         self._watchlist_reveal_started_at = 0.0
         self._watchlist_reveal_offsets: dict[str, float] | None = None
         self._watchlist_prewarm_offsets: dict[str, int] | None = None
@@ -1545,6 +1653,83 @@ class _NativeProfileController:
         self._reset_stall_probe()
         self._set_phase("background_prewarm")
 
+    def _begin_foreground_watchlist_prewarm_hold(self) -> None:
+        if self._foreground_watchlist_hold_observed:
+            return
+        started_at = time.perf_counter()
+        self._record_watchlist_reveal(started_at)
+        self._foreground_watchlist_hold_started_at = started_at
+        self._foreground_watchlist_hold_offsets = self._metric_offsets()
+        self._foreground_watchlist_hold_observed = True
+        self._reset_stall_probe()
+        self._set_phase("background_prewarm_watchlist_hold")
+
+    def _release_foreground_watchlist_prewarm_hold(self) -> bool:
+        """Release the profiler-only foreground hold through a real tab switch.
+
+        The active-Watchlist hold is measured before this call.  A real
+        navigation then hides Watchlist and deliberately mounts one target;
+        remaining pages continue through their normal hidden staging path.
+        That keeps the probe faithful to the user-facing lifecycle instead of
+        changing logical state while the Watchlist page remains on screen.
+        """
+        if self._foreground_watchlist_release_requested:
+            return True
+        workspace = getattr(self.window, "_workspace", None)
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
+        target_index = next(
+            (
+                index
+                for index, spec in enumerate(specs)
+                if str(spec.get("key") or "") != "watchlist"
+            ),
+            -1,
+        )
+        if workspace is None or target_index < 0:
+            self._fail("foreground Watchlist hold could not release background prewarm")
+            return False
+        try:
+            activated = bool(workspace.activate_tab(target_index, reason="user"))
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            self._fail(f"foreground Watchlist hold release navigation rejected: {exc}")
+            return False
+        if not activated:
+            self._fail("foreground Watchlist hold release navigation rejected")
+            return False
+        self._foreground_watchlist_release_requested = True
+        self._foreground_watchlist_release_key = str(
+            (specs[target_index] or {}).get("key") or ""
+        ).strip()
+        self._set_phase("background_prewarm_released")
+        coordinator = getattr(workspace, "_background_preload_coordinator", None)
+        advance = getattr(coordinator, "advance", None)
+        if callable(advance):
+            self.QTimer.singleShot(0, advance)
+        return True
+
+    def _return_to_watchlist_after_background_prewarm(self) -> None:
+        if self._foreground_watchlist_return_pending:
+            return
+        workspace = getattr(self.window, "_workspace", None)
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
+        watchlist_index = next(
+            (
+                index
+                for index, spec in enumerate(specs)
+                if str(spec.get("key") or "") == "watchlist"
+            ),
+            -1,
+        )
+        if workspace is None or watchlist_index < 0:
+            self._fail("post-prewarm Watchlist return unavailable")
+            return
+        self._foreground_watchlist_return_pending = True
+        self._set_phase("background_prewarm_watchlist_return")
+        if not bool(workspace.activate_tab(watchlist_index, reason="user")):
+            self._fail("post-prewarm Watchlist return rejected")
+            return
+        self.QTimer.singleShot(300, self._continue_after_background_prewarm)
+
     def _watchlist_viewport_background_snapshot(self) -> dict:
         workspace = getattr(getattr(self, "window", None), "_workspace", None)
         tab_getter = getattr(workspace, "get_loaded_tab", None)
@@ -1593,6 +1778,7 @@ class _NativeProfileController:
                 repaint_runtime["viewport_background"] = viewport_background
         reveal_acceptance = _watchlist_reveal_acceptance(
             reveal_metrics["paint"],
+            paint_region=reveal_paint_region,
             viewport_background=viewport_background,
         )
         reveal_acceptance_enforced = not bool(getattr(self.args, "shell_nav_only", False))
@@ -1615,7 +1801,7 @@ class _NativeProfileController:
             ),
             "ui_stall_snapshot": self._stall_snapshot(),
             "acceptance_metric_source": "watchlist_table_paint_ms",
-            "acceptance_scope": "actual_vcp_first_preload_reveal_plus_zero_later_full_viewport_paints",
+            "acceptance_scope": "actual_vcp_preload_reveal_complete_frame_required_later_full_frames_observed_not_suppressed",
             "acceptance": reveal_acceptance,
             "acceptance_enforced": reveal_acceptance_enforced,
         }
@@ -1635,6 +1821,46 @@ class _NativeProfileController:
             return
         workspace = getattr(self.window, "_workspace", None)
         status = workspace.background_preload_status() if workspace is not None else {}
+        hold_reason = str(status.get("foreground_hold_reason", "") or "")
+        if (
+            self._background_prewarm_started_at <= 0.0
+            and hold_reason == "watchlist_active"
+        ):
+            self._begin_foreground_watchlist_prewarm_hold()
+            if self._foreground_watchlist_hold_status is None:
+                self._foreground_watchlist_hold_status = dict(status)
+            hold_elapsed_ms = (
+                time.perf_counter() - self._foreground_watchlist_hold_started_at
+            ) * 1000.0
+            hold_remaining_ms = _foreground_watchlist_hold_remaining_ms(hold_elapsed_ms)
+            if hold_remaining_ms:
+                self.QTimer.singleShot(
+                    min(50, hold_remaining_ms),
+                    self._poll_background_prewarm_finished,
+                )
+                return
+            if hold_elapsed_ms >= max(1, int(self.args.prewarm_timeout_ms)):
+                self.report["background_prewarm"] = {
+                    "elapsed_ms": round(hold_elapsed_ms, 3),
+                    "status": status,
+                    "acceptance": {
+                        "status": "fail",
+                        "violations": ["foreground_watchlist_hold_not_released"],
+                    },
+                }
+                self._fail("foreground Watchlist hold did not release background prewarm")
+                return
+            release_started_at = time.perf_counter()
+            release_offsets = self._metric_offsets()
+            self._reset_stall_probe()
+            if not self._release_foreground_watchlist_prewarm_hold():
+                return
+            self._foreground_watchlist_hold_released_at = release_started_at
+            self._background_prewarm_started_at = release_started_at
+            self._background_prewarm_offsets = release_offsets
+            self._set_phase("background_prewarm")
+            self.QTimer.singleShot(50, self._poll_background_prewarm_finished)
+            return
         if self._background_prewarm_started_at <= 0.0 and bool(status.get("finished")):
             terminal_at = time.perf_counter()
             self._record_watchlist_reveal(terminal_at)
@@ -1699,6 +1925,15 @@ class _NativeProfileController:
                 "ClassicWorkspace._prewarm_next_tab",
             ),
         )
+        foreground_release_key = str(
+            getattr(self, "_foreground_watchlist_release_key", "") or ""
+        )
+        foreground_hold_observed = bool(
+            getattr(self, "_foreground_watchlist_hold_observed", False)
+        )
+        foreground_release_requested = bool(
+            getattr(self, "_foreground_watchlist_release_requested", False)
+        )
         acceptance = _background_prewarm_acceptance(
             status,
             paint_region,
@@ -1706,6 +1941,7 @@ class _NativeProfileController:
             mounted_keys=mounted_keys,
             staged_keys=staged_keys,
             lazy_keys=lazy_keys,
+            foreground_mounted_key=foreground_release_key,
         )
         heartbeat_lateness = summarize_durations(
             list(self._heartbeat_by_phase.get("background_prewarm", ()))
@@ -1722,9 +1958,47 @@ class _NativeProfileController:
             "heartbeat_lateness": heartbeat_lateness,
             "ui_stall_snapshot": stall_snapshot,
         }
+        foreground_hold = None
+        if foreground_hold_observed:
+            hold_paint_region = self.paint_probe.paint_region_summary(
+                "background_prewarm_watchlist_hold"
+            )
+            hold_offsets = self._foreground_watchlist_hold_offsets or self._metric_offsets()
+            hold_metrics = _summarize_residual_repaint_metrics(self._metrics_since(hold_offsets))
+            hold_acceptance = _foreground_watchlist_hold_acceptance(
+                observed=True,
+                paint_region=hold_paint_region,
+                metrics=hold_metrics,
+            )
+            foreground_hold = {
+                "elapsed_ms": round(
+                    max(
+                        0.0,
+                        float(
+                            getattr(self, "_foreground_watchlist_hold_released_at", 0.0)
+                            or time.perf_counter()
+                        )
+                        - float(getattr(self, "_foreground_watchlist_hold_started_at", 0.0) or 0.0),
+                    )
+                    * 1000.0,
+                    3,
+                ),
+                "minimum_elapsed_ms": FOREGROUND_WATCHLIST_HOLD_MIN_MS,
+                "status_at_hold": dict(
+                    getattr(self, "_foreground_watchlist_hold_status", None) or {}
+                ),
+                "released_for_hidden_staging": bool(
+                    foreground_release_requested
+                ),
+                "release_target_key": foreground_release_key,
+                "paint_region": hold_paint_region,
+                "metrics": hold_metrics,
+                "acceptance": hold_acceptance,
+            }
         self.report["background_prewarm"] = {
             "elapsed_ms": round(elapsed_ms, 3),
             "first_hidden_key": self._background_prewarm_first_hidden_key,
+            "foreground_release_key": foreground_release_key,
             "tab_count": tab_count,
             "mounted_keys": mounted_keys,
             "staged_keys": staged_keys,
@@ -1745,11 +2019,21 @@ class _NativeProfileController:
             "heartbeat_lateness": heartbeat_lateness,
             "ui_stall_snapshot": stall_snapshot,
             "event_loop_observation": event_loop_observation,
-            "acceptance_scope": "watchlist_repaint_and_11_tab_all_hidden_staging",
+            "foreground_watchlist_hold": foreground_hold,
+            "acceptance_scope": (
+                "watchlist_repaint_and_11_tab_hidden_staging"
+                if not foreground_release_key
+                else "watchlist_repaint_and_11_tab_staging_after_one_real_foreground_navigation"
+            ),
             "acceptance": acceptance,
         }
         if acceptance["status"] != "pass":
             self.report["errors"].append("background prewarm repaint acceptance failed")
+        if foreground_hold is not None and foreground_hold["acceptance"]["status"] != "pass":
+            self.report["errors"].append("foreground Watchlist hold repaint acceptance failed")
+        if foreground_release_requested:
+            self._return_to_watchlist_after_background_prewarm()
+            return
         self._continue_after_background_prewarm()
 
     def _resolve_shell_nav_targets(self):
@@ -1887,6 +2171,11 @@ class _NativeProfileController:
             pixmap = screen.grabWindow(win_id)
             if pixmap is None or pixmap.isNull():
                 raise RuntimeError("empty_screen_grab")
+            width_reader = getattr(pixmap, "width", None)
+            height_reader = getattr(pixmap, "height", None)
+            if callable(width_reader) and callable(height_reader):
+                if int(width_reader()) <= 1 or int(height_reader()) <= 1:
+                    raise RuntimeError("screen_grab_too_small")
             if not bool(pixmap.save(str(paths["main_window"]), "PNG")):
                 raise RuntimeError("main_window_save_failed")
             artifacts["main_window"]["saved"] = True

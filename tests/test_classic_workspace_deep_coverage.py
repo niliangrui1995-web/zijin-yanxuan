@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget
 
 from app.services.stock_context_model_service import StockSignal
@@ -56,15 +57,20 @@ def test_classic_workspace_tracks_logical_activity_and_prepares_hidden_reveal():
     assert calls == [("active", True), ("other", False), ("prepare",)]
 
 
-def test_workspace_staging_host_is_detached_from_live_workspace_layout(qt_application):
-    """过期的懒加载页不能作为主工作区子树的一部分完成构造。"""
+def test_workspace_staging_host_is_owned_nonactivating_tool_outside_live_layout(qt_application):
+    """预热宿主由工作区拥有，但绝不进入 live QTabWidget 的布局树。"""
     workspace = QWidget()
     workspace.host = None
     workspace._background_preload_staging_host = None
     host = workspace_module._ensure_background_preload_staging_host(workspace)
     try:
-        assert host.parentWidget() is None
-        assert host.parent() is None
+        assert host.parentWidget() is workspace
+        assert host.isWindow() is True
+        assert host.windowFlags() & Qt.WindowType.Tool
+        assert host.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+        assert host.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen) is True
+        assert host.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating) is True
+        assert host.isVisible() is False
         assert getattr(host, "_workspace", None) is workspace
 
         workspace_module._dispose_background_preload_staging_host(workspace)

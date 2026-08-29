@@ -269,6 +269,7 @@ class FundHoldingsViewCommitter(QObject):
         self._finish_rows: list[dict] | None = None
         self._selection: dict | None = None
         self._selection_baseline: dict | None = None
+        self._paused = False
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(0)
@@ -281,6 +282,10 @@ class FundHoldingsViewCommitter(QObject):
     @property
     def is_active(self) -> bool:
         return self._finish_rows is not None
+
+    @property
+    def is_paused(self) -> bool:
+        return bool(self._paused)
 
     def should_chunk(self, rows) -> bool:
         return len(rows) > self._chunk_size and callable(getattr(self._tab.model, "append_rows", None))
@@ -308,6 +313,8 @@ class FundHoldingsViewCommitter(QObject):
         if getattr(self._tab, "_runtime_cleanup_done", False):
             self.cancel()
             return
+        if self._paused:
+            return
 
         chunk = self._pending_rows[: self._chunk_size]
         del self._pending_rows[: self._chunk_size]
@@ -323,6 +330,23 @@ class FundHoldingsViewCommitter(QObject):
             self._timer.start()
         else:
             self._complete()
+
+    def pause(self) -> bool:
+        """Freeze a hidden batch commit without dropping its pending rows."""
+        if not self.is_active:
+            return False
+        self._paused = True
+        self._timer.stop()
+        return True
+
+    def resume(self) -> bool:
+        """Continue a previously paused batch from the exact next row."""
+        if not self._paused:
+            return False
+        self._paused = False
+        if self.is_active and not getattr(self._tab, "_runtime_cleanup_done", False):
+            self._timer.start()
+        return True
 
     def _complete(self) -> None:
         view_rows = self._finish_rows
@@ -342,6 +366,7 @@ class FundHoldingsViewCommitter(QObject):
 
     def cancel(self) -> None:
         self._timer.stop()
+        self._paused = False
         self._pending_rows = []
         self._finish_rows = None
         self._selection = None

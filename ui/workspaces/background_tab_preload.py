@@ -189,6 +189,54 @@ def _ordinary_step_interaction_quiet_delay_ms(coordinator) -> int:
     return max(0, int(remaining_ms + 0.999))
 
 
+def _watchlist_is_current(coordinator) -> bool:
+    """Read only the current page; it remains valid even when the queue is empty."""
+    workspace = coordinator.workspace
+    spec_getter = getattr(workspace, "_spec_for_key_or_index", None)
+    if not callable(spec_getter):
+        return False
+    try:
+        watchlist_spec = spec_getter("watchlist") or {}
+        watchlist = watchlist_spec.get("widget")
+        return bool(watchlist is not None and workspace.tabs.currentWidget() is watchlist)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _foreground_watchlist_hold_reason(coordinator) -> str:
+    """Return a foreground-priority hold reason without touching the live layout.
+
+    The Watchlist opts in because it is the primary working surface.  Once its
+    own cache-only preload has completed, constructing another hidden QWidget
+    can still cause native MainWindow activation/layout invalidations on
+    Windows.  Those invalidations are unrelated to Watchlist data, but they
+    force an expensive full viewport paint.  A deliberate user request keeps
+    its existing priority path and is never held here.
+    """
+    if coordinator._priority_reasons or not _watchlist_is_current(coordinator):
+        return ""
+    workspace = coordinator.workspace
+    try:
+        watchlist_spec = workspace._spec_for_key_or_index("watchlist") or {}
+        watchlist = watchlist_spec.get("widget")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+    hold_reader = getattr(watchlist, "should_hold_background_prewarm", None)
+    if not callable(hold_reader):
+        return ""
+    try:
+        return "watchlist_active" if hold_reader() else ""
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
+def _visible_watchlist_prewarm_hold_reason(coordinator) -> str:
+    """Hold ordinary queued staging only after Watchlist's first frame is ready."""
+    if not bool(getattr(coordinator.workspace, "_background_prewarm_queue", ())):
+        return ""
+    return _foreground_watchlist_hold_reason(coordinator)
+
+
 def _interactive_handoff_start_delay_ms(workspace, reason: object) -> int:
     """Reuse shell-nav's quiet window before constructing a cold staged target.
 
@@ -476,9 +524,13 @@ def _finish_visible_watchlist_resume_handoff(coordinator) -> None:
 
 def cancel_background_tab_preload(coordinator) -> None:
     coordinator.timer.stop()
+    coordinator.workspace._background_prewarm_foreground_hold_reason = ""
     coordinator._priority_reasons.clear()
     coordinator._interactive_handoff_targets.clear()
     coordinator._watchlist_resume_pause_requested = False
+    coordinator._foreground_hold_active_key = ""
+    coordinator._foreground_hold_mode = ""
+    coordinator._foreground_hold_requeued_keys.clear()
     receipt = coordinator._cancel_receipt
     if receipt is None and coordinator.workspace._background_prewarm_active_widget is not None:
         receipt = coordinator._cancel_active_widget(reason="owner_shutdown")
@@ -521,6 +573,10 @@ class BackgroundTabPreloadCoordinator(QObject):
         self._startup_lazy_handoff_keys: list[str] = []
         self._interactive_handoff_targets: set[str] = set()
         self._watchlist_resume_pause_requested = False
+        self._foreground_hold_active_key = ""
+        self._foreground_hold_mode = ""
+        self._foreground_hold_count = 0
+        self._foreground_hold_requeued_keys: set[str] = set()
         workspace._background_prewarm_timer = self.timer
 
     def start(self) -> None:
@@ -533,6 +589,11 @@ class BackgroundTabPreloadCoordinator(QObject):
         self._startup_lazy_handoff_keys.clear()
         self._interactive_handoff_targets.clear()
         self._watchlist_resume_pause_requested = False
+        self._foreground_hold_active_key = ""
+        self._foreground_hold_mode = ""
+        self._foreground_hold_count = 0
+        self._foreground_hold_requeued_keys.clear()
+        workspace._background_prewarm_foreground_hold_reason = ""
         workspace._background_prewarm_visible_watchlist_state = "pending"
         workspace._background_prewarm_visible_watchlist_at = 0.0
         workspace._background_prewarm_visible_watchlist_detail = ""
@@ -549,13 +610,44 @@ class BackgroundTabPreloadCoordinator(QObject):
                 self._poll_cancelled_step()
                 return
             if workspace._background_prewarm_active_key:
+                if self._cancelling_key:
+                    self._poll_cancelled_step()
+                    return
+                if self._foreground_hold_active_key:
+                    if _watchlist_is_current(self):
+                        workspace._background_prewarm_foreground_hold_reason = "watchlist_active"
+                        _schedule_preload(
+                            self,
+                            max(1, int(workspace.BACKGROUND_PREWARM_WATCHLIST_HOLD_POLL_MS)),
+                        )
+                        return
+                    if not self.resume_foreground_hold_after_watchlist():
+                        _schedule_preload(self, workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+                        return
                 self._poll_active_step()
                 return
             self._discard_stale_priority_requests()
             quiet_delay_ms = _ordinary_step_interaction_quiet_delay_ms(self)
             if quiet_delay_ms > 0:
+                workspace._background_prewarm_foreground_hold_reason = ""
                 _schedule_preload(self, quiet_delay_ms)
                 return
+            hold_reason = _visible_watchlist_prewarm_hold_reason(self)
+            if hold_reason:
+                previous_reason = str(
+                    getattr(workspace, "_background_prewarm_foreground_hold_reason", "") or ""
+                )
+                workspace._background_prewarm_foreground_hold_reason = hold_reason
+                if previous_reason != hold_reason:
+                    log.info(
+                        "[Workspace] pause ordinary background preload while Watchlist remains active"
+                    )
+                _schedule_preload(
+                    self,
+                    max(1, int(workspace.BACKGROUND_PREWARM_WATCHLIST_HOLD_POLL_MS)),
+                )
+                return
+            workspace._background_prewarm_foreground_hold_reason = ""
             self._start_next_step()
 
     def status(self) -> dict:
@@ -581,6 +673,13 @@ class BackgroundTabPreloadCoordinator(QObject):
             "startup_lazy_handoff_count": len(self._startup_lazy_handoff_keys),
             "interactive_handoff_targets": sorted(self._interactive_handoff_targets),
             "watchlist_resume_pause_requested": self._watchlist_resume_pause_requested,
+            "foreground_hold_reason": str(
+                getattr(workspace, "_background_prewarm_foreground_hold_reason", "") or ""
+            ),
+            "foreground_hold_active_key": self._foreground_hold_active_key,
+            "foreground_hold_mode": self._foreground_hold_mode,
+            "foreground_hold_count": self._foreground_hold_count,
+            "foreground_hold_requeued_keys": sorted(self._foreground_hold_requeued_keys),
             "planned_order": planned_order,
             "planned_count": len(planned_order),
             "start_order": list(workspace._background_prewarm_start_order),
@@ -619,6 +718,8 @@ class BackgroundTabPreloadCoordinator(QObject):
     def prioritize(self, key: str, reason: object) -> bool:
         """Move an interactive request to the next serial preload slot."""
         workspace = self.workspace
+        if self._foreground_hold_active_key:
+            self.resume_foreground_hold_after_watchlist()
         request = _resume_startup_lazy_handoff(self, key, reason)
         if request is None:
             request = _normalized_priority_request(workspace, key, reason)
@@ -739,29 +840,128 @@ class BackgroundTabPreloadCoordinator(QObject):
         return discarded
 
     def pause_interactive_handoff_for_watchlist(self, reason: object) -> bool:
-        """Stop superseded hidden preload work when Watchlist becomes visible again."""
+        """Protect visible Watchlist from an already active hidden preload step."""
         if not is_interactive_tab_load_reason(reason):
             return False
         workspace = self.workspace
-        if not self._startup_lazy_handoff_keys:
-            return bool(self._discard_stale_priority_requests())
         if workspace._background_prewarm_finished or not _preload_key_ready(
             workspace,
             "watchlist",
         ):
             return False
 
+        self._discard_stale_priority_requests()
         self._priority_reasons.clear()
         self._prestart_priority_order.clear()
         self._priority_closures.clear()
         self._priority_boosted_keys.clear()
         self._interactive_handoff_targets.clear()
-        if workspace._background_prewarm_active_key:
-            self._watchlist_resume_pause_requested = True
-            return True
+        active_key = str(workspace._background_prewarm_active_key or "")
+        if active_key and active_key != "watchlist":
+            return self._hold_active_step_for_visible_watchlist()
 
         _finish_visible_watchlist_resume_handoff(self)
         return True
+
+    def resume_foreground_hold_after_watchlist(self) -> bool:
+        """Release an active cooperative hold as soon as the user leaves Watchlist."""
+        key = str(self._foreground_hold_active_key or "")
+        if not key:
+            return False
+        if _watchlist_is_current(self):
+            return False
+        if self._foreground_hold_mode == "cancelling":
+            _schedule_preload(self, 0)
+            return True
+        if self._foreground_hold_mode != "paused":
+            return False
+        widget = self.workspace._background_prewarm_active_widget
+        resume = getattr(widget, "resume_background_preload", None)
+        try:
+            resumed = bool(callable(resume) and resume())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning("[Workspace] resume foreground-held preload failed key=%s: %s", key, exc)
+            resumed = False
+        if not resumed:
+            return False
+        self._foreground_hold_active_key = ""
+        self._foreground_hold_mode = ""
+        self.workspace._background_prewarm_foreground_hold_reason = ""
+        _schedule_preload(self, 0)
+        return True
+
+    def _hold_active_step_for_visible_watchlist(self) -> bool:
+        workspace = self.workspace
+        key = str(workspace._background_prewarm_active_key or "")
+        if not key:
+            return False
+        if self._foreground_hold_active_key == key:
+            return True
+        widget = workspace._background_prewarm_active_widget
+        pause = getattr(widget, "pause_background_preload", None)
+        try:
+            paused = bool(callable(pause) and pause())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning("[Workspace] pause active background preload failed key=%s: %s", key, exc)
+            paused = False
+        self._foreground_hold_active_key = key
+        self._foreground_hold_count += 1
+        workspace._background_prewarm_foreground_hold_reason = "watchlist_active"
+        if paused:
+            self._foreground_hold_mode = "paused"
+            _schedule_preload(
+                self,
+                max(1, int(workspace.BACKGROUND_PREWARM_WATCHLIST_HOLD_POLL_MS)),
+            )
+            return True
+
+        self._foreground_hold_mode = "cancelling"
+        self._begin_foreground_hold_cancellation()
+        return True
+
+    def _begin_foreground_hold_cancellation(self) -> None:
+        workspace = self.workspace
+        key = str(workspace._background_prewarm_active_key or "")
+        if not key or self._cancelling_key:
+            return
+        self._cancelling_key = key
+        self._cancel_terminal_status = "foreground_hold"
+        self._cancel_terminal_detail = "watchlist_visible"
+        self._cancel_settlement_started_at = time.perf_counter()
+        self._cancel_receipt = self._cancel_active_widget(reason="watchlist_visible")
+        self._poll_cancelled_step()
+
+    def _park_cancelled_step_for_foreground_hold(self) -> None:
+        workspace = self.workspace
+        key = str(workspace._background_prewarm_active_key or "")
+        if key and not _preload_key_ready(workspace, key):
+            queued_keys = set(workspace._background_prewarm_queue)
+            queued_keys.add(key)
+            workspace._background_prewarm_queue = [
+                candidate
+                for candidate in workspace.STARTUP_TAB_LOAD_ORDER
+                if candidate in queued_keys and not _preload_key_ready(workspace, candidate)
+            ]
+            for closure in self._priority_closures.values():
+                _move_priority_closure_to_front(workspace, closure)
+            self._foreground_hold_requeued_keys.add(key)
+
+        workspace._background_prewarm_active_key = ""
+        workspace._background_prewarm_active_widget = None
+        workspace._background_prewarm_active_started_at = 0.0
+        self._active_step_count = max(0, self._active_step_count - 1)
+        self._foreground_hold_active_key = ""
+        self._foreground_hold_mode = ""
+        _clear_cancellation_state(self)
+        if _watchlist_is_current(self):
+            workspace._background_prewarm_foreground_hold_reason = "watchlist_active"
+            _schedule_preload(
+                self,
+                max(1, int(workspace.BACKGROUND_PREWARM_WATCHLIST_HOLD_POLL_MS)),
+            )
+            return
+        workspace._background_prewarm_foreground_hold_reason = ""
+        _schedule_preload(self, 0)
 
     def _poll_active_step(self) -> None:
         workspace = self.workspace
@@ -839,11 +1039,15 @@ class BackgroundTabPreloadCoordinator(QObject):
     def _activate_step(self, key: str, spec: Mapping) -> None:
         workspace = self.workspace
         self._dependency_failures.pop(key, None)
-        workspace._background_prewarm_start_order.append(key)
+        resumed_from_foreground_hold = key in self._foreground_hold_requeued_keys
+        self._foreground_hold_requeued_keys.discard(key)
+        if not resumed_from_foreground_hold:
+            workspace._background_prewarm_start_order.append(key)
         workspace._background_prewarm_active_key = key
         workspace._background_prewarm_active_widget = None
         workspace._background_prewarm_active_started_at = time.perf_counter()
-        self.stepStarted.emit(key)
+        if not resumed_from_foreground_hold:
+            self.stepStarted.emit(key)
         self._active_step_count += 1
         self._max_concurrent_steps = max(self._max_concurrent_steps, self._active_step_count)
         with ui_stall_span(
@@ -956,6 +1160,12 @@ class BackgroundTabPreloadCoordinator(QObject):
             _schedule_preload(self, self.workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
             return
         self._cancellation_blocked = False
+        if (
+            self._foreground_hold_mode == "cancelling"
+            and self._foreground_hold_active_key == str(self.workspace._background_prewarm_active_key or "")
+        ):
+            self._park_cancelled_step_for_foreground_hold()
+            return
         status = self._cancel_terminal_status
         detail = self._cancel_terminal_detail
         self._finish_active_step_and_continue(status, detail)

@@ -101,9 +101,18 @@ def _initialize_fund_runtime_timers(owner) -> None:
     owner._f5_auto_sync_timer = _single_shot_timer(owner, owner._run_pending_auto_sync_after_f5)
 
 
+def _background_preload_is_held(owner) -> bool:
+    return bool(
+        getattr(owner, "_background_preload_paused", False)
+        and getattr(owner, "_background_preload_requested", False)
+    )
+
+
 class _FundHoldingsBackgroundPreloadMixin:
     def prime_background_load(self) -> bool:
         self._background_preload_requested = True
+        if self._background_preload_paused:
+            return False
         if self._background_preload_done:
             return False
         already_started = self._initial_load_started
@@ -118,8 +127,75 @@ class _FundHoldingsBackgroundPreloadMixin:
         return bool(
             self._background_preload_requested
             and self._background_preload_done
+            and not self._background_preload_paused
             and not commit_active
         )
+
+    def pause_background_preload(self) -> bool:
+        """Keep a cache-only preload inert while Watchlist owns the foreground."""
+        if (
+            not self._background_preload_requested
+            or self._background_preload_done
+            or getattr(self, "_runtime_cleanup_done", False)
+        ):
+            return False
+        if self._background_preload_paused:
+            return True
+        self._background_preload_paused = True
+        timer = self._initial_load_timer
+        self._background_preload_restart_initial_timer = bool(timer.isActive())
+        timer.stop()
+        self._view_committer.pause()
+        return True
+
+    def resume_background_preload(self) -> bool:
+        """Resume a held cache-only preload without restarting committed batches."""
+        if not self._background_preload_paused:
+            return False
+        self._background_preload_paused = False
+        pending_payload = self._background_preload_pending_payload
+        pending_payload_generation = self._background_preload_pending_payload_generation
+        pending_rows = self._background_preload_pending_rows
+        pending_error = self._background_preload_pending_error
+        pending_error_generation = self._background_preload_pending_error_generation
+        restart_initial_timer = self._background_preload_restart_initial_timer
+        self._background_preload_pending_payload = None
+        self._background_preload_pending_payload_generation = 0
+        self._background_preload_pending_rows = None
+        self._background_preload_pending_error = ""
+        self._background_preload_pending_error_generation = 0
+        self._background_preload_restart_initial_timer = False
+        if self._view_committer.is_paused:
+            self._view_committer.resume()
+        if pending_payload is not None:
+            QTimer.singleShot(
+                0,
+                lambda payload=pending_payload, generation=pending_payload_generation: self._resume_deferred_background_payload(
+                    payload,
+                    generation,
+                ),
+            )
+        elif pending_rows is not None:
+            view_rows, defer_finish, generation = pending_rows
+            QTimer.singleShot(
+                0,
+                lambda view_rows=view_rows, defer_finish=defer_finish, generation=generation: self._apply_view_rows_and_finish(
+                    view_rows,
+                    defer_finish=defer_finish,
+                    generation=generation,
+                ),
+            )
+        elif pending_error:
+            QTimer.singleShot(
+                0,
+                lambda detail=pending_error, generation=pending_error_generation: self._show_deferred_background_preload_error(
+                    detail,
+                    generation,
+                ),
+            )
+        elif restart_initial_timer and self._initial_load_started:
+            self._initial_load_timer.start(0)
+        return True
 
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
@@ -129,6 +205,13 @@ class _FundHoldingsBackgroundPreloadMixin:
             self._initial_load_started = False
             self._background_preload_requested = False
             self._background_preload_done = False
+            self._background_preload_paused = False
+            self._background_preload_pending_payload = None
+            self._background_preload_pending_payload_generation = 0
+            self._background_preload_pending_rows = None
+            self._background_preload_pending_error = ""
+            self._background_preload_pending_error_generation = 0
+            self._background_preload_restart_initial_timer = False
 
         return cancel_background_preload_tasks(
             self,
@@ -186,6 +269,13 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         self._initial_load_started = False
         self._background_preload_requested = False
         self._background_preload_done = False
+        self._background_preload_paused = False
+        self._background_preload_pending_payload: dict | None = None
+        self._background_preload_pending_payload_generation = 0
+        self._background_preload_pending_rows: tuple[list[dict], bool, int | None] | None = None
+        self._background_preload_pending_error = ""
+        self._background_preload_pending_error_generation = 0
+        self._background_preload_restart_initial_timer = False
         self._view_load_generation = 0
         self._initial_load_task_id = self._build_workspace_task_id(f"initial_load_{id(self)}")
         self._latest_quarter_map: dict[str, str] = {}
@@ -390,6 +480,9 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
     def _ensure_initial_load_started(self):
         if self._initial_load_started:
             return
+        if _background_preload_is_held(self):
+            self._background_preload_restart_initial_timer = True
+            return
         self._initial_load_started = True
         self._set_initial_loading_state("正在加载基金持仓数据...", "首次进入时后台构建持仓视图")
         if self._initial_load_delay_ms > 0:
@@ -445,6 +538,10 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
 
     def _apply_view_payload(self, payload: dict):
         commit_generation = int(getattr(self, "_view_load_generation", 0))
+        if _background_preload_is_held(self):
+            self._background_preload_pending_payload = payload
+            self._background_preload_pending_payload_generation = commit_generation
+            return
         with ui_stall_span(
             "FundHoldingsTab._apply_view_payload",
             tab="fund_holdings",
@@ -489,6 +586,13 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
     ) -> None:
         if generation is not None and generation != int(getattr(self, "_view_load_generation", 0)):
             return
+        if _background_preload_is_held(self):
+            self._background_preload_pending_rows = (
+                view_rows,
+                defer_finish,
+                int(getattr(self, "_view_load_generation", 0)) if generation is None else generation,
+            )
+            return
         apply_fund_holdings_view_rows(
             self,
             view_rows,
@@ -520,8 +624,37 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         if not view_rows and not getattr(self, "_sync_active", False):
             self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
 
+    def _resume_deferred_background_payload(self, payload: dict, generation: int) -> None:
+        if generation != int(getattr(self, "_view_load_generation", 0)):
+            return
+        if _background_preload_is_held(self):
+            self._background_preload_pending_payload = payload
+            self._background_preload_pending_payload_generation = generation
+            return
+        self._apply_view_payload(payload)
+
+    def _show_deferred_background_preload_error(self, detail: str, generation: int | None = None) -> None:
+        if generation is not None and generation != int(getattr(self, "_view_load_generation", 0)):
+            return
+        if _background_preload_is_held(self):
+            self._background_preload_pending_error = detail
+            self._background_preload_pending_error_generation = int(
+                getattr(self, "_view_load_generation", 0)
+            )
+            return
+        self.lbl_status.setText(f"基金持仓加载失败：{detail}")
+        self.table_state.show_error(
+            "基金持仓加载失败",
+            detail,
+            action_text="重试",
+            action_callback=self._ensure_initial_load_started,
+        )
+
     def _reload_from_db_async(self, *, quarter_scope: str | None = None, quarter_keys=None):
         self._initial_load_timer.stop()
+        if _background_preload_is_held(self):
+            self._background_preload_restart_initial_timer = True
+            return
         self._view_load_generation += 1
         generation = self._view_load_generation
         if quarter_scope is None:
@@ -553,13 +686,11 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             self._initial_load_started = False
             self._background_preload_done = True
             detail = str(message or "").strip() or "未知异常"
-            self.lbl_status.setText(f"基金持仓加载失败：{detail}")
-            self.table_state.show_error(
-                "基金持仓加载失败",
-                detail,
-                action_text="重试",
-                action_callback=self._ensure_initial_load_started,
-            )
+            if _background_preload_is_held(self):
+                self._background_preload_pending_error = detail
+                self._background_preload_pending_error_generation = generation
+                return
+            self._show_deferred_background_preload_error(detail, generation)
 
         self._initial_load_task_id = self._build_workspace_task_id(f"load_{scope}_{id(self)}")
         task_lifecycle_for(self, runner=task_manager).run_background(

@@ -948,6 +948,14 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
     _run_pending_async_local_quote_refresh = _run_pending_async_local_quote_refresh
     _run_coalesced_model_update = _run_coalesced_model_update
 
+    def should_hold_background_prewarm(self) -> bool:
+        """Keep unrelated hidden QWidget construction off the active Watchlist."""
+        return bool(
+            not self._closing
+            and getattr(self, "_workspace_active", False)
+            and self._is_current_workspace_tab()
+        )
+
     """
     关注池 独立 Tab 组件 (Controller + View)
     全权负责关注池的增删查改、实时报价、AI诊断结果展示。

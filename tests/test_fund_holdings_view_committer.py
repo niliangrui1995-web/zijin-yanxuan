@@ -98,6 +98,127 @@ def test_large_fund_holdings_payload_is_committed_in_bounded_gui_batches(monkeyp
         tab.deleteLater()
 
 
+def test_chunked_fund_holdings_commit_pauses_and_resumes_without_losing_pending_rows(monkeypatch):
+    """A foreground Watchlist hold must not discard an in-flight hidden commit."""
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    rows = _view_rows(96)
+    try:
+        tab._apply_view_rows_and_finish(rows, defer_finish=False)
+        committer = tab._view_committer
+        pending_before_pause = committer.pending_count
+        row_count_before_pause = tab.model.rowCount()
+
+        assert committer.pause() is True
+        assert committer.is_paused is True
+        committer.apply_next()
+
+        assert committer.pending_count == pending_before_pause
+        assert tab.model.rowCount() == row_count_before_pause == tab.VIEW_ROW_CHUNK_SIZE
+
+        assert committer.resume() is True
+        _drain_committer(tab)
+
+        assert committer.is_paused is False
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in rows]
+        assert completed == [[row["代码"] for row in rows]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_background_fund_preload_defers_completed_payload_until_watchlist_hold_releases(
+    monkeypatch,
+    qt_application,
+):
+    """A worker callback must not start model commits while Watchlist owns the foreground."""
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    payload = {"view_rows": _view_rows(48), "loaded_quarter_scope": "latest"}
+    try:
+        tab._background_preload_requested = True
+        tab._initial_load_started = True
+        assert tab.pause_background_preload() is True
+
+        tab._apply_view_payload(payload)
+
+        assert tab.model.rowCount() == 0
+        assert tab._background_preload_pending_payload is payload
+        assert tab.is_background_preload_complete() is False
+
+        assert tab.resume_background_preload() is True
+        for _ in range(3):
+            qt_application.processEvents()
+
+        assert tab.model.rowCount() > 0
+        _drain_committer(tab)
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in payload["view_rows"]]
+        assert completed == [[row["代码"] for row in payload["view_rows"]]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_background_fund_preload_drops_stale_payload_held_across_a_new_generation(
+    monkeypatch,
+    qt_application,
+):
+    """A held worker result must not overwrite a newer fund-holdings request."""
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    payload = {"view_rows": _view_rows(48), "loaded_quarter_scope": "latest"}
+    try:
+        tab._background_preload_requested = True
+        tab._initial_load_started = True
+        assert tab.pause_background_preload() is True
+        tab._apply_view_payload(payload)
+        tab._view_load_generation += 1
+
+        assert tab.resume_background_preload() is True
+        for _ in range(3):
+            qt_application.processEvents()
+
+        assert tab.model.rowCount() == 0
+        assert completed == []
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_background_fund_preload_defers_a_rows_callback_already_queued_before_hold_release(
+    monkeypatch,
+    qt_application,
+):
+    """The second-stage singleShot callback must not append rows during the hold."""
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    rows = _view_rows(48)
+    try:
+        tab._background_preload_requested = True
+        tab._initial_load_started = True
+        assert tab.pause_background_preload() is True
+
+        tab._apply_view_rows_and_finish(rows, defer_finish=True, generation=0)
+
+        assert tab.model.rowCount() == 0
+        assert tab._background_preload_pending_rows == (rows, True, 0)
+
+        assert tab.resume_background_preload() is True
+        for _ in range(3):
+            qt_application.processEvents()
+
+        assert tab.model.rowCount() > 0
+        _drain_committer(tab)
+        assert completed == [[row["代码"] for row in rows]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_chunked_fund_holdings_commit_updates_all_duplicate_quote_rows_after_first_batch(monkeypatch):
     completed = []
     _stub_finish(monkeypatch, completed)

@@ -116,7 +116,7 @@ class _CancellablePreloadTab(_ControlledPreloadTab):
         self.cancel_calls += 1
         self.cancel_reasons.append(reason)
         self.events.append(("cancel", self.key))
-        assert reason in {"step_timeout", "step_failed", "owner_shutdown"}
+        assert reason in {"step_timeout", "step_failed", "owner_shutdown", "watchlist_visible"}
         return self.cancellation_receipt
 
     def shutdown(self):
@@ -124,6 +124,42 @@ class _CancellablePreloadTab(_ControlledPreloadTab):
 
     def on_workspace_tab_activated(self):
         self.activation_calls += 1
+
+
+class _PausablePreloadTab(_ControlledPreloadTab):
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(key, events, parent)
+        self.paused = False
+        self.pause_calls = 0
+        self.resume_calls = 0
+
+    def pause_background_preload(self) -> bool:
+        self.pause_calls += 1
+        self.paused = True
+        self.events.append(("pause", self.key))
+        return True
+
+    def resume_background_preload(self) -> bool:
+        self.resume_calls += 1
+        self.paused = False
+        self.events.append(("resume", self.key))
+        return True
+
+
+class _WatchlistForegroundHoldPreloadTab(_ControlledPreloadTab):
+    def should_hold_background_prewarm(self) -> bool:
+        return True
+
+
+class _ImmediateCancellationPreloadTab(_ControlledPreloadTab):
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(key, events, parent)
+        self.cancel_reasons: list[str] = []
+
+    def cancel_background_preload(self, *, reason: str):
+        self.cancel_reasons.append(reason)
+        self.events.append(("cancel", self.key))
+        return BackgroundPreloadCancellationReceipt.immediate()
 
 
 class _FailingCancellablePrimeTab(_CancellablePreloadTab):
@@ -1322,6 +1358,66 @@ def test_visible_watchlist_prewarm_continues_hidden_staging_before_runtime_consu
         workspace.deleteLater()
 
 
+def test_visible_watchlist_holds_ordinary_prewarm_until_foreground_is_released(qt_application):
+    class _ForegroundProtectedPreloadTab(_ControlledPreloadTab):
+        def should_hold_background_prewarm(self) -> bool:
+            return True
+
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _ForegroundProtectedPreloadTab(
+        "watchlist", events, workspace
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        workspace._background_prewarm_enabled = True
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "watchlist"
+        workspace._background_prewarm_active_widget.ready = True
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        held_status = workspace.background_preload_status()
+        assert workspace._background_prewarm_active_key == ""
+        assert held_status["foreground_hold_reason"] == "watchlist_active"
+        assert held_status["start_order"] == ["watchlist"]
+        assert held_status["remaining_keys"] == list(startup_tab_keys())[1:]
+
+        system_log_index = workspace._tab_index_for_key("system_log")
+        previous_blocked = workspace.tabs.blockSignals(True)
+        try:
+            workspace.tabs.setCurrentIndex(system_log_index)
+        finally:
+            workspace.tabs.blockSignals(previous_blocked)
+        classic_workspace_module._set_workspace_tab_activity(workspace, "system_log")
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "system_log"
+        assert workspace.background_preload_status()["foreground_hold_reason"] == ""
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_background_prewarm_placeholder_replacement_arms_current_ai_repaint_guard(qt_application):
     class _GuardedAiTab(_ControlledPreloadTab):
         def __init__(self, key, events, parent=None):
@@ -1955,7 +2051,7 @@ def test_shell_nav_return_demotes_cold_target_before_hidden_construction(
         workspace.deleteLater()
 
 
-def test_watchlist_return_demotes_active_priority_and_keeps_full_queue_after_settlement(
+def test_watchlist_return_requeues_active_priority_and_keeps_full_queue_held(
     qt_application,
 ):
     events: list[tuple[str, str]] = []
@@ -1966,6 +2062,12 @@ def test_watchlist_return_demotes_active_priority_and_keeps_full_queue_after_set
         watchlist_startup_tasks=False,
     )
     _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _WatchlistForegroundHoldPreloadTab(
+        "watchlist",
+        events,
+        workspace,
+    )
     workspace.resize(960, 640)
     workspace.show()
     qt_application.processEvents()
@@ -1996,7 +2098,6 @@ def test_watchlist_return_demotes_active_priority_and_keeps_full_queue_after_set
         assert paused["pending_priority_keys"] == []
         assert paused["interactive_handoff_targets"] == []
 
-        active.ready = True
         workspace._prewarm_next_tab()
         _stop_preload_timer(workspace)
 
@@ -2005,7 +2106,10 @@ def test_watchlist_return_demotes_active_priority_and_keeps_full_queue_after_set
         assert status["completion_scope"] == "all_planned"
         assert status["watchlist_resume_pause_requested"] is False
         assert status["active_key"] == ""
-        assert "ai_industry_chain" not in status["remaining_keys"]
+        assert status["foreground_hold_reason"] == "watchlist_active"
+        assert "ai_industry_chain" in status["remaining_keys"]
+        assert "ai_industry_chain" not in status["completion_order"]
+        assert "ai_industry_chain" not in status["failures"]
         assert "stock_candidates" in status["remaining_keys"]
         assert status["startup_lazy_handoff_keys"] == []
         assert events.count(("construct", "ai_industry_chain")) == 1
@@ -2071,6 +2175,268 @@ def test_watchlist_return_keeps_noncurrent_priority_tail_hidden_until_quiet_queu
         assert status["startup_lazy_handoff_keys"] == []
         assert events.count(("construct", "ai_industry_chain")) == 1
         assert events.count(("construct", "foreign_block")) == 0
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_visible_watchlist_pauses_an_already_active_cooperative_background_step(
+    qt_application,
+):
+    """Returning to Watchlist must stop an in-flight hidden tab before its next GUI slice."""
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _WatchlistForegroundHoldPreloadTab(
+        "watchlist",
+        events,
+        workspace,
+    )
+    ai_spec = workspace._spec_for_key_or_index("ai_industry_chain")
+    ai_spec["factory"] = lambda **_kwargs: _PausablePreloadTab(
+        "ai_industry_chain",
+        events,
+        workspace,
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        foreign_index = workspace._tab_index_for_key("foreign_block")
+        system_log_index = workspace._tab_index_for_key("system_log")
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        assert workspace.activate_tab(foreign_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        active = workspace._background_prewarm_active_widget
+        assert isinstance(active, _PausablePreloadTab)
+        assert workspace._background_prewarm_active_key == "ai_industry_chain"
+
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        status = workspace.background_preload_status()
+        assert active.paused is True
+        assert status["foreground_hold_reason"] == "watchlist_active"
+        assert status["foreground_hold_active_key"] == "ai_industry_chain"
+        assert status["foreground_hold_mode"] == "paused"
+
+        active.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "ai_industry_chain"
+        assert "ai_industry_chain" not in workspace._background_prewarm_completion_order
+
+        assert workspace.activate_tab(system_log_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        assert active.paused is False
+        assert active.resume_calls == 1
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert "ai_industry_chain" in workspace._background_prewarm_completion_order
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_visible_watchlist_cancels_and_requeues_nonpausable_active_background_step(
+    qt_application,
+):
+    """A non-cooperative hidden tab must be settled and retried, never marked terminal."""
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _WatchlistForegroundHoldPreloadTab(
+        "watchlist",
+        events,
+        workspace,
+    )
+    ai_spec = workspace._spec_for_key_or_index("ai_industry_chain")
+    ai_spec["factory"] = lambda **_kwargs: _ImmediateCancellationPreloadTab(
+        "ai_industry_chain",
+        events,
+        workspace,
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        foreign_index = workspace._tab_index_for_key("foreign_block")
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        assert workspace.activate_tab(foreign_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        active = workspace._background_prewarm_active_widget
+        assert isinstance(active, _ImmediateCancellationPreloadTab)
+
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        status = workspace.background_preload_status()
+        assert active.cancel_reasons == ["watchlist_visible"]
+        assert status["active_key"] == ""
+        assert status["remaining_keys"].count("ai_industry_chain") == 1
+        assert "ai_industry_chain" not in status["completion_order"]
+        assert "ai_industry_chain" not in status["failures"]
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == ""
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_visible_watchlist_waits_for_active_cancellation_before_requeueing(qt_application):
+    """An unsettled cancellation remains fail-closed and cannot launch the next hidden tab."""
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _WatchlistForegroundHoldPreloadTab(
+        "watchlist",
+        events,
+        workspace,
+    )
+    ai_spec = workspace._spec_for_key_or_index("ai_industry_chain")
+    ai_spec["factory"] = lambda **_kwargs: _CancellablePreloadTab(
+        "ai_industry_chain",
+        events,
+        workspace,
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        foreign_index = workspace._tab_index_for_key("foreign_block")
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        assert workspace.activate_tab(foreign_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        active = workspace._background_prewarm_active_widget
+        assert isinstance(active, _CancellablePreloadTab)
+
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        cancelling = workspace.background_preload_status()
+        assert active.cancel_reasons == ["watchlist_visible"]
+        assert cancelling["active_key"] == "ai_industry_chain"
+        assert cancelling["foreground_hold_mode"] == "cancelling"
+        assert "ai_industry_chain" not in cancelling["completion_order"]
+        assert "ai_industry_chain" not in cancelling["failures"]
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == "ai_industry_chain"
+        assert events.count(("construct", "system_log")) == 0
+
+        active.cancellation_receipt.settled = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        settled = workspace.background_preload_status()
+        assert settled["active_key"] == ""
+        assert settled["remaining_keys"].count("ai_industry_chain") == 1
+        assert "ai_industry_chain" not in settled["completion_order"]
+        assert "ai_industry_chain" not in settled["failures"]
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace._background_prewarm_active_key == ""
+        assert events.count(("construct", "system_log")) == 0
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_visible_watchlist_holds_the_last_active_step_even_when_queue_is_empty(qt_application):
+    """The foreground guarantee covers a popped final item, not only queued work."""
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    watchlist_spec = workspace._spec_for_key_or_index("watchlist")
+    watchlist_spec["factory"] = lambda **_kwargs: _WatchlistForegroundHoldPreloadTab(
+        "watchlist",
+        events,
+        workspace,
+    )
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        watchlist = workspace.ensure_tab_loaded("watchlist", reason=TabLoadReason.USER.value)
+        assert isinstance(watchlist, _WatchlistForegroundHoldPreloadTab)
+        watchlist._workspace_background_preload_ready = True
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        active = _PausablePreloadTab("ai_industry_chain", events, workspace)
+        workspace._background_prewarm_enabled = True
+        workspace._background_prewarm_started = True
+        workspace._background_prewarm_finished = False
+        workspace._background_prewarm_queue = []
+        workspace._background_prewarm_active_key = "ai_industry_chain"
+        workspace._background_prewarm_active_widget = active
+        workspace._background_prewarm_active_started_at = time.perf_counter()
+        workspace._background_preload_coordinator._active_step_count = 1
+
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        active.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        status = workspace.background_preload_status()
+        assert active.paused is True
+        assert status["foreground_hold_reason"] == "watchlist_active"
+        assert status["active_key"] == "ai_industry_chain"
+        assert status["completion_order"] == []
     finally:
         workspace.shutdown()
         workspace.deleteLater()

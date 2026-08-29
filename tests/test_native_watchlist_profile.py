@@ -10,6 +10,8 @@ from scripts.native_watchlist_profile import (
     _build_synthetic_quote_payload,
     _event_dispatcher_summary,
     _FirstPaintProbe,
+    _foreground_watchlist_hold_acceptance,
+    _foreground_watchlist_hold_remaining_ms,
     _native_platform_error,
     _NativeProfileController,
     _parse_args,
@@ -240,6 +242,27 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_all_hid
         staged_keys=staged_keys,
         lazy_keys=[],
     )["status"] == "pass"
+    assert _background_prewarm_acceptance(
+        status,
+        paint_region,
+        tab_count=11,
+        mounted_keys=["watchlist", "tab-0"],
+        staged_keys=staged_keys[1:],
+        lazy_keys=[],
+        foreground_mounted_key="tab-0",
+    )["status"] == "pass"
+    priority_status = dict(status)
+    priority_order = ["watchlist", "tab-1", "tab-0", *staged_keys[2:]]
+    priority_status.update(start_order=priority_order, completion_order=priority_order)
+    assert _background_prewarm_acceptance(
+        priority_status,
+        paint_region,
+        tab_count=11,
+        mounted_keys=["watchlist", "tab-1"],
+        staged_keys=["tab-0", *staged_keys[2:]],
+        lazy_keys=[],
+        foreground_mounted_key="tab-1",
+    )["status"] == "pass"
 
     topology_failure = _background_prewarm_acceptance(
         status,
@@ -280,6 +303,71 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_all_hid
     acceptance = _background_prewarm_acceptance(status, paint_region)
     assert acceptance["status"] == "fail"
     assert "watchlist_full_viewport_during_hidden_prewarm=2" in acceptance["violations"]
+
+
+def test_native_watchlist_profile_foreground_watchlist_hold_requires_zero_full_frames():
+    clear_region = {"full_viewport_count": 0}
+    clear_metrics = {"paint": {"full_viewport_count": 0}}
+
+    assert _foreground_watchlist_hold_acceptance(
+        observed=True,
+        paint_region=clear_region,
+        metrics=clear_metrics,
+    ) == {"status": "pass", "violations": []}
+
+    rejected = _foreground_watchlist_hold_acceptance(
+        observed=False,
+        paint_region={"full_viewport_count": 1},
+        metrics={"paint": {"full_viewport_count": 1}},
+    )
+
+    assert rejected == {
+        "status": "fail",
+        "violations": [
+            "watchlist_foreground_hold_not_observed",
+            "watchlist_foreground_hold_full_viewport_input=1",
+            "watchlist_foreground_hold_full_viewport_delivered=1",
+        ],
+    }
+
+
+def test_native_watchlist_profile_foreground_hold_waits_a_full_policy_interval():
+    assert _foreground_watchlist_hold_remaining_ms(0.0) == 1100
+    assert _foreground_watchlist_hold_remaining_ms(1_099.1) == 1
+    assert _foreground_watchlist_hold_remaining_ms(1_100.0) == 0
+    assert _foreground_watchlist_hold_remaining_ms(1_101.0) == 0
+
+
+def test_native_watchlist_profile_releases_foreground_hold_through_real_user_navigation():
+    activation_calls = []
+    scheduled = []
+    failures = []
+    phases = []
+    specs = [{"key": "watchlist"}, {"key": "system_log"}]
+
+    workspace = SimpleNamespace(
+        tab_specs=lambda: specs,
+        activate_tab=lambda index, *, reason: activation_calls.append((index, reason)) or True,
+    )
+    workspace._background_preload_coordinator = SimpleNamespace(
+        advance=lambda: scheduled.append("advance")
+    )
+    controller = object.__new__(_NativeProfileController)
+    controller.window = SimpleNamespace(_workspace=workspace)
+    controller._foreground_watchlist_release_requested = False
+    controller._set_phase = phases.append
+    controller._fail = failures.append
+    controller.QTimer = SimpleNamespace(
+        singleShot=lambda delay, callback: scheduled.append((delay, callback))
+    )
+
+    assert _NativeProfileController._release_foreground_watchlist_prewarm_hold(controller) is True
+    assert activation_calls == [(1, "user")]
+    assert phases == ["background_prewarm_released"]
+    assert failures == []
+    assert scheduled[0][0] == 0
+    assert scheduled[0][1]() is None
+    assert scheduled == [(0, scheduled[0][1]), "advance"]
 
 
 def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_lazy_handoff():
@@ -363,7 +451,7 @@ def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_l
     assert prewarm_report["acceptance"] == {"status": "pass", "violations": []}
 
 
-def test_native_watchlist_profile_reveal_acceptance_allows_only_first_full_paint():
+def test_native_watchlist_profile_reveal_acceptance_allows_complete_later_frames():
     paint_metrics = {
         "durations": {"count": 2},
         "full_viewport_count": 1,
@@ -384,11 +472,8 @@ def test_native_watchlist_profile_reveal_acceptance_allows_only_first_full_paint
     paint_metrics["after_first"]["full_viewport_count"] = 1
     paint_metrics["after_first"]["other_full_viewport_count"] = 1
     assert _watchlist_reveal_acceptance(paint_metrics) == {
-        "status": "fail",
-        "violations": [
-            "watchlist_full_viewport_after_reveal=1",
-            "watchlist_other_full_viewport_after_reveal=1",
-        ],
+        "status": "pass",
+        "violations": [],
     }
     assert _watchlist_reveal_acceptance({"durations": {"count": 0}, "after_first": {}}) == {
         "status": "fail",
@@ -497,7 +582,7 @@ def test_native_watchlist_profile_summarizes_visible_watchlist_prewarm_spans():
     ]
 
 
-def test_native_watchlist_profile_reveal_acceptance_uses_actual_vcp_metrics_not_raw_events():
+def test_native_watchlist_profile_reveal_acceptance_rejects_dropped_native_full_frames():
     table_metric = SimpleNamespace(
         value=18.0,
         tags={
@@ -537,12 +622,15 @@ def test_native_watchlist_profile_reveal_acceptance_uses_actual_vcp_metrics_not_
     assert reveal["paint_region"]["full_viewport_count"] == 3
     assert reveal["metrics"]["paint"]["full_viewport_count"] == 1
     assert reveal["acceptance_metric_source"] == "watchlist_table_paint_ms"
-    assert reveal["acceptance"] == {"status": "pass", "violations": []}
+    assert reveal["acceptance"] == {
+        "status": "fail",
+        "violations": ["watchlist_reveal full_viewport_paint_dropped=1/3"],
+    }
     assert reveal["event_loop_stalls"]["max_ms"] == 24.0
-    assert controller.report["errors"] == []
+    assert controller.report["errors"] == ["watchlist reveal repaint acceptance failed"]
 
 
-def test_native_watchlist_profile_shell_nav_acceptance_allows_only_initial_full_viewport():
+def test_native_watchlist_profile_shell_nav_acceptance_requires_full_frame_delivery():
     paint_metrics = _summarize_shell_nav_paint_metrics(
         [
             SimpleNamespace(
@@ -644,9 +732,8 @@ def test_native_watchlist_profile_shell_nav_guard_metrics_are_phase_local_and_di
 def test_native_watchlist_profile_shell_nav_acceptance_uses_actual_paint_not_incoming_event_filter():
     result = {
         "cycle": 1,
-        # QApplication's event filter sees the two paints the VCP viewport
-        # guard consumes. Keep this as evidence, but it is not an actual
-        # VCPTableView.paintEvent budget.
+        # QApplication's event filter sees all three native full paints, but
+        # the old guard delivers only the first to VCPTableView.paintEvent.
         "paint_region": {
             "count": 3,
             "full_viewport_count": 3,
@@ -669,12 +756,15 @@ def test_native_watchlist_profile_shell_nav_acceptance_uses_actual_paint_not_inc
     }
 
     assert _shell_nav_repaint_acceptance([result], expected_cycles=1) == {
-        "status": "pass",
-        "violations": [],
+        "status": "fail",
+        "violations": [
+            "cycle=1 full_viewport_paint_dropped=1/3",
+            "cycle=1 watchlist_full_viewport_paint_suppressed=2",
+        ],
     }
 
 
-def test_native_watchlist_profile_shell_nav_acceptance_rejects_repeat_other_full_paints():
+def test_native_watchlist_profile_shell_nav_acceptance_allows_repeat_full_frames_when_delivered():
     result = {
         "cycle": 1,
         "paint_region": {
@@ -689,21 +779,15 @@ def test_native_watchlist_profile_shell_nav_acceptance_rejects_repeat_other_full
             "other_full_viewport_count": 2,
             "other_full_viewport_after_first_count": 1,
         },
-        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 1},
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
     }
 
-    acceptance = _shell_nav_repaint_acceptance([result], expected_cycles=2)
+    acceptance = _shell_nav_repaint_acceptance([result], expected_cycles=1)
 
-    assert acceptance["status"] == "fail"
-    assert "cycle=1 actual_full_viewport_metric_budget" in acceptance["violations"]
-    assert "cycle=1 actual_full_viewport_after_first" in acceptance["violations"]
-    assert "cycle=1 other_full_viewport_metric_budget" in acceptance["violations"]
-    assert "cycle=1 other_full_viewport_after_first" in acceptance["violations"]
-    assert "cycle=1 event_loop_critical_stall" in acceptance["violations"]
-    assert "cycle=2 result_count=0" in acceptance["violations"]
+    assert acceptance == {"status": "pass", "violations": []}
 
 
-def test_native_watchlist_profile_shell_nav_acceptance_rejects_late_other_full_metric():
+def test_native_watchlist_profile_shell_nav_acceptance_allows_late_other_full_metric_when_delivered():
     result = {
         "cycle": 1,
         "paint_region": {
@@ -723,12 +807,7 @@ def test_native_watchlist_profile_shell_nav_acceptance_rejects_late_other_full_m
 
     acceptance = _shell_nav_repaint_acceptance([result], expected_cycles=1)
 
-    assert acceptance["status"] == "fail"
-    assert acceptance["violations"] == [
-        "cycle=1 actual_full_viewport_metric_budget",
-        "cycle=1 actual_full_viewport_after_first",
-        "cycle=1 other_full_viewport_after_first",
-    ]
+    assert acceptance == {"status": "pass", "violations": []}
 
 
 def test_native_watchlist_profile_shell_nav_acceptance_preserves_tab_topology():
@@ -741,7 +820,11 @@ def test_native_watchlist_profile_shell_nav_acceptance_preserves_tab_topology():
             "full_viewport_count": 1,
             "after_first": {"full_viewport_count": 0},
         },
-        "paint_metrics": {"other_full_viewport_count": 1},
+        "paint_metrics": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "other_full_viewport_count": 1,
+        },
         "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
     }
 
@@ -749,6 +832,34 @@ def test_native_watchlist_profile_shell_nav_acceptance_preserves_tab_topology():
 
     assert acceptance["status"] == "fail"
     assert "cycle=1 tab_count=10 expected=11" in acceptance["violations"]
+
+
+def test_native_watchlist_profile_shell_nav_acceptance_rejects_invalid_visual_evidence():
+    result = {
+        "cycle": 1,
+        "paint_region": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "after_first": {"full_viewport_count": 0},
+        },
+        "paint_metrics": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "other_full_viewport_count": 1,
+        },
+        "visual_artifacts": {
+            "main_window": {"saved": True},
+            "watchlist_viewport": {"saved": False, "error": "screen_grab_too_small"},
+        },
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
+    }
+
+    assert _shell_nav_repaint_acceptance([result], expected_cycles=1) == {
+        "status": "fail",
+        "violations": [
+            "cycle=1 visual_artifact=watchlist_viewport error=screen_grab_too_small"
+        ],
+    }
 
 
 def test_native_watchlist_profile_region_summary_does_not_treat_sparse_span_as_full():
@@ -1040,6 +1151,51 @@ def test_native_watchlist_profile_captures_shell_nav_visual_artifacts(tmp_path):
     }
 
 
+def test_native_watchlist_profile_rejects_tiny_shell_nav_screen_grab(tmp_path):
+    class _TinyPixmap:
+        def isNull(self):
+            return False
+
+        def width(self):
+            return 1
+
+        def height(self):
+            return 1
+
+        def save(self, path, _format):
+            Path(path).write_bytes(b"tiny-png")
+            return True
+
+        def devicePixelRatio(self):
+            return 1.0
+
+        def rect(self):
+            return QRect(0, 0, 1, 1)
+
+        def copy(self, _rect):
+            return self
+
+    class _Screen:
+        def grabWindow(self, _win_id):
+            return _TinyPixmap()
+
+    class _Widget:
+        def screen(self):
+            return _Screen()
+
+        def winId(self):
+            return 1
+
+    controller = object.__new__(_NativeProfileController)
+    controller.window = _Widget()
+    controller.activation_profile_path = tmp_path / "watchlist_activation.prof"
+
+    artifacts = controller._capture_shell_nav_visual_artifacts(2, table=None)
+
+    assert artifacts["main_window"]["saved"] is False
+    assert artifacts["main_window"]["error"] == "screen_grab_too_small"
+
+
 def test_native_watchlist_profile_residual_acceptance_uses_structure_counts():
     results = [
         {
@@ -1130,7 +1286,7 @@ def test_native_watchlist_profile_residual_acceptance_rejects_missing_cycles_and
     assert "cycle=1 action=name_refresh ui_stall_recorded" in acceptance["violations"]
 
 
-def test_native_watchlist_profile_residual_acceptance_rejects_visible_return_burst():
+def test_native_watchlist_profile_residual_acceptance_keeps_stall_checks_without_rejecting_delivered_frames():
     result = {
         "cycle": 1,
         "action": "lhb_to_watchlist",
@@ -1154,11 +1310,40 @@ def test_native_watchlist_profile_residual_acceptance_rejects_visible_return_bur
     acceptance = _residual_repaint_acceptance([result])
 
     assert acceptance["status"] == "fail"
-    assert "cycle=1 action=lhb_to_watchlist full_viewport_paint_budget" in acceptance["violations"]
-    assert "cycle=1 action=lhb_to_watchlist full_viewport_region_budget" in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist full_viewport_paint_budget" not in acceptance["violations"]
+    assert "cycle=1 action=lhb_to_watchlist full_viewport_region_budget" not in acceptance["violations"]
     assert "cycle=1 action=lhb_to_watchlist first_paint_reason" in acceptance["violations"]
     assert "cycle=1 action=lhb_to_watchlist heartbeat_stall" in acceptance["violations"]
     assert "cycle=1 action=lhb_to_watchlist ui_critical_stall_recorded" in acceptance["violations"]
+
+
+def test_native_watchlist_profile_residual_acceptance_rejects_dropped_visible_full_paint():
+    result = {
+        "cycle": 1,
+        "action": "lhb_to_watchlist",
+        "paint_region": {"count": 3, "full_viewport_count": 3},
+        "heartbeat_lateness": {"count": 4, "max_ms": 1.0},
+        "ui_stall_snapshot": {"installed": True, "total_count": 0, "critical_count": 0},
+        "metrics": {
+            "model_updates": [],
+            "paint": {
+                "full_viewport_count": 1,
+                "first": {"reason": "native_profile_tab_return"},
+            },
+            "snapshot": {
+                "capture_count": 0,
+                "skipped_count": 1,
+                "skipped_pairs": [{"source": "lhb", "target": "watchlist"}],
+            },
+        },
+    }
+
+    assert _residual_repaint_acceptance([result]) == {
+        "status": "fail",
+        "violations": [
+            "cycle=1 action=lhb_to_watchlist full_viewport_paint_dropped=1/3",
+        ],
+    }
 
 
 def test_native_watchlist_profile_quote_acceptance_enforces_local_direct_repaint():
