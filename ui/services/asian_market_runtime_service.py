@@ -18,6 +18,7 @@ from app.services.asian_market_cache_service import (
 from app.services.asian_market_cache_service import (
     cache_mtime,
     load_latest_trade_dates,
+    load_latest_trade_dates_by_ticker,
     write_realtime_quote_cache,
 )
 from app.services.ui_event_service import domain_events as event_bus
@@ -82,6 +83,35 @@ def _runtime_degraded_progress_message(message: str) -> str:
         return text
 
     return ""
+
+
+def _stale_target_trade_dates(
+    target_codes,
+    expected_latest_by_market: dict[str, dt.date],
+    cache_latest_by_ticker: dict[str, dt.date],
+) -> list[tuple[str, dt.date | None, dt.date]]:
+    stale_tickers = []
+    for raw_code in target_codes:
+        ticker = str(raw_code or "").strip().upper()
+        if "." not in ticker:
+            continue
+        market = MarketCalendar.normalize_market(ticker.rsplit(".", 1)[-1])
+        expected_date = expected_latest_by_market.get(market)
+        cache_date = cache_latest_by_ticker.get(ticker)
+        if expected_date is not None and (cache_date is None or cache_date < expected_date):
+            stale_tickers.append((ticker, cache_date, expected_date))
+    return stale_tickers
+
+
+def _stale_market_trade_dates(
+    expected_latest: dict[str, dt.date],
+    cache_latest: dict[str, dt.date],
+) -> list[tuple[str, dt.date | None, dt.date]]:
+    return [
+        (market, cache_latest.get(market), expected_date)
+        for market, expected_date in expected_latest.items()
+        if cache_latest.get(market) is None or cache_latest[market] < expected_date
+    ]
 
 
 class AsianMarketRuntimeService(QObject):
@@ -208,9 +238,13 @@ class AsianMarketRuntimeService(QObject):
 
         worker = self._worker_factory(self.target_codes())
         self._worker = worker
-        worker.progress.connect(self._on_worker_progress)
-        worker.result_ready.connect(self._on_rt_update)
-        worker.finished.connect(self._on_worker_finished)
+        worker.progress.connect(
+            lambda message, worker=worker: self._on_worker_progress(message, worker=worker)
+        )
+        worker.result_ready.connect(
+            lambda updates, worker=worker: self._on_rt_update(updates, worker=worker)
+        )
+        worker.finished.connect(lambda worker=worker: self._on_worker_finished(worker))
         return worker
 
     def resume_auto_refresh(self) -> None:
@@ -305,7 +339,9 @@ class AsianMarketRuntimeService(QObject):
         self._closed = True
         self.stop(auto=False)
 
-    def _on_worker_finished(self) -> None:
+    def _on_worker_finished(self, worker=None) -> None:
+        if worker is not None and worker is not self._worker:
+            return
         worker = self._worker
         if worker is not None:
             with suppress(RuntimeError):
@@ -316,7 +352,9 @@ class AsianMarketRuntimeService(QObject):
         if self._runtime_state != "manual_refresh_once":
             self._set_runtime_state("idle")
 
-    def _on_worker_progress(self, message: str) -> None:
+    def _on_worker_progress(self, message: str, *, worker=None) -> None:
+        if worker is not None and worker is not self._worker:
+            return
         if self._closed:
             return
         text = str(message or "").strip()
@@ -332,7 +370,9 @@ class AsianMarketRuntimeService(QObject):
 
         self.sig_progress.emit(text)
 
-    def _on_rt_update(self, updates: dict) -> None:
+    def _on_rt_update(self, updates: dict, *, worker=None) -> None:
+        if worker is not None and worker is not self._worker:
+            return
         if self._closed:
             return
         if not updates:
@@ -376,18 +416,17 @@ class AsianMarketRuntimeService(QObject):
         mtime = cache_mtime(JSON_CACHE)
         cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else dt.datetime.min
         cache_latest = load_latest_trade_dates(JSON_CACHE)
+        cache_latest_by_ticker = load_latest_trade_dates_by_ticker(JSON_CACHE)
         expected_latest = self._expected_latest_trade_dates()
         cache_latest_date = max(cache_latest.values()) if cache_latest else None
         expected_latest_date = max(expected_latest.values()) if expected_latest else None
 
         stale_by_mtime = cache_dt < target_dt
-        stale_markets = []
-        for market, expected_date in expected_latest.items():
-            cache_date = cache_latest.get(market)
-            if expected_date is not None and (cache_date is None or cache_date < expected_date):
-                stale_markets.append((market, cache_date, expected_date))
+        stale_markets = _stale_market_trade_dates(expected_latest, cache_latest)
+        stale_tickers = _stale_target_trade_dates(self.target_codes(), expected_latest, cache_latest_by_ticker)
         stale_by_trade_date = bool(
-            stale_markets
+            stale_tickers
+            or stale_markets
             or (
                 expected_latest_date is not None
                 and (cache_latest_date is None or cache_latest_date < expected_latest_date)
@@ -398,6 +437,7 @@ class AsianMarketRuntimeService(QObject):
             "stale_by_mtime": stale_by_mtime,
             "stale_by_trade_date": stale_by_trade_date,
             "stale_markets": stale_markets,
+            "stale_tickers": stale_tickers,
             "cache_dt": cache_dt,
             "target_dt": target_dt,
             "cache_latest_trade_date": cache_latest_date,

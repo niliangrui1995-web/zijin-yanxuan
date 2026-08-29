@@ -134,12 +134,12 @@ def test_collect_runtime_health_includes_core_sections(qt_application, monkeypat
     ]
     asian_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "asian_market")
     assert asian_lineage["network_capable"] is True
-    assert asian_lineage["triggered_network"] is None
+    assert asian_lineage["triggered_network"] is False
     assert "data/Cache/asian_rt_latest.json" in asian_lineage["cache_refs"]
     assert "data/Cache/asian_realtime_latest.json" not in asian_lineage["cache_refs"]
     lhb_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "lhb")
     assert lhb_lineage["network_capable"] is True
-    assert lhb_lineage["triggered_network"] is None
+    assert lhb_lineage["triggered_network"] is False
     assert lhb_lineage["source"] == "LhbPoolManager cache + local_quote_snapshot"
     assert "data/Cache/lhb_pool_30d.json" in lhb_lineage["cache_refs"]
     assert "data/Cache/lhb_pool_20d.json" not in lhb_lineage["cache_refs"]
@@ -170,6 +170,20 @@ def test_workspace_lineage_does_not_mask_missing_network_evidence_after_getter_e
     assert asian_lineage["network_capable"] is True
     assert asian_lineage["triggered_network"] is None
     assert asian_lineage["lineage_error"] is True
+
+
+def test_unloaded_network_capable_lineage_reports_no_runtime_network_activity():
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "asian_market", "title": "亚洲市场", "group": "情报源"}],
+        get_loaded_tab=lambda _key: None,
+    )
+
+    lineage = runtime_health._workspace_lineage(SimpleNamespace(_workspace=workspace))
+    asian_lineage = next(entry for entry in lineage if entry["key"] == "asian_market")
+
+    assert asian_lineage["loaded"] is False
+    assert asian_lineage["network_capable"] is True
+    assert asian_lineage["triggered_network"] is False
 
 
 def test_runtime_health_exposes_central_quote_universe_coverage():

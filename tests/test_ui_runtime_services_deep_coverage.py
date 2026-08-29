@@ -214,6 +214,73 @@ def test_asian_runtime_worker_creation_resume_pause_and_manual_refresh(monkeypat
     assert replacement is made[1]
 
 
+def test_asian_runtime_old_worker_finish_keeps_replacement(monkeypatch):
+    made = []
+    service = runtime_module.AsianMarketRuntimeService(
+        worker_factory=lambda codes: made.append(_Worker(codes)) or made[-1]
+    )
+    service.set_target_codes(["2330.TW"])
+
+    assert service.trigger_refresh_once()
+    old_worker = made[0]
+    old_finished = old_worker.finished.slots[0]
+    monkeypatch.setattr(
+        runtime_module,
+        "request_thread_shutdown",
+        lambda _worker, **kwargs: kwargs["stop"](),
+    )
+
+    assert service.stop()
+    assert service.trigger_refresh_once()
+    replacement = made[1]
+
+    old_finished()
+
+    assert service.current_worker() is replacement
+    assert service.is_running()
+
+
+def test_asian_runtime_old_worker_queued_updates_do_not_reach_replacement(monkeypatch):
+    made = []
+    service = runtime_module.AsianMarketRuntimeService(
+        worker_factory=lambda codes: made.append(_Worker(codes)) or made[-1]
+    )
+    service.set_target_codes(["2330.TW"])
+    progress = []
+    updates = []
+    service.sig_progress.connect(progress.append)
+    service.sig_rt_update.connect(updates.append)
+
+    assert service.trigger_refresh_once()
+    old_worker = made[0]
+    old_progress = old_worker.progress.slots[0]
+    old_result = old_worker.result_ready.slots[0]
+    monkeypatch.setattr(
+        runtime_module,
+        "request_thread_shutdown",
+        lambda _worker, **kwargs: kwargs["stop"](),
+    )
+
+    assert service.stop()
+    assert service.trigger_refresh_once()
+    replacement = made[1]
+    last_success_at = service.last_success_at
+
+    old_progress("timeout degraded markets")
+    old_result({"OLD.TW": {"close": 1}})
+
+    assert progress == []
+    assert updates == []
+    assert service.last_success_at is last_success_at
+    assert service.current_worker() is replacement
+
+    replacement.progress.slots[0]("正在拉取亚洲市场最新报价")
+    replacement.result_ready.slots[0]({"2330.TW": {"close": 100}})
+
+    assert progress == ["正在拉取亚洲市场最新报价"]
+    assert updates == [{"2330.TW": {"close": 100}}]
+
+
 def test_asian_runtime_sync_state_all_paths(monkeypatch):
     service = runtime_module.AsianMarketRuntimeService(worker_factory=lambda codes: _Worker(codes))
     service.set_target_codes(["2330.TW"])

@@ -13,18 +13,33 @@ class FundHoldingsTableModel(StockTableModel):
     """Stock model that can expose already-built rows in bounded GUI batches."""
 
 
+def build_fund_holdings_view_metadata(payload: dict) -> dict:
+    return {
+        "_latest_quarter_map": dict(payload.get("latest_quarter_map") or {}),
+        "_latest_sync_map": dict(payload.get("latest_sync_map") or {}),
+        "_concept_sector_cache": dict(payload.get("concept_sector_cache") or {}),
+        "_loaded_quarter_scope": str(payload.get("loaded_quarter_scope") or "").strip(),
+        "_loaded_quarter_keys": {
+            str(quarter_key or "").strip()
+            for quarter_key in (payload.get("loaded_quarter_keys") or [])
+            if str(quarter_key or "").strip()
+        },
+    }
+
+
 def apply_fund_holdings_view_rows(
     tab,
     view_rows: list[dict],
     *,
     defer_finish: bool,
     generation: int | None = None,
+    view_metadata: dict | None = None,
 ) -> None:
     if getattr(tab, "_runtime_cleanup_done", False):
         return
     view_committer = getattr(tab, "_view_committer", None)
     if view_committer is not None and view_committer.should_chunk(view_rows):
-        view_committer.start(view_rows)
+        view_committer.start(view_rows, generation=generation, view_metadata=view_metadata)
         return
 
     if view_committer is not None:
@@ -35,10 +50,11 @@ def apply_fund_holdings_view_rows(
         signal="deferred" if defer_finish else "sync",
     ):
         tab.model.update_data(view_rows, hydrate_latest_quotes=False)
+    _apply_view_metadata(tab, view_metadata)
     _schedule_view_finish(
         tab,
         view_rows,
-        defer_finish=defer_finish,
+        defer_finish=False,
         generation=generation,
     )
 
@@ -82,6 +98,21 @@ def _show_empty_view_payload_if_needed(tab, rows: list[dict]) -> None:
     from ui.tabs.fund_holdings_tab import FundHoldingsTab
 
     FundHoldingsTab._show_empty_view_payload_if_needed(tab, rows)
+
+
+_VIEW_METADATA_FIELDS = (
+    "_latest_quarter_map",
+    "_latest_sync_map",
+    "_concept_sector_cache",
+    "_loaded_quarter_scope",
+    "_loaded_quarter_keys",
+)
+
+
+def _apply_view_metadata(tab, metadata: dict | None) -> None:
+    for field in _VIEW_METADATA_FIELDS:
+        if metadata is not None and field in metadata:
+            setattr(tab, field, metadata[field])
 
 
 def _view_code_column(tab) -> int:
@@ -267,6 +298,9 @@ class FundHoldingsViewCommitter(QObject):
         self._chunk_size = max(1, int(chunk_size))
         self._pending_rows: list[dict] = []
         self._finish_rows: list[dict] | None = None
+        self._generation: int | None = None
+        self._previous_rows: list[dict] | None = None
+        self._view_metadata: dict | None = None
         self._selection: dict | None = None
         self._selection_baseline: dict | None = None
         self._paused = False
@@ -290,10 +324,24 @@ class FundHoldingsViewCommitter(QObject):
     def should_chunk(self, rows) -> bool:
         return len(rows) > self._chunk_size and callable(getattr(self._tab.model, "append_rows", None))
 
-    def start(self, rows) -> None:
+    def start(
+        self,
+        rows,
+        *,
+        generation: int | None = None,
+        view_metadata: dict | None = None,
+    ) -> None:
+        previous_rows = self._previous_rows
+        previous_selection = self._selection
+        if previous_rows is None:
+            previous_rows = list(self._tab.model.row_data)
+            previous_selection = _capture_view_selection(self._tab)
         self.cancel()
         view_rows = list(rows)
-        self._selection = _capture_view_selection(self._tab)
+        self._generation = generation
+        self._previous_rows = previous_rows
+        self._view_metadata = view_metadata
+        self._selection = previous_selection
         self._finish_rows = view_rows
         self._pending_rows = view_rows[self._chunk_size :]
         with ui_stall_span(
@@ -312,6 +360,9 @@ class FundHoldingsViewCommitter(QObject):
     def apply_next(self) -> None:
         if getattr(self._tab, "_runtime_cleanup_done", False):
             self.cancel()
+            return
+        if self._generation is not None and self._generation != int(getattr(self._tab, "_view_load_generation", 0)):
+            self.cancel(restore_previous=True)
             return
         if self._paused:
             return
@@ -350,27 +401,45 @@ class FundHoldingsViewCommitter(QObject):
 
     def _complete(self) -> None:
         view_rows = self._finish_rows
+        view_metadata = self._view_metadata
         selection = self._selection
         selection_changed = _capture_view_selection(self._tab) != self._selection_baseline
         self._finish_rows = None
+        self._generation = None
+        self._previous_rows = None
+        self._view_metadata = None
         self._selection = None
         self._selection_baseline = None
         if view_rows is None or getattr(self._tab, "_runtime_cleanup_done", False):
             return
 
+        _apply_view_metadata(self._tab, view_metadata)
         skip_empty_state = self._tab._finish_apply_view_payload(view_rows)
         if not skip_empty_state:
             self._tab._show_empty_view_payload_if_needed(view_rows)
         if not selection_changed:
             _restore_view_selection(self._tab, selection)
 
-    def cancel(self) -> None:
+    def cancel(self, *, restore_previous: bool = False) -> None:
+        previous_rows = self._previous_rows
+        previous_selection = self._selection
         self._timer.stop()
         self._paused = False
         self._pending_rows = []
         self._finish_rows = None
+        self._generation = None
+        self._previous_rows = None
+        self._view_metadata = None
         self._selection = None
         self._selection_baseline = None
+        if restore_previous and previous_rows is not None and not getattr(self._tab, "_runtime_cleanup_done", False):
+            self._tab.model.update_data(previous_rows, hydrate_latest_quotes=True, record_flash=False)
+            _restore_view_selection(self._tab, previous_selection)
 
 
-__all__ = ["FundHoldingsTableModel", "FundHoldingsViewCommitter", "apply_fund_holdings_view_rows"]
+__all__ = [
+    "FundHoldingsTableModel",
+    "FundHoldingsViewCommitter",
+    "apply_fund_holdings_view_rows",
+    "build_fund_holdings_view_metadata",
+]

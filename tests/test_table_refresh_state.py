@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import time
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt

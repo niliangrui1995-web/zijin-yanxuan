@@ -295,6 +295,162 @@ def test_async_local_prime_captures_real_callbacks_and_guards(monkeypatch):
     assert not refresh.prime_local_quote_snapshot_async(owner, owner.model)
 
 
+def test_async_local_prime_does_not_overwrite_newer_network_quote(monkeypatch):
+    owner = _Owner([{"代码": "000001"}])
+    baseline = {
+        "000001": {
+            "close": 10.0,
+            "quote_freshness": "cache",
+            "quote_received_at": 100.0,
+        }
+    }
+    newer_network = {
+        "000001": {
+            "close": 12.0,
+            "quote_freshness": "network",
+            "quote_received_at": 200.0,
+        }
+    }
+    _background, on_success, _on_error = refresh._local_quote_task_callbacks(
+        owner,
+        ["000001"],
+        baseline,
+    )
+    monkeypatch.setattr(refresh, "_latest_quote_snapshot", lambda: newer_network)
+    published = []
+    monkeypatch.setattr(
+        refresh,
+        "publish_rt_quotes",
+        lambda payload, source: published.append(dict(payload)) or dict(payload),
+    )
+
+    on_success(
+        {
+            "000001": {
+                "close": 10.0,
+                "market_cap": 1_000_000_000,
+                "quote_freshness": "cache",
+                "quote_received_at": 100.0,
+            }
+        }
+    )
+
+    assert published[0]["000001"]["close"] == 12.0
+    assert published[0]["000001"]["quote_received_at"] == 200.0
+    assert published[0]["000001"]["market_cap"] == 1_000_000_000
+
+
+def test_async_local_prime_keeps_warm_price_when_only_finance_fields_changed(monkeypatch):
+    baseline = {
+        "000001": {
+            "close": 10.0,
+            "quote_freshness": "cache",
+            "quote_received_at": 100.0,
+        }
+    }
+    current = {
+        "000001": {
+            **baseline["000001"],
+            "total_shares": 2_000_000_000,
+        }
+    }
+    monkeypatch.setattr(refresh, "_latest_quote_snapshot", lambda: current)
+
+    rebased = refresh._rebase_local_quote_payload(
+        {
+            "000001": {
+                "close": 11.0,
+                "quote_freshness": "local_realtime",
+                "quote_received_at": 150.0,
+            }
+        },
+        baseline,
+    )
+
+    assert rebased["000001"]["close"] == 11.0
+    assert rebased["000001"]["quote_freshness"] == "local_realtime"
+    assert rebased["000001"]["quote_received_at"] == 150.0
+    assert rebased["000001"]["total_shares"] == 2_000_000_000
+
+
+def test_async_local_prime_keeps_newer_quote_metadata_and_price_atomic(monkeypatch):
+    baseline = {
+        "000001": {
+            "close": 10.0,
+            "quote_freshness": "cache",
+            "quote_received_at": 100.0,
+            "total_shares": 1_000,
+        }
+    }
+    current = {
+        "000001": {
+            "close": 10.0,
+            "quote_freshness": "network",
+            "quote_received_at": 200.0,
+            "total_shares": 1_000,
+        }
+    }
+    monkeypatch.setattr(refresh, "_latest_quote_snapshot", lambda: current)
+
+    rebased = refresh._rebase_local_quote_payload(
+        {
+            "000001": {
+                "close": 11.0,
+                "quote_freshness": "local_realtime",
+                "quote_received_at": 150.0,
+                "high": 12.0,
+                "market_cap": 1_000_000_000,
+                "total_shares": 1_100,
+            }
+        },
+        baseline,
+    )
+
+    assert rebased["000001"]["close"] == 10.0
+    assert rebased["000001"]["quote_freshness"] == "network"
+    assert rebased["000001"]["quote_received_at"] == 200.0
+    assert "high" not in rebased["000001"]
+    assert rebased["000001"]["market_cap"] == 1_000_000_000
+    assert rebased["000001"]["total_shares"] == 1_100
+
+
+def test_async_local_prime_prefers_newer_finance_delta_with_network_quote(monkeypatch):
+    baseline = {
+        "000001": {
+            "close": 10.0,
+            "quote_freshness": "cache",
+            "quote_received_at": 100.0,
+            "total_shares": 1_000,
+        }
+    }
+    current = {
+        "000001": {
+            "close": 12.0,
+            "quote_freshness": "network",
+            "quote_received_at": 200.0,
+            "total_shares": 1_200,
+        }
+    }
+    monkeypatch.setattr(refresh, "_latest_quote_snapshot", lambda: current)
+
+    rebased = refresh._rebase_local_quote_payload(
+        {
+            "000001": {
+                "close": 11.0,
+                "quote_freshness": "local_realtime",
+                "quote_received_at": 150.0,
+                "total_shares": 1_100,
+            }
+        },
+        baseline,
+    )
+
+    assert rebased["000001"]["close"] == 12.0
+    assert rebased["000001"]["quote_freshness"] == "network"
+    assert rebased["000001"]["quote_received_at"] == 200.0
+    assert rebased["000001"]["total_shares"] == 1_200
+
+
 def test_defer_signatures_filtering_and_apply_metrics(monkeypatch):
     owner = _Owner()
     assert not refresh._should_defer_cache_snapshot_apply(owner, async_local=False)
@@ -730,13 +886,13 @@ def test_subscribe_global_quotes_remaining_branches(monkeypatch):
     assert owner._quote_signal_connected
     assert connected
 
-    updated = []
     owner = _Owner()
     owner._on_rt_quotes_direct = lambda quotes: None
-    owner.model.update_quotes = lambda quotes: updated.append(quotes)
-    monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {"000001": {"close": 10}})
+    owner.model.update_quotes = lambda quotes: None
+    snapshot = {"000001": {"close": 10}}
+    monkeypatch.setattr(global_store, "get_latest_quotes", lambda: snapshot)
     refresh.subscribe_global_quotes(owner)
-    assert updated
+    assert owner.applied == [snapshot]
 
     monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {})
     refresh.subscribe_global_quotes(owner)

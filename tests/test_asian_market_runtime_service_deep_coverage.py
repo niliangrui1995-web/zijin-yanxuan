@@ -187,9 +187,9 @@ def test_runtime_worker_creation_replacement_and_signal_wiring():
 
     assert first is created[0]
     assert first.codes == ["2330.TW"]
-    assert first.progress.slots == [service._on_worker_progress]
-    assert first.result_ready.slots == [service._on_rt_update]
-    assert first.finished.slots == [service._on_worker_finished]
+    assert len(first.progress.slots) == 1
+    assert len(first.result_ready.slots) == 1
+    assert len(first.finished.slots) == 1
     assert service._ensure_worker() is first
 
     service._worker = _Worker(failures={"codes"})

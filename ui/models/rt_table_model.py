@@ -22,6 +22,7 @@ from ui.models.table_model_helpers import (
     _numeric_heat_color,
     _parse_numeric_value,
     _prune_flash_records,
+    _replace_reordered_model_rows,
     _row_accent_color,
     _signed_amount_foreground,
     _status_badge_color,
@@ -151,8 +152,7 @@ class RtTableModel(QAbstractTableModel):
         _emit_model_row_ranges(self, changed_rows, 0, self.columnCount() - 1, self._flash_roles())
 
     def _emit_reordered_rows(self, rows: list) -> None:
-        self.layoutAboutToBeChanged.emit()
-        self._data = rows
+        _replace_reordered_model_rows(self, rows, self._row_id_sequence)
         self._flash_records.clear()
         self.layoutChanged.emit()
 

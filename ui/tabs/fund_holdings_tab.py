@@ -74,6 +74,7 @@ from ui.tabs.fund_holdings_table_model import (
     FundHoldingsTableModel,
     FundHoldingsViewCommitter,
     apply_fund_holdings_view_rows,
+    build_fund_holdings_view_metadata,
 )
 from ui.tabs.fund_holdings_view_state import (
     FundHoldingsViewState,
@@ -176,13 +177,14 @@ class _FundHoldingsBackgroundPreloadMixin:
                 ),
             )
         elif pending_rows is not None:
-            view_rows, defer_finish, generation = pending_rows
+            view_rows, defer_finish, generation, view_metadata = pending_rows
             QTimer.singleShot(
                 0,
-                lambda view_rows=view_rows, defer_finish=defer_finish, generation=generation: self._apply_view_rows_and_finish(
+                lambda view_rows=view_rows, defer_finish=defer_finish, generation=generation, view_metadata=view_metadata: self._apply_view_rows_and_finish(
                     view_rows,
                     defer_finish=defer_finish,
                     generation=generation,
+                    view_metadata=view_metadata,
                 ),
             )
         elif pending_error:
@@ -201,7 +203,7 @@ class _FundHoldingsBackgroundPreloadMixin:
         def _reset() -> None:
             self._view_load_generation += 1
             self._initial_load_timer.stop()
-            self._view_committer.cancel()
+            self._view_committer.cancel(restore_previous=True)
             self._initial_load_started = False
             self._background_preload_requested = False
             self._background_preload_done = False
@@ -272,7 +274,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         self._background_preload_paused = False
         self._background_preload_pending_payload: dict | None = None
         self._background_preload_pending_payload_generation = 0
-        self._background_preload_pending_rows: tuple[list[dict], bool, int | None] | None = None
+        self._background_preload_pending_rows: tuple[list[dict], bool, int | None, dict | None] | None = None
         self._background_preload_pending_error = ""
         self._background_preload_pending_error_generation = 0
         self._background_preload_restart_initial_timer = False
@@ -547,26 +549,19 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             tab="fund_holdings",
             signal=str(payload.get("loaded_quarter_scope") or ""),
         ):
-            self._latest_quarter_map = dict(payload.get("latest_quarter_map") or {})
-            self._latest_sync_map = dict(payload.get("latest_sync_map") or {})
-            self._concept_sector_cache = dict(payload.get("concept_sector_cache") or {})
-            self._loaded_quarter_scope = str(payload.get("loaded_quarter_scope") or "").strip()
-            self._loaded_quarter_keys = {
-                str(quarter_key or "").strip()
-                for quarter_key in (payload.get("loaded_quarter_keys") or [])
-                if str(quarter_key or "").strip()
-            }
+            view_metadata = build_fund_holdings_view_metadata(payload)
             view_rows = list(payload.get("view_rows") or [])
             should_defer = getattr(self, "_should_defer_view_payload_finish", None)
             defer_update = callable(should_defer) and should_defer()
             if defer_update:
                 QTimer.singleShot(
                     0,
-                    lambda view_rows=view_rows, generation=commit_generation: FundHoldingsTab._apply_view_rows_and_finish(
+                    lambda view_rows=view_rows, generation=commit_generation, view_metadata=view_metadata: FundHoldingsTab._apply_view_rows_and_finish(
                         self,
                         view_rows,
                         defer_finish=True,
                         generation=generation,
+                        view_metadata=view_metadata,
                     ),
                 )
             else:
@@ -575,6 +570,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
                     view_rows,
                     defer_finish=False,
                     generation=commit_generation,
+                    view_metadata=view_metadata,
                 )
 
     def _apply_view_rows_and_finish(
@@ -583,6 +579,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         *,
         defer_finish: bool,
         generation: int | None = None,
+        view_metadata: dict | None = None,
     ) -> None:
         if generation is not None and generation != int(getattr(self, "_view_load_generation", 0)):
             return
@@ -591,6 +588,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
                 view_rows,
                 defer_finish,
                 int(getattr(self, "_view_load_generation", 0)) if generation is None else generation,
+                view_metadata,
             )
             return
         apply_fund_holdings_view_rows(
@@ -598,6 +596,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             view_rows,
             defer_finish=defer_finish,
             generation=generation,
+            view_metadata=view_metadata,
         )
 
     def _should_defer_view_payload_finish(self) -> bool:

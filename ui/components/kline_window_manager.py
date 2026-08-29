@@ -878,6 +878,7 @@ def _ensure_manager_application_lifecycle_owner(manager) -> None:
         application = QCoreApplication.instance()
         if application is None or application.closingDown():
             return
+        lifecycle_application = application
         owner = getattr(manager, "_application_lifecycle_owner", None)
         if owner is not None:
             try:
@@ -890,8 +891,8 @@ def _ensure_manager_application_lifecycle_owner(manager) -> None:
 
         class _ApplicationLifecycleOwner(QObject):
             def __init__(self) -> None:
-                super().__init__(application)
-                application.aboutToQuit.connect(self._on_application_quit)
+                super().__init__(lifecycle_application)
+                lifecycle_application.aboutToQuit.connect(self._on_application_quit)
 
             def _on_application_quit(self) -> None:
                 owned_manager = manager_ref()

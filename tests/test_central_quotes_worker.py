@@ -25,6 +25,32 @@ def _accepted_submission(task_id: object) -> TaskSubmissionReceipt:
     )
 
 
+def test_quote_coverage_copy_fallback_tolerates_malformed_nested_fields(monkeypatch):
+    from ui.workers import central_quotes_worker as worker_module
+
+    monkeypatch.setattr(
+        worker_module,
+        "deepcopy",
+        lambda _value: (_ for _ in ()).throw(TypeError("not copyable")),
+    )
+
+    assert worker_module._copy_quote_coverage(
+        {
+            "total_unique": 2,
+            "supplier_total_unique": 3,
+            "duplicate_dropped": 1,
+            "by_source": object(),
+            "degraded_reasons": object(),
+        }
+    ) == {
+        "total_unique": 2,
+        "supplier_total_unique": 3,
+        "duplicate_dropped": 1,
+        "by_source": {},
+        "degraded_reasons": [],
+    }
+
+
 class _SinaQuoteProviderStub:
     def fetch_realtime_quotes_batch(self, fetch_codes):
         ordered = tuple(sorted(fetch_codes))

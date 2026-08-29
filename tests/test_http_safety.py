@@ -351,7 +351,7 @@ def test_urlopen_https_rejects_mutable_duck_typed_request_before_opening(monkeyp
         lambda *_handlers: (_ for _ in ()).throw(AssertionError("untrusted request must not be opened")),
     )
 
-    with pytest.raises(TypeError, match="URL string or urllib.request.Request"):
+    with pytest.raises(TypeError, match=r"URL string or urllib\.request\.Request"):
         urlopen_https(UntrustedRequest())
 
 

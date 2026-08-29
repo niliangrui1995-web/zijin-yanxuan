@@ -104,8 +104,24 @@ def test_chunked_fund_holdings_commit_pauses_and_resumes_without_losing_pending_
     _stub_finish(monkeypatch, completed)
     tab = FundHoldingsTab(_DummyProvider(), autoload=False)
     rows = _view_rows(96)
+    old_metadata = {
+        "_latest_quarter_map": {"OLD": "2025Q4"},
+        "_latest_sync_map": {"OLD": {"quarter": "2025Q4"}},
+        "_concept_sector_cache": {"OLD": "旧概念"},
+        "_loaded_quarter_scope": "latest",
+        "_loaded_quarter_keys": {"2025Q4"},
+    }
+    new_metadata = {
+        "_latest_quarter_map": {"NEW": "2026Q1"},
+        "_latest_sync_map": {"NEW": {"quarter": "2026Q1"}},
+        "_concept_sector_cache": {"NEW": "新概念"},
+        "_loaded_quarter_scope": "selected",
+        "_loaded_quarter_keys": {"2026Q1"},
+    }
     try:
-        tab._apply_view_rows_and_finish(rows, defer_finish=False)
+        for field, value in old_metadata.items():
+            setattr(tab, field, value)
+        tab._apply_view_rows_and_finish(rows, defer_finish=False, view_metadata=new_metadata)
         committer = tab._view_committer
         pending_before_pause = committer.pending_count
         row_count_before_pause = tab.model.rowCount()
@@ -116,13 +132,263 @@ def test_chunked_fund_holdings_commit_pauses_and_resumes_without_losing_pending_
 
         assert committer.pending_count == pending_before_pause
         assert tab.model.rowCount() == row_count_before_pause == tab.VIEW_ROW_CHUNK_SIZE
+        for field, value in old_metadata.items():
+            assert getattr(tab, field) == value
 
         assert committer.resume() is True
         _drain_committer(tab)
 
         assert committer.is_paused is False
         assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in rows]
+        for field, value in new_metadata.items():
+            assert getattr(tab, field) == value
         assert completed == [[row["代码"] for row in rows]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_consecutive_chunked_commits_publish_only_latest_rows_and_metadata(monkeypatch):
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    previous_rows = [dict(row, 代码=f"1{index:05d}") for index, row in enumerate(_view_rows(64))]
+    first_rows = [dict(row, 代码=f"2{index:05d}") for index, row in enumerate(_view_rows(80))]
+    latest_rows = [dict(row, 代码=f"3{index:05d}") for index, row in enumerate(_view_rows(90))]
+    old_metadata = {
+        "_latest_quarter_map": {"OLD": "2025Q4"},
+        "_latest_sync_map": {"OLD": {"quarter": "2025Q4"}},
+        "_concept_sector_cache": {"OLD": "旧概念"},
+        "_loaded_quarter_scope": "latest",
+        "_loaded_quarter_keys": {"2025Q4"},
+    }
+    first_metadata = {
+        "_latest_quarter_map": {"FIRST": "2026Q1"},
+        "_latest_sync_map": {"FIRST": {"quarter": "2026Q1"}},
+        "_concept_sector_cache": {"FIRST": "第一版概念"},
+        "_loaded_quarter_scope": "selected",
+        "_loaded_quarter_keys": {"2026Q1"},
+    }
+    latest_metadata = {
+        "_latest_quarter_map": {"LATEST": "2026Q2"},
+        "_latest_sync_map": {"LATEST": {"quarter": "2026Q2"}},
+        "_concept_sector_cache": {"LATEST": "最终概念"},
+        "_loaded_quarter_scope": "all",
+        "_loaded_quarter_keys": {"2026Q2"},
+    }
+    try:
+        tab.model.update_data(previous_rows, hydrate_latest_quotes=False)
+        for field, value in old_metadata.items():
+            setattr(tab, field, value)
+
+        tab._view_load_generation = 7
+        tab._apply_view_rows_and_finish(
+            first_rows,
+            defer_finish=False,
+            generation=7,
+            view_metadata=first_metadata,
+        )
+        for field, value in old_metadata.items():
+            assert getattr(tab, field) == value
+
+        tab._view_load_generation = 8
+        tab._apply_view_rows_and_finish(
+            latest_rows,
+            defer_finish=False,
+            generation=8,
+            view_metadata=latest_metadata,
+        )
+        for field, value in old_metadata.items():
+            assert getattr(tab, field) == value
+
+        _drain_committer(tab)
+
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in latest_rows]
+        for field, value in latest_metadata.items():
+            assert getattr(tab, field) == value
+        assert completed == [[row["代码"] for row in latest_rows]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_consecutive_chunked_commits_restore_original_rows_and_metadata_when_latest_is_cancelled(monkeypatch):
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    previous_rows = [dict(row, 代码=f"1{index:05d}") for index, row in enumerate(_view_rows(64))]
+    first_rows = [dict(row, 代码=f"2{index:05d}") for index, row in enumerate(_view_rows(80))]
+    latest_rows = [dict(row, 代码=f"3{index:05d}") for index, row in enumerate(_view_rows(90))]
+    old_metadata = {
+        "_latest_quarter_map": {"OLD": "2025Q4"},
+        "_latest_sync_map": {"OLD": {"quarter": "2025Q4"}},
+        "_concept_sector_cache": {"OLD": "旧概念"},
+        "_loaded_quarter_scope": "latest",
+        "_loaded_quarter_keys": {"2025Q4"},
+    }
+    first_metadata = {
+        "_latest_quarter_map": {"FIRST": "2026Q1"},
+        "_latest_sync_map": {"FIRST": {"quarter": "2026Q1"}},
+        "_concept_sector_cache": {"FIRST": "第一版概念"},
+        "_loaded_quarter_scope": "selected",
+        "_loaded_quarter_keys": {"2026Q1"},
+    }
+    latest_metadata = {
+        "_latest_quarter_map": {"LATEST": "2026Q2"},
+        "_latest_sync_map": {"LATEST": {"quarter": "2026Q2"}},
+        "_concept_sector_cache": {"LATEST": "最终概念"},
+        "_loaded_quarter_scope": "all",
+        "_loaded_quarter_keys": {"2026Q2"},
+    }
+    try:
+        tab.model.update_data(previous_rows, hydrate_latest_quotes=False)
+        for field, value in old_metadata.items():
+            setattr(tab, field, value)
+
+        tab._view_load_generation = 7
+        tab._apply_view_rows_and_finish(
+            first_rows,
+            defer_finish=False,
+            generation=7,
+            view_metadata=first_metadata,
+        )
+        tab._view_load_generation = 8
+        tab._apply_view_rows_and_finish(
+            latest_rows,
+            defer_finish=False,
+            generation=8,
+            view_metadata=latest_metadata,
+        )
+
+        tab._view_load_generation = 9
+        tab._view_committer._timer.stop()
+        tab._view_committer.apply_next()
+
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in previous_rows]
+        for field, value in old_metadata.items():
+            assert getattr(tab, field) == value
+        assert completed == []
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_chunked_fund_holdings_commit_drops_remaining_rows_after_generation_changes(monkeypatch):
+    """A failed newer reload must leave the last complete table, never an old half-table."""
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    previous_rows = [dict(row, 代码=f"1{index:05d}", 季度="2025Q4") for index, row in enumerate(_view_rows(64))]
+    incoming_rows = [dict(row, 代码=f"2{index:05d}") for index, row in enumerate(_view_rows(80))]
+    try:
+        tab.model.update_data(previous_rows, hydrate_latest_quotes=False)
+        tab._view_load_generation = 7
+        tab._apply_view_rows_and_finish(incoming_rows, defer_finish=False, generation=7)
+
+        assert [row["代码"] for row in tab.model.row_data] == [
+            row["代码"] for row in incoming_rows[: tab.VIEW_ROW_CHUNK_SIZE]
+        ]
+
+        tab._view_load_generation = 8
+        tab._view_committer._timer.stop()
+        tab._view_committer.apply_next()
+
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in previous_rows]
+        assert all(row["季度"] == "2025Q4" for row in tab.model.row_data)
+        assert not tab._view_committer.is_active
+        assert tab._view_committer.pending_count == 0
+        assert completed == []
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_cancelled_background_chunk_restores_last_complete_table(monkeypatch):
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    previous_rows = [dict(row, 代码=f"1{index:05d}") for index, row in enumerate(_view_rows(64))]
+    incoming_rows = [dict(row, 代码=f"2{index:05d}") for index, row in enumerate(_view_rows(80))]
+    try:
+        tab.model.update_data(previous_rows, hydrate_latest_quotes=False)
+        tab._view_load_generation = 7
+        tab._apply_view_rows_and_finish(incoming_rows, defer_finish=False, generation=7)
+
+        tab.cancel_background_preload(reason="step_timeout")
+
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in previous_rows]
+        assert not tab._view_committer.is_active
+        assert tab._view_committer.pending_count == 0
+        assert completed == []
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_chunk_rollback_restores_rows_and_view_metadata_atomically(monkeypatch):
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    previous_rows = [dict(row, 代码=f"1{index:05d}") for index, row in enumerate(_view_rows(64))]
+    incoming_rows = [dict(row, 代码=f"2{index:05d}") for index, row in enumerate(_view_rows(80))]
+    try:
+        tab.model.update_data(previous_rows, hydrate_latest_quotes=False)
+        tab._latest_quarter_map = {"OLD": "2025Q4"}
+        tab._latest_sync_map = {"OLD": {"quarter": "2025Q4"}}
+        tab._concept_sector_cache = {"OLD": "旧概念"}
+        tab._loaded_quarter_scope = "latest"
+        tab._loaded_quarter_keys = {"2025Q4"}
+        tab._view_load_generation = 7
+        tab._should_defer_view_payload_finish = lambda: False
+
+        tab._apply_view_payload(
+            {
+                "view_rows": incoming_rows,
+                "latest_quarter_map": {"NEW": "2026Q1"},
+                "latest_sync_map": {"NEW": {"quarter": "2026Q1"}},
+                "concept_sector_cache": {"NEW": "新概念"},
+                "loaded_quarter_scope": "selected",
+                "loaded_quarter_keys": ["2026Q1"],
+            }
+        )
+        tab._view_load_generation = 8
+        tab._view_committer._timer.stop()
+        tab._view_committer.apply_next()
+
+        assert [row["代码"] for row in tab.model.row_data] == [row["代码"] for row in previous_rows]
+        assert tab._latest_quarter_map == {"OLD": "2025Q4"}
+        assert tab._latest_sync_map == {"OLD": {"quarter": "2025Q4"}}
+        assert tab._concept_sector_cache == {"OLD": "旧概念"}
+        assert tab._loaded_quarter_scope == "latest"
+        assert tab._loaded_quarter_keys == {"2025Q4"}
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_chunk_rollback_rehydrates_latest_quotes(monkeypatch):
+    from core.global_store import global_store
+
+    completed = []
+    _stub_finish(monkeypatch, completed)
+    monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {})
+    tab = FundHoldingsTab(_DummyProvider(), autoload=False)
+    previous_rows = [dict(_view_rows(1)[0], 代码="600000")]
+    try:
+        tab.model.update_data(previous_rows, hydrate_latest_quotes=False)
+        tab._view_load_generation = 7
+        tab._apply_view_rows_and_finish(_view_rows(80), defer_finish=False, generation=7)
+        monkeypatch.setattr(
+            global_store,
+            "get_latest_quotes",
+            lambda: {"600000": {"close": 12.0, "last_close": 10.0, "total_shares": 1_000_000_000}},
+        )
+
+        tab._view_load_generation = 8
+        tab._view_committer._timer.stop()
+        tab._view_committer.apply_next()
+
+        assert tab.model.get_row_data(0).get("市价") == "12.00"
     finally:
         tab.shutdown()
         tab.deleteLater()
@@ -197,15 +463,38 @@ def test_background_fund_preload_defers_a_rows_callback_already_queued_before_ho
     _stub_finish(monkeypatch, completed)
     tab = FundHoldingsTab(_DummyProvider(), autoload=False)
     rows = _view_rows(48)
+    old_metadata = {
+        "_latest_quarter_map": {"OLD": "2025Q4"},
+        "_latest_sync_map": {"OLD": {"quarter": "2025Q4"}},
+        "_concept_sector_cache": {"OLD": "旧概念"},
+        "_loaded_quarter_scope": "latest",
+        "_loaded_quarter_keys": {"2025Q4"},
+    }
+    new_metadata = {
+        "_latest_quarter_map": {"NEW": "2026Q1"},
+        "_latest_sync_map": {"NEW": {"quarter": "2026Q1"}},
+        "_concept_sector_cache": {"NEW": "新概念"},
+        "_loaded_quarter_scope": "selected",
+        "_loaded_quarter_keys": {"2026Q1"},
+    }
     try:
+        for field, value in old_metadata.items():
+            setattr(tab, field, value)
         tab._background_preload_requested = True
         tab._initial_load_started = True
         assert tab.pause_background_preload() is True
 
-        tab._apply_view_rows_and_finish(rows, defer_finish=True, generation=0)
+        tab._apply_view_rows_and_finish(
+            rows,
+            defer_finish=True,
+            generation=0,
+            view_metadata=new_metadata,
+        )
 
         assert tab.model.rowCount() == 0
-        assert tab._background_preload_pending_rows == (rows, True, 0)
+        assert tab._background_preload_pending_rows == (rows, True, 0, new_metadata)
+        for field, value in old_metadata.items():
+            assert getattr(tab, field) == value
 
         assert tab.resume_background_preload() is True
         for _ in range(3):
@@ -213,6 +502,8 @@ def test_background_fund_preload_defers_a_rows_callback_already_queued_before_ho
 
         assert tab.model.rowCount() > 0
         _drain_committer(tab)
+        for field, value in new_metadata.items():
+            assert getattr(tab, field) == value
         assert completed == [[row["代码"] for row in rows]]
     finally:
         tab.shutdown()

@@ -229,7 +229,7 @@ class DataStore:
         last_scan_result: dict | None = None,
     ) -> None:
         """持久化业绩异动引擎的全部状态"""
-        payload = {
+        payload: dict[str, object] = {
             "last_sync_date": last_sync_date,
             "seen": seen,
             "records": records,

@@ -239,6 +239,16 @@ def load_latest_trade_dates(path: str = ASIAN_KLINE_CACHE) -> dict[str, dt.date]
         latest_dates[market] = max(trade_date, latest_dates.get(market, trade_date))
     return latest_dates
 
+
+def load_latest_trade_dates_by_ticker(path: str = ASIAN_KLINE_CACHE) -> dict[str, dt.date]:
+    latest_dates: dict[str, dt.date] = {}
+    for ticker, item in _ticker_index_for_path(path).items():
+        parsed = _latest_trade_date_item(item)
+        if parsed is not None:
+            latest_dates[ticker] = parsed[1]
+    return latest_dates
+
+
 __all__ = [
     "ASIAN_KLINE_CACHE",
     "ASIAN_REALTIME_CACHE",
@@ -248,6 +258,7 @@ __all__ = [
     "get_realtime_quote",
     "load_cached_asian_stock",
     "load_latest_trade_dates",
+    "load_latest_trade_dates_by_ticker",
     "merge_realtime_quote",
     "read_mapping_cache",
     "read_json_cache",

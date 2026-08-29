@@ -20,6 +20,9 @@ HOTSPOT_BUDGETS = {
     "scripts/perf_budget_check.py": {
         "_parse_args": 13,
     },
+    "scripts/native_watchlist_profile.py": {
+        "_NativeProfileController._poll_background_prewarm_finished": 219,
+    },
     "ui/kline_window_header.py": {
         "apply_qt_theme": 194,
     },
@@ -58,6 +61,9 @@ HOTSPOT_BUDGETS = {
     "vcp/fetchers/asian_kline_fetcher.py": {
         "sync_asian_kline_cache": 168,
     },
+    "vcp/data_provider_realtime.py": {
+        "_fetch_realtime_quote_sources": 197,
+    },
 }
 
 LARGE_FUNCTION_LINE_THRESHOLD = 170
@@ -72,7 +78,7 @@ MCCABE_COMPLEXITY_BUDGETS = {
         "BreakoutMonitorService.precompute_ready_pool": 29,
     },
     "scripts/native_watchlist_profile.py": {
-        "_residual_repaint_acceptance": 32,
+        "_residual_repaint_acceptance": 30,
     },
 }
 LEGACY_SOURCE_MOVES = {

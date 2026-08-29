@@ -5,8 +5,8 @@ import pytest
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
-import domains.stock_context.signal_builders as stock_context_module
 import app.services.stock_context_snapshot_service as stock_context_snapshot_module
+import domains.stock_context.signal_builders as stock_context_module
 import ui.workspaces.classic_workspace as classic_workspace_module
 import ui.workspaces.quote_universe_service as quote_universe_module
 import ui.workspaces.stock_context_service as stock_context_runtime_module

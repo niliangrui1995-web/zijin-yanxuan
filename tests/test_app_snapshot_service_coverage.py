@@ -141,6 +141,30 @@ def test_stock_context_snapshot_reads_success_and_failure_paths(monkeypatch):
     assert stock_snapshot.load_lhb_pool_rows() == []
 
 
+@pytest.mark.parametrize(
+    ("rows", "cache_exists", "expected"),
+    [
+        (
+            [{"代码": "000001"}, {"代码": ""}, None, {"代码": "600000"}],
+            True,
+            {"codes": ("000001", "", "600000"), "status": "registered", "reason": ""},
+        ),
+        ([], False, {"codes": (), "status": "degraded", "reason": "na_daily_cache_missing"}),
+        ([], True, {"codes": (), "status": "degraded", "reason": "na_daily_cache_empty"}),
+    ],
+)
+def test_na_daily_cached_realtime_projection_owns_cache_io_boundary(
+    monkeypatch,
+    rows,
+    cache_exists,
+    expected,
+):
+    monkeypatch.setattr(stock_snapshot, "load_named_cache_rows", lambda _name: rows)
+    monkeypatch.setattr(stock_snapshot, "cache_file_exists", lambda _path: cache_exists)
+
+    assert stock_snapshot.load_na_daily_cached_realtime_projection() == expected
+
+
 def test_fund_holding_snapshot_is_atomic_across_store_queries():
     class _Store:
         @staticmethod

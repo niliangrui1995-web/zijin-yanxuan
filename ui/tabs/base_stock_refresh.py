@@ -45,6 +45,17 @@ _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
 _FINANCE_CACHE_SIGNATURE: tuple[int, int] | None = None
 _FINANCE_CACHE_PAYLOAD: dict | None = None
+_FINANCE_ENRICHMENT_FIELDS = frozenset(
+    {
+        "total_shares",
+        "_zongguben",
+        "zongguben",
+        "market_cap",
+        "float_market_cap",
+        "price_base",
+        "finance_source",
+    }
+)
 
 
 def load_local_tdx_capital_snapshot(codes, tdx_vipdoc):
@@ -586,6 +597,43 @@ def _local_quote_task_key(owner, target_codes: list[str], *, scope: str = "visib
     )
 
 
+def _rebase_quote_entry(warm_entry: Mapping, current_entry: dict, baseline_entry: dict) -> dict:
+    payload = dict(warm_entry)
+    changed_current = {
+        key: value
+        for key, value in current_entry.items()
+        if key not in baseline_entry or baseline_entry[key] != value
+    }
+    if not changed_current:
+        return payload
+    if set(changed_current).issubset(_FINANCE_ENRICHMENT_FIELDS):
+        payload.update(changed_current)
+        return payload
+    rebased = dict(current_entry)
+    for key, value in payload.items():
+        if key in _FINANCE_ENRICHMENT_FIELDS and key not in changed_current:
+            rebased[key] = value
+    return rebased
+
+
+def _rebase_local_quote_payload(
+    warm_payload: Mapping[str, object],
+    baseline_quotes: Mapping[str, object],
+) -> dict:
+    current_quotes = _latest_quote_snapshot()
+    rebased = {}
+    for raw_code, raw_payload in dict(warm_payload or {}).items():
+        code = str(raw_code or "").strip()
+        if not code or not isinstance(raw_payload, Mapping):
+            continue
+        current_entry = _quote_entry_copy(current_quotes, code)
+        baseline_entry = _quote_entry_copy(baseline_quotes, code)
+        payload = _rebase_quote_entry(raw_payload, current_entry, baseline_entry)
+        if payload:
+            rebased[code] = payload
+    return rebased
+
+
 def _local_quote_task_callbacks(owner, target_codes: list[str], latest_target_quotes: dict):
     owner_ref = weakref.ref(owner)
     owner_class_name = owner.__class__.__name__
@@ -606,6 +654,9 @@ def _local_quote_task_callbacks(owner, target_codes: list[str], latest_target_qu
     def _on_success(warm_payload):
         owner_obj = owner_ref()
         if not _is_owner_runtime_active(owner_obj) or not warm_payload:
+            return
+        warm_payload = _rebase_local_quote_payload(warm_payload, latest_target_quotes)
+        if not warm_payload:
             return
         published = publish_rt_quotes(
             warm_payload,
@@ -673,8 +724,15 @@ def _should_defer_cache_snapshot_apply(owner, *, async_local: bool, force_apply:
         return False
 
     is_f5_refresh = bool(force_apply or getattr(owner, "_f5_cache_snapshot_apply", False))
-    if not is_f5_refresh and not _owner_is_visible(owner) and not _owner_accepts_hidden_quote_projection(owner):
-        return False
+    if not is_f5_refresh and not _owner_accepts_hidden_quote_projection(owner):
+        is_visible = getattr(owner, "isVisible", None)
+        if not callable(is_visible):
+            return False
+        try:
+            if not is_visible():
+                return False
+        except (RuntimeError, TypeError):
+            return False
 
     app = QCoreApplication.instance()
     return not (app is None or app.closingDown())

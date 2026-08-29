@@ -85,12 +85,20 @@ def _copy_quote_coverage(coverage: dict[str, object]) -> dict[str, object]:
     try:
         return deepcopy(coverage)
     except (TypeError, ValueError, RuntimeError):
+        raw_by_source = coverage.get("by_source")
+        raw_reasons = coverage.get("degraded_reasons")
+        if isinstance(raw_reasons, str):
+            degraded_reasons = [raw_reasons]
+        elif isinstance(raw_reasons, Iterable):
+            degraded_reasons = list(raw_reasons)
+        else:
+            degraded_reasons = []
         snapshot = {
             "total_unique": _non_negative_int(coverage.get("total_unique"), 0),
             "supplier_total_unique": _non_negative_int(coverage.get("supplier_total_unique"), 0),
             "duplicate_dropped": _non_negative_int(coverage.get("duplicate_dropped"), 0),
-            "by_source": dict(coverage.get("by_source") or {}),
-            "degraded_reasons": list(coverage.get("degraded_reasons") or ()),
+            "by_source": dict(raw_by_source) if isinstance(raw_by_source, Mapping) else {},
+            "degraded_reasons": degraded_reasons,
         }
         excluded_by_policy = coverage.get("excluded_by_policy")
         if isinstance(excluded_by_policy, Mapping):
@@ -159,17 +167,15 @@ def _normalize_quote_coverage_payload(payload) -> tuple[set[str], dict[str, obje
             coverage["excluded_by_policy"] = {}
 
     raw_reasons = structured_payload.get("degraded_reasons")
+    reasons: Iterable[object]
     if isinstance(raw_reasons, str):
         reasons = (raw_reasons,)
     elif raw_reasons is None:
         reasons = ()
+    elif isinstance(raw_reasons, Iterable):
+        reasons = raw_reasons
     else:
-        try:
-            iter(raw_reasons)
-        except TypeError:
-            reasons = ()
-        else:
-            reasons = raw_reasons
+        reasons = ()
     coverage["degraded_reasons"] = list(
         dict.fromkeys(
             str(reason).strip()

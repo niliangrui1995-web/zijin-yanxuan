@@ -99,6 +99,12 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
     assert "core/rps_precomputer.py" not in HOTSPOT_BUDGETS
     assert "app/bootstrap/startup_orchestrator.py" not in HOTSPOT_BUDGETS
     assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 13
+    assert (
+        HOTSPOT_BUDGETS["scripts/native_watchlist_profile.py"][
+            "_NativeProfileController._poll_background_prewarm_finished"
+        ]
+        == 219
+    )
     assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 222
     assert HOTSPOT_BUDGETS["ui/kline_chart_payload.py"]["build_kline_html"] == 28
     assert HOTSPOT_BUDGETS["ui/tabs/asian_market_tab.py"]["build_asian_market_local_cache_payload"] == 171
@@ -114,6 +120,7 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
     workspace_line_count = int(getattr(workspace_node, "end_lineno", workspace_node.lineno)) - workspace_node.lineno + 1
     assert HOTSPOT_BUDGETS["ui/workspaces/classic_workspace.py"]["ClassicWorkspace.__init__"] == workspace_line_count
     assert HOTSPOT_BUDGETS["vcp/fetchers/asian_kline_fetcher.py"]["sync_asian_kline_cache"] == 168
+    assert HOTSPOT_BUDGETS["vcp/data_provider_realtime.py"]["_fetch_realtime_quote_sources"] == 197
 
 
 def test_default_hotspot_budgets_cover_current_large_functions():
@@ -139,7 +146,7 @@ def test_mccabe_budget_rejects_unbudgeted_complexity_over_25(tmp_path):
 
 def test_default_mccabe_budgets_cover_current_complexity_over_25():
     assert scan_mccabe_complexity_budgets() == []
-    assert MCCABE_COMPLEXITY_BUDGETS["scripts/native_watchlist_profile.py"]["_residual_repaint_acceptance"] == 32
+    assert MCCABE_COMPLEXITY_BUDGETS["scripts/native_watchlist_profile.py"]["_residual_repaint_acceptance"] == 30
     assert len(MCCABE_COMPLEXITY_BUDGETS) == 2
 
 

@@ -594,6 +594,7 @@ def _new_lineage_entry(key: str, defaults: dict[str, Any], spec: dict, tab) -> d
             "last_updated": "",
             "trade_date": "",
             "network_capable": bool(defaults.get("network_capable", False)),
+            "triggered_network": False if tab is None else defaults.get("triggered_network"),
         }
     )
     return entry

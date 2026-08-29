@@ -669,6 +669,18 @@ def _sync_serial_values(rows):
             item[SERIAL_HEADER] = idx
 
 
+def _replace_reordered_model_rows(model, rows, row_id_sequence) -> None:
+    old_ids = row_id_sequence(model._data)
+    persistent_indexes = model.persistentIndexList()
+    model.layoutAboutToBeChanged.emit()
+    model._data = rows
+    new_row_by_id = {row_id: row for row, row_id in enumerate(row_id_sequence(rows))}
+    model.changePersistentIndexList(
+        persistent_indexes,
+        [model.index(new_row_by_id[old_ids[index.row()]], index.column()) for index in persistent_indexes],
+    )
+
+
 def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, roles, *, coalesce: bool = False):
     if not changed_rows:
         return

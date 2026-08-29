@@ -30,6 +30,7 @@ from ui.models.table_model_helpers import (
     _numeric_heat_color,
     _parse_numeric_value,
     _prune_flash_records,
+    _replace_reordered_model_rows,
     _row_accent_color,
     _signed_amount_foreground,
     _status_badge_color,
@@ -603,8 +604,7 @@ class StockTableModel(QAbstractTableModel):
 
     def _emit_reordered_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
-        self.layoutAboutToBeChanged.emit()
-        self._data = rows
+        _replace_reordered_model_rows(self, rows, self._row_id_sequence)
         self._rebuild_code_row_index()
         self._flash_records.clear()
         self._clear_sort_value_cache()

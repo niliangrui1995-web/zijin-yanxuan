@@ -2088,7 +2088,6 @@ def test_watchlist_return_requeues_active_priority_and_keeps_full_queue_held(
         workspace._prewarm_next_tab()
         _stop_preload_timer(workspace)
         assert workspace._background_prewarm_active_key == "ai_industry_chain"
-        active = workspace._background_prewarm_active_widget
 
         assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
         paused = workspace.background_preload_status()

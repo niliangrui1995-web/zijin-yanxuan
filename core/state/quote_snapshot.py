@@ -8,6 +8,7 @@ import time
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
+from typing import Any, cast
 
 # Recursive input contract enforced when ``strict_values=True``.  The default
 # compatibility mode still accepts ``object`` so unknown legacy leaves can be observed.
@@ -36,7 +37,7 @@ def coerce_quote_number(value: object) -> float:
     if value in (None, "", "-", "--"):
         return 0.0
     try:
-        return float(value)
+        return float(cast(Any, value))
     except (TypeError, ValueError):
         return 0.0
 

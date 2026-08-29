@@ -28,6 +28,15 @@ class _Tabs:
         self.changes.append(index)
 
 
+class _ClassicWorkspaceDouble(SimpleNamespace):
+    BACKGROUND_PREWARM_INTERACTION_QUIET_MS = (
+        workspace_module.ClassicWorkspace.BACKGROUND_PREWARM_INTERACTION_QUIET_MS
+    )
+
+    def _note_background_prewarm_interaction(self, reason):
+        return workspace_module.ClassicWorkspace._note_background_prewarm_interaction(self, reason)
+
+
 def test_classic_workspace_tracks_logical_activity_and_prepares_hidden_reveal():
     calls = []
 
@@ -229,14 +238,14 @@ def test_classic_workspace_spec_lookup_load_guards_and_error_paths(monkeypatch, 
 
 
 def test_classic_workspace_tab_change_queue_and_navigation_guards(monkeypatch):
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         _spec_for_key_or_index=lambda _index: None,
         _take_tab_activation_reason=lambda _index: "tab_switch",
         _mark_system_log_shell_nav=lambda *_args: None,
     )
     workspace_module.ClassicWorkspace._on_current_tab_changed(fake, 99)
 
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         _lazy_loading_keys={"loading"},
         tabs=_Tabs(count=1),
         _lazy_tab_load_delay_ms=lambda _reason: 0,
@@ -276,7 +285,7 @@ def test_classic_workspace_tab_change_queue_and_navigation_guards(monkeypatch):
 
 def test_classic_workspace_activate_tab_all_invalid_and_current_paths():
     tabs = _Tabs(count=2, current=0)
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         tabs=tabs,
         _pending_tab_activation_reasons={},
         _startup_last_allowed_index=-1,
@@ -313,7 +322,7 @@ def test_classic_workspace_activate_tab_attaches_bounded_transition_context():
         0: {"key": "watchlist", "loaded": True, "mounted": True, "widget": source},
         1: {"key": "asian_market", "loaded": True, "mounted": True, "widget": target},
     }
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         tabs=tabs,
         _tab_transition_sequence=0,
         _pending_tab_activation_reasons={},
@@ -344,7 +353,7 @@ def test_classic_workspace_reactivating_current_tab_does_not_create_transition_c
     tabs = _Tabs(count=2, current=1)
     target = SimpleNamespace(_workspace_tab_transition_context={})
     spec = {"key": "asian_market", "loaded": True, "mounted": True, "widget": target}
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         tabs=tabs,
         _tab_transition_sequence=0,
         _pending_tab_activation_reasons={},
@@ -371,7 +380,7 @@ def test_classic_workspace_arms_loaded_watchlist_guard_before_shell_nav_switch()
             calls.append(tabs.currentIndex())
 
     spec = {"key": "watchlist", "loaded": True, "widget": WatchlistWidget()}
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         tabs=tabs,
         _pending_tab_activation_reasons={},
         _startup_last_allowed_index=-1,
@@ -398,7 +407,7 @@ def test_classic_workspace_arms_loaded_lhb_guard_before_shell_nav_switch():
             calls.append(tabs.currentIndex())
 
     spec = {"key": "lhb", "loaded": True, "widget": LhbWidget()}
-    fake = SimpleNamespace(
+    fake = _ClassicWorkspaceDouble(
         tabs=tabs,
         _pending_tab_activation_reasons={},
         _startup_last_allowed_index=-1,

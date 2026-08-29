@@ -1249,7 +1249,7 @@ def test_fund_holdings_apply_view_payload_schedules_local_snapshot_without_sync_
     assert "store" not in calls
 
 
-def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkeypatch):
+def test_fund_holdings_apply_view_payload_commits_deferred_rows_and_finish_atomically(monkeypatch):
     calls = []
     queued = []
 
@@ -1314,13 +1314,9 @@ def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkey
     queued[0]()
 
     assert ("update", []) in calls
-    assert "empty" not in calls
-    assert len(queued) == 2
-
-    queued[1]()
-
     assert "ensure" in calls
     assert "empty" not in calls
+    assert len(queued) == 1
 
 
 def test_fund_holdings_cancelled_generation_drops_queued_view_commit(monkeypatch):
@@ -1354,7 +1350,7 @@ def test_fund_holdings_cancelled_generation_drops_queued_view_commit(monkeypatch
     assert calls == []
 
 
-def test_fund_holdings_cancelled_generation_drops_second_stage_finish(monkeypatch):
+def test_fund_holdings_deferred_non_chunk_commit_is_atomic(monkeypatch):
     calls = []
     queued = []
     monkeypatch.setattr(
@@ -1389,13 +1385,8 @@ def test_fund_holdings_cancelled_generation_drops_second_stage_finish(monkeypatc
     tab = DummyTab()
     fund_holdings_module.FundHoldingsTab._apply_view_payload(tab, {"view_rows": []})
     queued.pop(0)()
-    assert calls == [("update", [])]
-    assert len(queued) == 1
-
-    tab._view_load_generation += 1
-    queued.pop(0)()
-
-    assert calls == [("update", [])]
+    assert calls == [("update", []), "finish", "empty"]
+    assert queued == []
 
 
 def test_fund_holdings_tab_update_button_runs_sync_all_directly(monkeypatch):

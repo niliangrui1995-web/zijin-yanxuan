@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 
 import pytest
-from PyQt6.QtCore import QMimeData, QModelIndex, QRect, Qt
+from PyQt6.QtCore import QMimeData, QModelIndex, QPersistentModelIndex, QRect, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QStandardItemModel
 from PyQt6.QtTest import QAbstractItemModelTester
 from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem, QWidget
@@ -52,6 +52,30 @@ def test_table_models_obey_qt_model_contract_during_mutations():
 
     assert stock_tester.model() is stock
     assert realtime_tester.model() is realtime
+
+
+def test_table_model_reorder_keeps_persistent_index_on_same_stock():
+    stock = _stock(
+        ["代码", "名称"],
+        [{"代码": "000001", "名称": "A"}, {"代码": "000002", "名称": "B"}],
+    )
+    realtime = RtTableModel(
+        [{"代码": "000001", "名称": "A"}, {"代码": "000002", "名称": "B"}]
+    )
+
+    for model in (stock, realtime):
+        code_column = model.headers.index("代码")
+        persistent = QPersistentModelIndex(model.index(0, code_column))
+        reordered = [dict(model.row_data[1]), dict(model.row_data[0])]
+
+        if isinstance(model, StockTableModel):
+            model.update_data(reordered, hydrate_latest_quotes=False)
+        else:
+            assert model.update_rows_incremental(reordered)
+
+        assert persistent.isValid()
+        assert persistent.row() == 1
+        assert persistent.data(Qt.ItemDataRole.DisplayRole) == "000001"
 
 
 @pytest.mark.parametrize(

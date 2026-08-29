@@ -3,15 +3,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from pathlib import Path
 
 from app.services.stock_candidate_builder_service import build_stock_candidate_rows
 from app.services.stock_context_model_service import StockContextReadPolicy, StockContextSnapshot
 from app.services.stock_context_query_service import GENERAL_STOCK_CONTEXT_SOURCE_KEYS, StockContextQueryService
-from app.services.stock_context_snapshot_service import load_lhb_cached_realtime_projection
+from app.services.stock_context_snapshot_service import (
+    load_lhb_cached_realtime_projection,
+    load_na_daily_cached_realtime_projection,
+)
 from core.logger import get_logger
-from infra.storage.na_daily_repository import NA_DAILY_CACHE_FILE
-from infra.storage.stock_context_repository import load_named_cache_rows
 from ui.workspaces.tab_capabilities import (
     F5OffMarketQuoteUniverseCapability,
     QuoteUniverseCapability,
@@ -217,19 +217,14 @@ class QuoteUniverseService:
 
     @staticmethod
     def _read_na_daily_headless_projection() -> dict:
-        try:
-            rows = load_named_cache_rows("na_daily_latest.json")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        projection = load_na_daily_cached_realtime_projection()
+        if not isinstance(projection, Mapping):
             return _source_projection((), status="degraded", reason="na_daily_cache_invalid")
-        codes = tuple(
-            row.get("代码")
-            for row in rows
-            if isinstance(row, Mapping)
+        return _source_projection(
+            projection.get("codes", ()),
+            status=str(projection.get("status") or "degraded"),
+            reason=str(projection.get("reason") or ""),
         )
-        if codes:
-            return _source_projection(codes, status="registered")
-        reason = "na_daily_cache_missing" if not Path(NA_DAILY_CACHE_FILE).exists() else "na_daily_cache_empty"
-        return _source_projection((), status="degraded", reason=reason)
 
     def _headless_candidate_snapshot(self) -> StockContextSnapshot:
         snapshot_reader = self._context_snapshot_reader

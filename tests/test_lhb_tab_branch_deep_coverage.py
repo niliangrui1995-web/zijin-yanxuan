@@ -256,6 +256,7 @@ def test_validate_dates_merge_and_build_payload(monkeypatch):
 
 class _LhbDummy:
     def __init__(self):
+        lhb._initialize_lhb_background_preload_state(self)
         self._pool_bootstrap_not_before = 0.0
         self._post_f5_pool_defer_until = 0.0
         self._pool_load_in_progress = False

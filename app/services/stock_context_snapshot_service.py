@@ -6,7 +6,9 @@ from app.services import ui_industry_chain_service as ai_pool_module
 from app.services import ui_lhb_pool_service as lhb_pool_module
 from app.services.ui_industry_chain_service import load_cached_ai_industry_chain_stock_codes
 from domains.lhb.pool_service import collect_qualifying_codes
+from infra.storage.json_cache_repository import cache_file_exists
 from infra.storage.lhb_pool_repository import LhbPoolRepository, LhbRepositoryError
+from infra.storage.na_daily_repository import NA_DAILY_CACHE_FILE
 from infra.storage.stock_context_repository import (
     coerce_cache_rows,
     lhb_pool_cache_signature,
@@ -126,6 +128,24 @@ def load_lhb_cached_realtime_codes() -> set[str]:
     }
 
 
+def load_na_daily_cached_realtime_projection() -> dict:
+    """Return the read-only NA Daily code projection and cache state."""
+
+    try:
+        rows = load_named_cache_rows("na_daily_latest.json")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return {
+            "codes": (),
+            "status": "degraded",
+            "reason": "na_daily_cache_invalid",
+        }
+    codes = tuple(row.get("代码") for row in rows if isinstance(row, dict))
+    if codes:
+        return {"codes": codes, "status": "registered", "reason": ""}
+    reason = "na_daily_cache_missing" if not cache_file_exists(NA_DAILY_CACHE_FILE) else "na_daily_cache_empty"
+    return {"codes": (), "status": "degraded", "reason": reason}
+
+
 def load_fund_holding_snapshot(
     *,
     stock_codes=None,
@@ -163,6 +183,7 @@ __all__ = [
     "load_lhb_cached_realtime_codes",
     "load_lhb_cached_realtime_projection",
     "load_lhb_pool_rows",
+    "load_na_daily_cached_realtime_projection",
     "load_named_cache_rows",
     "load_scan_cache_rows",
     "project_root",
