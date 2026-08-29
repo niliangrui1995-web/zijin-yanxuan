@@ -344,39 +344,60 @@ def _background_prewarm_acceptance(
     staged_keys: list[str] | None = None,
     lazy_keys: list[str] | None = None,
 ) -> dict:
+    """Validate the completed all-tab hidden-staging contract.
+
+    Watchlist's necessary first visible frame is assessed separately by
+    ``_watchlist_reveal_acceptance``.  This phase begins with the first
+    non-Watchlist preload step, so it must stay paint-silent while the other
+    pages are constructed and primed outside the live ``QTabWidget``.
+    """
     violations: list[str] = []
     planned_count = int(status.get("planned_count", 0) or 0)
     planned_order = [str(key or "") for key in status.get("planned_order", ()) or ()]
     start_order = [str(key or "") for key in status.get("start_order", ()) or ()]
     completion_order = [str(key or "") for key in status.get("completion_order", ()) or ()]
-    handoff_keys = [
+    startup_lazy_handoff_keys = [
         str(key or "") for key in status.get("startup_lazy_handoff_keys", ()) or ()
     ]
-    expected_handoff = planned_order[1:] if planned_order[:1] == ["watchlist"] else []
+    ready_keys = [str(key or "") for key in status.get("ready_keys", ()) or ()]
+    expected_mounted_keys = ["watchlist"] if planned_order[:1] == ["watchlist"] else []
+    expected_staged_keys = planned_order[1:] if expected_mounted_keys else []
     if not bool(status.get("finished")):
         violations.append("prewarm_not_finished")
     if planned_count <= 0 or len(planned_order) != planned_count:
         violations.append(f"planned={len(planned_order)}/{planned_count}")
-    if start_order != ["watchlist"]:
+    if start_order != planned_order:
         violations.append(f"start_order={start_order}")
-    if completion_order != ["watchlist"]:
+    if completion_order != planned_order:
         violations.append(f"completion_order={completion_order}")
-    if handoff_keys != expected_handoff:
+    if startup_lazy_handoff_keys:
         violations.append(
-            f"startup_lazy_handoff_keys={handoff_keys} expected={expected_handoff}"
+            "startup_lazy_handoff_keys="
+            f"{startup_lazy_handoff_keys} expected=[]"
         )
-    if str(status.get("completion_scope") or "") != "visible_watchlist_ready":
+    if str(status.get("completion_scope") or "") != "all_planned":
         violations.append(f"completion_scope={status.get('completion_scope')!r}")
+    if str(status.get("visible_watchlist_state") or "") != "ready":
+        violations.append(
+            "visible_watchlist_state="
+            f"{str(status.get('visible_watchlist_state') or '')!r}"
+        )
+    if ready_keys != planned_order:
+        violations.append(f"ready_keys={ready_keys} expected={planned_order}")
     if status.get("failures"):
         violations.append(f"failures={sorted(status['failures'])}")
     if tab_count is not None and int(tab_count) != planned_count:
         violations.append(f"tab_count={int(tab_count)} expected={planned_count}")
-    if mounted_keys is not None and list(mounted_keys) != ["watchlist"]:
-        violations.append(f"mounted_keys={list(mounted_keys)}")
-    if staged_keys is not None and list(staged_keys):
-        violations.append(f"staged_keys={list(staged_keys)} expected=[]")
-    if lazy_keys is not None and list(lazy_keys) != handoff_keys:
-        violations.append(f"lazy_keys={list(lazy_keys)} expected={handoff_keys}")
+    if mounted_keys is not None and list(mounted_keys) != expected_mounted_keys:
+        violations.append(
+            f"mounted_keys={list(mounted_keys)} expected={expected_mounted_keys}"
+        )
+    if staged_keys is not None and list(staged_keys) != expected_staged_keys:
+        violations.append(
+            f"staged_keys={list(staged_keys)} expected={expected_staged_keys}"
+        )
+    if lazy_keys is not None and list(lazy_keys):
+        violations.append(f"lazy_keys={list(lazy_keys)} expected=[]")
     full_viewport_count = int(paint_region.get("full_viewport_count", 0) or 0)
     if full_viewport_count:
         violations.append(f"watchlist_full_viewport_during_hidden_prewarm={full_viewport_count}")
@@ -1708,7 +1729,15 @@ class _NativeProfileController:
             "mounted_keys": mounted_keys,
             "staged_keys": staged_keys,
             "lazy_keys": lazy_keys,
+            "ready_keys": [str(key or "") for key in status.get("ready_keys", ()) or ()],
+            "startup_lazy_handoff_keys": [
+                str(key or "")
+                for key in status.get("startup_lazy_handoff_keys", ()) or ()
+            ],
             "completion_scope": str(status.get("completion_scope") or ""),
+            "visible_watchlist_state": str(status.get("visible_watchlist_state") or ""),
+            "visible_watchlist_at": float(status.get("visible_watchlist_at", 0.0) or 0.0),
+            "visible_watchlist_detail": str(status.get("visible_watchlist_detail") or ""),
             "status": status,
             "paint_region": paint_region,
             "metrics": prewarm_metrics,
@@ -1716,7 +1745,7 @@ class _NativeProfileController:
             "heartbeat_lateness": heartbeat_lateness,
             "ui_stall_snapshot": stall_snapshot,
             "event_loop_observation": event_loop_observation,
-            "acceptance_scope": "watchlist_repaint_and_11_tab_startup_lazy_handoff",
+            "acceptance_scope": "watchlist_repaint_and_11_tab_all_hidden_staging",
             "acceptance": acceptance,
         }
         if acceptance["status"] != "pass":

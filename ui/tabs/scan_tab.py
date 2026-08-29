@@ -840,6 +840,7 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
         self.proxy_model.setSourceModel(self.source_model)
 
         self.table_scan = VCPTableView(default_row_height=30)
+        self.table_scan.set_targeted_flash_repaint_enabled(False, metric_scope="scan")
         self.table_scan.setModel(self.proxy_model)
         self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
         self.table_state = TableStateWrapper(self.table_scan, empty_title="暂无扫描结果", loading_title="扫描中...")

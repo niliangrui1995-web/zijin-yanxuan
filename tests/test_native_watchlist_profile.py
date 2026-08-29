@@ -206,17 +206,21 @@ def test_native_watchlist_profile_summarizes_residual_repaint_structure():
     assert summary["snapshot"]["skipped_count"] == 1
 
 
-def test_native_watchlist_profile_background_prewarm_acceptance_requires_zero_hidden_full_paints():
+def test_native_watchlist_profile_background_prewarm_acceptance_requires_all_hidden_staged_tabs_and_zero_hidden_full_paints():
     planned_order = ["watchlist", *[f"tab-{index}" for index in range(10)]]
-    handoff_keys = planned_order[1:]
+    staged_keys = planned_order[1:]
     status = {
         "finished": True,
         "planned_order": planned_order,
         "planned_count": 11,
-        "start_order": ["watchlist"],
-        "completion_order": ["watchlist"],
-        "completion_scope": "visible_watchlist_ready",
-        "startup_lazy_handoff_keys": handoff_keys,
+        "start_order": planned_order,
+        "completion_order": planned_order,
+        "completion_scope": "all_planned",
+        "visible_watchlist_state": "ready",
+        "visible_watchlist_at": 1.0,
+        "visible_watchlist_detail": "",
+        "startup_lazy_handoff_keys": [],
+        "ready_keys": planned_order,
         "failures": {},
     }
     paint_region = {
@@ -233,8 +237,8 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_zero_hi
         paint_region,
         tab_count=11,
         mounted_keys=["watchlist"],
-        staged_keys=[],
-        lazy_keys=handoff_keys,
+        staged_keys=staged_keys,
+        lazy_keys=[],
     )["status"] == "pass"
 
     topology_failure = _background_prewarm_acceptance(
@@ -242,8 +246,8 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_zero_hi
         paint_region,
         tab_count=10,
         mounted_keys=["watchlist", "tab-0"],
-        staged_keys=["tab-0"],
-        lazy_keys=handoff_keys[1:],
+        staged_keys=staged_keys[1:],
+        lazy_keys=["tab-0"],
     )
     assert topology_failure["status"] == "fail"
     assert any(item.startswith("tab_count=") for item in topology_failure["violations"])
@@ -255,18 +259,22 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_zero_hi
     invalid_status.update(
         start_order=["watchlist", "tab-0"],
         completion_order=["watchlist", "tab-0"],
-        completion_scope="all_planned",
-        startup_lazy_handoff_keys=handoff_keys[1:],
+        completion_scope="visible_watchlist_ready",
+        visible_watchlist_state="pending",
+        startup_lazy_handoff_keys=["tab-0"],
+        ready_keys=planned_order[:-1],
     )
     contract_failure = _background_prewarm_acceptance(invalid_status, paint_region)
     assert contract_failure["status"] == "fail"
     assert any(item.startswith("start_order=") for item in contract_failure["violations"])
     assert any(item.startswith("completion_order=") for item in contract_failure["violations"])
     assert any(item.startswith("completion_scope=") for item in contract_failure["violations"])
+    assert any(item.startswith("visible_watchlist_state=") for item in contract_failure["violations"])
     assert any(
         item.startswith("startup_lazy_handoff_keys=")
         for item in contract_failure["violations"]
     )
+    assert any(item.startswith("ready_keys=") for item in contract_failure["violations"])
 
     paint_region["full_viewport_count"] = 2
     acceptance = _background_prewarm_acceptance(status, paint_region)
@@ -274,21 +282,25 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_zero_hi
     assert "watchlist_full_viewport_during_hidden_prewarm=2" in acceptance["violations"]
 
 
-def test_native_watchlist_profile_accepts_finished_lazy_handoff_without_hidden_step():
+def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_lazy_handoff():
     planned_order = ["watchlist", *[f"tab-{index}" for index in range(10)]]
-    handoff_keys = planned_order[1:]
+    staged_keys = planned_order[1:]
     status = {
         "finished": True,
         "planned_order": planned_order,
         "planned_count": len(planned_order),
-        "start_order": ["watchlist"],
-        "completion_order": ["watchlist"],
-        "completion_scope": "visible_watchlist_ready",
-        "startup_lazy_handoff_keys": handoff_keys,
+        "start_order": planned_order,
+        "completion_order": planned_order,
+        "completion_scope": "all_planned",
+        "visible_watchlist_state": "ready",
+        "visible_watchlist_at": 1.0,
+        "visible_watchlist_detail": "",
+        "startup_lazy_handoff_keys": [],
+        "ready_keys": planned_order,
         "failures": {},
     }
     specs = [
-        {"key": key, "loaded": key == "watchlist", "mounted": key == "watchlist"}
+        {"key": key, "loaded": True, "mounted": key == "watchlist"}
         for key in planned_order
     ]
     workspace = SimpleNamespace(
@@ -302,7 +314,7 @@ def test_native_watchlist_profile_accepts_finished_lazy_handoff_without_hidden_s
     controller.args = SimpleNamespace(prewarm_timeout_ms=1)
     controller._background_prewarm_started_at = 0.0
     controller._background_prewarm_offsets = None
-    controller._background_prewarm_first_hidden_key = ""
+    controller._background_prewarm_first_hidden_key = staged_keys[0]
     controller._watchlist_reveal_started_at = 1.0
     controller._activation_started = 1.0
     controller._heartbeat_by_phase = {}
@@ -336,12 +348,17 @@ def test_native_watchlist_profile_accepts_finished_lazy_handoff_without_hidden_s
     assert timer_calls == []
     assert continuation_calls == [True]
     prewarm_report = controller.report["background_prewarm"]
-    assert prewarm_report["first_hidden_key"] == ""
+    assert prewarm_report["first_hidden_key"] == staged_keys[0]
     assert prewarm_report["tab_count"] == 11
     assert prewarm_report["mounted_keys"] == ["watchlist"]
-    assert prewarm_report["staged_keys"] == []
-    assert prewarm_report["lazy_keys"] == handoff_keys
-    assert prewarm_report["completion_scope"] == "visible_watchlist_ready"
+    assert prewarm_report["staged_keys"] == staged_keys
+    assert prewarm_report["lazy_keys"] == []
+    assert prewarm_report["ready_keys"] == planned_order
+    assert prewarm_report["startup_lazy_handoff_keys"] == []
+    assert prewarm_report["completion_scope"] == "all_planned"
+    assert prewarm_report["visible_watchlist_state"] == "ready"
+    assert prewarm_report["visible_watchlist_at"] == 1.0
+    assert prewarm_report["visible_watchlist_detail"] == ""
     assert prewarm_report["paint_region"]["full_viewport_count"] == 0
     assert prewarm_report["acceptance"] == {"status": "pass", "violations": []}
 

@@ -10,12 +10,18 @@ from PyQt6.QtWidgets import QWidget
 import app.bootstrap.startup_orchestrator as startup_orchestrator_module
 import ui.main_window_qt as main_window_qt_module
 import ui.workspaces.classic_workspace as classic_workspace_module
+from ui.tabs.stock_candidate_tab import StockCandidateTab
 from ui.workspaces.background_preload_receipt import (
     BackgroundPreloadCancellationReceipt,
     cancel_background_preload_tasks,
 )
 from ui.workspaces.classic_workspace import ClassicWorkspace
-from ui.workspaces.tab_registry import TAB_DEFINITIONS, TabLoadReason, startup_tab_keys
+from ui.workspaces.tab_registry import (
+    TAB_DEFINITIONS,
+    TabLoadReason,
+    startup_tab_keys,
+    widget_prewarm_tab_keys,
+)
 
 
 class _ControlledPreloadTab(QWidget):
@@ -210,6 +216,9 @@ class _FakeRunner:
 
 
 def _install_controlled_factories(workspace: ClassicWorkspace, events: list[tuple[str, str]]) -> None:
+    # These manual state-machine tests advance the coordinator explicitly;
+    # dedicated timing regressions exercise the production quiet window.
+    workspace.BACKGROUND_PREWARM_INTERACTION_QUIET_MS = 0
     for spec in workspace._tab_specs:
         key = spec["key"]
         spec["factory"] = lambda key=key, **_kwargs: _ControlledPreloadTab(key, events, workspace)
@@ -1164,7 +1173,7 @@ def test_prestart_restore_marks_initial_tab_ready_only_after_hydration(qt_applic
         workspace.deleteLater()
 
 
-def test_visible_watchlist_prewarm_finishes_before_runtime_consumers(
+def test_visible_watchlist_prewarm_continues_hidden_staging_before_runtime_consumers(
     qt_application,
     monkeypatch,
 ):
@@ -1210,14 +1219,15 @@ def test_visible_watchlist_prewarm_finishes_before_runtime_consumers(
         status = workspace.background_preload_status()
         hidden_specs = [spec for spec in workspace.tab_specs() if spec["key"] != "watchlist"]
 
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_ready"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
+        assert status["visible_watchlist_state"] == "ready"
         assert status["start_order"] == ["watchlist"]
         assert status["completion_order"] == ["watchlist"]
-        assert status["startup_lazy_handoff_keys"] == expected_order[1:]
-        assert status["startup_lazy_handoff_count"] == 10
-        assert quote_universe_refreshes == ["refresh"]
-        assert status["remaining_keys"] == []
+        assert status["startup_lazy_handoff_keys"] == []
+        assert status["startup_lazy_handoff_count"] == 0
+        assert quote_universe_refreshes == []
+        assert status["remaining_keys"] == expected_order[1:]
         assert status["pending_priority_keys"] == []
         assert status["active_key"] == ""
         assert status["active_step_count"] == 0
@@ -1237,6 +1247,39 @@ def test_visible_watchlist_prewarm_finishes_before_runtime_consumers(
         assert all(("construct", key) not in events for key in expected_order[1:])
 
         startup_host = SimpleNamespace(workspace=workspace)
+        assert startup_orchestrator_module._background_preload_is_settled(startup_host) is False
+        assert main_window_qt_module._background_tab_preload_settled(workspace) is False
+
+        for expected_key in expected_order[1:]:
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+            assert workspace._background_prewarm_active_key == expected_key
+            workspace._background_prewarm_active_widget.ready = True
+            workspace._prewarm_next_tab()
+            _stop_preload_timer(workspace)
+
+        # The final terminal step only schedules the queue drain; advance once
+        # more to let the coordinator record all-planned completion.
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+
+        final_status = workspace.background_preload_status()
+        assert final_status["finished"] is True
+        assert final_status["completion_scope"] == "all_planned"
+        assert final_status["visible_watchlist_state"] == "ready"
+        assert final_status["startup_lazy_handoff_keys"] == []
+        assert final_status["remaining_keys"] == []
+        assert final_status["active_key"] == ""
+        assert final_status["active_step_count"] == 0
+        assert final_status["max_concurrent_steps"] == 1
+        assert final_status["blocked_reason"] == ""
+        assert all(spec["loaded"] for spec in hidden_specs)
+        assert all(spec["mounted"] is False for spec in hidden_specs)
+        assert all(
+            workspace.tabs.widget(workspace._tab_index_for_key(spec["key"])) is spec["page_widget"]
+            for spec in hidden_specs
+        )
+        assert quote_universe_refreshes == ["refresh"]
         assert startup_orchestrator_module._background_preload_is_settled(startup_host) is True
         assert main_window_qt_module._background_tab_preload_settled(workspace) is True
 
@@ -1272,51 +1315,8 @@ def test_visible_watchlist_prewarm_finishes_before_runtime_consumers(
         assert prewarm_calls == [{"delay_ms": 0, "hidden_view": True}]
         assert scheduled == []
 
-        target_key = "stock_candidates"
-        target_index = workspace._tab_index_for_key(target_key)
-        placeholder = workspace.tabs.widget(target_index)
-        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
-        _stop_preload_timer(workspace)
-        resumed = workspace.background_preload_status()
-        dependency_chain = [
-            "ai_industry_chain",
-            "na_daily",
-            "scan",
-            "foreign_block",
-            "earnings",
-            "fund_holdings",
-            "lhb",
-            "asian_market",
-            "stock_candidates",
-        ]
-        assert resumed["finished"] is False
-        assert resumed["completion_scope"] == "interactive_resume"
-        assert resumed["startup_lazy_handoff_keys"] == []
-        assert resumed["priority_closures"][target_key] == dependency_chain
-        assert workspace._background_prewarm_queue[: len(dependency_chain)] == dependency_chain
-
-        for expected_key in dependency_chain:
-            workspace._prewarm_next_tab()
-            _stop_preload_timer(workspace)
-            assert workspace._background_prewarm_active_key == expected_key
-            workspace._background_prewarm_active_widget.ready = True
-            workspace._prewarm_next_tab()
-            _stop_preload_timer(workspace)
-
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
-        assert workspace.tabs.currentIndex() == target_index
-        assert workspace.tabs.currentWidget() is not placeholder
-        assert workspace.get_loaded_tab(target_key) is workspace.tabs.currentWidget()
-        assert events.count(("construct", target_key)) == 1
-        final_status = workspace.background_preload_status()
-        assert final_status["finished"] is True
-        assert final_status["completion_scope"] == "interactive_target_ready"
-        assert final_status["startup_lazy_handoff_keys"] == ["system_log"]
-        assert final_status["interactive_handoff_targets"] == []
-        assert final_status["active_key"] == ""
-        assert final_status["timer_active"] is False
-        assert events.count(("construct", "system_log")) == 0
-        assert quote_universe_refreshes == ["refresh", "refresh"]
+        assert events.count(("construct", "stock_candidates")) == 1
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -1413,7 +1413,7 @@ def test_background_prewarm_placeholder_replacement_does_not_arm_current_watchli
         workspace.deleteLater()
 
 
-@pytest.mark.parametrize("target_key", ("asian_market", "na_daily"))
+@pytest.mark.parametrize("target_key", widget_prewarm_tab_keys())
 def test_transition_tables_stay_staged_during_background_prewarm_until_activation(
     qt_application,
     target_key,
@@ -1422,6 +1422,14 @@ def test_transition_tables_stay_staged_during_background_prewarm_until_activatio
         def __init__(self, key, events, parent=None):
             super().__init__(key, events, parent)
             self.viewport_background_sync_calls = 0
+            self.preload_reveal_calls = 0
+            self.guard_load_reasons = []
+
+        def prepare_workspace_preload_reveal(self) -> None:
+            self.preload_reveal_calls += 1
+
+        def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+            self.guard_load_reasons.append(load_reason)
 
         def sync_workspace_viewport_background(self) -> None:
             self.viewport_background_sync_calls += 1
@@ -1457,6 +1465,8 @@ def test_transition_tables_stay_staged_during_background_prewarm_until_activatio
         assert workspace.tabs.widget(target_index) is placeholder
         assert target.parentWidget() is workspace._background_preload_staging_host
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+        assert target.preload_reveal_calls == 0
+        assert target.guard_load_reasons == []
 
         assert workspace.activate_tab(target_index, reason=TabLoadReason.SHELL_NAV.value) is True
 
@@ -1465,7 +1475,32 @@ def test_transition_tables_stay_staged_during_background_prewarm_until_activatio
         assert workspace.tabs.indexOf(target) == target_index
         assert target.parentWidget() is not workspace._background_preload_staging_host
         assert target.viewport_background_sync_calls == 1
+        # A hidden preload does not paint the live table.  The intentional
+        # first mount arms exactly one required preload_reveal frame, and a
+        # repeated activation must not manufacture another structural reveal.
+        assert target.preload_reveal_calls == 1
+        assert target.guard_load_reasons == [TabLoadReason.BACKGROUND_PREWARM.value]
+        assert workspace.activate_tab(target_index, reason=TabLoadReason.SHELL_NAV.value) is True
+        assert target.preload_reveal_calls == 1
+        assert target.guard_load_reasons == [TabLoadReason.BACKGROUND_PREWARM.value]
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_stock_candidate_background_staging_host_resolves_workspace_context(qt_application):
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    try:
+        staging_host = classic_workspace_module._ensure_background_preload_staging_host(workspace)
+        staged_owner = SimpleNamespace(parent=lambda: staging_host)
+
+        assert StockCandidateTab._workspace(staged_owner) is workspace
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -1530,7 +1565,7 @@ def test_active_transition_table_keeps_placeholder_until_background_step_is_read
         workspace.deleteLater()
 
 
-def test_visible_watchlist_prime_failure_hands_hidden_tabs_back_to_lazy_loading(
+def test_visible_watchlist_prime_failure_keeps_hidden_staging_queue_intact(
     qt_application,
 ):
     events: list[tuple[str, str]] = []
@@ -1559,13 +1594,15 @@ def test_visible_watchlist_prime_failure_hands_hidden_tabs_back_to_lazy_loading(
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_terminal"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
+        assert status["visible_watchlist_state"] == "terminal_failed"
+        assert status["visible_watchlist_detail"] == "startup prime failed"
         assert status["start_order"] == ["watchlist"]
         assert status["completion_order"] == ["watchlist"]
         assert status["failures"] == {"watchlist": "startup prime failed"}
-        assert status["startup_lazy_handoff_keys"] == list(startup_tab_keys())[1:]
-        assert status["remaining_keys"] == []
+        assert status["startup_lazy_handoff_keys"] == []
+        assert status["remaining_keys"] == list(startup_tab_keys())[1:]
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
         assert workspace.tabs.currentWidget() is workspace.get_loaded_tab("watchlist")
         assert workspace.tabs.currentWidget() is not placeholder
@@ -1615,8 +1652,10 @@ def test_current_watchlist_placeholder_mounts_when_background_step_has_no_priori
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_ready"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
+        assert status["visible_watchlist_state"] == "ready"
+        assert status["remaining_keys"] == list(startup_tab_keys())[1:]
         assert workspace.tabs.currentWidget() is staged
         assert workspace._spec_for_key_or_index("watchlist")["mounted"] is True
         assert workspace.tabs.count() == len(TAB_DEFINITIONS) == 11
@@ -1761,10 +1800,11 @@ def test_user_watchlist_activation_discards_stale_restore_priority(qt_applicatio
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_ready"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
         assert status["pending_priority_keys"] == []
-        assert status["startup_lazy_handoff_keys"] == list(startup_tab_keys())[1:]
+        assert status["startup_lazy_handoff_keys"] == []
+        assert status["remaining_keys"] == list(startup_tab_keys())[1:]
         assert all(
             ("construct", key) not in events for key in list(startup_tab_keys())[1:]
         )
@@ -1811,7 +1851,7 @@ def test_user_activation_cancels_queued_workspace_restore_timer(qt_application):
         workspace.deleteLater()
 
 
-def test_watchlist_return_cancels_post_handoff_restore_before_hidden_construction(
+def test_watchlist_return_demotes_restore_priority_without_clearing_hidden_staging(
     qt_application,
 ):
     events: list[tuple[str, str]] = []
@@ -1835,9 +1875,7 @@ def test_watchlist_return_cancels_post_handoff_restore_before_hidden_constructio
         workspace._background_prewarm_active_widget.ready = True
         workspace._prewarm_next_tab()
         _stop_preload_timer(workspace)
-        assert workspace.background_preload_status()["completion_scope"] == (
-            "visible_watchlist_ready"
-        )
+        assert workspace.background_preload_status()["completion_scope"] == "all_planned"
 
         target_index = workspace._tab_index_for_key("stock_candidates")
         assert workspace.activate_tab(
@@ -1847,17 +1885,18 @@ def test_watchlist_return_cancels_post_handoff_restore_before_hidden_constructio
         _stop_preload_timer(workspace)
         resumed = workspace.background_preload_status()
         assert resumed["finished"] is False
-        assert resumed["completion_scope"] == "interactive_resume"
+        assert resumed["completion_scope"] == "all_planned"
+        assert resumed["pending_priority_keys"] == ["stock_candidates"]
 
         assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_resumed"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
         assert status["pending_priority_keys"] == []
         assert status["interactive_handoff_targets"] == []
         assert status["watchlist_resume_pause_requested"] is False
-        assert status["startup_lazy_handoff_keys"] == list(startup_tab_keys())[1:]
-        assert status["timer_active"] is False
+        assert status["startup_lazy_handoff_keys"] == []
+        assert status["remaining_keys"] == list(startup_tab_keys())[1:]
         assert all(
             ("construct", key) not in events for key in list(startup_tab_keys())[1:]
         )
@@ -1866,7 +1905,57 @@ def test_watchlist_return_cancels_post_handoff_restore_before_hidden_constructio
         workspace.deleteLater()
 
 
-def test_watchlist_return_stops_interactive_handoff_after_active_step_settles(
+def test_shell_nav_return_demotes_cold_target_before_hidden_construction(
+    qt_application,
+):
+    """A rapid shell-nav return must win before a cold target constructs."""
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=True,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    workspace.resize(960, 640)
+    workspace.show()
+    qt_application.processEvents()
+
+    try:
+        watchlist_index = workspace._tab_index_for_key("watchlist")
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
+        _stop_preload_timer(workspace)
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        workspace._background_prewarm_active_widget.ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert workspace.background_preload_status()["completion_scope"] == "all_planned"
+
+        workspace.prepare_shell_group_rebuild_navigation(interval_ms=5_000)
+        scan_index = workspace._tab_index_for_key("scan")
+        assert workspace.activate_tab(scan_index, reason=TabLoadReason.SHELL_NAV.value) is True
+        qt_application.processEvents()
+
+        # The 120ms shell-group quiet window must keep the zero-delay preload
+        # callback from entering QWidget construction before a quick return.
+        assert ("construct", "scan") not in events
+        assert workspace._background_prewarm_active_key == ""
+        assert workspace.background_preload_status()["timer_active"] is True
+
+        assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.SHELL_NAV.value) is True
+        status = workspace.background_preload_status()
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
+        assert status["pending_priority_keys"] == []
+        assert "scan" in status["remaining_keys"]
+        assert ("construct", "scan") not in events
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_watchlist_return_demotes_active_priority_and_keeps_full_queue_after_settlement(
     qt_application,
 ):
     events: list[tuple[str, str]] = []
@@ -1902,7 +1991,8 @@ def test_watchlist_return_stops_interactive_handoff_after_active_step_settles(
         assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
         paused = workspace.background_preload_status()
         assert paused["finished"] is False
-        assert paused["watchlist_resume_pause_requested"] is True
+        assert paused["completion_scope"] == "all_planned"
+        assert paused["watchlist_resume_pause_requested"] is False
         assert paused["pending_priority_keys"] == []
         assert paused["interactive_handoff_targets"] == []
 
@@ -1911,24 +2001,21 @@ def test_watchlist_return_stops_interactive_handoff_after_active_step_settles(
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_resumed"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
         assert status["watchlist_resume_pause_requested"] is False
         assert status["active_key"] == ""
-        assert status["timer_active"] is False
-        assert "ai_industry_chain" not in status["startup_lazy_handoff_keys"]
-        assert "stock_candidates" in status["startup_lazy_handoff_keys"]
+        assert "ai_industry_chain" not in status["remaining_keys"]
+        assert "stock_candidates" in status["remaining_keys"]
+        assert status["startup_lazy_handoff_keys"] == []
         assert events.count(("construct", "ai_industry_chain")) == 1
-        assert all(
-            events.count(("construct", key)) == 0
-            for key in status["startup_lazy_handoff_keys"]
-        )
+        assert events.count(("construct", "stock_candidates")) == 0
     finally:
         workspace.shutdown()
         workspace.deleteLater()
 
 
-def test_watchlist_return_stops_initial_priority_tail_after_watchlist_is_ready(
+def test_watchlist_return_keeps_noncurrent_priority_tail_hidden_until_quiet_queue_resumes(
     qt_application,
 ):
     events: list[tuple[str, str]] = []
@@ -1969,7 +2056,7 @@ def test_watchlist_return_stops_initial_priority_tail_after_watchlist_is_ready(
         assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
         paused = workspace.background_preload_status()
         assert workspace.tabs.currentWidget() is watchlist
-        assert paused["watchlist_resume_pause_requested"] is True
+        assert paused["watchlist_resume_pause_requested"] is False
         assert paused["pending_priority_keys"] == []
 
         active.ready = True
@@ -1977,10 +2064,11 @@ def test_watchlist_return_stops_initial_priority_tail_after_watchlist_is_ready(
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "visible_watchlist_resumed"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
         assert status["watchlist_resume_pause_requested"] is False
-        assert "foreign_block" in status["startup_lazy_handoff_keys"]
+        assert "foreign_block" in status["remaining_keys"]
+        assert status["startup_lazy_handoff_keys"] == []
         assert events.count(("construct", "ai_industry_chain")) == 1
         assert events.count(("construct", "foreign_block")) == 0
     finally:
@@ -1988,7 +2076,7 @@ def test_watchlist_return_stops_initial_priority_tail_after_watchlist_is_ready(
         workspace.deleteLater()
 
 
-def test_interactive_handoff_uses_latest_requested_target(qt_application):
+def test_interactive_priority_uses_latest_requested_target_without_ending_full_staging(qt_application):
     events: list[tuple[str, str]] = []
     workspace = ClassicWorkspace(
         data_provider=object(),
@@ -2026,7 +2114,7 @@ def test_interactive_handoff_uses_latest_requested_target(qt_application):
 
         resumed = workspace.background_preload_status()
         assert resumed["pending_priority_keys"] == [latest_key]
-        assert resumed["interactive_handoff_targets"] == [latest_key]
+        assert resumed["interactive_handoff_targets"] == []
         assert workspace._background_prewarm_queue[0] == latest_key
 
         workspace._prewarm_next_tab()
@@ -2037,9 +2125,10 @@ def test_interactive_handoff_uses_latest_requested_target(qt_application):
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "interactive_target_ready"
-        assert first_key in status["startup_lazy_handoff_keys"]
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
+        assert first_key in status["remaining_keys"]
+        assert status["startup_lazy_handoff_keys"] == []
         assert events.count(("construct", first_key)) == 0
         assert events.count(("construct", latest_key)) == 1
     finally:
@@ -2047,7 +2136,7 @@ def test_interactive_handoff_uses_latest_requested_target(qt_application):
         workspace.deleteLater()
 
 
-def test_new_target_clears_watchlist_pause_while_previous_step_settles(qt_application):
+def test_latest_target_replaces_demoted_priority_while_previous_step_settles(qt_application):
     events: list[tuple[str, str]] = []
     workspace = ClassicWorkspace(
         data_provider=object(),
@@ -2083,7 +2172,7 @@ def test_new_target_clears_watchlist_pause_while_previous_step_settles(qt_applic
         active = workspace._background_prewarm_active_widget
 
         assert workspace.activate_tab(watchlist_index, reason=TabLoadReason.USER.value) is True
-        assert workspace.background_preload_status()["watchlist_resume_pause_requested"] is True
+        assert workspace.background_preload_status()["watchlist_resume_pause_requested"] is False
         assert workspace.activate_tab(
             workspace._tab_index_for_key(latest_target),
             reason=TabLoadReason.USER.value,
@@ -2092,7 +2181,7 @@ def test_new_target_clears_watchlist_pause_while_previous_step_settles(qt_applic
         resumed = workspace.background_preload_status()
         assert resumed["watchlist_resume_pause_requested"] is False
         assert resumed["pending_priority_keys"] == [latest_target]
-        assert resumed["interactive_handoff_targets"] == [latest_target]
+        assert resumed["interactive_handoff_targets"] == []
 
         active.ready = True
         workspace._prewarm_next_tab()
@@ -2105,9 +2194,10 @@ def test_new_target_clears_watchlist_pause_while_previous_step_settles(qt_applic
         _stop_preload_timer(workspace)
 
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "interactive_target_ready"
-        assert first_target in status["startup_lazy_handoff_keys"]
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
+        assert first_target in status["remaining_keys"]
+        assert status["startup_lazy_handoff_keys"] == []
         assert events.count(("construct", latest_target)) == 1
         assert events.count(("construct", first_target)) == 0
     finally:
@@ -2115,7 +2205,7 @@ def test_new_target_clears_watchlist_pause_while_previous_step_settles(qt_applic
         workspace.deleteLater()
 
 
-def test_interactive_handoff_dependency_failure_keeps_unrelated_tabs_lazy(qt_application):
+def test_interactive_priority_dependency_failure_keeps_full_staging_queue_running(qt_application):
     events: list[tuple[str, str]] = []
     workspace = ClassicWorkspace(
         data_provider=object(),
@@ -2137,15 +2227,14 @@ def test_interactive_handoff_dependency_failure_keeps_unrelated_tabs_lazy(qt_app
         workspace._background_prewarm_active_widget.ready = True
         workspace._prewarm_next_tab()
         _stop_preload_timer(workspace)
-        assert workspace.background_preload_status()["finished"] is True
+        assert workspace.background_preload_status()["finished"] is False
+        assert workspace.background_preload_status()["completion_scope"] == "all_planned"
 
         target_key = "foreign_block"
         target_index = workspace._tab_index_for_key(target_key)
         assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
         _stop_preload_timer(workspace)
-        assert workspace.background_preload_status()["interactive_handoff_targets"] == [
-            target_key
-        ]
+        assert workspace.background_preload_status()["pending_priority_keys"] == [target_key]
 
         workspace._prewarm_next_tab()
         _stop_preload_timer(workspace)
@@ -2160,51 +2249,17 @@ def test_interactive_handoff_dependency_failure_keeps_unrelated_tabs_lazy(qt_app
         workspace._prewarm_next_tab()
         _stop_preload_timer(workspace)
         status = workspace.background_preload_status()
-        assert status["finished"] is True
-        assert status["completion_scope"] == "interactive_target_terminal"
+        assert status["finished"] is False
+        assert status["completion_scope"] == "all_planned"
         assert status["interactive_handoff_targets"] == []
         assert status["dependency_failures"][target_key] == (
             "dependencies_not_ready:ai_industry_chain"
         )
-        assert target_key in status["startup_lazy_handoff_keys"]
-        assert status["startup_lazy_handoff_keys"]
-        assert status["remaining_keys"] == []
+        assert target_key not in status["remaining_keys"]
+        assert status["startup_lazy_handoff_keys"] == []
+        assert status["remaining_keys"]
         assert events.count(("construct", target_key)) == 0
-        assert all(
-            events.count(("construct", key)) == 0
-            for key in status["startup_lazy_handoff_keys"]
-            if key != "ai_industry_chain"
-        )
-
-        ai_widget.is_background_preload_complete = lambda: ai_widget.ready
-        ai_widget.ready = True
-        assert workspace.activate_tab(target_index, reason=TabLoadReason.USER.value) is True
-        _stop_preload_timer(workspace)
-        retry = workspace.background_preload_status()
-        assert retry["priority_closures"][target_key] == [
-            "ai_industry_chain",
-            target_key,
-        ]
-
-        workspace._prewarm_next_tab()
-        _stop_preload_timer(workspace)
-        assert workspace._background_prewarm_active_key == ""
-        assert ai_widget.prime_calls == 2
-        workspace._prewarm_next_tab()
-        _stop_preload_timer(workspace)
-        assert workspace._background_prewarm_active_key == target_key
-        workspace._background_prewarm_active_widget.ready = True
-        workspace._prewarm_next_tab()
-        _stop_preload_timer(workspace)
-
-        recovered = workspace.background_preload_status()
-        assert recovered["finished"] is True
-        assert recovered["completion_scope"] == "interactive_target_ready"
-        assert "ai_industry_chain" not in recovered["failures"]
-        assert target_key not in recovered["failures"]
-        assert target_key not in recovered["dependency_failures"]
         assert events.count(("construct", "ai_industry_chain")) == 1
-        assert events.count(("construct", target_key)) == 1
     finally:
         workspace.shutdown()
         workspace.deleteLater()

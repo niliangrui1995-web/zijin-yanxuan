@@ -441,7 +441,7 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         """Apply the latest hidden quote projection before this page is shown."""
         return self.prime_hidden_quote_projection()
 
-    def _apply_quote_store_snapshot(self, current_model=None):
+    def _apply_quote_store_snapshot(self, current_model=None, *, record_flash: bool | None = None):
         if current_model is not None:
             self._active_model_ref = current_model
 
@@ -457,8 +457,9 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
 
         quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
         if quote_subset:
-            record_flash = True
-            if BaseStockTab._accepts_hidden_quote_projection(self):
+            if record_flash is None:
+                record_flash = True
+            if record_flash and BaseStockTab._accepts_hidden_quote_projection(self):
                 try:
                     record_flash = bool(self._workspace_active and self.isVisible())
                 except RuntimeError:
@@ -505,6 +506,15 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
             prepare = getattr(table, "prepare_background_preload_reveal", None)
             if callable(prepare):
                 prepare()
+
+    def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+        """Arm the hidden-staged page's bounded post-reveal paint-tail guard."""
+        if not bool(getattr(self, "_workspace_preload_staged", False)):
+            return
+        for table in self.iter_tables():
+            prepare = getattr(table, "prepare_workspace_preload_repaint_guard", None)
+            if callable(prepare):
+                prepare(load_reason=load_reason)
 
     def sync_workspace_viewport_background(self) -> None:
         for table in self.iter_tables():

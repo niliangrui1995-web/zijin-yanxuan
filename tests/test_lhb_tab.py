@@ -755,6 +755,26 @@ def test_lhb_shell_nav_repaint_guard_delegates_to_table(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_staged_preload_repaint_guard_delegates_only_while_hidden_staged(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    calls = []
+    monkeypatch.setattr(
+        tab.table,
+        "prepare_workspace_preload_repaint_guard",
+        lambda *, load_reason: calls.append(load_reason),
+    )
+    try:
+        tab.prepare_workspace_preload_repaint_guard(load_reason="background_prewarm")
+        assert calls == []
+
+        tab._workspace_preload_staged = True
+        tab.prepare_workspace_preload_repaint_guard(load_reason="background_prewarm")
+
+        assert calls == ["background_prewarm"]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_quote_default_resort_emits_one_layout_and_targeted_data_span():
     tab = LhbTab(object(), autoload_pool=False)
     rows = [
@@ -878,6 +898,51 @@ def test_lhb_hidden_cache_only_preload_stages_rows_without_model_invalidation(mo
         assert len(pool_updated) == 1
     finally:
         lhb_tab_module.event_bus.sig_lhb_pool_updated.disconnect(capture_published_rows)
+        tab.deleteLater()
+
+
+def test_lhb_staged_cache_only_preload_commits_before_preload_reveal(monkeypatch):
+    """后台 staging 时把真实 reset/sort 留在不可见 host，不能到首显再回放。"""
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._workspace_preload_staged = True
+    tab._background_preload_requested = True
+    tab._background_preload_cache_only = True
+    model_reset = QSignalSpy(tab.model.modelReset)
+    reset_visibility = []
+    quote_store_applies = []
+    tab.model.modelReset.connect(lambda: reset_visibility.append(tab.isVisible()))
+    monkeypatch.setattr(
+        tab,
+        "_apply_quote_store_snapshot",
+        lambda **kwargs: quote_store_applies.append(kwargs),
+    )
+    try:
+        lhb_tab_module._complete_lhb_pool_load(
+            tab,
+            {
+                "status": "ok",
+                "cache_only": True,
+                "pool_manager": SimpleNamespace(get_cached_dates=lambda: ["20260728"]),
+                "pool": [{"代码": "000001"}],
+                "row_data": [{"代码": "000001", "名称": "平安银行"}],
+                "missing": [],
+                "pending_validation": [],
+            },
+            emit_event=True,
+        )
+
+        assert tab.model.rowCount() == 1
+        assert tab._pending_lhb_display is None
+        assert len(model_reset) == 1
+        assert reset_visibility == [False]
+        assert quote_store_applies == [{"record_flash": False}]
+
+        # ClassicWorkspace arms preload_reveal while the widget is still in
+        # the staging host.  That bookkeeping must not replay a second reset.
+        tab.prepare_workspace_preload_reveal()
+        assert len(model_reset) == 1
+        assert lhb_tab_module._flush_pending_lhb_display(tab) is False
+    finally:
         tab.deleteLater()
 
 
@@ -1223,6 +1288,29 @@ def test_lhb_silent_quote_snapshot_does_not_enter_visible_flash_queue(monkeypatc
         assert applied == [({"300750": {"close": 10.0}}, False)]
         assert tab._pending_quote_snapshot == {}
         assert not tab._quote_apply_timer.isActive()
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_staged_cache_snapshot_is_silent_but_later_quote_can_flash(monkeypatch):
+    monkeypatch.setattr(
+        "ui.tabs.base_stock_tab.latest_quote_snapshot",
+        lambda: {"300750": {"close": 10.0, "last_close": 9.5}},
+    )
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data(
+        [{"代码": "300750", "名称": "宁德时代", "现价": "9.00", "涨幅%": 0.0}],
+        hydrate_latest_quotes=False,
+    )
+    tab.isVisible = lambda: False
+    try:
+        tab._apply_quote_store_snapshot(record_flash=False)
+
+        assert tab.model._flash_records == {}
+
+        tab._apply_quote_snapshot({"300750": {"close": 11.0, "last_close": 9.5}})
+
+        assert tab.model._flash_records
     finally:
         tab.deleteLater()
 

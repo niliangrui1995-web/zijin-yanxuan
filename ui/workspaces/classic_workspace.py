@@ -478,6 +478,10 @@ def _initialize_workspace_runtime_state(workspace, *, controlled_startup_probe_g
     workspace._background_prewarm_started = False
     workspace._background_prewarm_finished = False
     workspace._background_prewarm_finished_at = 0.0
+    workspace._background_prewarm_visible_watchlist_state = "pending"
+    workspace._background_prewarm_visible_watchlist_at = 0.0
+    workspace._background_prewarm_visible_watchlist_detail = ""
+    workspace._background_prewarm_interaction_quiet_until = 0.0
     workspace._background_prewarm_enabled = False
     workspace._background_prewarm_timer = None
     workspace._background_prewarm_active_key = ""
@@ -590,6 +594,10 @@ def _clear_workspace_pending_state(workspace) -> None:
     workspace._background_prewarm_enabled = False
     workspace._background_prewarm_started = False
     workspace._background_prewarm_finished_at = 0.0
+    workspace._background_prewarm_visible_watchlist_state = "pending"
+    workspace._background_prewarm_visible_watchlist_at = 0.0
+    workspace._background_prewarm_visible_watchlist_detail = ""
+    workspace._background_prewarm_interaction_quiet_until = 0.0
     workspace._copy_hook_refresh_queued = False
     restore_timer = getattr(workspace, "_restore_last_tab_timer", None)
     if restore_timer is None:
@@ -778,7 +786,11 @@ def _register_loaded_workspace_tab(
                 callback()
 
 
-_BACKGROUND_PREWARM_STAGED_TAB_KEYS = frozenset({"watchlist", "asian_market", "na_daily"})
+# Every WIDGET_PREWARM page must stay outside the live QTabWidget hierarchy
+# until its own intentional reveal.  Replacing an inactive placeholder in the
+# live stack posts LayoutRequest to MainWindow and can invalidate the currently
+# visible table's backing store, even though that table's model did not change.
+_BACKGROUND_PREWARM_STAGED_TAB_KEYS = frozenset(widget_prewarm_tab_keys())
 
 
 def _should_stage_background_tab_mount(workspace, key: str, load_reason: str) -> bool:
@@ -1012,6 +1024,27 @@ def _mount_loaded_workspace_tab(workspace, spec: dict, key: str, index: int):
     return widget
 
 
+def _mark_watchlist_visible_preload_ready(workspace, key: str, widget) -> None:
+    """Promote hidden Watchlist staging only after it is the mounted current page."""
+    if key != "watchlist" or widget is None:
+        return
+    if str(getattr(workspace, "_background_prewarm_visible_watchlist_state", "") or "") != "staged_ready":
+        return
+    spec = workspace._spec_for_key_or_index("watchlist")
+    try:
+        mounted_current = bool(
+            (spec or {}).get("mounted")
+            and workspace.tabs.currentWidget() is widget
+        )
+    except (AttributeError, RuntimeError, TypeError):
+        return
+    if not mounted_current:
+        return
+    workspace._background_prewarm_visible_watchlist_state = "ready"
+    workspace._background_prewarm_visible_watchlist_at = time.perf_counter()
+    workspace._background_prewarm_visible_watchlist_detail = ""
+
+
 def _skip_if_workspace_stopping(default=None):
     def _decorate(method):
         @wraps(method)
@@ -1044,6 +1077,10 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
     BACKGROUND_PREWARM_POLL_INTERVAL_MS = 80
+    # QWidget construction is synchronous on the GUI thread.  Continue the
+    # staged preload only after a short quiet window so a normal background
+    # step cannot land in the middle of a user's consecutive tab switches.
+    BACKGROUND_PREWARM_INTERACTION_QUIET_MS = 750
     BACKGROUND_PREWARM_STEP_TIMEOUT_MS = 190_000
     BACKGROUND_PREWARM_CANCEL_SETTLEMENT_TIMEOUT_MS = 5_000
     BACKGROUND_PREWARM_CANCEL_BLOCKED_POLL_INTERVAL_MS = 500
@@ -1367,6 +1404,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             if spec is None:
                 return
             reason = self._take_tab_activation_reason(index)
+            self._note_background_prewarm_interaction(reason)
             _cancel_pending_startup_restore_for_user(self, reason)
             _pause_interactive_handoff_for_visible_watchlist(self, key, reason)
             self._mark_system_log_shell_nav(key, reason)
@@ -1376,6 +1414,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
                     if self._defer_interactive_activation_until_preload_ready(key, reason):
                         return
                     widget = _mount_loaded_workspace_tab(self, spec, key, index)
+                    _mark_watchlist_visible_preload_ready(self, key, widget)
                     ClassicWorkspace._promote_loaded_tab_to_interactive(widget, reason)
                     self._startup_last_allowed_index = index
                     self._notify_tab_activated(key, widget)
@@ -1473,6 +1512,18 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             return self.SHELL_GROUP_REBUILD_LOAD_DELAY_MS
         return 0
 
+    def _note_background_prewarm_interaction(self, reason: object) -> None:
+        """Yield ordinary hidden staging while a real tab navigation settles."""
+        if not is_interactive_tab_load_reason(normalize_tab_load_reason(reason)):
+            return
+        quiet_ms = max(0, int(self.BACKGROUND_PREWARM_INTERACTION_QUIET_MS))
+        if quiet_ms <= 0:
+            return
+        self._background_prewarm_interaction_quiet_until = max(
+            float(getattr(self, "_background_prewarm_interaction_quiet_until", 0.0) or 0.0),
+            time.perf_counter() + quiet_ms / 1000.0,
+        )
+
     def _activation_callback_delay_ms(self) -> int:
         if self._is_shell_group_rebuild_quiet_window():
             return self.SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS
@@ -1514,6 +1565,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
             return False
 
         reason_text = normalize_tab_load_reason(reason) or TabLoadReason.USER.value
+        self._note_background_prewarm_interaction(reason_text)
         _cancel_pending_startup_restore_for_user(self, reason_text)
         spec = self._spec_for_key_or_index(target_index)
         key = str((spec or {}).get("key") or "").strip()
@@ -1530,6 +1582,7 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
                     if self._defer_interactive_activation_until_preload_ready(key, reason_text):
                         return True
                     widget = _mount_loaded_workspace_tab(self, spec, key, target_index)
+                    _mark_watchlist_visible_preload_ready(self, key, widget)
                     ClassicWorkspace._promote_loaded_tab_to_interactive(widget, reason_text)
                     self._startup_last_allowed_index = target_index
                     self._notify_tab_activated(key, widget)

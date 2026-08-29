@@ -565,6 +565,7 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
             "卖方营业部",
         ]
         self.table = VCPTableView(default_row_height=30)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="foreign_block")
         self.model = StockTableModel(self.columns)
         self.model.set_plain_style_headers(["交易日期"])
         self.proxy_model = BlockTradeFilterProxyModel(self.table)

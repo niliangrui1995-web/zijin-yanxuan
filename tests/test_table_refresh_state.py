@@ -183,6 +183,28 @@ def _arm_visible_watchlist_preload_repaint_guard(
     assert table.viewport().isVisible()
 
 
+def _arm_visible_lhb_staged_preload_repaint_guard(table, app):
+    table.set_targeted_flash_repaint_enabled(True, metric_scope="lhb")
+    table.resize(640, 360)
+    table.show()
+    _process_events(app)
+    table.prepare_workspace_preload_repaint_guard(load_reason="background_prewarm")
+    table._activate_shell_nav_repaint_guard()
+    assert table._shell_nav_repaint_guard is not None
+    assert table.viewport().isVisible()
+
+
+def _arm_visible_generic_staged_preload_repaint_guard(table, app, *, scope: str):
+    table.set_targeted_flash_repaint_enabled(False, metric_scope=scope)
+    table.resize(640, 360)
+    table.show()
+    _process_events(app)
+    table.prepare_workspace_preload_repaint_guard(load_reason="background_prewarm")
+    table._activate_shell_nav_repaint_guard()
+    assert table._shell_nav_repaint_guard is not None
+    assert table.viewport().isVisible()
+
+
 def _full_viewport_paint_event(table):
     return QPaintEvent(table.viewport().rect())
 
@@ -585,8 +607,8 @@ def test_watchlist_shell_nav_does_not_arm_viewport_paint_guard(qt_application):
         table.deleteLater()
 
 
-def test_watchlist_reveal_batch_releases_updates_for_required_first_frame():
-    """隐藏关注池只在同步切换期合并更新，随后必须恢复 Qt 首帧。"""
+def test_watchlist_reveal_batch_releases_updates_and_arms_bounded_layout_tail_guard():
+    """隐藏关注池释放首帧后，只保护无业务变化的原生布局尾巴。"""
     table = VCPTableView()
     try:
         table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
@@ -599,6 +621,37 @@ def test_watchlist_reveal_batch_releases_updates_for_required_first_frame():
 
         assert table.updatesEnabled() is True
         assert table._workspace_reveal_batch_active is False
+        guard = table._shell_nav_repaint_guard
+        assert guard is not None
+        assert guard["workspace_load_reason"] == "workspace_reveal_batch"
+        assert guard["rearm_after_required_full"] is False
+        assert guard["native_tail_signal"] == "window_layout_request"
+        assert guard["native_tail_last_event"] == "window_update_request"
+    finally:
+        table.deleteLater()
+
+
+def test_watchlist_visible_reveal_tail_guard_preserves_first_frame_then_defers_layout_tail(
+    qt_application,
+):
+    table = VCPTableView()
+    try:
+        table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+        table.resize(640, 360)
+        table.show()
+        _process_events(qt_application)
+        table._workspace_reveal_batch_active = True
+
+        table.finish_workspace_reveal_batch()
+
+        guard = table._shell_nav_repaint_guard
+        assert guard is not None
+        assert guard["active_until"] > 0.0
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table._record_native_window_event(QEvent(QEvent.Type.LayoutRequest))
+        table._record_native_window_event(QEvent(QEvent.Type.UpdateRequest))
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
     finally:
         table.deleteLater()
 
@@ -1029,6 +1082,153 @@ def test_lhb_shell_nav_guard_retains_post_budget_fail_open(qt_application):
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is True
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
         assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_lhb_staged_preload_guard_preserves_first_real_frame_after_empty_paint_and_defers_tail(
+    qt_application,
+    monkeypatch,
+):
+    """空区域事件不能耗掉首帧；后台暂存揭示后的无内容尾帧保持短窗口抑制。"""
+    class RecordingTable(VCPTableView):
+        def __init__(self):
+            super().__init__()
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    table = RecordingTable()
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        _arm_visible_lhb_staged_preload_repaint_guard(table, qt_application)
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        empty_paint = QPaintEvent(QRegion())
+        assert empty_paint.region().rectCount() == 0
+        assert table._maybe_defer_shell_nav_full_paint(empty_paint) is False
+        assert table._shell_nav_repaint_guard["first_full_seen"] is False
+
+        QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+        for _ in range(4):
+            QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+
+        assert table.actual_paint_calls == 1
+        guard_metrics = [
+            item for item in recorded if item[0] == "lhb_staged_preload_reveal_tail_guard"
+        ]
+        assert [item[2]["tags"]["decision"] for item in guard_metrics] == [
+            "first_full_allowed",
+            "suppress_redundant_full",
+            "suppress_redundant_full",
+            "suppress_redundant_full_after_budget",
+            "suppress_redundant_full_after_budget",
+        ]
+        assert table._shell_nav_repaint_guard is not None
+    finally:
+        table.deleteLater()
+
+
+def test_lhb_staged_preload_guard_keeps_required_model_structure_frame(qt_application):
+    for structural_change in ("_on_model_reset", "_on_model_layout_changed"):
+        table = VCPTableView()
+        try:
+            _arm_visible_lhb_staged_preload_repaint_guard(table, qt_application)
+            assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+            getattr(table, structural_change)()
+
+            assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+            assert table._shell_nav_repaint_guard is not None
+        finally:
+            table.deleteLater()
+
+
+def test_lhb_staged_preload_guard_is_not_overwritten_by_shell_nav_prepare(qt_application):
+    table = VCPTableView()
+    try:
+        _arm_visible_lhb_staged_preload_repaint_guard(table, qt_application)
+        table.prepare_shell_nav_repaint_guard()
+
+        guard = table._shell_nav_repaint_guard
+        assert guard is not None
+        assert guard["metric_name"] == "lhb_staged_preload_reveal_tail_guard"
+        assert guard["retain_after_budget"] is True
+    finally:
+        table.deleteLater()
+
+
+def test_lhb_staged_preload_guard_fails_open_for_geometry_and_flash_expiry(qt_application):
+    """The reveal-tail guard must never defer a viewport resize or flash cleanup."""
+    table = VCPTableView()
+    try:
+        _arm_visible_lhb_staged_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+
+        table.resize(641, 361)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+
+        _arm_visible_lhb_staged_preload_repaint_guard(table, qt_application)
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        table._mark_pending_paint_metric("flash_expiry")
+
+        assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
+        assert table._shell_nav_repaint_guard is None
+    finally:
+        table.deleteLater()
+
+
+def test_generic_staged_preload_guard_preserves_first_frame_and_defers_redundant_tail(
+    qt_application,
+    monkeypatch,
+):
+    """基金/扫描/候选等 hidden staging 页共用同一首帧与尾帧边界。"""
+    class RecordingTable(VCPTableView):
+        def __init__(self):
+            super().__init__()
+            self.actual_paint_calls = 0
+
+        def paintEvent(self, event):  # noqa: N802 - Qt API naming
+            self.actual_paint_calls += 1
+            return super().paintEvent(event)
+
+    table = RecordingTable()
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+    try:
+        _arm_visible_generic_staged_preload_repaint_guard(
+            table,
+            qt_application,
+            scope="fund_holdings",
+        )
+        table.actual_paint_calls = 0
+        recorded.clear()
+
+        QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+        for _ in range(3):
+            QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
+
+        assert table.actual_paint_calls == 1
+        guard_metrics = [
+            item for item in recorded if item[0] == "fund_holdings_staged_preload_reveal_tail_guard"
+        ]
+        assert [item[2]["tags"]["decision"] for item in guard_metrics] == [
+            "first_full_allowed",
+            "suppress_redundant_full",
+            "suppress_redundant_full",
+            "suppress_redundant_full_after_budget",
+        ]
     finally:
         table.deleteLater()
 

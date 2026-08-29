@@ -1013,6 +1013,15 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             # so suppressing them in viewportEvent can leave the body blank.
             # The owner batches the source transition instead.
             return
+        existing_guard = self._shell_nav_repaint_guard
+        if (
+            isinstance(existing_guard, dict)
+            and existing_guard.get("metric_name") == "lhb_staged_preload_reveal_tail_guard"
+        ):
+            # The staged-reveal guard is armed before this table becomes
+            # visible.  Do not replace it with the shorter shell-nav guard
+            # between placeholder replacement and QStackedLayout's first show.
+            return
         self._arm_redundant_full_paint_guard(
             workspace_load_reason="shell_nav",
             metric_name=f"{self._paint_metric_scope}_shell_nav_repaint_guard",
@@ -1050,6 +1059,32 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         if self._closing:
             return
         self.setUpdatesEnabled(True)
+        if self._paint_metric_scope != "watchlist":
+            return
+        # StackOne has now completed the synchronous part of the reveal.  The
+        # next full frame remains mandatory, but a later LayoutRequest /
+        # UpdateRequest pair with no model, geometry, input, or flash change is
+        # merely a native layout tail.  Reuse the existing fail-open guard so
+        # only that bounded tail is deferred.
+        self._arm_redundant_full_paint_guard(
+            workspace_load_reason="workspace_reveal_batch",
+            metric_name="watchlist_workspace_reveal_layout_tail_guard",
+            retain_after_budget=True,
+            preserve_visible_frame=False,
+            active_ms=self.WATCHLIST_PRELOAD_REPAINT_GUARD_ACTIVE_MS,
+            max_suppressions=self.WATCHLIST_PRELOAD_REPAINT_GUARD_MAX_SUPPRESSIONS,
+        )
+        guard = self._shell_nav_repaint_guard
+        if guard is not None:
+            guard.update(
+                native_tail_signal="window_layout_request",
+                native_tail_last_event="window_update_request",
+                native_tail_signal_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS,
+                native_tail_last_event_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS,
+            )
+        viewport = self.viewport()
+        if self.isVisible() and viewport is not None and viewport.isVisible():
+            self._activate_shell_nav_repaint_guard()
 
     def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
         """Arm source-scoped guards for a bounded workspace preload repaint tail."""
@@ -1081,6 +1116,32 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
                     native_tail_signal_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_SIGNAL_MAX_AGE_MS,
                     native_tail_last_event_max_age_ms=self.WATCHLIST_PRELOAD_LAYOUT_TAIL_UPDATE_MAX_AGE_MS,
                 )
+            return
+        if self._paint_metric_scope == "lhb":
+            # LHB's staged cache payload already reset/sorted its model inside
+            # the hidden host.  Its own first shown frame must still paint, but
+            # StackOne may post several unchanged full viewport paints after it.
+            # Keep this guard only for the short staged-reveal burst; model,
+            # geometry, quote, and flash changes all fail open below.
+            self._arm_redundant_full_paint_guard(
+                workspace_load_reason=load_reason_text,
+                metric_name="lhb_staged_preload_reveal_tail_guard",
+                retain_after_budget=True,
+                preserve_visible_frame=False,
+            )
+            return
+        if self._paint_metric_scope:
+            # The remaining data tabs share the same staged-mount contract:
+            # the model is hydrated while hidden, so reveal needs one first
+            # frame but no second unchanged full-viewport burst.  This path is
+            # called only by BaseStockTab while `_workspace_preload_staged` is
+            # still true; normal interactive tab switches do not arm it.
+            self._arm_redundant_full_paint_guard(
+                workspace_load_reason=load_reason_text,
+                metric_name=f"{self._paint_metric_scope}_staged_preload_reveal_tail_guard",
+                retain_after_budget=True,
+                preserve_visible_frame=False,
+            )
 
     def _arm_redundant_full_paint_guard(
         self,
@@ -1280,9 +1341,15 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             if viewport is None:
                 self._clear_shell_nav_repaint_guard()
                 return False
+            paint_region = event.region()
+            if paint_region.isEmpty() or int(paint_region.rectCount()) <= 0:
+                # Qt can send an empty Paint event while QTabWidget replaces a
+                # placeholder.  It is not a drawable full frame and must not
+                # spend the staged-reveal first-frame budget.
+                return False
             viewport_rect = viewport.rect()
             viewport_size = (viewport_rect.width(), viewport_rect.height())
-            _ratio, _rects, full_viewport = _paint_region_metrics(event.region(), viewport_rect)
+            _ratio, _rects, full_viewport = _paint_region_metrics(paint_region, viewport_rect)
             if not full_viewport:
                 self._acknowledge_shell_nav_partial_paint(event)
                 return False

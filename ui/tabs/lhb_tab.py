@@ -728,6 +728,17 @@ def _is_lhb_display_active(owner) -> bool:
         return False
 
 
+def _should_materialize_staged_lhb_preload(owner, *, refresh_quotes: bool) -> bool:
+    """Permit only cache-only background preload to commit inside the hidden host."""
+    return bool(
+        not refresh_quotes
+        and getattr(owner, "_workspace_preload_staged", False)
+        and getattr(owner, "_background_preload_requested", False)
+        and getattr(owner, "_background_preload_cache_only", False)
+        and not _is_lhb_widget_visible(owner)
+    )
+
+
 def _emit_staged_lhb_pool_update(owner) -> None:
     previous_handling = bool(getattr(owner, "_handling_lhb_pool_update", False))
     owner._handling_lhb_pool_update = True
@@ -750,7 +761,11 @@ def _deliver_or_stage_lhb_pool(
     pool_rows = [dict(row) for row in (pool or [])]
     owner._realtime_quote_projection_state = "ready"
     owner._realtime_quote_projection_reason = ""
-    if _is_lhb_display_active(owner):
+    materialize_staged_preload = _should_materialize_staged_lhb_preload(
+        owner,
+        refresh_quotes=refresh_quotes,
+    )
+    if _is_lhb_display_active(owner) or materialize_staged_preload:
         owner._pending_lhb_display = None
         owner._display_pool(
             pool_rows,
@@ -758,8 +773,9 @@ def _deliver_or_stage_lhb_pool(
             row_data=rows,
             refresh_quotes=refresh_quotes,
             trigger=trigger,
+            record_quote_flash=not materialize_staged_preload,
         )
-        action = "applied"
+        action = "preloaded" if materialize_staged_preload else "applied"
         applied = True
     else:
         signature = owner._describe_lhb_rows(rows).signature
@@ -915,11 +931,23 @@ def _complete_lhb_pool_error(owner, error_message: str) -> None:
         )
 
 
-def _refresh_loaded_lhb_quotes(owner, *, rows_changed: bool, refresh_quotes: bool) -> None:
+def _refresh_loaded_lhb_quotes(
+    owner,
+    *,
+    rows_changed: bool,
+    refresh_quotes: bool,
+    record_flash: bool = True,
+) -> None:
     if not rows_changed:
         return
     if not refresh_quotes:
-        owner._apply_quote_store_snapshot()
+        if record_flash:
+            owner._apply_quote_store_snapshot()
+        else:
+            try:
+                owner._apply_quote_store_snapshot(record_flash=False)
+            except TypeError:
+                owner._apply_quote_store_snapshot()
     elif owner._is_opening_warmup_window():
         owner.refresh_table_from_latest_snapshot(async_local=True)
     else:
@@ -942,10 +970,16 @@ class _LhbBackgroundPreloadMixin:
     def is_background_preload_complete(self) -> bool:
         if getattr(self, "_runtime_cleanup_done", False):
             return True
+        staged_cache_payload_pending = bool(
+            getattr(self, "_workspace_preload_staged", False)
+            and getattr(self, "_background_preload_cache_only", False)
+            and isinstance(getattr(self, "_pending_lhb_display", None), dict)
+        )
         return bool(
             self._background_preload_requested
             and self._background_preload_done
             and not self._pool_load_in_progress
+            and not staged_cache_payload_pending
         )
 
     def cancel_background_preload(self, *, reason: str):
@@ -1078,6 +1112,14 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         prepare = getattr(self.table, "prepare_shell_nav_repaint_guard", None)
         if callable(prepare):
             prepare()
+
+    def prepare_workspace_preload_repaint_guard(self, *, load_reason: str) -> None:
+        """Protect only this hidden-staged page's post-reveal native paint tail."""
+        if not bool(getattr(self, "_workspace_preload_staged", False)):
+            return
+        prepare = getattr(self.table, "prepare_workspace_preload_repaint_guard", None)
+        if callable(prepare):
+            prepare(load_reason=load_reason)
 
     def on_workspace_tab_activated(self) -> None:
         started_at = time.perf_counter()
@@ -1862,6 +1904,7 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         row_data: list[dict] | None = None,
         refresh_quotes: bool = True,
         trigger: str = "direct",
+        record_quote_flash: bool = True,
     ):
         """将池数据渲染到表格"""
         apply_started_at = time.perf_counter()
@@ -1912,7 +1955,12 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
                 "trigger": str(trigger or "direct"),
             },
         )
-        _refresh_loaded_lhb_quotes(self, rows_changed=rows_changed, refresh_quotes=refresh_quotes)
+        _refresh_loaded_lhb_quotes(
+            self,
+            rows_changed=rows_changed,
+            refresh_quotes=refresh_quotes,
+            record_flash=record_quote_flash,
+        )
 
     # ================================================================
     # 后台回填缺失天数

@@ -446,6 +446,7 @@ class StockCandidateTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         self.table = VCPTableView(default_row_height=30)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="stock_candidates")
         self.table_state = TableStateWrapper(self.table, empty_title="暂无综合候选", loading_title="刷新中...")
 
         self.model = StockTableModel(self.COLUMNS)
@@ -484,6 +485,13 @@ class StockCandidateTab(BaseStockTab):
         while cursor is not None:
             if hasattr(cursor, "collect_stock_context"):
                 return cursor
+            # Background-preloaded pages are deliberately parented to the
+            # parentless staging host until the user reveals them.  The host
+            # mirrors the real workspace through this bridge so candidate
+            # snapshots retain their normal source/dependency contract.
+            staged_workspace = getattr(cursor, "_workspace", None)
+            if hasattr(staged_workspace, "collect_stock_context"):
+                return staged_workspace
             cursor = cursor.parent() if hasattr(cursor, "parent") else None
         return None
 

@@ -350,6 +350,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             "概念板块",
         ]
         self.table = VCPTableView(default_row_height=30)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="fund_holdings")
         self.model = FundHoldingsTableModel(self.columns)
         self._view_committer = FundHoldingsViewCommitter(self, chunk_size=self.VIEW_ROW_CHUNK_SIZE)
         self.model.set_plain_style_headers(["主体", "资金属性", "季度", "变化类型", "概念板块"])
