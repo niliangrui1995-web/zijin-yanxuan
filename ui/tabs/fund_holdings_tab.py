@@ -87,6 +87,8 @@ from ui.tabs.fund_holdings_view_state import (
 from ui.workspaces.background_preload_receipt import cancel_background_preload_tasks
 from ui.workspaces.tab_registry import create_tab_lineage_service
 
+FUND_HOLDINGS_VIEW_UPDATE_THRESHOLD = 10_000
+
 
 def _single_shot_timer(parent, callback, *, interval_ms: int = 0) -> QTimer:
     timer = QTimer(parent)
@@ -453,6 +455,11 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         self.proxy_model = FundHoldingsFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
+        set_update_threshold = getattr(self.table, "setUpdateThreshold", None)
+        if callable(set_update_threshold):
+            # Qt 6.9+ 的默认值 200 会将基金持仓的正常行情批量（如 119 行 × 3 列）
+            # 升级为完整 viewport；结构性首帧与模型重置仍按原有路径处理。
+            set_update_threshold(FUND_HOLDINGS_VIEW_UPDATE_THRESHOLD)
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)

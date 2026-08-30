@@ -19,6 +19,70 @@ def test_fund_holdings_tab_defaults_to_cache_only_ai_chain_data():
     assert fund_holdings_module.FundHoldingsTab._chain_context_provider is load_cached_ai_industry_chain_context_map
 
 
+def test_fund_holdings_visible_quote_batch_stays_partial_after_first_frame(qt_application, monkeypatch):
+    """119 行行情回写不能因 Qt 默认阈值升级为第二次整视口绘制。"""
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    monkeypatch.setattr(tab, "_should_start_runtime_on_show", lambda: False)
+    rows = [
+        {
+            "代码": f"{index:06d}",
+            "名称": f"基金持仓{index}",
+            "市价": "10.00",
+            "涨幅%": 0.0,
+            "市值": "10亿",
+            "主体": "测试主体",
+            "季度": "2026Q2",
+            "变化类型": "增持",
+            "_is_latest_subject_quarter": True,
+        }
+        for index in range(147)
+    ]
+    try:
+        tab.model.update_data(rows, hydrate_latest_quotes=False)
+        tab.proxy_model.set_latest_only(False)
+        tab.resize(1280, 720)
+        tab.show()
+        for _ in range(5):
+            qt_application.processEvents()
+        tab.table_state.show_table()
+        for _ in range(5):
+            qt_application.processEvents()
+
+        # 清除首次可见首帧，以下仅观察预热揭示后的本地行情批量回写。
+        recorded.clear()
+        quotes = {
+            f"{index:06d}": {
+                "close": 11.0,
+                "last_close": 10.0,
+                "total_shares": 1_000_000_000,
+            }
+            for index in range(119)
+        }
+        assert tab.model.update_quotes(quotes, record_flash=True) == 119
+        assert tab.model._flash_records
+        for _ in range(10):
+            qt_application.processEvents()
+
+        paints = [item for item in recorded if item[0] == "fund_holdings_table_paint_ms"]
+        assert len(paints) == 1
+        tags = paints[0][2]["tags"]
+        assert tags["reason"] == "quote_data_changed"
+        assert tags["changed_rows"] == "119"
+        assert tags["changed_indexes"] == "357"
+        assert int(tags["update_threshold"]) > 119 * 3
+        assert tags["threshold_exceeded"] == "false"
+        assert tags["delivered_full_viewport"] == "false"
+        assert tags["delivery_kind"] == "partial_region"
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_workspace_activation_retries_cancelled_initial_load():
     calls = []
     tab = SimpleNamespace(_ensure_initial_load_started=lambda: calls.append("retry"))
