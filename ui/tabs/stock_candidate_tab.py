@@ -25,6 +25,7 @@ from ui.workspaces.stock_context_widget_adapter import capture_workspace_stock_c
 
 _STOCK_CONTEXT_FUND_SNAPSHOT_TASK = task_registry.workspace("stock_context_fund_rows_snapshot")
 _STOCK_CONTEXT_LHB_SNAPSHOT_TASK = task_registry.workspace("stock_context_lhb_rows_snapshot")
+STOCK_CANDIDATES_VIEW_UPDATE_THRESHOLD = 10_000
 
 
 def _candidate_tab_titles(owner) -> dict[str, str]:
@@ -455,6 +456,11 @@ class StockCandidateTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
+        set_update_threshold = getattr(self.table, "setUpdateThreshold", None)
+        if callable(set_update_threshold):
+            # Qt 6.9+ 的默认值 200 会将综合候选的正常行情批量（如 195 行 × 3 列）
+            # 升级为完整 viewport；结构性首帧与模型重置仍按原有路径处理。
+            set_update_threshold(STOCK_CANDIDATES_VIEW_UPDATE_THRESHOLD)
         self.table.setItemDelegate(StockItemDelegate(self.table))
 
         header = self.table.horizontalHeader()

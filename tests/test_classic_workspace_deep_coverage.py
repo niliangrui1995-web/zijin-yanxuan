@@ -338,7 +338,18 @@ def test_classic_workspace_activate_tab_attaches_bounded_transition_context():
     assert workspace_module.ClassicWorkspace.activate_tab(fake, 1, reason="shell_nav")
 
     assert source._workspace_tab_transition_context == {}
-    assert target._workspace_tab_transition_context == {
+    assert {
+        key: target._workspace_tab_transition_context[key]
+        for key in (
+            "transition_id",
+            "source_tab",
+            "target_tab",
+            "reason",
+            "mounted_before",
+            "preload_active_key",
+            "preload_state",
+        )
+    } == {
         "transition_id": "1",
         "source_tab": "watchlist",
         "target_tab": "asian_market",
@@ -347,6 +358,54 @@ def test_classic_workspace_activate_tab_attaches_bounded_transition_context():
         "preload_active_key": "",
         "preload_state": "interactive_warm",
     }
+    assert isinstance(target._workspace_tab_transition_context["_created_at"], float)
+
+
+def test_classic_workspace_attaches_warm_stock_candidates_return_context_before_switch():
+    tabs = _Tabs(count=2, current=1)
+    source = SimpleNamespace(_workspace_tab_transition_context={})
+    target = SimpleNamespace()
+    specs = {
+        0: {"key": "watchlist", "loaded": True, "mounted": True, "widget": target},
+        1: {"key": "stock_candidates", "loaded": True, "mounted": True, "widget": source},
+    }
+    fake = _ClassicWorkspaceDouble(
+        tabs=tabs,
+        _tab_transition_sequence=0,
+        _pending_tab_activation_reasons={},
+        _startup_last_allowed_index=-1,
+        _background_prewarm_active_key="",
+        _background_prewarm_finished=True,
+        _spec_for_key_or_index=lambda index: specs.get(index),
+        _defer_interactive_activation_until_preload_ready=lambda *_args: False,
+        _mark_system_log_shell_nav=lambda *_args: None,
+        _notify_tab_activated=lambda *_args: None,
+    )
+
+    assert workspace_module.ClassicWorkspace.activate_tab(fake, 0, reason="shell_nav")
+
+    assert tabs.currentIndex() == 0
+    assert {
+        key: target._workspace_tab_transition_context[key]
+        for key in (
+            "transition_id",
+            "source_tab",
+            "target_tab",
+            "reason",
+            "mounted_before",
+            "preload_active_key",
+            "preload_state",
+        )
+    } == {
+        "transition_id": "1",
+        "source_tab": "stock_candidates",
+        "target_tab": "watchlist",
+        "reason": "shell_nav",
+        "mounted_before": True,
+        "preload_active_key": "",
+        "preload_state": "interactive_warm",
+    }
+    assert isinstance(target._workspace_tab_transition_context["_created_at"], float)
 
 
 def test_classic_workspace_reactivating_current_tab_does_not_create_transition_context():

@@ -340,6 +340,78 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
         _close_and_delete(tab)
 
 
+def test_stock_candidates_visible_202_row_quote_batch_stays_partial_after_first_frame(
+    qt_application, monkeypatch
+):
+    """195 行行情回写不能因 Qt 默认阈值升级为第二次整视口绘制。"""
+    recorded = []
+    monkeypatch.setattr(
+        "core.observability.record_metric",
+        lambda name, value, **kwargs: recorded.append((name, value, kwargs)),
+    )
+
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    monkeypatch.setattr(tab, "_should_start_runtime_on_show", lambda: False)
+    # 隔离同一 QApplication 中其他候选页延迟绘制的观测指标；该 scope 不改变
+    # stock_candidates 的非 Watchlist 绘制行为。
+    tab.table.set_targeted_flash_repaint_enabled(False, metric_scope="stock_candidates_202_regression")
+    rows = [
+        {
+            "代码": f"{index:06d}",
+            "名称": f"综合候选{index}",
+            "市价": "10.00",
+            "涨幅%": 0.0,
+            "市值": "10亿",
+            "共振分": 22,
+            "来源数": 2,
+            "信号数": 2,
+            "来源": "VCP扫描｜基金持仓",
+            "核心信号": "触发日期 20260423 | RPS 96",
+            "最近时间": "20260423",
+        }
+        for index in range(202)
+    ]
+    try:
+        tab.model.update_data(rows, hydrate_latest_quotes=False)
+        assert tab.model.rowCount() == 202
+        assert tab.proxy_model.rowCount() == 202
+        tab.resize(1280, 720)
+        tab.show()
+        for _ in range(5):
+            qt_application.processEvents()
+        tab.table_state.show_table()
+        for _ in range(5):
+            qt_application.processEvents()
+
+        # 清除首次可见首帧，以下仅观察预热揭示后的本地行情批量回写。
+        recorded.clear()
+        quotes = {
+            f"{index:06d}": {
+                "close": 11.0,
+                "last_close": 10.0,
+                "zongguben": 1_000_000_000,
+            }
+            for index in range(195)
+        }
+        assert tab.model.update_quotes(quotes, record_flash=True) == 195
+        assert tab.model._flash_records
+        for _ in range(10):
+            qt_application.processEvents()
+
+        paints = [item for item in recorded if item[0] == "stock_candidates_202_regression_table_paint_ms"]
+        assert len(paints) == 1
+        tags = paints[0][2]["tags"]
+        assert tags["reason"] == "quote_data_changed"
+        assert tags["changed_rows"] == "195"
+        assert tags["changed_indexes"] == "585"
+        assert int(tags["update_threshold"]) > 195 * 3
+        assert tags["threshold_exceeded"] == "false"
+        assert tags["delivered_full_viewport"] == "false"
+        assert tags["delivery_kind"] == "partial_region"
+    finally:
+        _close_and_delete(tab)
+
+
 def test_stock_candidate_show_runtime_skips_non_interactive_load_reason():
     class DummyTab:
         _workspace_load_reason = "perf_memory_probe"

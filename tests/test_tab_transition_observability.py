@@ -58,3 +58,24 @@ def test_transition_stage_keeps_id_in_structured_log_and_uses_bounded_metric_tag
     assert logs[-1][0] == "workspace.tab_transition_stage"
     assert logs[-1][1]["transition_id"] == "1"
     assert logs[-1][1]["preload_active_key"] == ""
+
+
+def test_transition_context_expires_before_it_can_misattribute_later_native_paints(monkeypatch):
+    owner = SimpleNamespace(_tab_transition_sequence=0)
+    widget = SimpleNamespace()
+    clock = [100.0]
+    monkeypatch.setattr(transition_observability.time, "monotonic", lambda: clock[0])
+
+    context = transition_observability.begin_tab_transition(
+        owner,
+        source_tab="stock_candidates",
+        target_tab="watchlist",
+        reason="shell_nav",
+        mounted_before=True,
+        preload_active_key="",
+        target_preload_state="interactive_warm",
+    )
+    transition_observability.attach_tab_transition_context(widget, context)
+    clock[0] += (transition_observability.TAB_TRANSITION_CONTEXT_MAX_AGE_MS / 1000.0) + 0.001
+
+    assert transition_observability.tab_transition_context(widget, tab="watchlist") == {}

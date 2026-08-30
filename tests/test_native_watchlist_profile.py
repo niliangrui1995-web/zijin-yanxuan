@@ -78,6 +78,7 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.quote_target_count == 6
     assert args.shell_nav_cycles == 0
     assert args.shell_nav_settle_ms == 1200
+    assert args.shell_nav_source_tab == ""
     assert args.shell_nav_only is False
     assert args.membership_delta_probe is False
     assert args.disable_market_pulse is False
@@ -94,6 +95,8 @@ def test_native_watchlist_profile_cli_accepts_shell_nav_sampling_options():
             "2",
             "--shell-nav-settle-ms",
             "1600",
+            "--shell-nav-source-tab",
+            "stock_candidates",
             "--shell-nav-only",
             "--membership-delta-probe",
             "--disable-market-pulse",
@@ -102,6 +105,7 @@ def test_native_watchlist_profile_cli_accepts_shell_nav_sampling_options():
 
     assert args.shell_nav_cycles == 2
     assert args.shell_nav_settle_ms == 1600
+    assert args.shell_nav_source_tab == "stock_candidates"
     assert args.shell_nav_only is True
     assert args.membership_delta_probe is True
     assert args.disable_market_pulse is True
@@ -154,6 +158,35 @@ def test_native_watchlist_profile_activation_uses_requested_workspace_path(
 def test_native_watchlist_profile_shell_nav_only_requires_a_shell_nav_cycle():
     with pytest.raises(SystemExit):
         _parse_args(["--shell-nav-only"])
+
+
+def test_native_watchlist_profile_resolves_same_group_source_with_production_index_activation():
+    activation_calls = []
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [
+            {"key": "watchlist"},
+            {"key": "stock_candidates"},
+            {"key": "lhb"},
+        ],
+        tab_indices_by_group=lambda: {"主工作台": [0, 1, 2]},
+    )
+    nav = SimpleNamespace(
+        _group_to_indices={"主工作台": [0, 1, 2]},
+        _activate_workspace_index=lambda index, *, reason: activation_calls.append((index, reason)),
+    )
+    controller = object.__new__(_NativeProfileController)
+    controller.window = SimpleNamespace(_workspace=workspace, _shell_navigation_widget=nav)
+    controller.args = SimpleNamespace(shell_nav_source_tab="stock_candidates")
+
+    targets = controller._resolve_shell_nav_targets()
+
+    assert targets is not None
+    assert targets["activation_path"] == "ShellNavigationWidget._activate_workspace_index"
+    assert targets["outbound_index"] == 1
+    assert targets["watchlist_index"] == 0
+    assert targets["source_tab"] == "stock_candidates"
+    assert targets["activate_workspace_index"] is nav._activate_workspace_index
+    assert activation_calls == []
 
 
 def test_native_watchlist_profile_builds_sparse_changed_quote_payload():
@@ -669,6 +702,61 @@ def test_native_watchlist_profile_shell_nav_acceptance_requires_full_frame_deliv
     assert _shell_nav_repaint_acceptance([result], expected_cycles=1) == {
         "status": "pass",
         "violations": [],
+    }
+
+
+def test_native_watchlist_profile_strict_warm_return_acceptance_requires_the_exact_single_frame_contract():
+    result = {
+        "cycle": 1,
+        "paint_region": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "after_first": {"full_viewport_count": 0},
+        },
+        "paint_metrics": {
+            "count": 1,
+            "full_viewport_count": 1,
+            "full_viewport_after_first_count": 0,
+            "other_full_viewport_count": 1,
+            "other_full_viewport_after_first_count": 0,
+            "samples": [
+                {
+                    "source_tab": "stock_candidates",
+                    "target_tab": "watchlist",
+                    "transition_reason": "shell_nav",
+                    "preload_state": "interactive_warm",
+                    "mounted_before": "true",
+                    "delivered_full_viewport": "true",
+                    "native_window_signal": "",
+                }
+            ],
+        },
+        "ui_stall_snapshot": {"installed": True, "event_loop_critical_count": 0},
+    }
+    required_transition = {
+        "source_tab": "stock_candidates",
+        "target_tab": "watchlist",
+        "transition_reason": "shell_nav",
+        "preload_state": "interactive_warm",
+        "mounted_before": "true",
+    }
+
+    assert _shell_nav_repaint_acceptance(
+        [result],
+        expected_cycles=1,
+        required_transition=required_transition,
+    ) == {"status": "pass", "violations": []}
+
+    result["paint_region"]["after_first"]["full_viewport_count"] = 1
+    result["paint_metrics"]["full_viewport_after_first_count"] = 1
+
+    assert _shell_nav_repaint_acceptance(
+        [result],
+        expected_cycles=1,
+        required_transition=required_transition,
+    ) == {
+        "status": "fail",
+        "violations": ["cycle=1 warm_return_full_viewport_tail"],
     }
 
 

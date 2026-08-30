@@ -133,6 +133,12 @@ def _summarize_shell_nav_paint_metrics(paint_samples: list) -> dict:
                 "delivery_kind": str(sample.tags.get("delivery_kind", "")),
                 "paint_event_spontaneous": str(sample.tags.get("paint_event_spontaneous", "")),
                 "workspace_load_reason": str(sample.tags.get("workspace_load_reason", "")),
+                "source_tab": str(sample.tags.get("source_tab", "")),
+                "target_tab": str(sample.tags.get("target_tab", "")),
+                "transition_reason": str(sample.tags.get("transition_reason", "")),
+                "preload_state": str(sample.tags.get("preload_state", "")),
+                "mounted_before": str(sample.tags.get("mounted_before", "")),
+                "native_window_signal": str(sample.tags.get("native_window_signal", "")),
                 "structural_reason": str(sample.tags.get("structural_reason", "")),
                 "pending_reasons": str(sample.tags.get("pending_reasons", "")),
                 "changed_rows": str(sample.tags.get("changed_rows", "")),
@@ -520,7 +526,12 @@ def _full_viewport_delivery_violations(
     return []
 
 
-def _shell_nav_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
+def _shell_nav_repaint_acceptance(
+    results: list[dict],
+    *,
+    expected_cycles: int | None = None,
+    required_transition: dict[str, str] | None = None,
+) -> dict:
     if not results:
         if expected_cycles is not None and int(expected_cycles) > 0:
             return {"status": "fail", "violations": ["shell_nav_cycles_missing"]}
@@ -557,6 +568,36 @@ def _shell_nav_repaint_acceptance(results: list[dict], *, expected_cycles: int |
                 label=f"cycle={cycle}",
             )
         )
+        if required_transition:
+            incoming_full_count = int(paint_region.get("full_viewport_count", 0) or 0)
+            delivered_full_count = int(paint_metrics.get("full_viewport_count", 0) or 0)
+            if incoming_full_count != 1 or delivered_full_count != 1:
+                violations.append(
+                    f"cycle={cycle} warm_return_full_viewport_count="
+                    f"{incoming_full_count}/{delivered_full_count}"
+                )
+            after_first_incoming = int(
+                (paint_region.get("after_first", {}) or {}).get("full_viewport_count", 0) or 0
+            )
+            after_first_delivered = int(paint_metrics.get("full_viewport_after_first_count", 0) or 0)
+            if after_first_incoming != 0 or after_first_delivered != 0:
+                violations.append(f"cycle={cycle} warm_return_full_viewport_tail")
+            sample_rows = list(paint_metrics.get("samples", ()) or ())
+            full_rows = [
+                sample
+                for sample in sample_rows
+                if str((sample or {}).get("delivered_full_viewport", "")).strip().lower() == "true"
+            ]
+            if len(full_rows) == 1:
+                full_row = full_rows[0] or {}
+                for field, expected_value in required_transition.items():
+                    if str(full_row.get(field, "")).strip() != str(expected_value).strip():
+                        violations.append(
+                            f"cycle={cycle} warm_return_{field}="
+                            f"{str(full_row.get(field, '')).strip() or 'missing'}"
+                        )
+            else:
+                violations.append(f"cycle={cycle} warm_return_transition_sample_missing")
         guard_counts = (result.get("repaint_guard", {}) or {}).get("decision_counts", {}) or {}
         suppressed_full_paints = sum(
             max(0, int(value or 0))
@@ -841,6 +882,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=1200,
         help="Collection window after each production shell-navigation return.",
+    )
+    parser.add_argument(
+        "--shell-nav-source-tab",
+        default="",
+        metavar="TAB_KEY",
+        help=(
+            "Use this exact same-group tab as the outbound shell-navigation source. "
+            "For example: stock_candidates."
+        ),
     )
     parser.add_argument(
         "--shell-nav-only",
@@ -2040,6 +2090,7 @@ class _NativeProfileController:
         workspace = getattr(self.window, "_workspace", None)
         nav = getattr(self.window, "_shell_navigation_widget", None)
         switch_group = getattr(nav, "_switch_group", None)
+        activate_workspace_index = getattr(nav, "_activate_workspace_index", None)
         specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
         watchlist_index = next(
             (index for index, spec in enumerate(specs) if str(spec.get("key") or "") == "watchlist"),
@@ -2056,6 +2107,43 @@ class _NativeProfileController:
             ),
             "",
         )
+        source_tab = str(getattr(self.args, "shell_nav_source_tab", "") or "").strip()
+        if source_tab:
+            outbound_index = next(
+                (index for index, spec in enumerate(specs) if str(spec.get("key") or "") == source_tab),
+                -1,
+            )
+            outbound_group = next(
+                (
+                    group
+                    for group, indices in group_to_indices.items()
+                    if outbound_index in list(indices or ())
+                ),
+                "",
+            )
+            if (
+                workspace is None
+                or not callable(activate_workspace_index)
+                or watchlist_index < 0
+                or outbound_index < 0
+                or outbound_index == watchlist_index
+                or not watchlist_group
+                or outbound_group != watchlist_group
+            ):
+                return None
+            return {
+                "workspace": workspace,
+                "nav": nav,
+                "activate_workspace_index": activate_workspace_index,
+                "watchlist_index": watchlist_index,
+                "watchlist_group": watchlist_group,
+                "outbound_group": outbound_group,
+                "outbound_index": outbound_index,
+                "outbound_indices": [outbound_index],
+                "source_tab": source_tab,
+                "activation_path": "ShellNavigationWidget._activate_workspace_index",
+                "navigation_mode": "same_group_index",
+            }
         outbound_group = next(
             (
                 group
@@ -2082,6 +2170,9 @@ class _NativeProfileController:
             "watchlist_group": watchlist_group,
             "outbound_group": outbound_group,
             "outbound_indices": outbound_indices,
+            "source_tab": "",
+            "activation_path": "ShellNavigationWidget._switch_group",
+            "navigation_mode": "group_switch",
         }
 
     def _start_shell_nav_cycle(self) -> None:
@@ -2099,7 +2190,13 @@ class _NativeProfileController:
         }
         self._set_phase(f"shell_nav_{cycle}_outbound")
         try:
-            targets["switch_group"](targets["outbound_group"])
+            if targets.get("navigation_mode") == "same_group_index":
+                targets["activate_workspace_index"](
+                    targets["outbound_index"],
+                    reason="shell_nav",
+                )
+            else:
+                targets["switch_group"](targets["outbound_group"])
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             self._fail(f"shell navigation outbound failed: {exc}")
             return
@@ -2120,10 +2217,16 @@ class _NativeProfileController:
             phase["model_signal_offset"] = self._model_signal_probe.offset()
             self._set_phase(f"shell_nav_{cycle}_watchlist_return")
             try:
-                phase["switch_group"](
-                    phase["watchlist_group"],
-                    preferred_index=phase["watchlist_index"],
-                )
+                if phase.get("navigation_mode") == "same_group_index":
+                    phase["activate_workspace_index"](
+                        phase["watchlist_index"],
+                        reason="shell_nav",
+                    )
+                else:
+                    phase["switch_group"](
+                        phase["watchlist_group"],
+                        preferred_index=phase["watchlist_index"],
+                    )
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 self._fail(f"shell navigation return failed: {exc}")
                 return
@@ -2244,8 +2347,12 @@ class _NativeProfileController:
         self._shell_nav_results.append(
             {
                 "cycle": cycle,
-                "activation_path": "ShellNavigationWidget._switch_group",
+                "activation_path": str(
+                    phase.get("activation_path") or "ShellNavigationWidget._switch_group"
+                ),
                 "return_reason": "shell_nav",
+                "source_tab": str(phase.get("source_tab") or ""),
+                "target_tab": "watchlist",
                 "outbound_group": str(phase["outbound_group"]),
                 "watchlist_group": str(phase["watchlist_group"]),
                 "tab_count": tab_count,
@@ -2934,13 +3041,28 @@ class _NativeProfileController:
         if quote_acceptance_enforced and quote_acceptance["status"] != "pass":
             self.report["errors"].append("quote repaint acceptance failed")
         shell_nav_expected_cycles = max(0, int(self.args.shell_nav_cycles))
+        shell_nav_source_tab = str(getattr(self.args, "shell_nav_source_tab", "") or "").strip()
+        required_shell_nav_transition = (
+            {
+                "source_tab": shell_nav_source_tab,
+                "target_tab": "watchlist",
+                "transition_reason": "shell_nav",
+                "preload_state": "interactive_warm",
+                "mounted_before": "true",
+            }
+            if shell_nav_source_tab
+            else None
+        )
         shell_nav_acceptance = _shell_nav_repaint_acceptance(
             self._shell_nav_results,
             expected_cycles=shell_nav_expected_cycles,
+            required_transition=required_shell_nav_transition,
         )
         self.report["shell_nav_cycles"] = {
             "completed": self._shell_nav_cycle_index,
             "settle_ms": max(1, int(self.args.shell_nav_settle_ms)),
+            "source_tab": shell_nav_source_tab,
+            "required_transition": required_shell_nav_transition,
             "acceptance": shell_nav_acceptance,
             "acceptance_enforced": shell_nav_expected_cycles > 0,
             "results": list(self._shell_nav_results),
@@ -3089,6 +3211,7 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "quote_target_count": int(args.quote_target_count),
             "shell_nav_cycles": int(args.shell_nav_cycles),
             "shell_nav_settle_ms": int(args.shell_nav_settle_ms),
+            "shell_nav_source_tab": str(getattr(args, "shell_nav_source_tab", "") or ""),
             "shell_nav_only": bool(args.shell_nav_only),
             "membership_delta_probe": bool(args.membership_delta_probe),
             "disable_market_pulse": bool(args.disable_market_pulse),

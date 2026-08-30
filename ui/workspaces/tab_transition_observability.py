@@ -11,6 +11,12 @@ from app.services.ui_diagnostics_service import ui_stall_span
 from core.observability import emit_structured_log, record_metric
 
 
+# Transition metadata is diagnostic context, not durable page state.  Keep it
+# long enough to join the immediate queued show/layout work, but never let it
+# label an unrelated native activation minutes later.
+TAB_TRANSITION_CONTEXT_MAX_AGE_MS = 5_000
+
+
 def begin_tab_transition(
     owner,
     *,
@@ -37,6 +43,7 @@ def begin_tab_transition(
         normalized_target_state = "active" if active_key else ("ready" if preload_ready else "pending")
     return {
         "transition_id": str(sequence),
+        "_created_at": time.monotonic(),
         "source_tab": str(source_tab or "").strip(),
         "target_tab": str(target_tab or "").strip(),
         "reason": str(reason or "").strip(),
@@ -70,6 +77,12 @@ def tab_transition_context(owner, *, tab: str) -> dict[str, object]:
         return {}
     if str(context.get("target_tab") or "").strip() != str(tab or "").strip():
         return {}
+    created_at = context.get("_created_at")
+    if isinstance(created_at, (int, float)) and created_at > 0:
+        age_ms = (time.monotonic() - float(created_at)) * 1000.0
+        if age_ms > TAB_TRANSITION_CONTEXT_MAX_AGE_MS:
+            clear_tab_transition_context(owner)
+            return {}
     return dict(context)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QEvent, QPoint, Qt
@@ -13,6 +14,7 @@ from core.observability import metric_history
 from ui.components import table_controls as controls
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 from ui.styles.global_qss import generate_global_qss
+from ui.workspaces.tab_transition_observability import TAB_TRANSITION_CONTEXT_MAX_AGE_MS
 
 
 def _render_widget(widget, qt_application, *, width=320, height=100):
@@ -356,6 +358,40 @@ def test_vcp_table_view_passive_metrics_keep_transition_context(qt_application):
             and sample.tags.get("transition_phase") == "paint"
             for sample in samples
         )
+    finally:
+        table.close()
+        owner.close()
+        table.deleteLater()
+        owner.deleteLater()
+
+
+def test_vcp_table_view_drops_expired_transition_context_from_later_paint_metrics(qt_application):
+    owner = QWidget()
+    owner._workspace_tab_transition_context = {
+        "transition_id": "8",
+        "_created_at": time.monotonic() - (TAB_TRANSITION_CONTEXT_MAX_AGE_MS / 1000.0) - 0.1,
+        "source_tab": "stock_candidates",
+        "target_tab": "na_daily",
+        "reason": "shell_nav",
+        "mounted_before": True,
+        "preload_state": "interactive_warm",
+    }
+    table = controls.VCPTableView(owner)
+    table.set_targeted_flash_repaint_enabled(False, metric_scope="na_daily")
+    metric_cursor = len(metric_history("na_daily_table_paint_ms"))
+    try:
+        owner.resize(360, 180)
+        table.resize(360, 180)
+        table._mark_pending_paint_metric("preload_reveal")
+        owner.show()
+        table.show()
+        qt_application.processEvents()
+        _render_widget(table, qt_application, width=360, height=180)
+
+        samples = metric_history("na_daily_table_paint_ms")[metric_cursor:]
+        assert samples
+        assert all("source_tab" not in sample.tags for sample in samples)
+        assert owner._workspace_tab_transition_context == {}
     finally:
         table.close()
         owner.close()

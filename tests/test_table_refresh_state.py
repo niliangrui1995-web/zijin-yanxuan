@@ -619,6 +619,73 @@ def test_watchlist_reveal_batch_requests_one_complete_viewport_frame():
         table.deleteLater()
 
 
+def test_watchlist_interactive_warm_shell_nav_return_batches_only_the_viewport():
+    """精确 warm 返回只释放 viewport，不能额外唤醒整张表。"""
+    class RecordingViewport(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.update_calls = []
+
+        def update(self, *args):  # noqa: N802 - Qt API naming
+            self.update_calls.append(args)
+            return super().update(*args)
+
+    owner = QWidget()
+    owner._workspace_tab_transition_context = {
+        "transition_id": "17",
+        "source_tab": "stock_candidates",
+        "target_tab": "watchlist",
+        "reason": "shell_nav",
+        "mounted_before": True,
+        "preload_state": "interactive_warm",
+    }
+    table = VCPTableView(owner)
+    viewport = RecordingViewport()
+    table.setViewport(viewport)
+    try:
+        table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+
+        assert table.begin_workspace_reveal_batch() is True
+        assert table.updatesEnabled() is True
+        assert viewport.updatesEnabled() is False
+        viewport.update_calls.clear()
+
+        table.finish_workspace_reveal_batch()
+
+        assert table.updatesEnabled() is True
+        assert viewport.updatesEnabled() is True
+        assert table._workspace_reveal_batch_active is False
+        assert viewport.update_calls == []
+    finally:
+        table.deleteLater()
+        owner.deleteLater()
+
+
+def test_watchlist_reveal_batch_keeps_table_fallback_when_transition_is_not_interactive_warm():
+    owner = QWidget()
+    owner._workspace_tab_transition_context = {
+        "transition_id": "18",
+        "source_tab": "stock_candidates",
+        "target_tab": "watchlist",
+        "reason": "shell_nav",
+        "mounted_before": True,
+        "preload_state": "background_ready",
+    }
+    table = VCPTableView(owner)
+    try:
+        table.set_targeted_flash_repaint_enabled(True, metric_scope="watchlist")
+
+        assert table.begin_workspace_reveal_batch() is True
+        assert table.updatesEnabled() is False
+
+        table.finish_workspace_reveal_batch()
+
+        assert table.updatesEnabled() is True
+    finally:
+        table.deleteLater()
+        owner.deleteLater()
+
+
 def test_watchlist_prewarm_never_arms_a_viewport_paint_suppression_guard(qt_application):
     """后台缓存可以常驻，但可见关注池不得以吞 PaintEvent 来消除尾帧。"""
     table = VCPTableView()

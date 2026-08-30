@@ -55,6 +55,7 @@ from PyQt6.QtWidgets import (
 from ui.components.tooltip_popup import hide_floating_tooltip, show_floating_tooltip
 from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
 from ui.theme_tokens import build_ui_tokens, get_state_tone
+from ui.workspaces.tab_transition_observability import tab_transition_context
 
 from .motion import install_button_feedback, install_menu_fade
 from .table_view_helpers import bounded_model_row, find_header_column
@@ -250,6 +251,8 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         # again.  This flag only batches the synchronous StackOne transition;
         # it never consumes Paint events after the fact.
         self._workspace_reveal_batch_active = False
+        self._workspace_reveal_batch_mode = ""
+        self._workspace_reveal_batch_viewport_updates_were_enabled: bool | None = None
         # Watchlist's delegate deliberately paints without a focus frame.  It
         # can therefore update only the affected row when a separate K-line
         # window takes or returns focus instead of invalidating the viewport.
@@ -934,6 +937,29 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             preserve_visible_frame=False,
         )
 
+    def _uses_viewport_only_warm_return_batch(self) -> bool:
+        """Match only the proven same-workspace warm return path.
+
+        The transition context is read while ClassicWorkspace is synchronously
+        switching pages.  It is copied into batch-local state below so a later
+        native activation cannot influence this decision.
+        """
+        if self._paint_metric_scope != "watchlist":
+            return False
+        parent = self.parentWidget()
+        while parent is not None:
+            context = tab_transition_context(parent, tab="watchlist")
+            if context:
+                return (
+                    str(context.get("source_tab") or "").strip() == "stock_candidates"
+                    and str(context.get("target_tab") or "").strip() == "watchlist"
+                    and str(context.get("reason") or "").strip() == "shell_nav"
+                    and bool(context.get("mounted_before"))
+                    and str(context.get("preload_state") or "").strip() == "interactive_warm"
+                )
+            parent = parent.parentWidget()
+        return False
+
     def begin_workspace_reveal_batch(self) -> bool:
         """Coalesce a hidden Watchlist page's synchronous StackOne reveal.
 
@@ -953,6 +979,18 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             return False
         self._clear_shell_nav_repaint_guard()
         self._workspace_reveal_batch_active = True
+        self._workspace_reveal_batch_mode = ""
+        self._workspace_reveal_batch_viewport_updates_were_enabled = None
+        if self._uses_viewport_only_warm_return_batch():
+            # Re-enabling a QWidget queues its own update.  The Watchlist
+            # content belongs to the viewport, so avoid also waking the table
+            # and then explicitly scheduling a second viewport update.
+            self._workspace_reveal_batch_mode = "viewport_only"
+            viewport_updates_were_enabled = bool(viewport.updatesEnabled())
+            self._workspace_reveal_batch_viewport_updates_were_enabled = viewport_updates_were_enabled
+            if viewport_updates_were_enabled:
+                viewport.setUpdatesEnabled(False)
+            return True
         self.setUpdatesEnabled(False)
         return True
 
@@ -961,7 +999,16 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         if not self._workspace_reveal_batch_active:
             return
         self._workspace_reveal_batch_active = False
+        batch_mode = self._workspace_reveal_batch_mode
+        viewport_updates_were_enabled = self._workspace_reveal_batch_viewport_updates_were_enabled
+        self._workspace_reveal_batch_mode = ""
+        self._workspace_reveal_batch_viewport_updates_were_enabled = None
         if self._closing:
+            return
+        if batch_mode == "viewport_only":
+            viewport = self.viewport()
+            if viewport is not None and viewport_updates_were_enabled:
+                viewport.setUpdatesEnabled(True)
             return
         self.setUpdatesEnabled(True)
         if self._paint_metric_scope != "watchlist":
@@ -1637,11 +1684,8 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
                 tags["background_prewarm_active_key_at_paint"] = str(
                     getattr(parent, "_background_prewarm_active_key", "") or ""
                 )
-            transition_context = getattr(parent, "_workspace_tab_transition_context", None)
-            if (
-                isinstance(transition_context, dict)
-                and str(transition_context.get("target_tab") or "").strip() == scope
-            ):
+            transition_context = tab_transition_context(parent, tab=scope)
+            if transition_context:
                 paint_transition_metadata = {
                     "transition_id": str(transition_context.get("transition_id") or ""),
                     "source_tab": str(transition_context.get("source_tab") or ""),
