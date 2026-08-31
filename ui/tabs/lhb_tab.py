@@ -1866,6 +1866,14 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
             return [dict(row) for row in rows]
         return []
 
+    def iter_stock_context_rows(self, current_model=None):
+        """Yield the newest staged/display rows without a whole-list copy."""
+        pending = getattr(self, "_pending_lhb_display", None)
+        if isinstance(pending, dict):
+            rows = pending.get("row_data")
+            return iter(rows if rows is not None else ())
+        return super().iter_stock_context_rows(current_model=current_model)
+
     def get_realtime_quote_source_projection(self) -> dict:
         """Return the current LHB registration state for the central worker.
 

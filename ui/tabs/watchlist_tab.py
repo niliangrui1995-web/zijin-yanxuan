@@ -879,6 +879,7 @@ class _WatchlistBackgroundPreloadMixin:
 
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
+            self.cancel_background_ui_construction()
             self._vcp_task_generation += 1
             self._watchlist_lineage_generation = int(
                 getattr(self, "_watchlist_lineage_generation", 0)
@@ -914,7 +915,8 @@ class _WatchlistBackgroundPreloadMixin:
             reason=reason,
             reset_state=_reset,
             local_settled=lambda: not self._background_preload.vcp_pending
-            and not self._initial_data_loading,
+            and not self._initial_data_loading
+            and not self.is_background_ui_construction_active(),
             runner=task_manager,
         )
 
@@ -971,6 +973,7 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         startup_indicator_refresh_enabled: bool = True,
         startup_indicator_refresh_delay_ms: int = 500,
         startup_followup_refresh_enabled: bool = True,
+        defer_background_ui_build: bool = False,
     ):
         ui_construct_started_at = time.perf_counter()
         super().__init__(data_provider=data_provider, parent=parent)
@@ -989,13 +992,69 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self._watchlist_lineage_service = None
         self._last_watchlist_result = None
         self._last_watchlist_signature = ""
-        self._init_ui()
-        record_metric("watchlist_tab_import_ms", _WATCHLIST_MODULE_IMPORT_MS, unit="ms")
-        record_metric(
-            "watchlist_tab_ui_construct_ms",
-            (time.perf_counter() - ui_construct_started_at) * 1000.0,
-            unit="ms",
+        self._watchlist_ui_construct_started_at = ui_construct_started_at
+        self._defer_background_ui_build = bool(defer_background_ui_build)
+        if self._defer_background_ui_build:
+            self._begin_deferred_watchlist_ui_construction()
+        else:
+            self._init_ui()
+            self._finish_watchlist_ui_construction()
+
+    def _begin_deferred_watchlist_ui_construction(self) -> None:
+        self.begin_background_ui_construction(
+            (
+                ("watchlist_toolbar", lambda: self._run_watchlist_ui_phase("toolbar", self._init_ui_toolbar)),
+                (
+                    "watchlist_table_widget",
+                    lambda: self._run_watchlist_ui_phase("table_widget", self._init_ui_table_widget),
+                ),
+                (
+                    "watchlist_table_model",
+                    lambda: self._run_watchlist_ui_phase("table_model", self._init_ui_table_model),
+                ),
+                (
+                    "watchlist_table_state",
+                    lambda: self._run_watchlist_ui_phase("table_state", self._init_ui_table_state),
+                ),
+                (
+                    "watchlist_table_configuration",
+                    lambda: self._run_watchlist_ui_phase(
+                        "table_configuration",
+                        self._finish_ui_table_configuration,
+                    ),
+                ),
+                (
+                    "watchlist_runtime_wiring",
+                    lambda: self._run_watchlist_ui_phase(
+                        "runtime_wiring",
+                        self._finish_watchlist_ui_construction,
+                    ),
+                ),
+            ),
         )
+
+    def _run_watchlist_ui_phase(self, phase: str, callback) -> None:
+        with ui_stall_span(
+            "WatchlistTab.background_ui_phase",
+            tab="watchlist",
+            signal=f"background_ui_{phase}",
+        ):
+            callback()
+
+    def _finish_watchlist_ui_construction(self) -> None:
+        record_metric("watchlist_tab_import_ms", _WATCHLIST_MODULE_IMPORT_MS, unit="ms")
+        if not self._defer_background_ui_build:
+            record_metric(
+                "watchlist_tab_ui_construct_ms",
+                (time.perf_counter() - self._watchlist_ui_construct_started_at) * 1000.0,
+                unit="ms",
+            )
+        else:
+            record_metric(
+                "watchlist_tab_background_ui_build_elapsed_ms",
+                (time.perf_counter() - self._watchlist_ui_construct_started_at) * 1000.0,
+                unit="ms",
+            )
         # 订阅全局报价与大一统市值更新机制
         self.subscribe_global_quotes()
 
@@ -1106,9 +1165,14 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
             self._pending_vcp_apply_signature = ()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._init_ui_toolbar()
+        self._init_ui_table()
+        self._finish_ui_table_configuration()
+
+    def _init_ui_toolbar(self):
+        self._watchlist_layout = QVBoxLayout(self)
+        self._watchlist_layout.setContentsMargins(0, 0, 0, 0)
+        self._watchlist_layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_sp_status = QLabel("")
@@ -1142,7 +1206,14 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
         action_widgets = [self.add_stock_input, btn_add_stock, btn_reset]
         toolbar = self.build_tab_toolbar("关注池", self.lbl_sp_status, filter_widgets, action_widgets)
-        layout.addWidget(toolbar)
+        self._watchlist_layout.addWidget(toolbar)
+
+    def _init_ui_table(self):
+        self._init_ui_table_widget()
+        self._init_ui_table_model()
+        self._init_ui_table_state()
+
+    def _init_ui_table_widget(self):
 
         # 表格控件
         self.table_sp = VCPTableView(default_row_height=30)
@@ -1153,6 +1224,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.setDropIndicatorShown(True)
         self.table_sp.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.table_sp.setDragDropOverwriteMode(False)
+
+    def _init_ui_table_model(self):
 
         # 绑定 Model 与 Delegate
         headers = [
@@ -1181,6 +1254,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
         self.table_sp.set_viewport_base_background_enabled(True)
 
+    def _init_ui_table_state(self):
+
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
         self.table_sp.set_focus_transition_repaint_enabled(False)
@@ -1188,6 +1263,8 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
 
         # 接收模型发出的手动排序完成信号
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
+
+    def _finish_ui_table_configuration(self):
 
         # 自适应列宽
         header = self.table_sp.horizontalHeader()
@@ -1209,7 +1286,7 @@ class WatchlistTab(_WatchlistBackgroundPreloadMixin, BaseStockTab):
         self.table_sp.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_sp.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table_state)
+        self._watchlist_layout.addWidget(self.table_state)
 
     @staticmethod
     def _now_hhmm() -> str:

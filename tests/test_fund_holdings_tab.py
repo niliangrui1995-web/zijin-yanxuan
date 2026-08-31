@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtTest import QSignalSpy
+from PyQt6.QtTest import QSignalSpy, QTest
 
 from core.ai_industry_chain_pool import (
     load_cached_ai_industry_chain_context_map,
@@ -94,6 +94,71 @@ def test_fund_holdings_workspace_activation_retries_cancelled_initial_load():
 
 class _DummyProvider:
     pass
+
+
+def _wait_for_background_ui_construction(tab, qt_application) -> None:
+    for _ in range(20):
+        if tab.is_background_ui_construction_complete():
+            return
+        QTest.qWait(20)
+        qt_application.processEvents()
+    assert tab.is_background_ui_construction_complete()
+
+
+def test_fund_holdings_background_ui_construction_defers_autoload_until_all_phases_finish(
+    qt_application,
+    monkeypatch,
+):
+    initial_load_calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_ensure_initial_load_started",
+        lambda self: initial_load_calls.append("initial_load"),
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(
+        _DummyProvider(),
+        defer_background_ui_build=True,
+    )
+    try:
+        assert tab.is_background_ui_construction_complete() is False
+        assert not hasattr(tab, "model")
+        assert initial_load_calls == []
+
+        _wait_for_background_ui_construction(tab, qt_application)
+
+        assert tab.model is not None
+        assert tab.table_state is not None
+        assert initial_load_calls == ["initial_load"]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_fund_holdings_background_ui_construction_pauses_and_cancels_before_table_phase(
+    qt_application,
+):
+    tab = fund_holdings_module.FundHoldingsTab(
+        _DummyProvider(),
+        autoload=False,
+        defer_background_ui_build=True,
+    )
+    try:
+        assert tab.pause_background_preload() is True
+        QTest.qWait(40)
+        qt_application.processEvents()
+        assert tab.is_background_ui_construction_complete() is False
+        assert not hasattr(tab, "model")
+
+        assert tab.resume_background_preload() is True
+        assert tab.cancel_background_preload(reason="step_timeout").is_settled() is True
+        QTest.qWait(40)
+        qt_application.processEvents()
+        assert tab.is_background_ui_construction_active() is False
+        assert tab.background_ui_construction_error() == "background UI construction cancelled"
+        assert not hasattr(tab, "model")
+    finally:
+        tab.deleteLater()
 
 
 class _FakeSettings:
@@ -1468,7 +1533,7 @@ def test_fund_holdings_tab_update_button_runs_sync_all_directly(monkeypatch):
         tab.btn_update.click()
         assert len(calls) == 1
         assert calls[0][0] == "全部更新"
-        assert calls[0][1] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
+        assert calls[0][1] is fund_holdings_module._run_fund_holdings_sync_latest_all
     finally:
         tab.deleteLater()
 
@@ -1488,9 +1553,21 @@ def test_fund_holdings_tab_runs_auto_sync_after_f5(monkeypatch):
         assert tab.run_auto_sync_after_f5() is True
         assert len(calls) == 1
         assert calls[0][0] == "F5后自动更新"
-        assert calls[0][1] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
+        assert calls[0][1] is fund_holdings_module._run_fund_holdings_sync_latest_all
     finally:
         tab.deleteLater()
+
+
+def test_fund_holdings_sync_worker_entry_resolves_service_with_its_token(monkeypatch):
+    received_tokens = []
+    token = object()
+    service = SimpleNamespace(
+        sync_latest_all=lambda *, cancellation_token=None: received_tokens.append(cancellation_token) or {"ok": True}
+    )
+    monkeypatch.setattr(fund_holdings_module, "_get_fund_holdings_sync_service", lambda: service)
+
+    assert fund_holdings_module._run_fund_holdings_sync_latest_all(cancellation_token=token) == {"ok": True}
+    assert received_tokens == [token]
 
 
 def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
@@ -1536,7 +1613,7 @@ def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
         assert tab._run_pending_auto_sync_after_f5() is True
         assert calls[:2] == [("snapshot", tab.model, True), "status"]
         assert calls[2][0] == "sync"
-        assert calls[2][2] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
+        assert calls[2][2] is fund_holdings_module._run_fund_holdings_sync_latest_all
     finally:
         tab.deleteLater()
 

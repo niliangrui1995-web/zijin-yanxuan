@@ -61,6 +61,7 @@ class StockCandidateTab(BaseStockTab):
     AUTO_REFRESH_DEBOUNCE_MS = 1500
     REFRESH_TASK_ID = "stock_candidates_context_refresh"
     BACKGROUND_DEPENDENCY_POLL_MS = 50
+    BACKGROUND_CONTEXT_CAPTURE_YIELD_MS = 16
     BACKGROUND_REFRESH_TIMEOUT_SECONDS = 60.0
     REQUIRED_SOURCE_TABS = frozenset({"ai_industry_chain", "na_daily"})
     SNAPSHOT_SOURCE_TABS = ("fund_holdings", "lhb")
@@ -79,7 +80,14 @@ class StockCandidateTab(BaseStockTab):
         "最近时间",
     ]
 
-    def __init__(self, data_provider, parent=None, *, runtime_start_delay_ms: int = 1500):
+    def __init__(
+        self,
+        data_provider,
+        parent=None,
+        *,
+        runtime_start_delay_ms: int = 1500,
+        defer_background_ui_build: bool = False,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
         try:
             self._runtime_start_delay_ms = max(0, int(runtime_start_delay_ms))
@@ -107,8 +115,67 @@ class StockCandidateTab(BaseStockTab):
         self._background_preload_rebuild_started = False
         self._background_preload_retry_pending = False
         self._background_preload_reuses_ready_sources = False
+        self._background_preload_waiting_context_capture = False
+        self._background_context_capture_session = None
+        self._background_context_capture_snapshot = None
+        self._background_context_capture_generation = 0
+        self._background_context_capture_paused = False
         self._auto_refresh_connections = []
-        self._init_ui()
+        self._auto_refresh_timer = None
+        self._background_dependency_timer = None
+        self._background_context_capture_timer = None
+        self._defer_background_ui_build = bool(defer_background_ui_build)
+        if self._defer_background_ui_build:
+            self._begin_deferred_candidate_ui_construction()
+        else:
+            self._init_ui()
+            self._finish_candidate_ui_construction()
+
+    def _begin_deferred_candidate_ui_construction(self) -> None:
+        self.begin_background_ui_construction(
+            (
+                (
+                    "stock_candidates_toolbar",
+                    lambda: self._run_candidate_ui_phase("toolbar", self._init_ui_toolbar),
+                ),
+                (
+                    "stock_candidates_table_model",
+                    lambda: self._run_candidate_ui_phase("table_model", self._init_ui_table_model),
+                ),
+                (
+                    "stock_candidates_table_widget",
+                    lambda: self._run_candidate_ui_phase("table_widget", self._init_ui_table_widget),
+                ),
+                (
+                    "stock_candidates_table_state",
+                    lambda: self._run_candidate_ui_phase("table_state", self._init_ui_table_state),
+                ),
+                (
+                    "stock_candidates_table_configuration",
+                    lambda: self._run_candidate_ui_phase(
+                        "table_configuration",
+                        self._finish_ui_table_configuration,
+                    ),
+                ),
+                (
+                    "stock_candidates_runtime_wiring",
+                    lambda: self._run_candidate_ui_phase(
+                        "runtime_wiring",
+                        self._finish_candidate_ui_construction,
+                    ),
+                ),
+            ),
+        )
+
+    def _run_candidate_ui_phase(self, phase: str, callback) -> None:
+        with ui_stall_span(
+            "StockCandidateTab.background_ui_phase",
+            tab="stock_candidates",
+            signal=f"background_ui_{phase}",
+        ):
+            callback()
+
+    def _finish_candidate_ui_construction(self) -> None:
         self.subscribe_global_quotes(self.model)
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.setSingleShot(True)
@@ -118,6 +185,10 @@ class StockCandidateTab(BaseStockTab):
         self._background_dependency_timer.setSingleShot(True)
         self._background_dependency_timer.setInterval(self.BACKGROUND_DEPENDENCY_POLL_MS)
         self._background_dependency_timer.timeout.connect(self._poll_background_preload_dependencies)
+        self._background_context_capture_timer = QTimer(self)
+        self._background_context_capture_timer.setSingleShot(True)
+        self._background_context_capture_timer.setInterval(self.BACKGROUND_CONTEXT_CAPTURE_YIELD_MS)
+        self._background_context_capture_timer.timeout.connect(self._advance_background_context_capture)
         self._connect_auto_refresh_events()
         self._initial_refresh_started = False
 
@@ -193,6 +264,8 @@ class StockCandidateTab(BaseStockTab):
             and self._background_preload_done
             and self._background_preload_rebuild_started
             and not self._background_preload_waiting_snapshots
+            and not self._background_preload_waiting_context_capture
+            and not self._background_context_capture_active()
             and not self._candidate_refresh_running
             and not self._candidate_refresh_pending
             and not self._candidate_refresh_followup_scheduled
@@ -227,9 +300,136 @@ class StockCandidateTab(BaseStockTab):
         return set(self.SNAPSHOT_SOURCE_TABS).issubset(ready)
 
     def _schedule_background_dependency_poll(self) -> None:
-        timer = self._background_dependency_timer
+        timer = getattr(self, "_background_dependency_timer", None)
+        if timer is None:
+            return
         if not timer.isActive() and not getattr(self, "_runtime_cleanup_done", False):
             timer.start()
+
+    def _background_context_capture_active(self) -> bool:
+        return getattr(self, "_background_context_capture_session", None) is not None
+
+    def _schedule_background_context_capture(self) -> bool:
+        timer = getattr(self, "_background_context_capture_timer", None)
+        if timer is None or getattr(self, "_runtime_cleanup_done", False):
+            return False
+        if not timer.isActive() and not self._background_context_capture_paused:
+            timer.start()
+        return True
+
+    def _begin_background_context_capture(self) -> bool:
+        """Start the candidate-only GUI snapshot slices after dependencies settle."""
+        if self._background_context_capture_active():
+            return True
+        workspace = self._workspace()
+        begin_capture = getattr(workspace, "begin_background_stock_context_snapshot_capture", None)
+        if not callable(begin_capture):
+            return False
+        try:
+            # stock_candidates depends on both snapshot sources in the 11-tab
+            # graph.  Read their staged widgets directly and do not perform a
+            # second LHB cache/signature pass in this GUI callback.
+            session = begin_capture(
+                include_rps_bundle=False,
+                include_cached_sources=False,
+            )
+        except TypeError:
+            try:
+                session = begin_capture()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                return False
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+        if session is None or not callable(getattr(session, "advance", None)):
+            return False
+        self._background_context_capture_generation += 1
+        self._background_context_capture_session = session
+        self._background_context_capture_snapshot = None
+        self._background_context_capture_paused = False
+        self._background_preload_waiting_context_capture = True
+        return self._schedule_background_context_capture()
+
+    def _background_context_capture_phase(self, session) -> str:
+        reader = getattr(session, "next_phase_label", None)
+        try:
+            phase = str(reader() if callable(reader) else "source").strip()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            phase = "source"
+        return phase or "source"
+
+    def _advance_background_context_capture(self) -> None:
+        session = getattr(self, "_background_context_capture_session", None)
+        if (
+            session is None
+            or self._background_context_capture_paused
+            or getattr(self, "_runtime_cleanup_done", False)
+        ):
+            return
+        generation = self._background_context_capture_generation
+        phase = self._background_context_capture_phase(session)
+        try:
+            with ui_stall_span(
+                "StockCandidateTab.capture_context_snapshot_phase",
+                tab="stock_candidates",
+                signal=f"background_capture_{phase}",
+            ):
+                completed = bool(session.advance())
+            if not completed:
+                self._schedule_background_context_capture()
+                return
+            snapshot_reader = getattr(session, "snapshot", None)
+            snapshot = snapshot_reader() if callable(snapshot_reader) else None
+            if not isinstance(snapshot, StockContextSnapshot):
+                raise RuntimeError("background stock-context capture returned no immutable snapshot")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            if generation != self._background_context_capture_generation:
+                return
+            self._background_context_capture_session = None
+            self._background_preload_waiting_context_capture = False
+            self._on_candidate_refresh_error(f"context capture failed: {exc}")
+            return
+        if generation != self._background_context_capture_generation:
+            return
+        self._background_context_capture_session = None
+        self._background_context_capture_snapshot = snapshot
+        self._background_preload_waiting_context_capture = False
+        self._start_candidate_refresh_async(context_snapshot=snapshot)
+
+    def _cancel_background_context_capture(self) -> None:
+        self._background_context_capture_generation += 1
+        timer = getattr(self, "_background_context_capture_timer", None)
+        if timer is not None:
+            timer.stop()
+        session = getattr(self, "_background_context_capture_session", None)
+        cancel = getattr(session, "cancel", None)
+        try:
+            if callable(cancel):
+                cancel()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            pass
+        self._background_context_capture_session = None
+        self._background_context_capture_snapshot = None
+        self._background_context_capture_paused = False
+        self._background_preload_waiting_context_capture = False
+
+    def pause_background_preload(self) -> bool:
+        if super().pause_background_preload():
+            return True
+        if not self._background_context_capture_active() or self._background_context_capture_paused:
+            return False
+        self._background_context_capture_paused = True
+        timer = getattr(self, "_background_context_capture_timer", None)
+        if timer is not None:
+            timer.stop()
+        return True
+
+    def resume_background_preload(self) -> bool:
+        if super().resume_background_preload():
+            return True
+        if not self._background_context_capture_active() or not self._background_context_capture_paused:
+            return False
+        self._background_context_capture_paused = False
+        return self._schedule_background_context_capture()
 
     def _maybe_start_background_candidate_rebuild(self) -> bool:
         if (
@@ -245,10 +445,13 @@ class StockCandidateTab(BaseStockTab):
                 self._realtime_quote_projection_reason = "stock_candidates_tab_snapshot_pending"
             self._schedule_background_dependency_poll()
             return False
-        self._background_dependency_timer.stop()
+        timer = getattr(self, "_background_dependency_timer", None)
+        if timer is not None:
+            timer.stop()
         self._background_preload_waiting_snapshots = False
         self._background_preload_rebuild_started = True
-        self._start_candidate_refresh_async()
+        if not self._begin_background_context_capture():
+            self._start_candidate_refresh_async()
         return True
 
     def _poll_background_preload_dependencies(self) -> None:
@@ -268,7 +471,11 @@ class StockCandidateTab(BaseStockTab):
                 pass
 
         def _reset() -> None:
-            self._background_dependency_timer.stop()
+            self.cancel_background_ui_construction()
+            self._cancel_background_context_capture()
+            timer = getattr(self, "_background_dependency_timer", None)
+            if timer is not None:
+                timer.stop()
             self._candidate_refresh_running = False
             self._candidate_refresh_pending = False
             self._candidate_refresh_followup_scheduled = False
@@ -276,6 +483,7 @@ class StockCandidateTab(BaseStockTab):
             self._background_preload_done = False
             self._background_preload_error = ""
             self._background_preload_waiting_snapshots = False
+            self._background_preload_waiting_context_capture = False
             self._background_preload_rebuild_started = False
             self._background_preload_retry_pending = True
             self._background_preload_reuses_ready_sources = False
@@ -298,6 +506,8 @@ class StockCandidateTab(BaseStockTab):
             local_settled=lambda: not self._candidate_refresh_running
             and not self._candidate_refresh_pending
             and not self._candidate_refresh_followup_scheduled
+            and not self._background_context_capture_active()
+            and not self.is_background_ui_construction_active()
             and (reuses_ready_sources or self._stock_context_snapshots_settled()),
             runner=task_manager,
         )
@@ -376,6 +586,7 @@ class StockCandidateTab(BaseStockTab):
         self._context_refresh_pending = False
         self._candidate_refresh_pending = False
         self._candidate_refresh_followup_scheduled = False
+        self._cancel_background_context_capture()
         self._realtime_quote_projection_state = "unknown"
         self._realtime_quote_projection_reason = "stock_candidates_tab_runtime_stopped"
         dependency_timer = getattr(self, "_background_dependency_timer", None)
@@ -428,9 +639,14 @@ class StockCandidateTab(BaseStockTab):
         self._auto_refresh_timer.start(self.AUTO_REFRESH_DEBOUNCE_MS)
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._init_ui_toolbar()
+        self._init_ui_table()
+        self._finish_ui_table_configuration()
+
+    def _init_ui_toolbar(self):
+        self._candidate_layout = QVBoxLayout(self)
+        self._candidate_layout.setContentsMargins(0, 0, 0, 0)
+        self._candidate_layout.setSpacing(0)
 
         self.lbl_status = QLabel("未刷新")
         self.search_box = QLineEdit()
@@ -444,24 +660,37 @@ class StockCandidateTab(BaseStockTab):
         btn_refresh.clicked.connect(self.refresh_candidates)
 
         toolbar = self.build_tab_toolbar("综合候选", self.lbl_status, [self.search_box], [btn_refresh])
-        layout.addWidget(toolbar)
+        self._candidate_layout.addWidget(toolbar)
 
-        self.table = VCPTableView(default_row_height=30)
-        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="stock_candidates")
-        self.table_state = TableStateWrapper(self.table, empty_title="暂无综合候选", loading_title="刷新中...")
+    def _init_ui_table(self):
+        self._init_ui_table_model()
+        self._init_ui_table_widget()
+        self._init_ui_table_state()
+
+    def _init_ui_table_model(self):
 
         self.model = StockTableModel(self.COLUMNS)
         self.model.set_plain_style_headers(["来源", "核心信号", "最近时间"])
         self.model.set_muted_text_headers(["共振分", "来源数", "信号数", "来源", "核心信号", "最近时间"])
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
+
+    def _init_ui_table_widget(self):
+
+        self.table = VCPTableView(default_row_height=30)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="stock_candidates")
         self.table.setModel(self.proxy_model)
         set_update_threshold = getattr(self.table, "setUpdateThreshold", None)
         if callable(set_update_threshold):
             # Qt 6.9+ 的默认值 200 会将综合候选的正常行情批量（如 195 行 × 3 列）
-            # 升级为完整 viewport；结构性首帧与模型重置仍按原有路径处理。
+                # 升级为完整 viewport；结构性首帧与模型重置仍按原有路径处理。
             set_update_threshold(STOCK_CANDIDATES_VIEW_UPDATE_THRESHOLD)
         self.table.setItemDelegate(StockItemDelegate(self.table))
+
+    def _init_ui_table_state(self):
+        self.table_state = TableStateWrapper(self.table, empty_title="暂无综合候选", loading_title="刷新中...")
+
+    def _finish_ui_table_configuration(self):
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
@@ -483,7 +712,7 @@ class StockCandidateTab(BaseStockTab):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table_state, 1)
+        self._candidate_layout.addWidget(self.table_state, 1)
         self._refresh_status()
 
     def _workspace(self):
@@ -545,7 +774,11 @@ class StockCandidateTab(BaseStockTab):
         with ui_stall_span("StockCandidateTab.refresh_candidates", tab="stock_candidates", signal="context_refresh"):
             self._start_candidate_refresh_async()
 
-    def _start_candidate_refresh_async(self) -> None:
+    def _start_candidate_refresh_async(
+        self,
+        *,
+        context_snapshot: StockContextSnapshot | None = None,
+    ) -> None:
         if self._candidate_refresh_running or self._candidate_refresh_followup_scheduled:
             self._candidate_refresh_pending = True
             return
@@ -555,8 +788,10 @@ class StockCandidateTab(BaseStockTab):
             self._realtime_quote_projection_reason = "stock_candidates_tab_loading"
         tab_titles = self._tab_titles()
         provider_status = self._read_provider_status()
-        workspace = self._workspace()
-        snapshot = capture_workspace_stock_context(workspace)
+        snapshot = context_snapshot
+        if snapshot is None:
+            workspace = self._workspace()
+            snapshot = capture_workspace_stock_context(workspace)
         if snapshot is None:
             snapshot = _immutable_candidate_snapshot(self._read_stock_context())
         read_policy = StockContextReadPolicy.build(allow_lhb_cache_compute=False)

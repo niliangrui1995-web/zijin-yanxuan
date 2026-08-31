@@ -35,6 +35,7 @@ from app.services.foreign_block_market_data_service import (
 )
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_task_lifecycle_service import (
     invoke_with_cancellation,
     task_lifecycle_for,
@@ -297,8 +298,16 @@ class _ForeignBlockBackgroundPreloadMixin:
             and self._local_cache_pending_emit_event is None
         )
 
+    def pause_background_preload(self) -> bool:
+        """Keep queued hidden-widget construction inert while Watchlist is foreground."""
+        return super().pause_background_preload()
+
+    def resume_background_preload(self) -> bool:
+        return super().resume_background_preload()
+
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
+            self.cancel_background_ui_construction()
             self._initial_local_cache_generation += 1
             self._initial_local_cache_callback_pending = False
             self._local_cache_generation += 1
@@ -436,12 +445,14 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
         *,
         autoload: bool = True,
         initial_cache_load_delay_ms: int = LOCAL_CACHE_LOAD_DELAY_MS,
+        defer_background_ui_build: bool = False,
     ):
         super().__init__(data_provider=data_provider, parent=parent)
         try:
             self._initial_cache_load_delay_ms = max(0, int(initial_cache_load_delay_ms))
         except (TypeError, ValueError):
             self._initial_cache_load_delay_ms = LOCAL_CACHE_LOAD_DELAY_MS
+        self._autoload = bool(autoload)
         self._is_loading = False
         self._last_success_at = None
         self._status_primary = "等待加载"
@@ -473,10 +484,80 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
             partial(_run_pending_visible_online_refresh, self),
         )
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
-        self._init_ui()
-        if autoload:
-            self._schedule_initial_local_cache_load()
+        self._defer_background_ui_build = bool(defer_background_ui_build)
+        if self._defer_background_ui_build:
+            self._begin_deferred_foreign_block_ui_construction()
+        else:
+            self._init_ui()
+            self._finish_foreign_block_ui_construction()
 
+    def _begin_deferred_foreign_block_ui_construction(self) -> None:
+        self.begin_background_ui_construction(
+            (
+                (
+                    "foreign_block_layout",
+                    lambda: self._run_foreign_block_ui_phase("layout", self._init_ui_layout),
+                ),
+                (
+                    "foreign_block_filter_controls",
+                    lambda: self._run_foreign_block_ui_phase(
+                        "filter_controls",
+                        self._init_ui_filter_controls,
+                    ),
+                ),
+                (
+                    "foreign_block_toolbar",
+                    lambda: self._run_foreign_block_ui_phase("toolbar", self._init_ui_toolbar),
+                ),
+                (
+                    "foreign_block_table_model",
+                    lambda: self._run_foreign_block_ui_phase(
+                        "table_model",
+                        self._init_ui_table_model,
+                    ),
+                ),
+                (
+                    "foreign_block_table_widget",
+                    lambda: self._run_foreign_block_ui_phase(
+                        "table_widget",
+                        self._init_ui_table_widget,
+                    ),
+                ),
+                (
+                    "foreign_block_table_state",
+                    lambda: self._run_foreign_block_ui_phase(
+                        "table_state",
+                        self._init_ui_table_state,
+                    ),
+                ),
+                (
+                    "foreign_block_table_configuration",
+                    lambda: self._run_foreign_block_ui_phase(
+                        "table_configuration",
+                        self._finish_ui_table_configuration,
+                    ),
+                ),
+                (
+                    "foreign_block_runtime_wiring",
+                    lambda: self._run_foreign_block_ui_phase(
+                        "runtime_wiring",
+                        self._finish_foreign_block_ui_construction,
+                    ),
+                ),
+            )
+        )
+
+    def _run_foreign_block_ui_phase(self, phase: str, callback) -> None:
+        with ui_stall_span(
+            "ForeignBlockTradeTab.background_ui_phase",
+            tab="foreign_block",
+            signal=f"background_ui_{phase}",
+        ):
+            callback()
+
+    def _finish_foreign_block_ui_construction(self) -> None:
+        if self._autoload:
+            self._schedule_initial_local_cache_load()
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
         event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
 
@@ -498,10 +579,21 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
         _cancel_online_fetch(self, reason="owner_hidden", resume_when_visible=True)
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._init_ui_layout()
+        self._init_ui_filter_controls()
+        self._init_ui_toolbar()
+        self._init_ui_table_model()
+        self._init_ui_table_widget()
+        self._init_ui_table_state()
+        self._finish_ui_table_configuration()
+
+    def _init_ui_layout(self) -> None:
+        self._foreign_block_layout = QVBoxLayout(self)
+        self._foreign_block_layout.setContentsMargins(0, 0, 0, 0)
+        self._foreign_block_layout.setSpacing(0)
         self.lbl_status = QLabel("等待加载...")
+
+    def _init_ui_filter_controls(self) -> None:
         self.cmb_filter_date = MultiSelectFilterButton("全部日期")
         self.cmb_filter_date.setFixedWidth(128)
         self.cmb_filter_date.selectionChanged.connect(self._filter_table_combo)
@@ -539,15 +631,23 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
             self.search_box,
             self.cmb_days,
         ]
+        self._foreign_block_filter_widgets = filter_widgets
 
+    def _init_ui_toolbar(self) -> None:
         self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.run_post_online_refresh)
 
         action_widgets = [self.btn_refresh]
-        toolbar = self.build_tab_toolbar("外资大宗", self.lbl_status, filter_widgets, action_widgets)
-        layout.addWidget(toolbar)
+        toolbar = self.build_tab_toolbar(
+            "外资大宗",
+            self.lbl_status,
+            self._foreign_block_filter_widgets,
+            action_widgets,
+        )
+        self._foreign_block_layout.addWidget(toolbar)
 
+    def _init_ui_table_model(self) -> None:
         self.columns = [
             "代码",
             "名称",
@@ -564,17 +664,22 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
             "买方营业部",
             "卖方营业部",
         ]
-        self.table = VCPTableView(default_row_height=30)
-        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="foreign_block")
         self.model = StockTableModel(self.columns)
         self.model.set_plain_style_headers(["交易日期"])
+
+    def _init_ui_table_widget(self) -> None:
+        self.table = VCPTableView(default_row_height=30)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="foreign_block")
         self.proxy_model = BlockTradeFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
+
+    def _init_ui_table_state(self) -> None:
         self.table_state = TableStateWrapper(self.table, empty_title="暂无大宗交易数据", loading_title="抓取中...")
 
+    def _finish_ui_table_configuration(self) -> None:
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
         default_widths = [52, 60, 70, 55, 55, 55, 70, 85, 65, 65, 65, 75, 75, 140, 140]
@@ -590,7 +695,7 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table_state, 1)
+        self._foreign_block_layout.addWidget(self.table_state, 1)
 
     def _on_days_changed(self, idx):
         days_map = {0: 10, 1: 30, 2: 40, 3: 60}
@@ -751,6 +856,7 @@ class ForeignBlockTradeTab(_ForeignBlockBackgroundPreloadMixin, BaseStockTab):
         self._load_local_cache(emit_event=False)
 
     def _cleanup_runtime_state(self):
+        self.cancel_background_ui_construction()
         _shutdown_foreign_runtime(self)
         with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)

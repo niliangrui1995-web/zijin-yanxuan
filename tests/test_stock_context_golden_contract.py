@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import threading
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
+import domains.stock_context.models as stock_context_models
 from app.services.stock_context_model_service import (
     DEFAULT_SOURCE_ORDER,
     StockContextReadPolicy,
@@ -120,6 +121,149 @@ def test_widget_snapshot_can_omit_rps_bundle_without_reading_engine():
 
     assert calls == []
     assert snapshot.rps_bundle is None
+
+
+def test_widget_snapshot_session_copies_only_one_configured_row_chunk_per_advance():
+    class _CopyBudgetProbe:
+        copied_in_current_advance = 0
+
+        def __deepcopy__(self, _memo):
+            type(self).copied_in_current_advance += 1
+            if type(self).copied_in_current_advance > 2:
+                raise AssertionError("one snapshot advance copied more than its row chunk")
+            return type(self)()
+
+    rows = [
+        {"代码": f"00000{index}", "payload": _CopyBudgetProbe()}
+        for index in range(1, 6)
+    ]
+    tab = _RowsTab(rows)
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: tab if key == "ai_industry_chain" else None,
+        tab_specs=lambda: [{"key": "ai_industry_chain", "title": "AI产业链"}],
+    )
+
+    session = StockContextWidgetSnapshotAdapter(workspace).begin_capture(
+        include_rps_bundle=False,
+        sources={"ai_industry_chain"},
+        row_chunk_size=2,
+    )
+
+    for expected_codes in (("000001", "000002"), ("000003", "000004"), ("000005",)):
+        _CopyBudgetProbe.copied_in_current_advance = 0
+        assert session.advance() is False
+        assert _CopyBudgetProbe.copied_in_current_advance == len(expected_codes)
+
+    _CopyBudgetProbe.copied_in_current_advance = 0
+    assert session.advance() is True
+    assert _CopyBudgetProbe.copied_in_current_advance == 0
+    assert [row["代码"] for row in session.snapshot().rows_for("ai_industry_chain")] == [
+        "000001",
+        "000002",
+        "000003",
+        "000004",
+        "000005",
+    ]
+
+
+def test_widget_snapshot_session_finalization_does_not_refreeze_all_rows(monkeypatch):
+    tab = _RowsTab(
+        [
+            {"代码": "000001", "细分板块": "AI"},
+            {"代码": "000002", "细分板块": "算力"},
+        ]
+    )
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: tab if key == "ai_industry_chain" else None,
+        tab_specs=lambda: [{"key": "ai_industry_chain", "title": "AI产业链"}],
+    )
+    session = StockContextWidgetSnapshotAdapter(workspace).begin_capture(
+        include_rps_bundle=False,
+        sources={"ai_industry_chain"},
+    )
+
+    assert session.advance() is False
+    monkeypatch.setattr(
+        stock_context_models,
+        "_freeze_source_rows",
+        lambda _rows: (_ for _ in ()).throw(AssertionError("finalization re-froze all source rows")),
+    )
+
+    assert session.advance() is True
+    assert [row["代码"] for row in session.snapshot().rows_for("ai_industry_chain")] == [
+        "000001",
+        "000002",
+    ]
+
+
+def test_snapshot_frozen_parts_finalization_does_not_walk_large_pre_frozen_rows():
+    class _NoFinalizationRowWalk(tuple):
+        def __iter__(self):
+            raise AssertionError("assemble_snapshot walked every already-frozen row")
+
+    rows = _NoFinalizationRowWalk(
+        [
+            MappingProxyType({"代码": f"{index:06d}", "payload": MappingProxyType({"rank": index})})
+            for index in range(4096)
+        ]
+    )
+
+    snapshot = StockContextSnapshot._from_frozen_parts(
+        source_rows={"ai_industry_chain": rows},
+        cached_source_rows={},
+        source_row_counts={"ai_industry_chain": len(rows)},
+    )
+
+    assert snapshot.source_rows["ai_industry_chain"] is rows
+    assert snapshot.source_row_counts["ai_industry_chain"] == 4096
+
+
+def test_widget_snapshot_prefers_lazy_row_iterators_over_compatibility_getters():
+    class _LazyRowsTab:
+        @staticmethod
+        def iter_stock_context_rows():
+            return iter(({"代码": "000001", "来源": "lazy"},))
+
+        @staticmethod
+        def get_row_data():
+            raise AssertionError("adapter called eager get_row_data despite lazy iterator")
+
+    class _LazyScanTab:
+        @staticmethod
+        def iter_scan_results():
+            return iter(({"代码": "000002", "来源": "scan_lazy"},))
+
+        @staticmethod
+        def get_scan_results():
+            raise AssertionError("adapter called eager get_scan_results despite lazy iterator")
+
+        @staticmethod
+        def get_row_data():
+            raise AssertionError("adapter called scan fallback getter despite lazy iterator")
+
+    tabs = {
+        "ai_industry_chain": _LazyRowsTab(),
+        "scan": _LazyScanTab(),
+    }
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: tabs.get(key),
+        tab_specs=lambda: [
+            {"key": "ai_industry_chain", "title": "AI产业链"},
+            {"key": "scan", "title": "扫描"},
+        ],
+    )
+
+    snapshot = StockContextWidgetSnapshotAdapter(workspace).capture(
+        include_rps_bundle=False,
+        sources={"ai_industry_chain", "scan"},
+        row_chunk_size=1,
+    )
+
+    assert snapshot.rows_for("ai_industry_chain") == [{"代码": "000001", "来源": "lazy"}]
+    assert snapshot.rows_for("scan") == [{"代码": "000002", "来源": "scan_lazy"}]
 
 
 def test_workspace_snapshot_helper_forwards_rps_capture_policy():

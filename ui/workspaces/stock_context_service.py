@@ -4,7 +4,6 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Sequence
-from dataclasses import replace
 
 from app.services.stock_context_fund_snapshot_process_service import (
     load_stock_context_fund_snapshot_in_subprocess,
@@ -278,6 +277,111 @@ class StockContextService:
             self._published_kline_index = None
         return completed
 
+
+class BackgroundStockContextSnapshotCapture:
+    """Cooperatively materialize a published workspace-context snapshot.
+
+    The service owns the plain fund/LHB snapshots and the adapter owns QWidget
+    reads.  This handle deliberately does not call ``stat``/signature helpers:
+    background callers use the last *published* LHB generation while the
+    regular synchronous capture path retains its fresh-signature contract.
+    """
+
+    def __init__(self, adapter_session, loading_sources: frozenset[str]) -> None:
+        self._adapter_session = adapter_session
+        self._loading_sources = loading_sources
+        self._snapshot: StockContextSnapshot | None = None
+        self._cancelled = False
+
+    def advance(self) -> bool:
+        if self._cancelled:
+            return True
+        if self._snapshot is not None:
+            return True
+        if not self._adapter_session.advance():
+            return False
+        base_snapshot = self._adapter_session.snapshot()
+        self._snapshot = base_snapshot.with_loading_sources(
+            base_snapshot.loading_sources | self._loading_sources
+        )
+        return True
+
+    def snapshot(self) -> StockContextSnapshot:
+        if self._cancelled:
+            raise RuntimeError("stock-context background capture was cancelled")
+        if self._snapshot is None:
+            raise RuntimeError("stock-context background capture is not complete")
+        return self._snapshot
+
+    def next_phase_label(self) -> str:
+        if self._cancelled:
+            return "cancelled"
+        if self._snapshot is not None:
+            return "complete"
+        reader = getattr(self._adapter_session, "next_phase_label", None)
+        return str(reader() if callable(reader) else "source")
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+
+def begin_background_stock_context_snapshot_capture(
+    service: StockContextService,
+    *,
+    include_rps_bundle: bool = True,
+    include_cached_sources: bool = True,
+    sources: Sequence[str] | set[str] | frozenset[str] | None = None,
+    target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
+) -> BackgroundStockContextSnapshotCapture:
+    """Start a GUI-safe, turn-by-turn snapshot capture for hidden prewarm.
+
+    Snapshot workers publish whole replacement lists, so taking the current
+    list reference while holding the corresponding lock is stable for the
+    short capture lifetime.  Copying/filtering remains in the adapter's GUI
+    phases; no QWidget or mutable widget state crosses to a worker thread.
+    """
+
+    selected_sources = _normalized_scope(sources)
+    include_fund = selected_sources is None or "fund_holdings" in selected_sources
+    include_lhb = selected_sources is None or "lhb" in selected_sources
+    cached_rows: dict[str, list[dict]] = {}
+    cached_row_counts: dict[str, int] = {}
+    loading_sources: set[str] = set()
+
+    if include_fund:
+        with service._fund_rows_lock:
+            if include_cached_sources and service._fund_rows_loaded:
+                raw_rows = service._fund_rows_snapshot
+                cached_row_counts["fund_holdings"] = len(raw_rows)
+                cached_rows["fund_holdings"] = raw_rows
+            if service._fund_rows_loading:
+                loading_sources.add("fund_holdings")
+
+    if include_lhb:
+        with service._lhb_rows_lock:
+            # The async LHB task sets this generation only after it has
+            # completed its signature validation.  Do not repeat filesystem
+            # signature work in the GUI prewarm callback.
+            if include_cached_sources and service._lhb_rows_signature is not None:
+                raw_rows = service._lhb_rows_snapshot
+                cached_row_counts["lhb"] = len(raw_rows)
+                cached_rows["lhb"] = raw_rows
+            if service._lhb_rows_loading:
+                loading_sources.add("lhb")
+
+    adapter = StockContextWidgetSnapshotAdapter(service._workspace)
+    adapter_session = adapter.begin_capture(
+        cached_source_rows=cached_rows,
+        cached_source_row_counts=cached_row_counts,
+        include_rps_bundle=include_rps_bundle,
+        sources=selected_sources,
+        target_codes=target_codes,
+    )
+    return BackgroundStockContextSnapshotCapture(
+        adapter_session,
+        frozenset(loading_sources),
+    )
+
 def capture_stock_context_snapshot(
     service: StockContextService,
     *,
@@ -341,7 +445,9 @@ def capture_stock_context_snapshot(
             sources=selected_sources,
             target_codes=selected_target_codes,
         )
-    return replace(snapshot, loading_sources=snapshot.loading_sources | frozenset(loading_sources))
+    return snapshot.with_loading_sources(
+        snapshot.loading_sources | frozenset(loading_sources)
+    )
 
 
 def collect_stock_context_snapshot(

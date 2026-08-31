@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import domains.stock_context.models as stock_context_models
 from app.services.stock_context_model_service import (
     StockContextReadPolicy,
     StockContextSignalIndex,
@@ -12,7 +13,11 @@ from app.services.stock_context_model_service import (
 )
 from app.services.stock_context_query_service import StockContextQueryService
 from ui.workspaces import stock_context_service as context_module
-from ui.workspaces.stock_context_service import StockContextService, capture_stock_context_snapshot
+from ui.workspaces.stock_context_service import (
+    StockContextService,
+    begin_background_stock_context_snapshot_capture,
+    capture_stock_context_snapshot,
+)
 
 
 def test_stock_context_query_public_contract_covers_signal_variants(monkeypatch):
@@ -164,3 +169,73 @@ def test_stock_context_snapshot_status_and_cancellation_are_public_contracts(mon
         ("lhb-snapshot", "step_timeout"),
     ]
     assert service.async_snapshots_settled() is True
+
+
+def test_background_capture_skips_lhb_signature_and_cached_rows_when_disabled(monkeypatch):
+    class _ForbiddenCacheRows:
+        def __iter__(self):
+            raise AssertionError("disabled cached rows were iterated")
+
+        def __len__(self):
+            raise AssertionError("disabled cached rows were counted")
+
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda _key: None,
+        tab_specs=lambda: [],
+    )
+    service = StockContextService(workspace)
+    forbidden_rows = _ForbiddenCacheRows()
+    service._fund_rows_loaded = True
+    service._fund_rows_snapshot = forbidden_rows
+    service._lhb_rows_signature = ("published", 1, 1)
+    service._lhb_rows_snapshot = forbidden_rows
+    monkeypatch.setattr(
+        service,
+        "_lhb_pool_cache_signature",
+        lambda: (_ for _ in ()).throw(AssertionError("background capture read LHB signature")),
+    )
+
+    capture = begin_background_stock_context_snapshot_capture(
+        service,
+        include_rps_bundle=False,
+        include_cached_sources=False,
+        sources={"fund_holdings", "lhb"},
+    )
+
+    while not capture.advance():
+        pass
+
+    snapshot = capture.snapshot()
+    assert snapshot.cached_source_rows == {}
+    assert snapshot.cached_source_row_counts == {}
+
+
+def test_background_capture_applies_loading_without_refreezing_completed_rows(monkeypatch):
+    rows = [{"代码": "000001", "细分板块": "AI"}]
+    tab = SimpleNamespace(get_row_data=lambda: rows)
+    workspace = SimpleNamespace(
+        engine=None,
+        get_loaded_tab=lambda key: tab if key == "ai_industry_chain" else None,
+        tab_specs=lambda: [{"key": "ai_industry_chain", "title": "AI产业链"}],
+    )
+    service = StockContextService(workspace)
+    service._fund_rows_loading = True
+    capture = begin_background_stock_context_snapshot_capture(
+        service,
+        include_rps_bundle=False,
+        include_cached_sources=False,
+        sources={"ai_industry_chain", "fund_holdings"},
+    )
+    monkeypatch.setattr(
+        stock_context_models,
+        "_freeze_source_rows",
+        lambda _rows: (_ for _ in ()).throw(AssertionError("loading status re-froze completed rows")),
+    )
+
+    while not capture.advance():
+        pass
+
+    snapshot = capture.snapshot()
+    assert snapshot.loading_sources == frozenset({"fund_holdings"})
+    assert snapshot.rows_for("ai_industry_chain") == rows

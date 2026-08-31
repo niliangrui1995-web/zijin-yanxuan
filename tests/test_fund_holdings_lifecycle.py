@@ -4,6 +4,7 @@ import pytest
 
 from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
 from ui.tabs import fund_holdings_payload as payload_module
+from ui.tabs import fund_holdings_tab as fund_holdings_tab_module
 
 
 class _PayloadStore:
@@ -38,6 +39,47 @@ def test_fund_holdings_payload_stops_between_store_stages():
         )
 
     assert store.query_calls == 0
+
+
+def test_fund_holdings_payload_does_not_resolve_default_store_after_cancellation(monkeypatch):
+    token = CancellationToken()
+    token.cancel("before_default_store")
+    calls = []
+    monkeypatch.setattr(
+        payload_module,
+        "_resolve_fund_holdings_store",
+        lambda: calls.append("store") or object(),
+    )
+
+    with pytest.raises(TaskCancelledError, match="before_default_store"):
+        payload_module.load_fund_holdings_view_payload(
+            quarter_scope="latest",
+            stock_universe_provider=lambda: set(),
+            chain_context_provider=lambda: {},
+            capital_attribute_labels={},
+            cancellation_token=token,
+        )
+
+    assert calls == []
+
+
+def test_fund_holdings_tab_payload_worker_checks_cancellation_before_store_resolution(monkeypatch):
+    token = CancellationToken()
+    token.cancel("before_tab_payload_store")
+    calls = []
+    monkeypatch.setattr(
+        payload_module,
+        "_resolve_fund_holdings_store",
+        lambda: calls.append("store") or object(),
+    )
+
+    with pytest.raises(TaskCancelledError, match="before_tab_payload_store"):
+        fund_holdings_tab_module.FundHoldingsTab._load_view_payload(
+            object(),
+            cancellation_token=token,
+        )
+
+    assert calls == []
 
 
 def test_fund_holdings_row_builder_stops_inside_row_loop():

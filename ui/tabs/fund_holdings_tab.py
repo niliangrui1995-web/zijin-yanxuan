@@ -20,14 +20,12 @@ from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_fund_holdings_service import (
+from domains.fund_holdings.compare import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
     QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     SUBJECT_QFII,
     SUBJECT_RUIYUAN,
-    fund_holdings_store,
-    fund_holdings_sync_service,
 )
 from app.services.ui_industry_chain_service import (
     load_cached_ai_industry_chain_context_map,
@@ -90,6 +88,48 @@ from ui.workspaces.tab_registry import create_tab_lineage_service
 FUND_HOLDINGS_VIEW_UPDATE_THRESHOLD = 10_000
 
 
+def _get_fund_holdings_store():
+    """Resolve the SQLite store only from the payload/runtime boundary.
+
+    ``FundHoldingsTab`` itself is a hidden QWidget shell during ordinary
+    prewarm.  Resolving the former UI service at module import also created
+    the store and sync singletons on that shell's GUI callback.  The initial
+    view payload already belongs to a lifecycle worker, so cache this export
+    only when that worker (or a later completed UI callback) needs it.
+    """
+    store = globals().get("fund_holdings_store")
+    if store is None:
+        from domains.fund_holdings.store import fund_holdings_store as store
+
+        globals()["fund_holdings_store"] = store
+    return store
+
+
+def _get_fund_holdings_sync_service():
+    """Resolve the network-capable sync service in its background task."""
+    service = globals().get("fund_holdings_sync_service")
+    if service is None:
+        from domains.fund_holdings.sync import fund_holdings_sync_service as service
+
+        globals()["fund_holdings_sync_service"] = service
+    return service
+
+
+def _run_fund_holdings_sync_latest_all(*, cancellation_token=None):
+    """Worker entrypoint that keeps first sync-service import off the GUI."""
+    service = _get_fund_holdings_sync_service()
+    return service.sync_latest_all(cancellation_token=cancellation_token)
+
+
+def __getattr__(name: str):
+    """Keep historical module-level service access lazy for callers/tests."""
+    if name == "fund_holdings_store":
+        return _get_fund_holdings_store()
+    if name == "fund_holdings_sync_service":
+        return _get_fund_holdings_sync_service()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def _single_shot_timer(parent, callback, *, interval_ms: int = 0) -> QTimer:
     timer = QTimer(parent)
     timer.setSingleShot(True)
@@ -136,6 +176,8 @@ class _FundHoldingsBackgroundPreloadMixin:
 
     def pause_background_preload(self) -> bool:
         """Keep a cache-only preload inert while Watchlist owns the foreground."""
+        if super().pause_background_preload():
+            return True
         if (
             not self._background_preload_requested
             or self._background_preload_done
@@ -153,6 +195,8 @@ class _FundHoldingsBackgroundPreloadMixin:
 
     def resume_background_preload(self) -> bool:
         """Resume a held cache-only preload without restarting committed batches."""
+        if super().resume_background_preload():
+            return True
         if not self._background_preload_paused:
             return False
         self._background_preload_paused = False
@@ -203,9 +247,14 @@ class _FundHoldingsBackgroundPreloadMixin:
 
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
+            self.cancel_background_ui_construction()
             self._view_load_generation += 1
-            self._initial_load_timer.stop()
-            self._view_committer.cancel(restore_previous=True)
+            timer = getattr(self, "_initial_load_timer", None)
+            if timer is not None:
+                timer.stop()
+            committer = getattr(self, "_view_committer", None)
+            if committer is not None:
+                committer.cancel(restore_previous=True)
             self._initial_load_started = False
             self._background_preload_requested = False
             self._background_preload_done = False
@@ -223,8 +272,15 @@ class _FundHoldingsBackgroundPreloadMixin:
             task_ids=(self._initial_load_task_id,),
             reason=reason,
             reset_state=_reset,
-            local_settled=lambda: not self._initial_load_timer.isActive()
-            and not self._view_committer.is_active,
+            local_settled=lambda: not bool(
+                getattr(self, "_initial_load_timer", None)
+                and self._initial_load_timer.isActive()
+            )
+            and not bool(
+                getattr(self, "_view_committer", None)
+                and self._view_committer.is_active
+            )
+            and not self.is_background_ui_construction_active(),
             runner=task_manager,
         )
 
@@ -263,6 +319,8 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         parent=None,
         autoload: bool = True,
         initial_load_delay_ms: int = 0,
+        *,
+        defer_background_ui_build: bool = False,
     ):
         super().__init__(data_provider=data_provider, parent=parent)
         try:
@@ -307,16 +365,12 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         self._restoring_view_state = False
         self._view_state_restored = False
         _initialize_fund_runtime_timers(self)
-
-        self._init_ui()
-        if self._autoload:
-            self._ensure_initial_load_started()
+        self._defer_background_ui_build = bool(defer_background_ui_build)
+        if self._defer_background_ui_build:
+            self._begin_deferred_fund_holdings_ui_construction()
         else:
-            self._set_initial_loading_state("基金持仓待加载", "首次进入时自动读取本地数据库")
-
-        event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
-        event_bus.sig_app_closing.connect(self._save_view_state)
-        event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_updated)
+            self._init_ui()
+            self._finish_fund_holdings_ui_construction()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -353,17 +407,101 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         return self.cmb_capital_attribute.selected_values()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._init_ui_layout()
+        self._init_ui_filter_controls()
+        self._init_ui_toolbar()
+        self._init_ui_table_model()
+        self._init_ui_table_widget()
+        self._init_ui_table_state()
+        self._finish_ui_table_configuration()
 
+    def _begin_deferred_fund_holdings_ui_construction(self) -> None:
+        self.begin_background_ui_construction(
+            (
+                (
+                    "fund_holdings_layout",
+                    lambda: self._run_fund_holdings_ui_phase("layout", self._init_ui_layout),
+                ),
+                (
+                    "fund_holdings_filter_controls",
+                    lambda: self._run_fund_holdings_ui_phase(
+                        "filter_controls",
+                        self._init_ui_filter_controls,
+                    ),
+                ),
+                (
+                    "fund_holdings_toolbar",
+                    lambda: self._run_fund_holdings_ui_phase("toolbar", self._init_ui_toolbar),
+                ),
+                (
+                    "fund_holdings_table_model",
+                    lambda: self._run_fund_holdings_ui_phase(
+                        "table_model",
+                        self._init_ui_table_model,
+                    ),
+                ),
+                (
+                    "fund_holdings_table_widget",
+                    lambda: self._run_fund_holdings_ui_phase(
+                        "table_widget",
+                        self._init_ui_table_widget,
+                    ),
+                ),
+                (
+                    "fund_holdings_table_state",
+                    lambda: self._run_fund_holdings_ui_phase(
+                        "table_state",
+                        self._init_ui_table_state,
+                    ),
+                ),
+                (
+                    "fund_holdings_table_configuration",
+                    lambda: self._run_fund_holdings_ui_phase(
+                        "table_configuration",
+                        self._finish_ui_table_configuration,
+                    ),
+                ),
+                (
+                    "fund_holdings_runtime_wiring",
+                    lambda: self._run_fund_holdings_ui_phase(
+                        "runtime_wiring",
+                        self._finish_fund_holdings_ui_construction,
+                    ),
+                ),
+            )
+        )
+
+    def _run_fund_holdings_ui_phase(self, phase: str, callback) -> None:
+        with ui_stall_span(
+            "FundHoldingsTab.background_ui_phase",
+            tab="fund_holdings",
+            signal=f"background_ui_{phase}",
+        ):
+            callback()
+
+    def _finish_fund_holdings_ui_construction(self) -> None:
+        if self._autoload:
+            self._ensure_initial_load_started()
+        else:
+            self._set_initial_loading_state("基金持仓待加载", "首次进入时自动读取本地数据库")
+        event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
+        event_bus.sig_app_closing.connect(self._save_view_state)
+        event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_updated)
+
+    def _init_ui_layout(self) -> None:
+        self._fund_holdings_layout = QVBoxLayout(self)
+        self._fund_holdings_layout.setContentsMargins(0, 0, 0, 0)
+        self._fund_holdings_layout.setSpacing(0)
+
+    def _init_ui_filter_controls(self) -> None:
         filter_widgets = self._init_filter_controls()
+        self._fund_holdings_filter_widgets = filter_widgets
+
+    def _init_ui_toolbar(self) -> None:
+        filter_widgets = self._fund_holdings_filter_widgets
         action_widgets = self._init_action_controls()
         toolbar = self.build_tab_toolbar("基金持仓", self.lbl_status, filter_widgets, action_widgets)
-        layout.addWidget(toolbar)
-
-        self._init_table()
-        layout.addWidget(self.table_state, 1)
+        self._fund_holdings_layout.addWidget(toolbar)
 
     def _init_filter_controls(self):
         self.lbl_status = QLabel("等待同步基金持仓数据库")
@@ -427,6 +565,12 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
         return [self.btn_update]
 
     def _init_table(self):
+        self._init_ui_table_model()
+        self._init_ui_table_widget()
+        self._init_ui_table_state()
+        self._finish_ui_table_configuration()
+
+    def _init_ui_table_model(self) -> None:
         self.columns = [
             "代码",
             "名称",
@@ -443,8 +587,6 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             "持股变化",
             "概念板块",
         ]
-        self.table = VCPTableView(default_row_height=30)
-        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="fund_holdings")
         self.model = FundHoldingsTableModel(self.columns)
         self._view_committer = FundHoldingsViewCommitter(self, chunk_size=self.VIEW_ROW_CHUNK_SIZE)
         self.model.set_plain_style_headers(["主体", "资金属性", "季度", "变化类型", "概念板块"])
@@ -452,9 +594,15 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             ["主体", "资金属性", "季度", "本期占比", "本期持股", "上期持股", "持股变化", "概念板块"]
         )
 
+    def _init_ui_table_widget(self) -> None:
+        self.table = VCPTableView(default_row_height=30)
+        self.table.set_targeted_flash_repaint_enabled(False, metric_scope="fund_holdings")
         self.proxy_model = FundHoldingsFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
+
+        # Keep the first-reveal configuration order identical to the eager
+        # constructor: update threshold and delegate precede the state wrapper.
         set_update_threshold = getattr(self.table, "setUpdateThreshold", None)
         if callable(set_update_threshold):
             # Qt 6.9+ 的默认值 200 会将基金持仓的正常行情批量（如 119 行 × 3 列）
@@ -463,9 +611,14 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
+
+    def _init_ui_table_state(self) -> None:
         self.table_state = TableStateWrapper(
             self.table, empty_title="暂无基金持仓数据", loading_title="同步基金持仓数据中..."
         )
+        self._fund_holdings_layout.addWidget(self.table_state, 1)
+
+    def _finish_ui_table_configuration(self) -> None:
         self._configure_table_header()
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -522,7 +675,10 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
 
     @classmethod
     def _query_change_rows_for_scope(cls, quarter_keys: set[str] | None) -> list[dict]:
-        return query_change_rows_for_scope(quarter_keys, stock_universe_provider=cls._stock_universe_provider)
+        return query_change_rows_for_scope(
+            quarter_keys,
+            stock_universe_provider=cls._stock_universe_provider,
+        )
 
     @classmethod
     def _load_view_payload(
@@ -1192,7 +1348,7 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
     def run_auto_sync_after_f5(self) -> bool:
         if getattr(self, "_runtime_cleanup_done", False) or self._sync_active:
             return False
-        self._run_sync_action("F5后自动更新", fund_holdings_sync_service.sync_latest_all)
+        self._run_sync_action("F5后自动更新", _run_fund_holdings_sync_latest_all)
         return True
 
     def schedule_auto_sync_after_f5(self) -> bool:
@@ -1229,11 +1385,11 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
     def run_full_sync(self) -> bool:
         if self._sync_active:
             return False
-        self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
+        self._run_sync_action("全部更新", _run_fund_holdings_sync_latest_all)
         return True
 
     def _refresh_filter_options(self):
-        quarters = fund_holdings_store.list_quarters()
+        quarters = _get_fund_holdings_store().list_quarters()
 
         current_subjects = self._selected_subject_names()
         current_capital_attributes = self._selected_capital_attributes()
@@ -1482,8 +1638,13 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             self._fund_holdings_cleanup_done = True
             self._pending_f5_auto_sync = False
             self._view_load_generation += 1
-            self._view_committer.cancel()
-            self._initial_load_timer.stop()
+            self.cancel_background_ui_construction()
+            committer = getattr(self, "_view_committer", None)
+            if committer is not None:
+                committer.cancel()
+            timer = getattr(self, "_initial_load_timer", None)
+            if timer is not None:
+                timer.stop()
             f5_timer = getattr(self, "_f5_auto_sync_timer", None)
             if f5_timer is not None:
                 f5_timer.stop()
@@ -1493,7 +1654,8 @@ class FundHoldingsTab(_FundHoldingsBackgroundPreloadMixin, BaseStockTab):
             view_state_timer = getattr(self, "_view_state_save_timer", None)
             if view_state_timer is not None:
                 view_state_timer.stop()
-            self._save_view_state()
+            if hasattr(self, "table"):
+                self._save_view_state()
             with suppress(TypeError, RuntimeError):
                 event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
             with suppress(TypeError, RuntimeError):

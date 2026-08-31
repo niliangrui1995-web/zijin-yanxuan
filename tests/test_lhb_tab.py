@@ -2397,6 +2397,21 @@ def test_lhb_watchlist_radar_rows_stays_on_display_snapshot_without_bootstrap(mo
         tab.deleteLater()
 
 
+def test_lhb_context_iterator_prefers_staged_rows_then_model_without_eager_copies():
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        tab.model.update_data([{"代码": "000001", "名称": "模型行"}])
+        staged_rows = [{"代码": "000002", "名称": "暂存行"}]
+        tab._pending_lhb_display = {"row_data": staged_rows}
+        assert list(tab.iter_stock_context_rows()) == staged_rows
+
+        tab._pending_lhb_display = None
+        model_rows = list(tab.iter_stock_context_rows())
+        assert [(row["代码"], row["名称"]) for row in model_rows] == [("000001", "模型行")]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_realtime_quote_projection_distinguishes_pending_staged_and_terminal_empty():
     tab = LhbTab(object(), autoload_pool=False)
     try:

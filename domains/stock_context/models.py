@@ -114,6 +114,44 @@ class StockSignal:
         return str(self.code or "").strip()
 
 
+def _frozen_row_parts(
+    value: Mapping[str, Sequence[Mapping[str, Any]]] | None,
+    *,
+    field_name: str,
+) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+    """Wrap rows already frozen in bounded GUI capture phases.
+
+    ``_from_frozen_parts`` is only used after the GUI capture session has
+    copied and recursively frozen every row.  Do not walk the row tuples here:
+    that would turn the final assembly turn back into an O(total rows) GUI
+    task, defeating the bounded capture phases that established this contract.
+    """
+    frozen: dict[str, tuple[Mapping[str, Any], ...]] = {}
+    for raw_source, raw_rows in (value or {}).items():
+        if not isinstance(raw_rows, tuple):
+            raise TypeError(f"{field_name} rows must be tuples")
+        frozen[str(raw_source)] = raw_rows
+    return MappingProxyType(frozen)
+
+
+def _row_counts_for_frozen_parts(
+    rows: Mapping[str, Sequence[Mapping[str, Any]]],
+    raw_counts: Mapping[str, int] | None,
+) -> Mapping[str, int]:
+    counts: dict[str, int] = {}
+    for raw_source, raw_count in (raw_counts or {}).items():
+        source = str(raw_source or "").strip()
+        if not source:
+            continue
+        try:
+            counts[source] = max(0, int(raw_count))
+        except (TypeError, ValueError):
+            continue
+    for source, source_rows in rows.items():
+        counts[source] = max(counts.get(source, 0), len(source_rows))
+    return MappingProxyType(counts)
+
+
 def _indexed_signal(raw_signal: Any, code: str) -> StockSignal | None:
     signal = coerce_stock_signal(raw_signal)
     if signal is None or signal.normalized_code() != code:
@@ -241,6 +279,85 @@ class StockContextSnapshot:
             self,
             "cached_source_row_counts",
             MappingProxyType(cached_source_row_counts),
+        )
+
+    @classmethod
+    def _from_frozen_parts(
+        cls,
+        *,
+        source_rows: Mapping[str, Sequence[Mapping[str, Any]]],
+        cached_source_rows: Mapping[str, Sequence[Mapping[str, Any]]],
+        available_sources: Sequence[str] | set[str] | frozenset[str] = (),
+        loading_sources: Sequence[str] | set[str] | frozenset[str] = (),
+        direct_source_keys: Sequence[str] | set[str] | frozenset[str] = (),
+        direct_signals: Sequence[StockSignal] = (),
+        foreign_keywords: Sequence[str] = (),
+        tab_titles: Mapping[str, Any] | None = None,
+        rps_bundle: Any = None,
+        source_row_counts: Mapping[str, int] | None = None,
+        cached_source_row_counts: Mapping[str, int] | None = None,
+    ) -> "StockContextSnapshot":
+        """Build a snapshot from trusted, recursively frozen parts.
+
+        The method is intentionally private: it is for the GUI capture session
+        after it has copied and frozen one row chunk at a time.  Calling the
+        public dataclass constructor here would recursively freeze every
+        accumulated row again in one final GUI callback.
+        """
+        frozen_source_rows = _frozen_row_parts(source_rows, field_name="source")
+        frozen_cached_source_rows = _frozen_row_parts(
+            cached_source_rows,
+            field_name="cached source",
+        )
+        if tab_titles is None:
+            frozen_tab_titles: Mapping[str, Any] = MappingProxyType({})
+        elif isinstance(tab_titles, MappingProxyType):
+            frozen_tab_titles = tab_titles
+        else:
+            raise TypeError("tab titles must be recursively frozen")
+
+        snapshot = object.__new__(cls)
+        object.__setattr__(snapshot, "source_rows", frozen_source_rows)
+        object.__setattr__(snapshot, "cached_source_rows", frozen_cached_source_rows)
+        object.__setattr__(snapshot, "available_sources", frozenset(available_sources))
+        object.__setattr__(snapshot, "loading_sources", frozenset(loading_sources))
+        object.__setattr__(snapshot, "direct_source_keys", frozenset(direct_source_keys))
+        object.__setattr__(snapshot, "direct_signals", tuple(direct_signals))
+        object.__setattr__(snapshot, "foreign_keywords", tuple(foreign_keywords))
+        object.__setattr__(snapshot, "tab_titles", frozen_tab_titles)
+        object.__setattr__(snapshot, "rps_bundle", rps_bundle)
+        object.__setattr__(
+            snapshot,
+            "source_row_counts",
+            _row_counts_for_frozen_parts(frozen_source_rows, source_row_counts),
+        )
+        object.__setattr__(
+            snapshot,
+            "cached_source_row_counts",
+            _row_counts_for_frozen_parts(
+                frozen_cached_source_rows,
+                cached_source_row_counts,
+            ),
+        )
+        return snapshot
+
+    def with_loading_sources(
+        self,
+        loading_sources: Sequence[str] | set[str] | frozenset[str],
+    ) -> "StockContextSnapshot":
+        """Return a loading-state variant without re-freezing captured rows."""
+        return type(self)._from_frozen_parts(
+            source_rows=self.source_rows,
+            cached_source_rows=self.cached_source_rows,
+            available_sources=self.available_sources,
+            loading_sources=loading_sources,
+            direct_source_keys=self.direct_source_keys,
+            direct_signals=self.direct_signals,
+            foreign_keywords=self.foreign_keywords,
+            tab_titles=self.tab_titles,
+            rps_bundle=self.rps_bundle,
+            source_row_counts=self.source_row_counts,
+            cached_source_row_counts=self.cached_source_row_counts,
         )
 
     def rows_for(self, source: str) -> list[dict[str, Any]]:

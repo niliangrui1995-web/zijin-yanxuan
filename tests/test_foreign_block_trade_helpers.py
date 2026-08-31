@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 from PyQt6.QtGui import QHideEvent
+from PyQt6.QtTest import QTest
 
 import app.services.foreign_block_market_data_service as foreign_market_service
 from app.services.foreign_block_market_data_service import (
@@ -19,6 +20,114 @@ from ui.tabs.foreign_block_trade_tab import (
     BlockTradeFilterProxyModel,
     ForeignBlockTradeTab,
 )
+
+
+class _DeferredForeignBlockProvider:
+    pass
+
+
+def _wait_for_background_ui_construction(tab, qt_application) -> None:
+    for _ in range(20):
+        if tab.is_background_ui_construction_complete():
+            return
+        QTest.qWait(20)
+        qt_application.processEvents()
+    assert tab.is_background_ui_construction_complete()
+
+
+def test_foreign_block_background_ui_construction_defers_autoload_until_all_phases_finish(
+    qt_application,
+    monkeypatch,
+):
+    scheduled = []
+    monkeypatch.setattr(
+        ForeignBlockTradeTab,
+        "_schedule_initial_local_cache_load",
+        lambda self: scheduled.append("initial_cache") or True,
+    )
+
+    tab = ForeignBlockTradeTab(
+        _DeferredForeignBlockProvider(),
+        defer_background_ui_build=True,
+    )
+    try:
+        assert tab.is_background_ui_construction_complete() is False
+        assert not hasattr(tab, "model")
+        assert scheduled == []
+
+        _wait_for_background_ui_construction(tab, qt_application)
+
+        assert tab.model is not None
+        assert tab.table_state is not None
+        assert scheduled == ["initial_cache"]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_foreign_block_background_ui_construction_pauses_then_cancels_before_controls(
+    qt_application,
+):
+    tab = ForeignBlockTradeTab(
+        _DeferredForeignBlockProvider(),
+        autoload=False,
+        defer_background_ui_build=True,
+    )
+    try:
+        assert tab.pause_background_preload() is True
+        QTest.qWait(40)
+        qt_application.processEvents()
+        assert tab.is_background_ui_construction_complete() is False
+        assert not hasattr(tab, "model")
+
+        assert tab.resume_background_preload() is True
+        assert tab.cancel_background_preload(reason="step_timeout").is_settled() is True
+        QTest.qWait(40)
+        qt_application.processEvents()
+        assert tab.is_background_ui_construction_active() is False
+        assert tab.background_ui_construction_error() == "background UI construction cancelled"
+        assert not hasattr(tab, "model")
+
+        # A workspace shutdown may race this early cancellation; it must not
+        # touch controls that have not been constructed.
+        tab.shutdown()
+    finally:
+        tab.deleteLater()
+
+
+def test_foreign_block_background_ui_construction_keeps_autoload_false_for_prime(
+    qt_application,
+    monkeypatch,
+):
+    scheduled = []
+
+    def _schedule_initial_cache(self):
+        if self._initial_local_cache_load_started:
+            return False
+        self._initial_local_cache_load_started = True
+        scheduled.append("initial_cache")
+        return True
+
+    monkeypatch.setattr(
+        ForeignBlockTradeTab,
+        "_schedule_initial_local_cache_load",
+        _schedule_initial_cache,
+    )
+    tab = ForeignBlockTradeTab(
+        _DeferredForeignBlockProvider(),
+        autoload=False,
+        defer_background_ui_build=True,
+    )
+    try:
+        _wait_for_background_ui_construction(tab, qt_application)
+        assert scheduled == []
+
+        assert tab.prime_background_load() is True
+        assert scheduled == ["initial_cache"]
+        assert tab.prime_background_load() is False
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
 
 
 def test_normalize_trade_date_value_handles_epoch_ms():

@@ -35,13 +35,31 @@ class FrameTaskScheduler(QObject):
         self._max_tasks_per_frame = max(1, int(max_tasks_per_frame or 1))
         self._tasks: deque[FrameTask] = deque()
         self._running = False
+        self._paused = False
+        self._drain_scheduled = False
 
     def is_running(self) -> bool:
         return self._running
 
     def cancel(self) -> None:
         self._running = False
+        self._paused = False
+        self._drain_scheduled = False
         self._tasks.clear()
+
+    def pause(self) -> bool:
+        """Keep queued GUI phases intact while a foreground hold is active."""
+        if not self._running or self._paused:
+            return False
+        self._paused = True
+        return True
+
+    def resume(self) -> bool:
+        if not self._running or not self._paused:
+            return False
+        self._paused = False
+        self._schedule_drain()
+        return True
 
     def start(self, tasks: Iterable[FrameTask]) -> None:
         self.cancel()
@@ -50,10 +68,18 @@ class FrameTaskScheduler(QObject):
             QTimer.singleShot(0, self.finished.emit)
             return
         self._running = True
-        QTimer.singleShot(0, self._drain)
+        self._paused = False
+        self._schedule_drain()
+
+    def _schedule_drain(self) -> None:
+        if not self._running or self._paused or self._drain_scheduled:
+            return
+        self._drain_scheduled = True
+        QTimer.singleShot(self._interval_ms, self._drain)
 
     def _drain(self) -> None:
-        if not self._running:
+        self._drain_scheduled = False
+        if not self._running or self._paused:
             return
 
         timer = QElapsedTimer()
@@ -71,8 +97,9 @@ class FrameTaskScheduler(QObject):
                 break
 
         if self._tasks and self._running:
-            QTimer.singleShot(self._interval_ms, self._drain)
+            self._schedule_drain()
             return
 
         self._running = False
+        self._paused = False
         self.finished.emit()

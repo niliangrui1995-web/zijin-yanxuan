@@ -6,7 +6,10 @@ from PyQt6.QtCore import QPoint, QRect
 
 from scripts import native_watchlist_profile
 from scripts.native_watchlist_profile import (
+    BACKGROUND_PREWARM_PROFILE_METRICS,
     _background_prewarm_acceptance,
+    _background_prewarm_runtime_acceptance,
+    _background_prewarm_runtime_summary,
     _build_synthetic_quote_payload,
     _event_dispatcher_summary,
     _FirstPaintProbe,
@@ -72,6 +75,8 @@ def test_native_watchlist_profile_cli_has_bounded_default_sampling_window():
     assert args.heartbeat_ms == 25
     assert args.background_prewarm is False
     assert args.restore_last_tab is False
+    assert args.background_prewarm_release_tab == ""
+    assert args.background_prewarm_release_reason == "user"
     assert args.prewarm_timeout_ms == 60_000
     assert args.quote_cycles == 0
     assert args.quote_cycle_ms == 1000
@@ -116,6 +121,22 @@ def test_native_watchlist_profile_cli_accepts_restore_last_tab_reveal_probe():
 
     assert args.background_prewarm is True
     assert args.restore_last_tab is True
+
+
+def test_native_watchlist_profile_cli_accepts_explicit_background_release_route():
+    args = _parse_args(
+        [
+            "--background-prewarm",
+            "--background-prewarm-release-tab",
+            "system_log",
+            "--background-prewarm-release-reason",
+            "restore_last_tab",
+        ]
+    )
+
+    assert args.background_prewarm is True
+    assert args.background_prewarm_release_tab == "system_log"
+    assert args.background_prewarm_release_reason == "restore_last_tab"
 
 
 @pytest.mark.parametrize(
@@ -338,6 +359,87 @@ def test_native_watchlist_profile_background_prewarm_acceptance_requires_all_hid
     assert "watchlist_full_viewport_during_hidden_prewarm=2" in acceptance["violations"]
 
 
+def test_native_watchlist_profile_background_runtime_compares_prewarm_and_ui_phase_stalls():
+    method_samples = [
+        SimpleNamespace(
+            value=42.0,
+            tags={
+                "method": "BackgroundTabPreloadCoordinator.construct_and_stage_tab",
+                "tab": "scan",
+                "signal": "background_prewarm",
+                "severity": "warn",
+            },
+        ),
+        SimpleNamespace(
+            value=31.0,
+            tags={
+                "method": "WatchlistTab.background_ui_phase",
+                "tab": "watchlist",
+                "signal": "background_ui_table_model",
+                "severity": "warn",
+            },
+        ),
+        SimpleNamespace(
+            value=63.0,
+            tags={
+                "method": "StockCandidateTab.background_ui_phase",
+                "tab": "stock_candidates",
+                "signal": "background_ui_snapshot_capture",
+                "severity": "warn",
+            },
+        ),
+        SimpleNamespace(
+            value=39.0,
+            tags={
+                "method": "StockCandidateTab.capture_context_snapshot_phase",
+                "tab": "stock_candidates",
+                "signal": "background_capture_source_fund_holdings",
+                "severity": "warn",
+            },
+        ),
+        SimpleNamespace(value=88.0, tags={"method": "unrelated", "signal": "other"}),
+    ]
+    event_loop_samples = [
+        SimpleNamespace(
+            value=47.0,
+            tags={"tab": "scan", "signal": "background_ui_table_model", "severity": "warn"},
+        ),
+        SimpleNamespace(
+            value=71.0,
+            tags={"tab": "system_log", "signal": "", "severity": "warn"},
+        ),
+    ]
+
+    runtime = _background_prewarm_runtime_summary(
+        {
+            "ui_method_stall_ms": method_samples,
+            "ui_event_loop_stall_ms": event_loop_samples,
+        }
+    )
+
+    assert runtime["prewarm_callbacks"]["durations"]["max_ms"] == 42.0
+    assert runtime["background_ui_phases"]["durations"]["max_ms"] == 63.0
+    assert runtime["background_capture_phases"]["durations"]["max_ms"] == 39.0
+    assert runtime["tagged_prewarm_event_loop"]["durations"]["max_ms"] == 47.0
+    assert runtime["event_loop"]["durations"]["max_ms"] == 71.0
+    assert runtime["maximums"]["overall_max_ms"] == 71.0
+
+    assert _background_prewarm_runtime_acceptance(
+        _background_prewarm_runtime_summary({}),
+        heartbeat_lateness={"max_ms": 49.0},
+        stall_snapshot={"installed": True, "total_count": 0, "max_elapsed_ms": 0.0},
+    )["status"] == "pass"
+    rejected = _background_prewarm_runtime_acceptance(
+        runtime,
+        heartbeat_lateness={"max_ms": 50.0},
+        stall_snapshot={"installed": True, "total_count": 2, "max_elapsed_ms": 71.0},
+    )
+    assert rejected["status"] == "fail"
+    assert "ui_stall_total_count=2" in rejected["violations"]
+    assert any(item.startswith("runtime_max_stall_ms=71.0") for item in rejected["violations"])
+    assert any(item.startswith("heartbeat_lateness_max_ms=50.0") for item in rejected["violations"])
+
+
 def test_native_watchlist_profile_foreground_watchlist_hold_requires_zero_full_frames():
     clear_region = {"full_viewport_count": 0}
     clear_metrics = {"paint": {"full_viewport_count": 0}}
@@ -403,6 +505,47 @@ def test_native_watchlist_profile_releases_foreground_hold_through_real_user_nav
     assert scheduled == [(0, scheduled[0][1]), "advance"]
 
 
+def test_native_watchlist_profile_releases_foreground_hold_through_restore_last_tab_route():
+    activation_calls = []
+    restore_calls = []
+    scheduled = []
+    failures = []
+    phases = []
+    specs = [{"key": "watchlist"}, {"key": "lhb"}, {"key": "system_log"}]
+
+    workspace = SimpleNamespace(
+        tab_specs=lambda: specs,
+        activate_tab=lambda index, *, reason: activation_calls.append((index, reason)) or True,
+        schedule_restore_last_tab=lambda index, *, delay_ms: restore_calls.append((index, delay_ms)),
+    )
+    workspace._background_preload_coordinator = SimpleNamespace(
+        advance=lambda: scheduled.append("advance")
+    )
+    controller = object.__new__(_NativeProfileController)
+    controller.window = SimpleNamespace(_workspace=workspace)
+    controller.args = SimpleNamespace(
+        background_prewarm_release_tab="system_log",
+        background_prewarm_release_reason="restore_last_tab",
+    )
+    controller._foreground_watchlist_release_requested = False
+    controller._set_phase = phases.append
+    controller._fail = failures.append
+    controller.QTimer = SimpleNamespace(
+        singleShot=lambda delay, callback: scheduled.append((delay, callback))
+    )
+
+    assert _NativeProfileController._release_foreground_watchlist_prewarm_hold(controller) is True
+    assert activation_calls == []
+    assert restore_calls == [(2, 0)]
+    assert controller._foreground_watchlist_release_key == "system_log"
+    assert controller._foreground_watchlist_release_reason == "restore_last_tab"
+    assert phases == ["background_prewarm_released"]
+    assert failures == []
+    assert scheduled[0][0] == 0
+    assert scheduled[0][1]() is None
+    assert scheduled == [(0, scheduled[0][1]), "advance"]
+
+
 def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_lazy_handoff():
     planned_order = ["watchlist", *[f"tab-{index}" for index in range(10)]]
     staged_keys = planned_order[1:]
@@ -451,8 +594,9 @@ def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_l
     phases = []
     continuation_calls = []
     timer_calls = []
+    metric_offset_calls = []
     controller._record_watchlist_reveal = reveal_calls.append
-    controller._metric_offsets = lambda: {}
+    controller._metric_offsets = lambda names=(): metric_offset_calls.append(tuple(names)) or {}
     controller._metrics_since = lambda _offsets: {}
     controller._reset_stall_probe = lambda: None
     controller._stall_snapshot = lambda: {"installed": True, "total_count": 0}
@@ -466,6 +610,7 @@ def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_l
 
     assert len(reveal_calls) == 1
     assert phases == ["background_prewarm"]
+    assert metric_offset_calls == [BACKGROUND_PREWARM_PROFILE_METRICS]
     assert timer_calls == []
     assert continuation_calls == [True]
     prewarm_report = controller.report["background_prewarm"]
@@ -482,6 +627,8 @@ def test_native_watchlist_profile_accepts_finished_full_hidden_staging_without_l
     assert prewarm_report["visible_watchlist_detail"] == ""
     assert prewarm_report["paint_region"]["full_viewport_count"] == 0
     assert prewarm_report["acceptance"] == {"status": "pass", "violations": []}
+    assert prewarm_report["runtime_stalls"]["maximums"]["overall_max_ms"] == 0.0
+    assert prewarm_report["runtime_acceptance"]["status"] == "pass"
 
 
 def test_native_watchlist_profile_reveal_acceptance_allows_complete_later_frames():

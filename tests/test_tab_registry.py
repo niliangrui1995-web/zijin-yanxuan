@@ -9,7 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from ui.workspaces.classic_workspace import ClassicWorkspace, _tab_factory_for_definition
+from ui.workspaces.classic_workspace import (
+    ClassicWorkspace,
+    _runtime_kwargs_for_definition,
+    _tab_factory_for_definition,
+)
 from ui.workspaces.quote_universe_service import QuoteUniverseService
 from ui.workspaces.tab_registry import (
     INFO_SOURCE_GROUP,
@@ -21,6 +25,7 @@ from ui.workspaces.tab_registry import (
     TabF5SnapshotPolicy,
     TabPostF5Policy,
     TabQuotePolicy,
+    TabLoadReason,
     TabRuntimeDelayPolicy,
     TabWarmPolicy,
     create_tab_lineage_service,
@@ -515,6 +520,33 @@ def test_importing_tab_registry_does_not_import_concrete_tabs():
     assert completed.returncode == 0, completed.stderr
 
 
+def test_fund_holdings_shell_import_defers_store_and_sync_singletons():
+    """Resolving the hidden tab class must not initialize its runtime domain."""
+    project_root = Path(__file__).resolve().parents[1]
+    script = (
+        "import sys\n"
+        "import ui.tabs.fund_holdings_tab as module\n"
+        "assert module.FundHoldingsTab.__name__ == 'FundHoldingsTab'\n"
+        "blocked = (\n"
+        "    'app.services.ui_fund_holdings_service',\n"
+        "    'domains.fund_holdings.store',\n"
+        "    'domains.fund_holdings.sync',\n"
+        ")\n"
+        "loaded = sorted(name for name in sys.modules if name in blocked)\n"
+        "raise SystemExit(','.join(loaded) if loaded else 0)\n"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_classic_workspace_runtime_specs_are_generated_from_registry():
     workspace = SimpleNamespace(data_provider=object(), engine=object())
     workspace._tab_factory = lambda *_args, **_kwargs: lambda **_runtime_kwargs: None
@@ -554,6 +586,50 @@ def test_tab_factory_reads_runtime_services_when_widget_is_created():
             {"initial_cache_load_delay_ms": 10},
         )
     ]
+
+
+def test_fund_holdings_defers_ui_only_for_background_prewarm():
+    definition = get_tab_definition("fund_holdings")
+    assert definition is not None
+    workspace = SimpleNamespace()
+
+    background_kwargs = _runtime_kwargs_for_definition(
+        definition,
+        TabLoadReason.BACKGROUND_PREWARM.value,
+        False,
+        workspace,
+    )
+    user_kwargs = _runtime_kwargs_for_definition(
+        definition,
+        TabLoadReason.USER.value,
+        False,
+        workspace,
+    )
+
+    assert background_kwargs == {"defer_background_ui_build": True}
+    assert "defer_background_ui_build" not in user_kwargs
+
+
+def test_foreign_block_defers_ui_only_for_background_prewarm():
+    definition = get_tab_definition("foreign_block")
+    assert definition is not None
+    workspace = SimpleNamespace()
+
+    background_kwargs = _runtime_kwargs_for_definition(
+        definition,
+        TabLoadReason.BACKGROUND_PREWARM.value,
+        False,
+        workspace,
+    )
+    user_kwargs = _runtime_kwargs_for_definition(
+        definition,
+        TabLoadReason.USER.value,
+        False,
+        workspace,
+    )
+
+    assert background_kwargs == {"autoload": False, "defer_background_ui_build": True}
+    assert user_kwargs == {"autoload": False}
 
 
 def test_explicit_quote_and_post_f5_policies_ignore_visual_group_changes():

@@ -48,6 +48,26 @@ def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
         tab.deleteLater()
 
 
+def test_scan_context_iterator_uses_current_rows_then_lazily_falls_back_to_model_rows():
+    fallback_calls = []
+    owner = type(
+        "_ScanIteratorOwner",
+        (),
+        {
+            "_current_results": [{"代码": "000001"}],
+            "iter_stock_context_rows": lambda self: fallback_calls.append("fallback")
+            or iter(({"代码": "000099"},)),
+        },
+    )()
+
+    assert list(ScanTab.iter_scan_results(owner)) == [{"代码": "000001"}]
+    assert fallback_calls == []
+
+    owner._current_results = ["invalid"]
+    assert list(ScanTab.iter_scan_results(owner)) == [{"代码": "000099"}]
+    assert fallback_calls == ["fallback"]
+
+
 def test_scan_background_preload_deduplicates_timer_and_prepares_hidden_rows(monkeypatch):
     submissions = []
     cache_reads = []

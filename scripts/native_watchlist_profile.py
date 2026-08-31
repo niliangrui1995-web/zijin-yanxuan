@@ -37,6 +37,19 @@ RESIDUAL_REPAINT_METRICS = (
 )
 WATCHLIST_REVEAL_METRICS = RESIDUAL_REPAINT_METRICS + ("ui_event_loop_stall_ms",)
 PREWARM_RUNTIME_METRICS = ("ui_method_stall_ms", "ui_event_loop_stall_ms")
+BACKGROUND_PREWARM_PROFILE_METRICS = RESIDUAL_REPAINT_METRICS + PREWARM_RUNTIME_METRICS
+BACKGROUND_PREWARM_RUNTIME_MAX_STALL_MS = 50.0
+BACKGROUND_PREWARM_RUNTIME_METHODS = (
+    "ClassicWorkspace.ensure_tab_loaded",
+    "ClassicWorkspace._prewarm_next_tab",
+    "BackgroundTabPreloadCoordinator.construct_and_stage_tab",
+    "BackgroundTabPreloadCoordinator.prime_tab_runtime",
+    "ClassicWorkspace.resolve_tab_class",
+    "ClassicWorkspace.construct_tab_widget",
+)
+BACKGROUND_PREWARM_SIGNAL = "background_prewarm"
+BACKGROUND_UI_SIGNAL_PREFIX = "background_ui_"
+BACKGROUND_CAPTURE_SIGNAL_PREFIX = "background_capture_"
 SHELL_NAV_REPAINT_METRICS = (
     "watchlist_table_paint_ms",
     "watchlist_table_paint_delay_ms",
@@ -259,6 +272,122 @@ def _summarize_named_runtime_spans(samples: list, *, names: tuple[str, ...]) -> 
             }
             for name, rows in grouped.items()
         },
+    }
+
+
+def _stall_sample_summary(samples: list) -> dict:
+    """Keep raw slow-span attribution alongside comparable duration maxima."""
+    rows = list(samples or ())
+    return {
+        "durations": summarize_durations([sample.value for sample in rows]),
+        "samples": [
+            {
+                "elapsed_ms": round(float(sample.value), 3),
+                "method": str((getattr(sample, "tags", {}) or {}).get("method", "")),
+                "tab": str((getattr(sample, "tags", {}) or {}).get("tab", "")),
+                "signal": str((getattr(sample, "tags", {}) or {}).get("signal", "")),
+                "severity": str((getattr(sample, "tags", {}) or {}).get("severity", "")),
+            }
+            for sample in rows
+        ],
+    }
+
+
+def _background_prewarm_runtime_summary(samples_by_name: dict[str, list]) -> dict:
+    """Separate coordinator spans, cooperative UI slices, and loop lateness.
+
+    The phase is deliberately started only after Watchlist's required first
+    visible frame.  Its event-loop samples are therefore evidence for hidden
+    staging, while the separately retained Watchlist reveal report continues
+    to own first-frame acceptance.
+    """
+    method_samples = list((samples_by_name or {}).get("ui_method_stall_ms", ()) or ())
+    event_loop_samples = list((samples_by_name or {}).get("ui_event_loop_stall_ms", ()) or ())
+
+    def _signal(sample) -> str:
+        return str((getattr(sample, "tags", {}) or {}).get("signal", "") or "")
+
+    def _method(sample) -> str:
+        return str((getattr(sample, "tags", {}) or {}).get("method", "") or "")
+
+    prewarm_callback_samples = [
+        sample
+        for sample in method_samples
+        if _signal(sample) == BACKGROUND_PREWARM_SIGNAL
+        and _method(sample) in BACKGROUND_PREWARM_RUNTIME_METHODS
+    ]
+    background_ui_phase_samples = [
+        sample
+        for sample in method_samples
+        if _signal(sample).startswith(BACKGROUND_UI_SIGNAL_PREFIX)
+    ]
+    background_capture_phase_samples = [
+        sample
+        for sample in method_samples
+        if _signal(sample).startswith(BACKGROUND_CAPTURE_SIGNAL_PREFIX)
+    ]
+    tagged_prewarm_event_loop_samples = [
+        sample
+        for sample in event_loop_samples
+        if _signal(sample) == BACKGROUND_PREWARM_SIGNAL
+        or _signal(sample).startswith(BACKGROUND_UI_SIGNAL_PREFIX)
+        or _signal(sample).startswith(BACKGROUND_CAPTURE_SIGNAL_PREFIX)
+    ]
+
+    prewarm_callbacks = _stall_sample_summary(prewarm_callback_samples)
+    background_ui_phases = _stall_sample_summary(background_ui_phase_samples)
+    background_capture_phases = _stall_sample_summary(background_capture_phase_samples)
+    event_loop = _stall_sample_summary(event_loop_samples)
+    tagged_event_loop = _stall_sample_summary(tagged_prewarm_event_loop_samples)
+    maximums = {
+        "prewarm_callback_max_ms": prewarm_callbacks["durations"]["max_ms"],
+        "background_ui_phase_max_ms": background_ui_phases["durations"]["max_ms"],
+        "background_capture_phase_max_ms": background_capture_phases["durations"]["max_ms"],
+        "event_loop_max_ms": event_loop["durations"]["max_ms"],
+        "tagged_prewarm_event_loop_max_ms": tagged_event_loop["durations"]["max_ms"],
+    }
+    maximums["overall_max_ms"] = round(max(maximums.values(), default=0.0), 3)
+    return {
+        "prewarm_callbacks": prewarm_callbacks,
+        "background_ui_phases": background_ui_phases,
+        "background_capture_phases": background_capture_phases,
+        "event_loop": event_loop,
+        "tagged_prewarm_event_loop": tagged_event_loop,
+        "maximums": maximums,
+    }
+
+
+def _background_prewarm_runtime_acceptance(
+    runtime: dict,
+    *,
+    heartbeat_lateness: dict,
+    stall_snapshot: dict,
+    max_stall_ms: float = BACKGROUND_PREWARM_RUNTIME_MAX_STALL_MS,
+) -> dict:
+    """Fail hidden prewarm on an observed GUI stall without changing repaint gates."""
+    violations: list[str] = []
+    threshold = max(1.0, float(max_stall_ms))
+    snapshot = dict(stall_snapshot or {})
+    maximums = dict((runtime or {}).get("maximums") or {})
+    observed_max = max(
+        float(maximums.get("overall_max_ms", 0.0) or 0.0),
+        float(snapshot.get("max_elapsed_ms", 0.0) or 0.0),
+    )
+    heartbeat_max = float((heartbeat_lateness or {}).get("max_ms", 0.0) or 0.0)
+    if not bool(snapshot.get("installed")):
+        violations.append("ui_stall_probe_not_installed")
+    if int(snapshot.get("total_count", 0) or 0) > 0:
+        violations.append(f"ui_stall_total_count={int(snapshot.get('total_count', 0) or 0)}")
+    if observed_max >= threshold:
+        violations.append(f"runtime_max_stall_ms={round(observed_max, 3)} threshold={round(threshold, 3)}")
+    if heartbeat_max >= threshold:
+        violations.append(
+            f"heartbeat_lateness_max_ms={round(heartbeat_max, 3)} threshold={round(threshold, 3)}"
+        )
+    return {
+        "status": "pass" if not violations else "fail",
+        "threshold_ms": round(threshold, 3),
+        "violations": violations,
     }
 
 
@@ -861,6 +990,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--restore-last-tab",
         action="store_true",
         help="Activate Watchlist through the production restore_last_tab reason instead of a user click.",
+    )
+    parser.add_argument(
+        "--background-prewarm-release-tab",
+        default="",
+        metavar="TAB_KEY",
+        help=(
+            "When the profiler releases the visible-Watchlist hold, navigate to this "
+            "non-Watchlist tab. Defaults to the first non-Watchlist stack tab."
+        ),
+    )
+    parser.add_argument(
+        "--background-prewarm-release-reason",
+        choices=("user", "restore_last_tab"),
+        default="user",
+        help="Reason used for the profiler-only hold release navigation.",
     )
     parser.add_argument("--prewarm-timeout-ms", type=int, default=60_000)
     parser.add_argument(
@@ -1497,6 +1641,7 @@ class _NativeProfileController:
         self._foreground_watchlist_hold_released_at = 0.0
         self._foreground_watchlist_release_requested = False
         self._foreground_watchlist_release_key = ""
+        self._foreground_watchlist_release_reason = ""
         self._foreground_watchlist_return_pending = False
         self._watchlist_reveal_started_at = 0.0
         self._watchlist_reveal_offsets: dict[str, float] | None = None
@@ -1699,7 +1844,7 @@ class _NativeProfileController:
         self._record_watchlist_reveal(started_at)
         self._background_prewarm_first_hidden_key = key_text
         self._background_prewarm_started_at = started_at
-        self._background_prewarm_offsets = self._metric_offsets()
+        self._background_prewarm_offsets = self._metric_offsets(BACKGROUND_PREWARM_PROFILE_METRICS)
         self._reset_stall_probe()
         self._set_phase("background_prewarm")
 
@@ -1727,19 +1872,56 @@ class _NativeProfileController:
             return True
         workspace = getattr(self.window, "_workspace", None)
         specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
-        target_index = next(
-            (
-                index
-                for index, spec in enumerate(specs)
-                if str(spec.get("key") or "") != "watchlist"
-            ),
-            -1,
+        requested_key = str(
+            getattr(getattr(self, "args", None), "background_prewarm_release_tab", "") or ""
+        ).strip()
+        release_reason = str(
+            getattr(getattr(self, "args", None), "background_prewarm_release_reason", "user")
+            or "user"
+        ).strip().lower()
+        if release_reason not in {"user", "restore_last_tab"}:
+            self._fail(f"foreground Watchlist hold release reason unsupported: {release_reason}")
+            return False
+        if requested_key:
+            target_index = next(
+                (
+                    index
+                    for index, spec in enumerate(specs)
+                    if str(spec.get("key") or "").strip() == requested_key
+                ),
+                -1,
+            )
+        else:
+            target_index = next(
+                (
+                    index
+                    for index, spec in enumerate(specs)
+                    if str(spec.get("key") or "").strip() != "watchlist"
+                ),
+                -1,
+            )
+        target_key = (
+            str((specs[target_index] or {}).get("key") or "").strip()
+            if 0 <= target_index < len(specs)
+            else ""
         )
-        if workspace is None or target_index < 0:
-            self._fail("foreground Watchlist hold could not release background prewarm")
+        if workspace is None or target_index < 0 or not target_key or target_key == "watchlist":
+            requested_detail = requested_key or "<default>"
+            self._fail(
+                "foreground Watchlist hold could not release background prewarm "
+                f"target={requested_detail}"
+            )
             return False
         try:
-            activated = bool(workspace.activate_tab(target_index, reason="user"))
+            if release_reason == "restore_last_tab":
+                schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
+                if callable(schedule_restore):
+                    schedule_restore(target_index, delay_ms=0)
+                    activated = True
+                else:
+                    activated = bool(workspace.activate_tab(target_index, reason=release_reason))
+            else:
+                activated = bool(workspace.activate_tab(target_index, reason=release_reason))
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             self._fail(f"foreground Watchlist hold release navigation rejected: {exc}")
             return False
@@ -1747,9 +1929,8 @@ class _NativeProfileController:
             self._fail("foreground Watchlist hold release navigation rejected")
             return False
         self._foreground_watchlist_release_requested = True
-        self._foreground_watchlist_release_key = str(
-            (specs[target_index] or {}).get("key") or ""
-        ).strip()
+        self._foreground_watchlist_release_key = target_key
+        self._foreground_watchlist_release_reason = release_reason
         self._set_phase("background_prewarm_released")
         coordinator = getattr(workspace, "_background_preload_coordinator", None)
         advance = getattr(coordinator, "advance", None)
@@ -1901,7 +2082,7 @@ class _NativeProfileController:
                 self._fail("foreground Watchlist hold did not release background prewarm")
                 return
             release_started_at = time.perf_counter()
-            release_offsets = self._metric_offsets()
+            release_offsets = self._metric_offsets(BACKGROUND_PREWARM_PROFILE_METRICS)
             self._reset_stall_probe()
             if not self._release_foreground_watchlist_prewarm_hold():
                 return
@@ -1915,7 +2096,7 @@ class _NativeProfileController:
             terminal_at = time.perf_counter()
             self._record_watchlist_reveal(terminal_at)
             self._background_prewarm_started_at = terminal_at
-            self._background_prewarm_offsets = self._metric_offsets()
+            self._background_prewarm_offsets = self._metric_offsets(BACKGROUND_PREWARM_PROFILE_METRICS)
             self._reset_stall_probe()
             self._set_phase("background_prewarm")
         if self._background_prewarm_started_at <= 0.0:
@@ -1962,8 +2143,12 @@ class _NativeProfileController:
         ]
         lazy_keys = [key for key in planned_order if not specs_by_key.get(key, {}).get("loaded")]
         paint_region = self.paint_probe.paint_region_summary("background_prewarm")
-        offsets = self._background_prewarm_offsets or self._metric_offsets()
-        prewarm_metrics = _summarize_residual_repaint_metrics(self._metrics_since(offsets))
+        offsets = self._background_prewarm_offsets
+        if offsets is None:
+            offsets = self._metric_offsets(BACKGROUND_PREWARM_PROFILE_METRICS)
+        runtime_samples = self._metrics_since(offsets)
+        prewarm_metrics = _summarize_residual_repaint_metrics(runtime_samples)
+        runtime_stalls = _background_prewarm_runtime_summary(runtime_samples)
         prewarm_offsets = getattr(self, "_watchlist_prewarm_offsets", None)
         visible_watchlist_runtime_samples = (
             self._metrics_since(prewarm_offsets) if prewarm_offsets is not None else {}
@@ -1977,6 +2162,9 @@ class _NativeProfileController:
         )
         foreground_release_key = str(
             getattr(self, "_foreground_watchlist_release_key", "") or ""
+        )
+        foreground_release_reason = str(
+            getattr(self, "_foreground_watchlist_release_reason", "") or ""
         )
         foreground_hold_observed = bool(
             getattr(self, "_foreground_watchlist_hold_observed", False)
@@ -1997,6 +2185,11 @@ class _NativeProfileController:
             list(self._heartbeat_by_phase.get("background_prewarm", ()))
         )
         stall_snapshot = self._stall_snapshot()
+        runtime_acceptance = _background_prewarm_runtime_acceptance(
+            runtime_stalls,
+            heartbeat_lateness=heartbeat_lateness,
+            stall_snapshot=stall_snapshot,
+        )
         event_loop_observation = {
             "status": (
                 "stalls_observed"
@@ -2041,6 +2234,7 @@ class _NativeProfileController:
                     foreground_release_requested
                 ),
                 "release_target_key": foreground_release_key,
+                "release_reason": foreground_release_reason,
                 "paint_region": hold_paint_region,
                 "metrics": hold_metrics,
                 "acceptance": hold_acceptance,
@@ -2049,6 +2243,7 @@ class _NativeProfileController:
             "elapsed_ms": round(elapsed_ms, 3),
             "first_hidden_key": self._background_prewarm_first_hidden_key,
             "foreground_release_key": foreground_release_key,
+            "foreground_release_reason": foreground_release_reason,
             "tab_count": tab_count,
             "mounted_keys": mounted_keys,
             "staged_keys": staged_keys,
@@ -2066,6 +2261,8 @@ class _NativeProfileController:
             "paint_region": paint_region,
             "metrics": prewarm_metrics,
             "visible_watchlist_runtime_spans": visible_watchlist_runtime_spans,
+            "runtime_stalls": runtime_stalls,
+            "runtime_acceptance": runtime_acceptance,
             "heartbeat_lateness": heartbeat_lateness,
             "ui_stall_snapshot": stall_snapshot,
             "event_loop_observation": event_loop_observation,
@@ -2079,6 +2276,8 @@ class _NativeProfileController:
         }
         if acceptance["status"] != "pass":
             self.report["errors"].append("background prewarm repaint acceptance failed")
+        if runtime_acceptance["status"] != "pass":
+            self.report["errors"].append("background prewarm runtime acceptance failed")
         if foreground_hold is not None and foreground_hold["acceptance"]["status"] != "pass":
             self.report["errors"].append("foreground Watchlist hold repaint acceptance failed")
         if foreground_release_requested:
@@ -3205,6 +3404,12 @@ def _build_profile_report(args, environment, database_info, paths) -> dict:
             "heartbeat_ms": int(args.heartbeat_ms),
             "background_prewarm": bool(args.background_prewarm),
             "restore_last_tab": bool(args.restore_last_tab),
+            "background_prewarm_release_tab": str(
+                getattr(args, "background_prewarm_release_tab", "") or ""
+            ),
+            "background_prewarm_release_reason": str(
+                getattr(args, "background_prewarm_release_reason", "user") or "user"
+            ),
             "prewarm_timeout_ms": int(args.prewarm_timeout_ms),
             "quote_cycles": int(args.quote_cycles),
             "quote_cycle_ms": int(args.quote_cycle_ms),

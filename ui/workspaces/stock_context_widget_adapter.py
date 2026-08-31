@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from PyQt6.QtCore import QCoreApplication, QThread
@@ -16,6 +16,7 @@ from app.services.stock_context_model_service import (
     coerce_stock_signal,
 )
 from app.services.stock_context_query_service import GENERAL_STOCK_CONTEXT_SOURCE_KEYS
+from domains.stock_context.models import _freeze_plain
 from ui.workspaces.tab_capabilities import (
     DataLineageCapability,
     ForeignKeywordCapability,
@@ -25,12 +26,13 @@ from ui.workspaces.tab_capabilities import (
 SOURCE_KEYS = tuple(
     source_key for source_key in DEFAULT_SOURCE_ORDER if source_key in GENERAL_STOCK_CONTEXT_SOURCE_KEYS
 )
+SNAPSHOT_CAPTURE_ROW_CHUNK_SIZE = 32
 
 
 @dataclass(frozen=True)
 class _CapturedSource:
     key: str
-    rows: tuple[dict, ...]
+    rows: tuple[Mapping[str, Any], ...]
     source_row_count: int
     loading: bool
     direct: bool
@@ -229,22 +231,19 @@ def _build_snapshot(
     rps_bundle,
     *,
     cached_source_row_counts=None,
+    prepared_cached_source_rows: Mapping[str, tuple[Mapping[str, Any], ...]] | None = None,
     selected_sources: frozenset[str] | None = None,
     target_codes: frozenset[str] | None = None,
 ) -> StockContextSnapshot:
-    return StockContextSnapshot(
+    return StockContextSnapshot._from_frozen_parts(
         source_rows=_source_rows_map(sources),
-        cached_source_rows=_cached_rows_snapshot(
-            cached_source_rows,
-            selected_sources,
-            target_codes,
-        ),
+        cached_source_rows=dict(prepared_cached_source_rows or {}),
         available_sources=_available_source_keys(specs, sources, selected_sources),
         loading_sources=_loading_source_keys(sources),
         direct_source_keys=_direct_source_keys(sources),
         direct_signals=_direct_source_signals(sources),
         foreign_keywords=_first_foreign_keywords(sources),
-        tab_titles=_tab_title_map(specs),
+        tab_titles=_freeze_plain(_tab_title_map(specs)),
         rps_bundle=rps_bundle,
         source_row_counts=_source_row_count_map(sources),
         cached_source_row_counts=_cached_row_count_snapshot(
@@ -318,54 +317,340 @@ class StockContextWidgetSnapshotAdapter:
         include_rps_bundle: bool = True,
         sources: Sequence[str] | set[str] | frozenset[str] | None = None,
         target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
+        row_chunk_size: int = SNAPSHOT_CAPTURE_ROW_CHUNK_SIZE,
     ) -> StockContextSnapshot:
-        self._assert_gui_thread()
-        specs = self._tab_specs()
-        selected_sources = _normalized_scope(sources)
-        selected_target_codes = _normalized_scope(target_codes)
-        captured_sources: list[_CapturedSource] = []
-        for key in SOURCE_KEYS:
-            if selected_sources is not None and key not in selected_sources:
-                continue
-            tab = self._loaded_tab(key)
-            rows, source_row_count = self._rows(tab, key, selected_target_codes)
-            source = _captured_source(
-                key,
-                tab,
-                rows,
-                source_row_count,
-                self._is_loading(tab),
-                selected_target_codes,
-            )
-            if source is not None:
-                captured_sources.append(source)
-        for spec in specs:
-            key = str(spec.get("key") or "").strip()
-            if not key or key in SOURCE_KEYS:
-                continue
-            if selected_sources is not None and key not in selected_sources:
-                continue
-            tab = self._loaded_tab(key)
-            source = _captured_source(
-                key,
-                tab,
-                [],
-                0,
-                self._is_loading(tab),
-                selected_target_codes,
-            )
-            if source is not None and source.direct:
-                captured_sources.append(source)
-        rps_bundle = self._rps_bundle() if include_rps_bundle else None
-        return _build_snapshot(
-            specs,
-            captured_sources,
-            cached_source_rows,
-            rps_bundle,
+        session = self.begin_capture(
+            cached_source_rows=cached_source_rows,
             cached_source_row_counts=cached_source_row_counts,
-            selected_sources=selected_sources,
-            target_codes=selected_target_codes,
+            include_rps_bundle=include_rps_bundle,
+            sources=sources,
+            target_codes=target_codes,
+            row_chunk_size=row_chunk_size,
         )
+        while not session.advance():
+            pass
+        return session.snapshot()
+
+    def begin_capture(
+        self,
+        *,
+        cached_source_rows: Mapping[str, list[dict] | tuple[dict, ...]] | None = None,
+        cached_source_row_counts: Mapping[str, int] | None = None,
+        include_rps_bundle: bool = True,
+        sources: Sequence[str] | set[str] | frozenset[str] | None = None,
+        target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
+        row_chunk_size: int = SNAPSHOT_CAPTURE_ROW_CHUNK_SIZE,
+    ) -> "StockContextWidgetSnapshotCaptureSession":
+        return StockContextWidgetSnapshotCaptureSession(
+            self,
+            cached_source_rows=cached_source_rows,
+            cached_source_row_counts=cached_source_row_counts,
+            include_rps_bundle=include_rps_bundle,
+            sources=sources,
+            target_codes=target_codes,
+            row_chunk_size=row_chunk_size,
+        )
+
+
+@dataclass
+class _CachedRowsCapture:
+    key: str
+    rows_iterator: object
+    frozen_rows: list[Mapping[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class _SourceRowsCapture:
+    key: str
+    tab: object
+    rows_iterator: object
+    include_rows: bool
+    loading: bool
+    direct: bool
+    fallback_reader: object | None = None
+    source_row_count: int = 0
+    frozen_rows: list[Mapping[str, Any]] = field(default_factory=list)
+    signals_iterator: object | None = None
+    frozen_signals: list[StockSignal] = field(default_factory=list)
+
+
+class StockContextWidgetSnapshotCaptureSession:
+    """Copy GUI-owned rows in fixed-size chunks before immutable assembly."""
+
+    def __init__(
+        self,
+        adapter: StockContextWidgetSnapshotAdapter,
+        *,
+        cached_source_rows: Mapping[str, list[dict] | tuple[dict, ...]] | None = None,
+        cached_source_row_counts: Mapping[str, int] | None = None,
+        include_rps_bundle: bool = True,
+        sources: Sequence[str] | set[str] | frozenset[str] | None = None,
+        target_codes: Sequence[str] | set[str] | frozenset[str] | None = None,
+        row_chunk_size: int = SNAPSHOT_CAPTURE_ROW_CHUNK_SIZE,
+    ) -> None:
+        adapter._assert_gui_thread()
+        self._adapter = adapter
+        self._specs = adapter._tab_specs()
+        self._cached_source_rows = dict(cached_source_rows or {})
+        self._cached_source_row_counts = dict(cached_source_row_counts or {})
+        self._selected_sources = _normalized_scope(sources)
+        self._target_codes = _normalized_scope(target_codes)
+        self._row_chunk_size = max(1, int(row_chunk_size or 1))
+        self._captured_sources: list[_CapturedSource] = []
+        self._prepared_cached_source_rows: dict[str, tuple[Mapping[str, Any], ...]] = {}
+        self._pending_cached_keys = [
+            str(key)
+            for key in self._cached_source_rows
+            if self._selected_sources is None or str(key) in self._selected_sources
+        ]
+        self._pending_source_keys = [
+            key
+            for key in SOURCE_KEYS
+            if self._selected_sources is None or key in self._selected_sources
+        ]
+        self._pending_extra_specs = [
+            spec
+            for spec in self._specs
+            if (key := _spec_key(spec))
+            and key not in SOURCE_KEYS
+            and (self._selected_sources is None or key in self._selected_sources)
+        ]
+        self._active_cached_capture: _CachedRowsCapture | None = None
+        self._active_source_capture: _SourceRowsCapture | None = None
+        self._rps_bundle = None
+        self._rps_pending = bool(include_rps_bundle)
+        self._snapshot: StockContextSnapshot | None = None
+
+    @staticmethod
+    def _values_iterator(value) -> object:
+        return iter(value or ())
+
+    @staticmethod
+    def _public_rows_reader(tab):
+        radar_reader = getattr(tab, "get_watchlist_radar_rows", None)
+        return radar_reader if callable(radar_reader) else getattr(tab, "get_row_data", None)
+
+    @classmethod
+    def _stock_context_rows_reader(cls, tab):
+        """Prefer the lazy public context-row capability when a tab has it."""
+        iterator_reader = getattr(tab, "iter_stock_context_rows", None)
+        return iterator_reader if callable(iterator_reader) else cls._public_rows_reader(tab)
+
+    def _new_source_capture(self, key: str, *, include_rows: bool) -> _SourceRowsCapture | None:
+        tab = self._adapter._loaded_tab(key)
+        if tab is None:
+            return None
+        reader = None
+        fallback_reader = None
+        if include_rows:
+            if key == "scan":
+                scan_iterator_reader = getattr(tab, "iter_scan_results", None)
+                if callable(scan_iterator_reader):
+                    # ScanTab's iterator owns its legacy model fallback.  Do
+                    # not also call the old eager getters after it completes.
+                    reader = scan_iterator_reader
+                else:
+                    scan_reader = getattr(tab, "get_scan_results", None)
+                    if callable(scan_reader):
+                        reader = scan_reader
+                        fallback_reader = self._stock_context_rows_reader(tab)
+                    else:
+                        reader = self._stock_context_rows_reader(tab)
+            else:
+                reader = self._stock_context_rows_reader(tab)
+        raw_rows = reader() if callable(reader) else ()
+        return _SourceRowsCapture(
+            key=key,
+            tab=tab,
+            rows_iterator=self._values_iterator(raw_rows),
+            include_rows=include_rows,
+            loading=self._adapter._is_loading(tab),
+            direct=isinstance(tab, StockSignalSourceCapability),
+            fallback_reader=fallback_reader,
+        )
+
+    def advance(self) -> bool:
+        """Copy at most ``row_chunk_size`` row/signal values in this turn."""
+        self._adapter._assert_gui_thread()
+        if self._snapshot is not None:
+            return True
+        if self._target_codes is not None and not self._target_codes:
+            return self._advance_empty_target()
+        if self._active_cached_capture is not None or self._pending_cached_keys:
+            return self._advance_cached_capture()
+        if self._active_source_capture is not None or self._pending_source_keys:
+            return self._advance_source_capture(include_rows=True)
+        if self._pending_extra_specs:
+            return self._advance_source_capture(include_rows=False)
+        if self._rps_pending:
+            self._rps_bundle = _freeze_plain(self._adapter._rps_bundle())
+            self._rps_pending = False
+            return False
+        self._snapshot = _build_snapshot(
+            self._specs,
+            self._captured_sources,
+            self._cached_source_rows,
+            self._rps_bundle,
+            cached_source_row_counts=self._cached_source_row_counts,
+            prepared_cached_source_rows=self._prepared_cached_source_rows,
+            selected_sources=self._selected_sources,
+            target_codes=self._target_codes,
+        )
+        return True
+
+    def _advance_empty_target(self) -> bool:
+        if self._pending_cached_keys:
+            key = self._pending_cached_keys.pop(0)
+            self._prepared_cached_source_rows[key] = ()
+            return False
+        if self._pending_source_keys:
+            self._pending_source_keys.pop(0)
+            return False
+        if self._pending_extra_specs:
+            self._pending_extra_specs.pop(0)
+            return False
+        if self._rps_pending:
+            self._rps_bundle = None
+            self._rps_pending = False
+            return False
+        self._snapshot = _build_snapshot(
+            self._specs,
+            self._captured_sources,
+            self._cached_source_rows,
+            self._rps_bundle,
+            cached_source_row_counts=self._cached_source_row_counts,
+            prepared_cached_source_rows=self._prepared_cached_source_rows,
+            selected_sources=self._selected_sources,
+            target_codes=self._target_codes,
+        )
+        return True
+
+    def _advance_cached_capture(self) -> bool:
+        capture = self._active_cached_capture
+        if capture is None:
+            key = self._pending_cached_keys.pop(0)
+            capture = _CachedRowsCapture(
+                key=key,
+                rows_iterator=self._values_iterator(self._cached_source_rows.get(key)),
+            )
+            self._active_cached_capture = capture
+
+        processed = 0
+        while processed < self._row_chunk_size:
+            try:
+                row = next(capture.rows_iterator)
+            except StopIteration:
+                self._prepared_cached_source_rows[capture.key] = tuple(capture.frozen_rows)
+                self._active_cached_capture = None
+                return False
+            processed += 1
+            if not isinstance(row, Mapping):
+                continue
+            if self._target_codes is not None and str(row.get("代码") or "").strip() not in self._target_codes:
+                continue
+            capture.frozen_rows.append(_freeze_plain(_plain_copy(dict(row))))
+        return False
+
+    def _advance_source_capture(self, *, include_rows: bool) -> bool:
+        capture = self._active_source_capture
+        if capture is None:
+            if include_rows:
+                key = self._pending_source_keys.pop(0)
+            else:
+                key = _spec_key(self._pending_extra_specs.pop(0))
+            capture = self._new_source_capture(key, include_rows=include_rows)
+            if capture is None:
+                return False
+            self._active_source_capture = capture
+
+        processed = 0
+        if capture.include_rows:
+            while processed < self._row_chunk_size:
+                try:
+                    row = next(capture.rows_iterator)
+                except StopIteration:
+                    if capture.fallback_reader is not None and capture.source_row_count == 0:
+                        reader = capture.fallback_reader
+                        capture.fallback_reader = None
+                        capture.rows_iterator = self._values_iterator(reader() if callable(reader) else ())
+                        continue
+                    break
+                processed += 1
+                if not isinstance(row, Mapping):
+                    continue
+                capture.source_row_count += 1
+                if self._target_codes is not None and str(row.get("代码") or "").strip() not in self._target_codes:
+                    continue
+                capture.frozen_rows.append(_freeze_plain(_plain_copy(dict(row))))
+            if processed >= self._row_chunk_size:
+                return False
+
+        if capture.direct:
+            if capture.signals_iterator is None:
+                reader = getattr(capture.tab, "iter_stock_signals", None)
+                capture.signals_iterator = self._values_iterator(reader() if callable(reader) else ())
+            while processed < self._row_chunk_size:
+                try:
+                    raw_signal = next(capture.signals_iterator)
+                except StopIteration:
+                    break
+                processed += 1
+                signal = coerce_stock_signal(raw_signal)
+                if signal is None:
+                    continue
+                source_signal = signal if signal.source_tab else replace(signal, source_tab=capture.key)
+                if self._target_codes is not None and source_signal.normalized_code() not in self._target_codes:
+                    continue
+                capture.frozen_signals.append(
+                    replace(
+                        source_signal,
+                        payload=_freeze_plain(_plain_copy(dict(source_signal.payload or {}))),
+                    )
+                )
+            if processed >= self._row_chunk_size:
+                return False
+
+        self._finish_source_capture(capture)
+        self._active_source_capture = None
+        return False
+
+    def _finish_source_capture(self, capture: _SourceRowsCapture) -> None:
+        if not capture.include_rows and not capture.direct:
+            return
+        self._captured_sources.append(
+            _CapturedSource(
+                key=capture.key,
+                rows=tuple(capture.frozen_rows),
+                source_row_count=capture.source_row_count,
+                loading=capture.loading,
+                direct=capture.direct,
+                signals=tuple(capture.frozen_signals),
+                foreign_keywords=_foreign_keywords(capture.key, capture.tab),
+            )
+        )
+
+    def next_phase_label(self) -> str:
+        """Return the next bounded GUI phase for diagnostics and scheduling."""
+        if self._snapshot is not None:
+            return "complete"
+        if self._active_cached_capture is not None:
+            return f"cached_{self._active_cached_capture.key}_rows"
+        if self._pending_cached_keys:
+            return f"cached_{self._pending_cached_keys[0]}_rows"
+        if self._active_source_capture is not None:
+            return f"source_{self._active_source_capture.key}_rows"
+        if self._pending_source_keys:
+            return f"source_{self._pending_source_keys[0]}_rows"
+        if self._pending_extra_specs:
+            return f"source_{_spec_key(self._pending_extra_specs[0])}_signals"
+        if self._rps_pending:
+            return "rps_bundle"
+        return "assemble_snapshot"
+
+    def snapshot(self) -> StockContextSnapshot:
+        if self._snapshot is None:
+            raise RuntimeError("stock-context snapshot capture is not complete")
+        return self._snapshot
 
 
 def capture_workspace_stock_context(
@@ -405,4 +690,8 @@ def capture_workspace_stock_context(
     return snapshot if isinstance(snapshot, StockContextSnapshot) else None
 
 
-__all__ = ["StockContextWidgetSnapshotAdapter", "capture_workspace_stock_context"]
+__all__ = [
+    "StockContextWidgetSnapshotAdapter",
+    "StockContextWidgetSnapshotCaptureSession",
+    "capture_workspace_stock_context",
+]

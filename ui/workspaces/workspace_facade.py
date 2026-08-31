@@ -21,6 +21,7 @@ from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.workspaces.quote_universe_service import QuoteUniverseService
 from ui.workspaces.stock_context_service import (
     StockContextService,
+    begin_background_stock_context_snapshot_capture,
     capture_stock_context_snapshot,
     collect_watchlist_radar_snapshot,
 )
@@ -101,6 +102,24 @@ def _capture_facade_stock_context(
     )
 
 
+def _begin_background_facade_stock_context_capture(
+    facade,
+    *,
+    include_rps_bundle: bool = True,
+    include_cached_sources: bool = True,
+    sources=None,
+    target_codes=None,
+):
+    """Expose the cooperative capture only to hidden-tab prewarm callers."""
+    return begin_background_stock_context_snapshot_capture(
+        facade._stock_context_service,
+        include_rps_bundle=include_rps_bundle,
+        include_cached_sources=include_cached_sources,
+        sources=sources,
+        target_codes=target_codes,
+    )
+
+
 def _publish_facade_stock_context_index(facade, index: StockContextSignalIndex) -> int:
     return facade._stock_context_service.publish_kline_signal_index(index)
 
@@ -148,6 +167,7 @@ class WorkspaceFacade:
 
     shutdown = _shutdown_stock_context_facade
     capture_stock_context_snapshot = _capture_facade_stock_context
+    begin_background_stock_context_snapshot_capture = _begin_background_facade_stock_context_capture
     publish_stock_context_signal_index = _publish_facade_stock_context_index
     get_published_stock_context_signals = _published_facade_stock_context_signals
     prime_stock_context_snapshots = _prime_facade_stock_context

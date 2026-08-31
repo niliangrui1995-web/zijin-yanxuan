@@ -87,6 +87,17 @@ class _SupplementalSnapshotPreloadTab(_ControlledPreloadTab):
         return self.snapshot_ready
 
 
+class _DeferredConstructionPreloadTab(_ControlledPreloadTab):
+    """A staged QWidget shell whose heavy GUI phases finish on later turns."""
+
+    def __init__(self, key: str, events: list[tuple[str, str]], parent=None):
+        super().__init__(key, events, parent)
+        self.ui_construction_ready = False
+
+    def is_background_ui_construction_complete(self) -> bool:
+        return self.ui_construction_ready
+
+
 class _ControlledCancellationReceipt:
     def __init__(self):
         self.settled = False
@@ -291,6 +302,49 @@ def test_preload_ready_waits_for_supplemental_local_snapshot_physical_completion
         assert tab.snapshot_prime_calls == 2
     finally:
         tab.deleteLater()
+
+
+def test_preload_waits_for_staged_gui_construction_before_prime(qt_application):
+    """A deferred QWidget shell must not run its runtime prime in the factory callback."""
+    events: list[tuple[str, str]] = []
+    workspace = ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        watchlist_startup_tasks=False,
+    )
+    _install_controlled_factories(workspace, events)
+    first_key = "scan"
+    first_spec = workspace._spec_for_key_or_index(first_key)
+    first_spec["factory"] = lambda **_kwargs: _DeferredConstructionPreloadTab(
+        first_key,
+        events,
+        workspace,
+    )
+
+    try:
+        workspace._initial_real_tab_activated = True
+        workspace._background_prewarm_enabled = True
+        workspace._background_prewarm_started = True
+        workspace._background_prewarm_finished = False
+        workspace._background_prewarm_queue = [first_key]
+        _stop_preload_timer(workspace)
+
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        active = workspace._background_prewarm_active_widget
+        assert isinstance(active, _DeferredConstructionPreloadTab)
+        assert events == [("construct", first_key)]
+        assert workspace.background_preload_status()["active_key"] == first_key
+
+        active.ui_construction_ready = True
+        workspace._prewarm_next_tab()
+        _stop_preload_timer(workspace)
+        assert events == [("construct", first_key), ("prime", first_key)]
+        assert workspace.background_preload_status()["active_key"] == first_key
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
 
 
 def test_preload_uses_registry_order_and_waits_for_each_data_completion(qt_application):

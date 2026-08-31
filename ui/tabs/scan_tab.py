@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QTimer
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
 from app.services.scan_cache_service import load_scan_cache, save_scan_cache
 from app.services.scan_runtime_service import VCPParams
 from app.services.ui_config_service import app_config
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -358,6 +360,7 @@ class _ScanCacheLifecycleMixin:
 
     def cancel_background_preload(self, *, reason: str):
         def _reset() -> None:
+            self.cancel_background_ui_construction()
             initial_timer = getattr(self, "_initial_cache_load_timer", None)
             if initial_timer is not None:
                 initial_timer.stop()
@@ -378,7 +381,8 @@ class _ScanCacheLifecycleMixin:
             task_ids=(task_registry.workspace("scan_cache_load"),),
             reason=reason,
             reset_state=_reset,
-            local_settled=lambda: not self._scan_cache_preload.committing,
+            local_settled=lambda: not self._scan_cache_preload.committing
+            and not self.is_background_ui_construction_active(),
             runner=task_manager,
         )
 
@@ -399,7 +403,15 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
     F5_AUTO_INCREMENTAL_DELAY_MS = 8000
     SCAN_TIMEOUT_SEC = 30 * 60
 
-    def __init__(self, data_provider, engine, parent=None, *, initial_cache_load_delay_ms: int = 300):
+    def __init__(
+        self,
+        data_provider,
+        engine,
+        parent=None,
+        *,
+        initial_cache_load_delay_ms: int = 300,
+        defer_background_ui_build: bool = False,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
         try:
@@ -428,9 +440,46 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
             settings_key=self.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY,
         )
         self._f5_auto_incremental_timer = self._f5_incremental.timer
+        self._initial_cache_load_timer = None
+        self._defer_background_ui_build = bool(defer_background_ui_build)
 
-        self._init_settings_widgets()
-        self._init_ui()
+        if self._defer_background_ui_build:
+            self._begin_deferred_scan_ui_construction()
+        else:
+            self._init_settings_widgets()
+            self._init_ui()
+            self._finish_scan_ui_construction()
+
+    def _begin_deferred_scan_ui_construction(self) -> None:
+        self.begin_background_ui_construction(
+            (
+                ("scan_settings", lambda: self._run_scan_ui_phase("settings", self._init_settings_widgets)),
+                ("scan_toolbar", lambda: self._run_scan_ui_phase("toolbar", self._init_ui_toolbar)),
+                ("scan_table_model", lambda: self._run_scan_ui_phase("table_model", self._init_ui_table_model)),
+                ("scan_table_widget", lambda: self._run_scan_ui_phase("table_widget", self._init_ui_table_widget)),
+                (
+                    "scan_table_configuration",
+                    lambda: self._run_scan_ui_phase(
+                        "table_configuration",
+                        self._finish_ui_table_configuration,
+                    ),
+                ),
+                (
+                    "scan_runtime_wiring",
+                    lambda: self._run_scan_ui_phase("runtime_wiring", self._finish_scan_ui_construction),
+                ),
+            ),
+        )
+
+    def _run_scan_ui_phase(self, phase: str, callback) -> None:
+        with ui_stall_span(
+            "ScanTab.background_ui_phase",
+            tab="scan",
+            signal=f"background_ui_{phase}",
+        ):
+            callback()
+
+    def _finish_scan_ui_construction(self) -> None:
 
         # 启动时自动加载上次缓存的扫描结果；owned timer 可在超时/退出时取消。
         self._initial_cache_load_timer = QTimer(self)
@@ -771,9 +820,14 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
                     self.table_state.show_empty("暂无扫描结果")
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._init_ui_toolbar()
+        self._init_ui_table()
+        self._finish_ui_table_configuration()
+
+    def _init_ui_toolbar(self):
+        self._scan_layout = QVBoxLayout(self)
+        self._scan_layout.setContentsMargins(0, 0, 0, 0)
+        self._scan_layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_scan_status = QLabel()
@@ -813,8 +867,14 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
 
         action_widgets = [self.btn_scan_action, self.btn_scan_increment, self.btn_scan_settings]
         toolbar = self.build_tab_toolbar("VCP 扫描", self.lbl_scan_status, filter_widgets, action_widgets)
-        layout.addWidget(toolbar)
+        self._scan_layout.addWidget(toolbar)
         self._refresh_scan_status()
+
+    def _init_ui_table(self):
+        self._init_ui_table_model()
+        self._init_ui_table_widget()
+
+    def _init_ui_table_model(self):
 
         # 表格控件 (MVC)
         self.columns = [
@@ -838,6 +898,8 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
         )
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
+
+    def _init_ui_table_widget(self):
 
         self.table_scan = VCPTableView(default_row_height=30)
         self.table_scan.set_targeted_flash_repaint_enabled(False, metric_scope="scan")
@@ -866,6 +928,8 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
 
         self.table_scan.keyPressEvent = table_key_press
 
+    def _finish_ui_table_configuration(self):
+
         # 列宽策略 (QSettings 持久化)
         header = self.table_scan.horizontalHeader()
         header.setStretchLastSection(False)
@@ -884,7 +948,7 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
         if not restored_sort:
             self.table_scan.sortByColumn(self.source_model.headers.index("触发日期"), Qt.SortOrder.DescendingOrder)
 
-        layout.addWidget(self.table_state)
+        self._scan_layout.addWidget(self.table_state)
 
     def _handle_show_kline(self, index=None):
         if index is None or not index.isValid():
@@ -965,6 +1029,29 @@ class ScanTab(_ScanCacheLifecycleMixin, BaseStockTab):
 
     def get_scan_results(self) -> list[dict]:
         return list(self._current_results or [])
+
+    def iter_scan_results(self):
+        """Yield current scan rows lazily, falling back to the table model.
+
+        ``get_scan_results`` remains the eager compatibility API.  The
+        stock-context snapshot adapter uses this iterator so copying and
+        freezing stay inside its bounded GUI slices.  The fallback preserves
+        the prior adapter contract for a scan whose current-results cache is
+        empty or malformed while the displayed source model has rows.
+        """
+        current_results = getattr(self, "_current_results", None)
+
+        def _rows():
+            has_scan_rows = False
+            for row in current_results if current_results is not None else ():
+                if not isinstance(row, Mapping):
+                    continue
+                has_scan_rows = True
+                yield row
+            if not has_scan_rows:
+                yield from self.iter_stock_context_rows()
+
+        return _rows()
 
     def run_incremental_scan(self) -> bool:
         return self._on_incremental_scan_clicked()

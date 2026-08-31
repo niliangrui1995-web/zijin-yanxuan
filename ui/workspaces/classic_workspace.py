@@ -56,6 +56,13 @@ EarningsTab = None
 FundHoldingsTab = None
 LogTab = None
 
+# These tabs have measured hidden-widget setup or context capture paths that
+# exceed one GUI frame.  Their normal foreground constructors remain eager;
+# only ordinary staged prewarm receives the cooperative build flag.
+_BACKGROUND_UI_PHASED_TAB_KEYS = frozenset(
+    {"watchlist", "scan", "foreign_block", "fund_holdings", "stock_candidates"}
+)
+
 def _resolve_tab_class(class_name: str, module_name: str):
     tab_class = globals().get(class_name)
     if tab_class is None:
@@ -121,13 +128,22 @@ def _runtime_kwargs_for_definition(
 ) -> dict:
     policy = definition.runtime_delay_policy
     if policy is TabRuntimeDelayPolicy.WATCHLIST:
-        return _watchlist_runtime_kwargs(definition, reason_text, first_visible_load, workspace)
-    if not first_visible_load:
-        return definition.noninteractive_default_kwargs()
-    kwarg = str(definition.runtime_delay_kwarg or "").strip()
-    if not kwarg or policy is TabRuntimeDelayPolicy.NONE:
-        return {}
-    return {kwarg: _first_visible_runtime_delay_ms(policy, reason_text, workspace)}
+        runtime_kwargs = _watchlist_runtime_kwargs(definition, reason_text, first_visible_load, workspace)
+    elif not first_visible_load:
+        runtime_kwargs = definition.noninteractive_default_kwargs()
+    else:
+        kwarg = str(definition.runtime_delay_kwarg or "").strip()
+        runtime_kwargs = (
+            {}
+            if not kwarg or policy is TabRuntimeDelayPolicy.NONE
+            else {kwarg: _first_visible_runtime_delay_ms(policy, reason_text, workspace)}
+        )
+    if (
+        reason_text == TabLoadReason.BACKGROUND_PREWARM.value
+        and definition.key in _BACKGROUND_UI_PHASED_TAB_KEYS
+    ):
+        runtime_kwargs["defer_background_ui_build"] = True
+    return runtime_kwargs
 
 
 class LazyTabPlaceholder(QWidget):
@@ -428,6 +444,23 @@ def _capture_workspace_stock_context(
         )
     return facade.capture_stock_context_snapshot(
         include_rps_bundle=include_rps_bundle,
+        sources=sources,
+        target_codes=target_codes,
+    )
+
+
+def _begin_background_workspace_stock_context_capture(
+    workspace,
+    *,
+    include_rps_bundle: bool = True,
+    include_cached_sources: bool = True,
+    sources=None,
+    target_codes=None,
+):
+    """Create a cooperative GUI capture for a hidden candidate-tab preload."""
+    return _resolve_workspace_facade(workspace).begin_background_stock_context_snapshot_capture(
+        include_rps_bundle=include_rps_bundle,
+        include_cached_sources=include_cached_sources,
         sources=sources,
         target_codes=target_codes,
     )
@@ -1080,12 +1113,16 @@ class _ClassicWorkspaceLifecycleMixin:
 class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
     mode = "classic"
     capture_stock_context_snapshot = _capture_workspace_stock_context
+    begin_background_stock_context_snapshot_capture = _begin_background_workspace_stock_context_capture
     publish_stock_context_signal_index = _publish_workspace_stock_context_index
     get_published_stock_context_signals = _published_workspace_stock_context_signals
     _shutting_down = False
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
     BACKGROUND_PREWARM_POLL_INTERVAL_MS = 80
+    # A staged tab yields one real event-loop turn between its GUI subtree
+    # completion, runtime prime, and completion probe.
+    BACKGROUND_PREWARM_GUI_PHASE_YIELD_MS = 16
     # After Watchlist has reached its required first frame, it is the most
     # frequently used foreground surface.  Keep ordinary hidden-widget
     # construction paused while it remains active; any deliberate navigation
@@ -1191,9 +1228,22 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
 
     def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
         def _create(**runtime_kwargs):
-            tab_class = _resolve_tab_class(class_name, module_name)
+            diagnostic_context = getattr(self, "_tab_factory_diagnostic_context", {}) or {}
+            diagnostic_tab = str(diagnostic_context.get("tab") or "")
+            diagnostic_signal = str(diagnostic_context.get("signal") or "")
+            with ui_stall_span(
+                "ClassicWorkspace.resolve_tab_class",
+                tab=diagnostic_tab,
+                signal=diagnostic_signal,
+            ):
+                tab_class = _resolve_tab_class(class_name, module_name)
             call_kwargs = {**kwargs, **runtime_kwargs}
-            return tab_class(*args, **call_kwargs)
+            with ui_stall_span(
+                "ClassicWorkspace.construct_tab_widget",
+                tab=diagnostic_tab,
+                signal=diagnostic_signal,
+            ):
+                return tab_class(*args, **call_kwargs)
 
         return _create
 
@@ -1233,7 +1283,18 @@ class ClassicWorkspace(_ClassicWorkspaceLifecycleMixin, QWidget):
         runtime_kwargs = _runtime_kwargs_for_definition(definition, reason_text, first_visible_load, self)
         if _should_stage_workspace_tab_mount(self, key, reason_text):
             runtime_kwargs["_workspace_parent_override"] = _ensure_background_preload_staging_host(self)
-        return factory(**runtime_kwargs)
+        previous_context = getattr(self, "_tab_factory_diagnostic_context", None)
+        self._tab_factory_diagnostic_context = {"tab": key, "signal": reason_text}
+        try:
+            return factory(**runtime_kwargs)
+        finally:
+            if previous_context is None:
+                try:
+                    del self._tab_factory_diagnostic_context
+                except AttributeError:
+                    pass
+            else:
+                self._tab_factory_diagnostic_context = previous_context
 
     def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:
         key = str(spec.get("key") or "").strip()

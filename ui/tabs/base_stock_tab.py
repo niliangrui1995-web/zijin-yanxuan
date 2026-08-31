@@ -34,6 +34,7 @@ from app.services.ui_navigation_service import ExternalTerminalNavigator
 from app.services.ui_quote_service import read_provider_health
 from app.services.ui_task_lifecycle_service import shutdown_task_lifecycle_for_owner
 from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
+from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.tabs.base_stock_refresh import (
     _latest_quote_snapshot as latest_quote_snapshot,
 )
@@ -280,6 +281,7 @@ def mark_runtime_network_activity(owner) -> None:
 class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWidget):
     """股票列表 Tab 基类 - 提供通用方法"""
     _TABLE_ATTR_CANDIDATES = ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table")
+    BACKGROUND_UI_CONSTRUCTION_YIELD_MS = 16
 
     def __init__(self, data_provider=None, parent=None):
         super().__init__(parent)
@@ -292,7 +294,112 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         self._quote_terminal_launcher = ExternalTerminalNavigator(self)
         self._runtime_cleanup_done = False
         self._runtime_network_triggered = False
+        self._background_ui_construction_complete = True
+        self._background_ui_construction_error = ""
+        self._background_ui_construction_scheduler = None
         event_bus.sig_app_closing.connect(self._flush_header_persistence)
+
+    def begin_background_ui_construction(self, tasks, *, on_finished=None) -> bool:
+        """Run already-split hidden-widget UI phases on separate GUI turns.
+
+        Qt widgets, models, and signal wiring stay in the GUI thread.  This
+        helper only yields *between* tab-supplied small phases; callers must
+        not place a monolithic constructor in one task.
+        """
+        scheduler = getattr(self, "_background_ui_construction_scheduler", None)
+        if scheduler is not None and scheduler.is_running():
+            return False
+
+        self._background_ui_construction_complete = False
+        self._background_ui_construction_error = ""
+        scheduler = FrameTaskScheduler(
+            self,
+            # A zero-timeout only queues another callback; it does not give a
+            # paint/input event a deterministic inter-frame budget on Windows.
+            interval_ms=self.BACKGROUND_UI_CONSTRUCTION_YIELD_MS,
+            frame_budget_ms=6,
+            max_tasks_per_frame=1,
+        )
+        self._background_ui_construction_scheduler = scheduler
+
+        def _fail(label: str, message: str) -> None:
+            self._background_ui_construction_error = f"{label}: {message}"
+            scheduler.cancel()
+
+        def _finish() -> None:
+            if getattr(self, "_background_ui_construction_scheduler", None) is not scheduler:
+                return
+            self._background_ui_construction_scheduler = None
+            if not self._background_ui_construction_error:
+                try:
+                    if callable(on_finished):
+                        on_finished()
+                    self._background_ui_construction_complete = True
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                    self._background_ui_construction_error = str(exc)
+            scheduler.deleteLater()
+
+        scheduler.taskFailed.connect(_fail)
+        scheduler.finished.connect(_finish)
+        scheduler.start(tasks)
+        return True
+
+    def is_background_ui_construction_complete(self) -> bool:
+        return bool(
+            self._background_ui_construction_complete
+            and not self._background_ui_construction_error
+        )
+
+    def is_background_ui_construction_active(self) -> bool:
+        scheduler = getattr(self, "_background_ui_construction_scheduler", None)
+        try:
+            return bool(scheduler is not None and scheduler.is_running())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def background_ui_construction_error(self) -> str:
+        return str(getattr(self, "_background_ui_construction_error", "") or "")
+
+    def cancel_background_ui_construction(self) -> bool:
+        """Stop queued hidden-widget phases before a preload cancellation settles.
+
+        A foreground hold pauses this scheduler and later resumes the same
+        partial widget.  This method is deliberately terminal instead: callers
+        use it only for cancellation/teardown, so an old queued QTimer callback
+        cannot continue building after its cancellation receipt is settled.
+        """
+        scheduler = getattr(self, "_background_ui_construction_scheduler", None)
+        if scheduler is None:
+            return True
+        self._background_ui_construction_scheduler = None
+        self._background_ui_construction_complete = False
+        self._background_ui_construction_error = "background UI construction cancelled"
+        try:
+            scheduler.cancel()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+        try:
+            scheduler.deleteLater()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            pass
+        return True
+
+    def pause_background_preload(self) -> bool:
+        """Pause only an in-flight staged UI build; data preloads keep their own policy."""
+        scheduler = getattr(self, "_background_ui_construction_scheduler", None)
+        pause = getattr(scheduler, "pause", None)
+        try:
+            return bool(callable(pause) and pause())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def resume_background_preload(self) -> bool:
+        scheduler = getattr(self, "_background_ui_construction_scheduler", None)
+        resume = getattr(scheduler, "resume", None)
+        try:
+            return bool(callable(resume) and resume())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
 
     def _is_current_workspace_tab(self) -> bool:
         return _is_direct_workspace_tab(self)
@@ -476,6 +583,17 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         model = current_model or self._resolve_active_quote_model()
         row_data = getattr(model, "row_data", None) or []
         return [row for row in row_data if isinstance(row, dict)]
+
+    def iter_stock_context_rows(self, current_model=None):
+        """Return a stable reference iterator for cooperative context capture.
+
+        The adapter copies and freezes each value on the GUI thread in its own
+        bounded phase.  Capturing the current row-data container once avoids
+        the eager list comprehension used by the compatibility getter above.
+        """
+        model = current_model or self._resolve_active_quote_model()
+        row_data = getattr(model, "row_data", None)
+        return iter(row_data if row_data is not None else ())
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
         codes: set[str] = set()
@@ -1001,6 +1119,7 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
         if getattr(self, "_runtime_cleanup_done", False):
             return
         self._runtime_cleanup_done = True
+        self.cancel_background_ui_construction()
         shutdown_task_lifecycle_for_owner(self, timeout_ms=750)
         self._flush_header_persistence()
 

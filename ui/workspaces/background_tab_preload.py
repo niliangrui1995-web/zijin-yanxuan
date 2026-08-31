@@ -303,6 +303,33 @@ def _preload_dependencies_ready(workspace, spec: Mapping) -> bool:
     return profile != TabConstructorProfile.SCAN.value or workspace.engine is not None
 
 
+def _background_ui_construction_state(widget) -> tuple[bool, str]:
+    """Read an optional staged-QWidget construction capability.
+
+    QWidget instances must remain in the GUI thread, but a tab may split its
+    own non-visible subtree creation across several event-loop turns.  Legacy
+    tabs deliberately remain eager: absence of this capability means their
+    construction is already complete.
+    """
+    checker = getattr(widget, "is_background_ui_construction_complete", None)
+    if not callable(checker):
+        return True, ""
+    try:
+        complete = bool(checker())
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return False, f"background UI construction status failed: {exc}"
+    if complete:
+        return True, ""
+    error_reader = getattr(widget, "background_ui_construction_error", None)
+    if not callable(error_reader):
+        return False, ""
+    try:
+        error = str(error_reader() or "").strip()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return False, f"background UI construction error probe failed: {exc}"
+    return False, error
+
+
 def _active_step_timed_out(workspace) -> bool:
     elapsed_ms = (
         time.perf_counter() - float(workspace._background_prewarm_active_started_at or 0.0)
@@ -539,6 +566,8 @@ def cancel_background_tab_preload(coordinator) -> None:
     _clear_cancellation_state(coordinator)
     coordinator._cancellation_blocked = False
     coordinator._active_step_count = 0
+    coordinator._active_step_runtime_primed = False
+    coordinator._active_step_phase = ""
 
 
 class BackgroundTabPreloadCoordinator(QObject):
@@ -568,6 +597,8 @@ class BackgroundTabPreloadCoordinator(QObject):
         self._dependency_failures: dict[str, str] = {}
         self._active_step_count = 0
         self._max_concurrent_steps = 0
+        self._active_step_runtime_primed = False
+        self._active_step_phase = ""
         self._shutdown_cancel_receipts: list[object] = []
         self._completion_scope = "all_planned"
         self._startup_lazy_handoff_keys: list[str] = []
@@ -709,6 +740,7 @@ class BackgroundTabPreloadCoordinator(QObject):
             "blocked_reason": "cancellation_timeout" if self._cancellation_blocked else "",
             "active_step_count": self._active_step_count,
             "max_concurrent_steps": self._max_concurrent_steps,
+            "active_phase": self._active_step_phase,
             "timer_active": bool(self.timer.isActive()),
             "interaction_quiet_remaining_ms": _ordinary_step_interaction_quiet_delay_ms(self),
             "shutdown_cancel_receipts": shutdown_receipts,
@@ -950,6 +982,8 @@ class BackgroundTabPreloadCoordinator(QObject):
         workspace._background_prewarm_active_widget = None
         workspace._background_prewarm_active_started_at = 0.0
         self._active_step_count = max(0, self._active_step_count - 1)
+        self._active_step_runtime_primed = False
+        self._active_step_phase = ""
         self._foreground_hold_active_key = ""
         self._foreground_hold_mode = ""
         _clear_cancellation_state(self)
@@ -967,6 +1001,8 @@ class BackgroundTabPreloadCoordinator(QObject):
         workspace = self.workspace
         if self._cancelling_key:
             self._poll_cancelled_step()
+            return
+        if not self._prime_active_step_after_ui_construction():
             return
         try:
             completed = self._widget_preload_complete(workspace._background_prewarm_active_widget)
@@ -1050,6 +1086,8 @@ class BackgroundTabPreloadCoordinator(QObject):
             self.stepStarted.emit(key)
         self._active_step_count += 1
         self._max_concurrent_steps = max(self._max_concurrent_steps, self._active_step_count)
+        self._active_step_runtime_primed = False
+        self._active_step_phase = "construct"
         with ui_stall_span(
             "BackgroundTabPreloadCoordinator.construct_and_stage_tab",
             tab=key,
@@ -1063,24 +1101,58 @@ class BackgroundTabPreloadCoordinator(QObject):
             self._fail_active_step("tab construction failed")
             return
         workspace._background_prewarm_active_widget = widget
+        self._prime_active_step_after_ui_construction()
+
+    def _prime_active_step_after_ui_construction(self) -> bool:
+        """Prime only after an optional staged QWidget subtree is ready.
+
+        The tab's builder owns the GUI slices.  This coordinator keeps the
+        existing one-active-step, timeout, cancellation, and priority state
+        machine intact while ensuring a complete runtime prime never runs in
+        the same callback as an unfinished staged construction.
+        """
+        workspace = self.workspace
+        widget = workspace._background_prewarm_active_widget
+        if widget is None:
+            return False
+        constructed, construction_error = _background_ui_construction_state(widget)
+        if not constructed:
+            if construction_error:
+                self._fail_active_step(construction_error)
+                return False
+            if _active_step_timed_out(workspace):
+                timeout_ms = workspace.BACKGROUND_PREWARM_STEP_TIMEOUT_MS
+                self._begin_step_cancellation(
+                    "timeout",
+                    f"background UI construction exceeded {timeout_ms}ms",
+                    reason="step_timeout",
+                )
+                return False
+            self._active_step_phase = "ui_construction"
+            _schedule_preload(
+                self,
+                max(1, int(getattr(workspace, "BACKGROUND_PREWARM_GUI_PHASE_YIELD_MS", 16))),
+            )
+            return False
+        if self._active_step_runtime_primed:
+            self._active_step_phase = "completion_probe"
+            return True
         with ui_stall_span(
             "BackgroundTabPreloadCoordinator.prime_tab_runtime",
-            tab=key,
+            tab=str(workspace._background_prewarm_active_key or ""),
             signal="background_prewarm",
         ):
             primed = workspace._prime_tab_runtime(widget)
         if not primed:
             self._fail_active_step("startup prime failed")
-            return
-        try:
-            completed = self._widget_preload_complete(widget)
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            self._fail_active_step(str(exc))
-            return
-        if completed:
-            self._complete_active_step()
-            return
-        _schedule_preload(self, workspace.BACKGROUND_PREWARM_POLL_INTERVAL_MS)
+            return False
+        self._active_step_runtime_primed = True
+        self._active_step_phase = "completion_probe"
+        _schedule_preload(
+            self,
+            max(1, int(getattr(workspace, "BACKGROUND_PREWARM_GUI_PHASE_YIELD_MS", 16))),
+        )
+        return False
 
     @staticmethod
     def _widget_preload_complete(widget) -> bool:
@@ -1224,6 +1296,8 @@ class BackgroundTabPreloadCoordinator(QObject):
         workspace._background_prewarm_active_widget = None
         workspace._background_prewarm_active_started_at = 0.0
         self._active_step_count = max(0, self._active_step_count - 1)
+        self._active_step_runtime_primed = False
+        self._active_step_phase = ""
         self._priority_boosted_keys.discard(key)
         self._priority_closures.pop(key, None)
         _clear_cancellation_state(self)

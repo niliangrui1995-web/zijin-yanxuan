@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-from app.services.ui_fund_holdings_service import (
+from domains.fund_holdings.compare import (
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     SUBJECT_QFII,
-    fund_holdings_store,
 )
 from app.services.ui_industry_chain_service import filter_rows_to_ai_chain_codes, normalize_ai_chain_code
 from app.services.ui_task_lifecycle_service import CancellationToken
@@ -18,6 +17,19 @@ from ui.tabs.fund_holdings_rules import (
     format_pct,
 )
 from ui.tabs.fund_holdings_subjects import shorten_subject_name
+
+
+def _resolve_fund_holdings_store():
+    """Create/read the SQLite-backed store in the caller's task boundary.
+
+    This module is imported while the hidden Tab shell is resolved.  Importing
+    ``store`` there would instantiate the process-wide DataStore on the GUI
+    thread, even though the first payload read already runs in its lifecycle
+    worker.  Delay that import until a store-backed operation actually runs.
+    """
+    from domains.fund_holdings.store import fund_holdings_store
+
+    return fund_holdings_store
 
 
 def _run_stage(cancellation_token, fn, *args, **kwargs):
@@ -163,9 +175,12 @@ def query_change_rows_for_scope(
     quarter_keys: set[str] | None,
     *,
     stock_universe_provider,
-    store=fund_holdings_store,
+    store=None,
     cancellation_token: CancellationToken | None = None,
 ) -> list[dict]:
+    _raise_if_cancelled(cancellation_token)
+    if store is None:
+        store = _resolve_fund_holdings_store()
     _raise_if_cancelled(cancellation_token)
     stock_codes = load_stock_universe_codes(
         stock_universe_provider,
@@ -260,9 +275,13 @@ def load_fund_holdings_view_payload(
     latest_scope: str = "latest",
     all_scope: str = "all",
     selected_scope: str = "selected",
-    store=fund_holdings_store,
+    store=None,
     cancellation_token: CancellationToken | None = None,
 ) -> dict:
+    _raise_if_cancelled(cancellation_token)
+    if store is None:
+        store = _resolve_fund_holdings_store()
+    _raise_if_cancelled(cancellation_token)
     latest_quarter_map = _run_stage(cancellation_token, store.get_latest_quarter_map)
     latest_sync_map = _run_stage(cancellation_token, store.get_latest_sync_map)
     normalized_scope = str(quarter_scope or latest_scope).strip().lower()

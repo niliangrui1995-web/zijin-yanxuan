@@ -807,6 +807,172 @@ def test_stock_candidate_preload_reuses_ready_upstream_snapshots_with_bounded_in
         workspace.deleteLater()
 
 
+def test_stock_candidate_background_capture_is_sliced_and_honors_hold_without_sync_capture(monkeypatch):
+    jobs = []
+    sync_capture_calls = []
+
+    class _CaptureSession:
+        def __init__(self):
+            self.advance_calls = 0
+            self.cancel_calls = 0
+
+        def next_phase_label(self):
+            return f"source_{self.advance_calls}"
+
+        def advance(self):
+            self.advance_calls += 1
+            return self.advance_calls >= 2
+
+        def snapshot(self):
+            assert self.advance_calls >= 2
+            return StockContextSnapshot()
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    class _Workspace(QWidget):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+            self.capture_calls = []
+
+        @staticmethod
+        def collect_stock_context():
+            return {}
+
+        @staticmethod
+        def background_preload_status():
+            return {"ready_keys": list(StockCandidateTab.SNAPSHOT_SOURCE_TABS)}
+
+        def begin_background_stock_context_snapshot_capture(self, **kwargs):
+            self.capture_calls.append(dict(kwargs))
+            return self.session
+
+        @staticmethod
+        def tab_specs():
+            return []
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    monkeypatch.setattr(
+        stock_candidate_module,
+        "capture_workspace_stock_context",
+        lambda *_args, **_kwargs: sync_capture_calls.append("sync")
+        or (_ for _ in ()).throw(AssertionError("background capture must not fall back to synchronous capture")),
+    )
+    session = _CaptureSession()
+    workspace = _Workspace(session)
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        assert tab.prime_background_load() is True
+        assert workspace.capture_calls == [
+            {"include_rps_bundle": False, "include_cached_sources": False}
+        ]
+        assert jobs == []
+
+        assert tab.pause_background_preload() is True
+        tab._advance_background_context_capture()
+        assert session.advance_calls == 0
+        assert jobs == []
+
+        assert tab.resume_background_preload() is True
+        tab._advance_background_context_capture()
+        assert session.advance_calls == 1
+        assert jobs == []
+
+        tab._advance_background_context_capture()
+        assert session.advance_calls == 2
+        assert [name for name, _fn, _kwargs in jobs] == ["candidate_refresh"]
+        assert sync_capture_calls == []
+    finally:
+        _close_and_delete(tab)
+        workspace.deleteLater()
+
+
+def test_stock_candidate_background_capture_cancel_blocks_late_callback(monkeypatch):
+    jobs = []
+
+    class _CaptureSession:
+        def __init__(self):
+            self.advance_calls = 0
+            self.cancel_calls = 0
+
+        @staticmethod
+        def next_phase_label():
+            return "source"
+
+        def advance(self):
+            self.advance_calls += 1
+            return False
+
+        @staticmethod
+        def snapshot():
+            return StockContextSnapshot()
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    class _Lifecycle:
+        def run_background(self, name, fn, **kwargs):
+            jobs.append((name, fn, kwargs))
+
+    class _Runner:
+        @staticmethod
+        def is_task_unsettled(_task_id):
+            return False
+
+        @staticmethod
+        def cancel_task(_task_id, *, reason):
+            del reason
+            return True
+
+    class _Workspace(QWidget):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
+        @staticmethod
+        def collect_stock_context():
+            return {}
+
+        @staticmethod
+        def background_preload_status():
+            return {"ready_keys": list(StockCandidateTab.SNAPSHOT_SOURCE_TABS)}
+
+        def begin_background_stock_context_snapshot_capture(self, **_kwargs):
+            return self.session
+
+        @staticmethod
+        def tab_specs():
+            return []
+
+    monkeypatch.setattr(stock_candidate_module, "task_lifecycle_for", lambda *_args, **_kwargs: _Lifecycle())
+    monkeypatch.setattr(stock_candidate_module, "task_manager", _Runner())
+    monkeypatch.setattr(
+        stock_candidate_module,
+        "capture_workspace_stock_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("late synchronous capture")),
+    )
+    session = _CaptureSession()
+    workspace = _Workspace(session)
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        assert tab.prime_background_load() is True
+        receipt = tab.cancel_background_preload(reason="step_timeout")
+        assert receipt.is_settled() is True
+        assert session.cancel_calls == 1
+
+        tab._advance_background_context_capture()
+        assert session.advance_calls == 0
+        assert jobs == []
+    finally:
+        _close_and_delete(tab)
+        workspace.deleteLater()
+
+
 def test_stock_candidate_cancel_receipt_covers_candidate_and_snapshot_workers(monkeypatch):
     class _Runner:
         def __init__(self):

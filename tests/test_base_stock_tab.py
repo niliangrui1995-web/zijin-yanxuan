@@ -62,6 +62,64 @@ class _OfflineSnapshotTab(BaseStockTab):
         self.model = _OfflineSnapshotModel()
 
 
+def test_base_stock_context_row_iterator_keeps_current_model_container_lazy():
+    class _Rows:
+        def __init__(self):
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return iter(({"代码": "000001"}, {"代码": "000002"}))
+
+    tab = BaseStockTab()
+    rows = _Rows()
+    tab.model = SimpleNamespace(row_data=rows)
+    try:
+        iterator = tab.iter_stock_context_rows()
+        assert rows.iterations == 1
+        assert list(iterator) == [{"代码": "000001"}, {"代码": "000002"}]
+    finally:
+        tab.deleteLater()
+
+
+def test_base_stock_staged_background_ui_construction_pauses_and_cancels_queued_phases():
+    """A foreground hold preserves phases; terminal cancellation drops them."""
+    app = QApplication.instance() or QApplication([])
+    tab = BaseStockTab()
+    calls: list[str] = []
+    try:
+        assert tab.begin_background_ui_construction(
+            (
+                ("first", lambda: calls.append("first")),
+                ("second", lambda: calls.append("second")),
+            )
+        ) is True
+        assert tab.pause_background_preload() is True
+        QTest.qWait(20)
+        app.processEvents()
+        assert calls == []
+
+        assert tab.resume_background_preload() is True
+        QTest.qWait(40)
+        app.processEvents()
+        assert calls == ["first", "second"]
+        assert tab.is_background_ui_construction_complete() is True
+
+        assert tab.begin_background_ui_construction(
+            (("stale", lambda: calls.append("stale")),)
+        ) is True
+        assert tab.is_background_ui_construction_active() is True
+        assert tab.cancel_background_ui_construction() is True
+        QTest.qWait(20)
+        app.processEvents()
+        assert calls == ["first", "second"]
+        assert tab.is_background_ui_construction_active() is False
+        assert tab.is_background_ui_construction_complete() is False
+        assert tab.background_ui_construction_error() == "background UI construction cancelled"
+    finally:
+        tab.deleteLater()
+
+
 def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
     tab = BaseStockTab()
     subtitle = QLabel("已连接")
