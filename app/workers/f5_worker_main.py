@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import logging
-import sqlite3
 import sys
 import time
 from dataclasses import replace
@@ -14,23 +14,10 @@ from typing import Sequence
 
 from app.services.f5_job_contract import F5JobRequest, F5JobResult, F5JobStatus
 from app.services.f5_retention_service import discard_failed_f5_generation
-from core.exceptions import CacheIOError, DataFormatError
+from core.logger import attach_shared_log_handler
 from infra.market_data.warehouse_manifest import WarehouseManifest
 from infra.storage.f5_job_repository import F5JobRepository
 from infra.storage.f5_snapshot_repository import F5SnapshotRepository
-
-_WORKER_ERRORS = (
-    AttributeError,
-    CacheIOError,
-    DataFormatError,
-    ImportError,
-    KeyError,
-    OSError,
-    RuntimeError,
-    sqlite3.Error,
-    TypeError,
-    ValueError,
-)
 
 
 def _configure_worker_logging(repository: F5JobRepository) -> None:
@@ -39,6 +26,39 @@ def _configure_worker_logging(repository: F5JobRepository) -> None:
     root = logging.getLogger()
     root.addHandler(handler)
     root.setLevel(logging.INFO)
+    attach_shared_log_handler(handler)
+
+
+def _exception_result(request: F5JobRequest, exc: BaseException, *, initialization: bool = False) -> F5JobResult:
+    exception_name = type(exc).__name__
+    detail = str(exc).strip()
+    message = f"{exception_name}: {detail}" if detail else exception_name
+    if isinstance(exc, MemoryError):
+        error_code = "worker_memory_exhausted"
+    elif isinstance(exc, SystemExit):
+        error_code = "worker_system_exit"
+    elif isinstance(exc, KeyboardInterrupt):
+        error_code = "worker_interrupted"
+    elif initialization:
+        error_code = "worker_initialization_failed"
+    else:
+        error_code = "worker_crash"
+    return F5JobResult.failed(request, error_code=error_code, error_message=message)
+
+
+def _persist_terminal_result(repository: F5JobRepository, result: F5JobResult) -> None:
+    try:
+        repository.write_result(result.to_dict())
+    except BaseException:
+        logging.getLogger(__name__).exception("F5 terminal result persistence failed")
+
+
+def _enable_faulthandler() -> None:
+    try:
+        if not faulthandler.is_enabled():
+            faulthandler.enable(all_threads=True)
+    except (OSError, RuntimeError, ValueError):
+        logging.getLogger(__name__).warning("F5 faulthandler could not be enabled", exc_info=True)
 
 
 def execute_request(request: F5JobRequest, repository: F5JobRepository | None = None) -> F5JobResult:
@@ -67,18 +87,16 @@ def execute_request(request: F5JobRequest, repository: F5JobRepository | None = 
             cancelled_checker=_cancelled,
             event_callback=_event,
         )
-    except _WORKER_ERRORS as exc:
+        if not isinstance(result, F5JobResult):
+            raise TypeError("F5 pipeline returned an invalid terminal result")
+    except BaseException as exc:
         logging.getLogger(__name__).exception("F5 worker crashed")
-        result = F5JobResult.failed(
-            request,
-            error_code="worker_crash",
-            error_message=str(exc),
-        )
+        result = _exception_result(request, exc)
     if result.status is F5JobStatus.CANCELLED:
         reason = cancel_state["reason"] or "cancelled"
         code = "deadline_exceeded" if reason == "deadline_exceeded" else "cancelled"
         result = replace(result, error_code=code, error_message=reason)
-    repository.write_result(result.to_dict())
+    _persist_terminal_result(repository, result)
     if result.status in {F5JobStatus.CANCELLED, F5JobStatus.FAILED}:
         _discard_failed_generation(request)
     return result
@@ -89,7 +107,7 @@ def _discard_failed_generation(request: F5JobRequest) -> None:
         manifest = WarehouseManifest(db_path=request.database_path)
         repository = F5SnapshotRepository(manifest)
         discard_failed_f5_generation(request.cache_dir, request.run_id, repository=repository)
-    except _WORKER_ERRORS as exc:
+    except BaseException as exc:
         logging.getLogger(__name__).warning("F5 failed generation cleanup skipped: %s", exc)
 
 
@@ -102,23 +120,27 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     repository = F5JobRepository(args.job_dir)
-    _configure_worker_logging(repository)
     request = None
     try:
         request = F5JobRequest.from_dict(repository.read_request())
         if Path(request.job_dir).resolve() != Path(args.job_dir).resolve():
             raise ValueError("request job_dir does not match worker argument")
+        _configure_worker_logging(repository)
+        _enable_faulthandler()
         result = execute_request(request, repository)
-    except _WORKER_ERRORS as exc:
-        logging.getLogger(__name__).exception("F5 worker initialization failed")
+    except BaseException as exc:
+        try:
+            logging.getLogger(__name__).exception("F5 worker initialization failed")
+        except BaseException:
+            pass
+        try:
+            print(f"F5 worker initialization failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        except OSError:
+            pass
         if request is None:
             return 1
-        result = F5JobResult.failed(
-            request,
-            error_code="worker_initialization_failed",
-            error_message=str(exc),
-        )
-        repository.write_result(result.to_dict())
+        result = _exception_result(request, exc, initialization=True)
+        _persist_terminal_result(repository, result)
     if result.status is F5JobStatus.READY_TO_ACTIVATE:
         return 0
     if result.status is F5JobStatus.CANCELLED:

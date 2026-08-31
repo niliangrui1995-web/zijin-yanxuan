@@ -18,18 +18,34 @@ from app.services.f5_job_contract import (
     F5SnapshotArtifacts,
 )
 from core.exceptions import AppError
+from core.f5_resource_guard import (
+    F5_FULL_REREAD_MIN_COMMIT_HEADROOM_BYTES,
+    F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES,
+    F5MemoryPressureError,
+    ensure_f5_commit_headroom,
+    read_system_commit_headroom,
+)
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger, system_log_backpressure
 from core.market_snapshot_dates import infer_effective_trade_date, normalize_trade_date
 from core.runtime_paths import DEFAULT_TDX_ROOT, ensure_cache_dir
+from domains.market_calendar import MarketCalendar
 from infra.market_data.f5_market_snapshot_store import F5MarketSnapshotStore
 from infra.market_data.market_data_warehouse import MARKET_DATA_SCHEMA_VERSION, MARKET_DATA_SOURCE_VERSION
+from infra.market_data.vipdoc_source_freshness import inspect_vipdoc_daily_source
 from infra.storage.file_integrity import fingerprint_file
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
 
 log = get_logger(__name__)
 
 F5_LOCAL_REREAD_MAX_WORKERS = 2
+
+
+def _latest_completed_cn_trade_date() -> str:
+    try:
+        return MarketCalendar.get_latest_completed_trade_date("CN", allow_refresh=False).strftime("%Y%m%d")
+    except (ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        return ""
 
 
 def _get_memory_usage_mb() -> float:
@@ -63,6 +79,14 @@ def _log_memory_snapshot(stage_name: str) -> None:
     mem_mb = _get_memory_usage_mb()
     if mem_mb > 0:
         log.info("[F5] 内存快照 [%s]: %.0f MB", stage_name, mem_mb)
+    commit = read_system_commit_headroom()
+    if commit is not None:
+        log.info(
+            "[F5] 系统提交余量 [%s]: %d MB / %d MB",
+            stage_name,
+            commit.headroom_bytes // 1024 // 1024,
+            commit.commit_limit_bytes // 1024 // 1024,
+        )
 
 
 def _build_rps_matrix(engine, all_data: dict, trade_date: str, cache_path: str) -> dict:
@@ -92,6 +116,12 @@ class _F5EventEmitter:
                 total=int(total or 0),
             )
         )
+
+
+class F5VipdocSourceError(RuntimeError):
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = str(error_code or "vipdoc_source_invalid")
+        super().__init__(str(message or "vipdoc source validation failed"))
 
 
 class _F5PipelineExecution:
@@ -127,6 +157,8 @@ class _F5PipelineExecution:
         self.rps250 = {}
         self.rps_valid_count = 0
         self.sector_count = 0
+        self.vipdoc_source = None
+        self._last_market_headroom_check_at = 0.0
 
     def run(self) -> F5JobResult:
         ensure_cache_dir()
@@ -136,14 +168,40 @@ class _F5PipelineExecution:
             except (TaskCancelledError, TaskDeadlineExceeded) as exc:
                 log.info("[F5] 任务已取消: %s", exc)
                 return self._result(F5JobStatus.CANCELLED, error_code="cancelled", error_message=str(exc))
+            except F5MemoryPressureError as exc:
+                log.warning("[F5] 资源预检拒绝任务: %s", exc)
+                return self._result(
+                    F5JobStatus.FAILED,
+                    error_code=exc.error_code,
+                    error_message=str(exc),
+                )
+            except F5VipdocSourceError as exc:
+                log.warning("[F5] 本地数据源校验失败: %s", exc)
+                return self._result(F5JobStatus.FAILED, error_code=exc.error_code, error_message=str(exc))
+            except MemoryError as exc:
+                log.error("[F5] 预计算内存耗尽", exc_info=True)
+                return self._result(
+                    F5JobStatus.FAILED,
+                    error_code="worker_memory_exhausted",
+                    error_message=f"MemoryError: {exc}" if str(exc) else "MemoryError",
+                )
             except (AppError, AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.error("[F5] 预计算失败: %s", exc, exc_info=True)
                 return self._result(F5JobStatus.FAILED, error_code="f5_pipeline_failed", error_message=str(exc))
+            except BaseException as exc:
+                log.error("[F5] 未预期的预计算异常: %s", exc, exc_info=True)
+                return self._result(
+                    F5JobStatus.FAILED,
+                    error_code="f5_pipeline_crash",
+                    error_message=f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
+                )
 
     def _run_stages(self) -> F5JobResult:
         self._checkpoint()
+        ensure_f5_commit_headroom(F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES, stage="F5 准备")
         self._emit(F5Phase.PREPARE, "[F5] 盘后一键预计算 -- 开始")
         _log_memory_snapshot("启动基线")
+        self._inspect_vipdoc_source()
         self._refresh_adjustments()
         all_data = self._sync_market()
         self._build_rps(all_data)
@@ -155,6 +213,7 @@ class _F5PipelineExecution:
         return self._result(F5JobStatus.READY_TO_ACTIVATE, artifacts=artifacts)
 
     def _refresh_adjustments(self) -> None:
+        ensure_f5_commit_headroom(F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES, stage="F5 gbbq 解析")
         self._emit(F5Phase.GBBQ, "[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
         try:
             self.data_provider.ensure_adjustment_metadata(force=True)
@@ -164,11 +223,8 @@ class _F5PipelineExecution:
         self._checkpoint()
 
     def _sync_market(self) -> dict:
-        resumed = self._try_resume_market()
-        if resumed:
-            self._stage_resumed_market()
-        else:
-            self._full_market_sync()
+        self._full_market_sync()
+        self._verify_vipdoc_source_stable()
         self._checkpoint()
         cache_data = getattr(self.data_provider, "cache_data", {}) or {}
         self.symbol_count = len(cache_data)
@@ -185,28 +241,8 @@ class _F5PipelineExecution:
         _log_memory_snapshot("阶段1→2 GC后")
         return {code: frame for code, frame in cache_data.items() if frame is not None and len(frame) >= 60}
 
-    def _try_resume_market(self) -> bool:
-        try:
-            cached_date = self.data_provider.load_cache_from_disk()
-            cached_data = getattr(self.data_provider, "cache_data", {}) or {}
-            if cached_date != self.requested_date or len(cached_data) <= 2000:
-                return False
-            codes_dict = self.data_provider._get_codes_from_vipdoc()
-            self.data_provider.code2name = codes_dict
-            message = f"[F5] 阶段1/3: 从本地仓库续算 ({len(cached_data)} 只标的)"
-            self._emit(F5Phase.MARKET_SYNC, message)
-            return True
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.info("[F5] 断点续算检测失败，执行全量重读: %s", exc)
-            return False
-
-    def _stage_resumed_market(self) -> None:
-        self.market_status = self.market_snapshot_writer(
-            self.data_provider.cache_data,
-            self.requested_date,
-        )
-
     def _full_market_sync(self) -> None:
+        ensure_f5_commit_headroom(F5_FULL_REREAD_MIN_COMMIT_HEADROOM_BYTES, stage="F5 本地日线全量重读")
         self._emit(F5Phase.MARKET_SYNC, "[F5] 阶段1/3: 开始从 vipdoc 全量重读...")
         with self.data_provider.cache_lock:
             self.data_provider.cache_data = {}
@@ -227,12 +263,14 @@ class _F5PipelineExecution:
             "force_refresh": True,
             "max_workers": F5_LOCAL_REREAD_MAX_WORKERS,
             "progress_callback": self._market_progress,
-            "cancellation_checker": self._cancelled,
+            "cancellation_checker": self._market_sync_cancelled,
             "snapshot_writer": self._write_market_snapshot,
             "snapshot_date": self.requested_date,
+            "load_cached_snapshot_if_empty": False,
         }
 
     def _write_market_snapshot(self, cache_data, snapshot_date):
+        ensure_f5_commit_headroom(F5_FULL_REREAD_MIN_COMMIT_HEADROOM_BYTES, stage="F5 市场快照写入")
         self.market_status = self.market_snapshot_writer(cache_data, snapshot_date)
         return self.market_status
 
@@ -243,6 +281,13 @@ class _F5PipelineExecution:
         message = f"[F5] 重读本地数据 {done}/{total}{suffix}"
         self.emitter.emit(F5Phase.MARKET_SYNC, message, completed=done, total=total)
 
+    def _market_sync_cancelled(self) -> bool:
+        now = time.monotonic()
+        if now - self._last_market_headroom_check_at >= 0.5:
+            ensure_f5_commit_headroom(F5_FULL_REREAD_MIN_COMMIT_HEADROOM_BYTES, stage="F5 本地日线全量重读")
+            self._last_market_headroom_check_at = now
+        return self._cancelled()
+
     def _resolve_market_contract(self, cache_data) -> None:
         if self.market_status is None or not self.market_status.ok:
             error = getattr(self.market_status, "error", "market snapshot was not staged")
@@ -250,9 +295,16 @@ class _F5PipelineExecution:
         self.effective_trade_date = infer_effective_trade_date(cache_data)
         if not self.effective_trade_date:
             raise ValueError("unable to infer effective trade date")
+        source_date = str(getattr(self.vipdoc_source, "effective_trade_date", "") or "")
+        if source_date and self.effective_trade_date != source_date:
+            raise F5VipdocSourceError(
+                "vipdoc_effective_date_mismatch",
+                f"vipdoc 最新有效日期 {source_date} 与读取结果 {self.effective_trade_date} 不一致",
+            )
 
     def _build_rps(self, all_data: dict) -> None:
         self._checkpoint()
+        ensure_f5_commit_headroom(F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES, stage="F5 RPS 计算")
         if not all_data:
             raise ValueError("no symbols have at least 60 market bars")
         self._emit(F5Phase.RPS, "[F5] 阶段2/3: 预计算 RPS 矩阵...")
@@ -277,6 +329,7 @@ class _F5PipelineExecution:
 
     def _build_sector_rps(self, all_data: dict) -> None:
         self._checkpoint()
+        ensure_f5_commit_headroom(F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES, stage="F5 板块 RPS 计算")
         gc.collect()
         _log_memory_snapshot("阶段2→2.5 GC后")
         self._emit(F5Phase.SECTOR_RPS, "[F5] 阶段2.5/3: 预计算板块 RPS...")
@@ -360,6 +413,68 @@ class _F5PipelineExecution:
 
     def _elapsed(self) -> float:
         return time.time() - self.start_time
+
+    def _inspect_vipdoc_source(self) -> None:
+        vipdoc = str(getattr(self.data_provider, "tdx_vipdoc", "") or "")
+        if not vipdoc or not Path(vipdoc).is_dir():
+            return
+        report = inspect_vipdoc_daily_source(vipdoc)
+        if report.unstable:
+            report = inspect_vipdoc_daily_source(vipdoc)
+        if report.unstable:
+            raise F5VipdocSourceError(
+                "vipdoc_source_unstable",
+                "通达信本地日线文件正在更新，请稍后重新执行 F5",
+            )
+        if not report.effective_trade_date or report.dated_symbol_count <= 0:
+            raise F5VipdocSourceError(
+                "vipdoc_source_unavailable",
+                "未从通达信 vipdoc 读取到有效日线记录",
+            )
+        expected_date = _latest_completed_cn_trade_date()
+        if expected_date and report.effective_trade_date < expected_date:
+            raise F5VipdocSourceError(
+                "vipdoc_source_stale",
+                f"通达信本地日线最新日期 {report.effective_trade_date} 落后于最近完成交易日 {expected_date}",
+            )
+        active_date = self._active_market_trade_date()
+        if active_date and report.effective_trade_date < active_date:
+            raise F5VipdocSourceError(
+                "vipdoc_source_stale",
+                f"通达信本地日线最新日期 {report.effective_trade_date} 落后于当前市场快照 {active_date}",
+            )
+        self.vipdoc_source = report
+        try:
+            save_json_file(str(Path(self.request.job_dir) / "vipdoc_source.json"), report.to_dict())
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.warnings.append(f"vipdoc 来源诊断写入失败: {exc}")
+        self._emit(
+            F5Phase.PREPARE,
+            f"[F5] 本地数据源预检 -- {report.effective_trade_date}，{report.symbol_count} 只标的",
+        )
+
+    def _verify_vipdoc_source_stable(self) -> None:
+        before = self.vipdoc_source
+        if before is None:
+            return
+        after = inspect_vipdoc_daily_source(before.source_path)
+        if after.unstable or after.signature != before.signature:
+            raise F5VipdocSourceError(
+                "vipdoc_source_changed_during_f5",
+                "F5 执行期间通达信本地日线发生变化，已拒绝激活不一致快照",
+            )
+
+    def _active_market_trade_date(self) -> str:
+        try:
+            getter = getattr(self.data_provider, "_get_market_data_warehouse", None)
+            warehouse = getter() if callable(getter) else getattr(self.data_provider, "market_data_warehouse", None)
+            status_reader = getattr(warehouse, "current_status", None)
+            status = status_reader(validate_parquet=False) if callable(status_reader) else None
+            if status is not None and bool(getattr(status, "ok", False)):
+                return normalize_trade_date(getattr(status, "trade_date", ""))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return ""
+        return ""
 
 
 class RPSPrecomputer:

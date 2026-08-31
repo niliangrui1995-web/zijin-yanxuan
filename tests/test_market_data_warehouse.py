@@ -883,8 +883,10 @@ def test_f5_stage1_progress_emits_job_events_under_system_log_backpressure(monke
             cancellation_checker=None,
             snapshot_writer=None,
             snapshot_date="",
+            load_cached_snapshot_if_empty=True,
         ):
             self.max_workers = max_workers
+            assert load_cached_snapshot_if_empty is False
             assert cancellation_checker is not None and cancellation_checker() is False
             if progress_callback:
                 progress_callback(1000, len(codes), "ETA 1 min")

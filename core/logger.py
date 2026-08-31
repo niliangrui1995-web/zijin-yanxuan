@@ -425,6 +425,23 @@ def _build_shared_handlers() -> list[logging.Handler]:
     return _shared_handlers
 
 
+def attach_shared_log_handler(handler: logging.Handler) -> None:
+    """Attach a process-local sink to current and future named loggers.
+
+    Workers use this to retain a job-scoped trace even though application
+    loggers intentionally do not propagate to the root logger.
+    """
+
+    with _logger_lock:
+        shared_handlers = _build_shared_handlers()
+        if handler not in shared_handlers:
+            setattr(handler, "_vcp_shared_handler", True)
+            shared_handlers.append(handler)
+        for logger in _logger_cache.values():
+            if handler not in logger.handlers:
+                logger.addHandler(handler)
+
+
 def get_logger(name: str = "vcp_hunter") -> logging.Logger:
     """Get logger by module name and reuse shared handlers."""
     logger_name = (name or "vcp_hunter").strip() or "vcp_hunter"

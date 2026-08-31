@@ -168,6 +168,8 @@ class F5JobResult:
     artifacts: F5SnapshotArtifacts | None = None
     error_code: str = ""
     error_message: str = ""
+    worker_exit_code: int | None = None
+    worker_stderr_tail: str = ""
     warnings: tuple[str, ...] = ()
     completed_at: str = field(default_factory=_now_iso)
     schema_version: int = F5_JOB_SCHEMA_VERSION
@@ -180,6 +182,8 @@ class F5JobResult:
         error_code: str,
         error_message: str,
         elapsed_seconds: float = 0.0,
+        worker_exit_code: int | None = None,
+        worker_stderr_tail: str = "",
         warnings: tuple[str, ...] = (),
     ) -> "F5JobResult":
         return cls(
@@ -189,6 +193,8 @@ class F5JobResult:
             elapsed_seconds=elapsed_seconds,
             error_code=str(error_code or "f5_failed"),
             error_message=str(error_message or "F5 job failed"),
+            worker_exit_code=int(worker_exit_code) if worker_exit_code is not None else None,
+            worker_stderr_tail=str(worker_stderr_tail or ""),
             warnings=tuple(warnings),
         )
 
@@ -220,6 +226,12 @@ class F5JobResult:
         artifacts = data.get("artifacts")
         data["artifacts"] = F5SnapshotArtifacts.from_dict(artifacts) if isinstance(artifacts, dict) else None
         data["warnings"] = tuple(data.get("warnings") or ())
+        raw_exit_code = data.get("worker_exit_code")
+        try:
+            data["worker_exit_code"] = int(raw_exit_code) if raw_exit_code is not None else None
+        except (TypeError, ValueError):
+            data["worker_exit_code"] = None
+        data["worker_stderr_tail"] = str(data.get("worker_stderr_tail") or "")
         return cls(**{name: data[name] for name in cls.__dataclass_fields__ if name in data})
 
     def to_dict(self) -> dict[str, Any]:

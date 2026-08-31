@@ -24,12 +24,13 @@ from domains.quotes.tdx_name_map import (
 )
 from infra.tasks.lifecycle import TaskCancelledError, raise_if_cancelled, reraise_task_cancellation
 from infra.tasks.owner_lifecycle import invoke_with_cancellation
-from vcp.constants import DATE_FMT, INCREMENTAL_BARS, MARKET_SYNC_WORKERS, MAX_HISTORY_BARS
+from vcp.constants import DATE_FMT, INCREMENTAL_BARS, MARKET_SYNC_WORKERS, MAX_HISTORY_BARS, MIN_HISTORY_BARS
 from vcp.data_provider_cache import load_cache_from_disk
 from vcp.data_provider_quotes import request_hithink_ticker_names, sanitize_hithink_error
 from vcp.utils import ensure_pandas_dataframe
 
 _log = get_logger(__name__)
+_MARKET_SYNC_MAX_IN_FLIGHT_PER_WORKER = 4
 
 
 def _resolve_market_sync_workers(*, offline: bool, requested_max_workers=None) -> int:
@@ -692,7 +693,7 @@ class TdxDataProviderHistoryMixin:
             try:
                 if self.tdx_vipdoc:
                     local_df = self._fetch_from_local_tdx(code)
-                    if local_df is not None and len(local_df) >= 250:
+                    if local_df is not None and len(local_df) >= MIN_HISTORY_BARS:
                         # 修复: 兼容 Polars 和 Pandas 两种 rename API
                         if "vol" in (local_df.columns if hasattr(local_df, "columns") else []):
                             if hasattr(local_df, "to_pandas"):
@@ -733,7 +734,7 @@ class TdxDataProviderHistoryMixin:
                     if gap_days > 10:
                         df = self._fetch_standard_data(api, code, count=MAX_HISTORY_BARS)
                         if df is not None:
-                            if len(df) >= 250:
+                            if len(df) >= MIN_HISTORY_BARS:
                                 return code, df, "OK"
                             return code, None, "次新股/上市不足250天"
                         return code, None, "全量下载超时"
@@ -742,7 +743,7 @@ class TdxDataProviderHistoryMixin:
                 return code, None, "增量下载超时"
             df = self._fetch_standard_data(api, code, count=MAX_HISTORY_BARS)
             if df is not None:
-                if len(df) >= 250:
+                if len(df) >= MIN_HISTORY_BARS:
                     return code, df, "OK"
                 return code, None, "次新股/上市不足250天"
             return code, None, "全量下载超时"
@@ -762,6 +763,7 @@ class TdxDataProviderHistoryMixin:
     def sync_market_data(
         self, codes, force_refresh=False, progress_callback=None, *, max_workers=None,
         cancellation_checker=None, snapshot_writer=None, snapshot_date: str | None = None,
+        load_cached_snapshot_if_empty: bool = True,
     ):
         requested_codes = tuple(dict.fromkeys(codes)) if codes is not None else ()
         if not requested_codes:
@@ -770,7 +772,7 @@ class TdxDataProviderHistoryMixin:
         today = today_date.strftime(DATE_FMT)
         persisted_date = _normalize_trade_date(snapshot_date) or today
         latest_trade_date = MarketCalendar.get_latest_trade_date("CN", ref_date=today_date).strftime(DATE_FMT)
-        if not self.cache_data:
+        if not self.cache_data and load_cached_snapshot_if_empty:
             self.load_cache_from_disk()
 
         snapshot_trade_date = _normalize_trade_date(getattr(self, "_market_data_snapshot_trade_date", ""))
@@ -809,47 +811,65 @@ class TdxDataProviderHistoryMixin:
         start_time = time.time()
         last_log_at = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_code = {
-                executor.submit(
-                    self._worker_fetch, code, force_refresh, self.cache_data.get(code) if not force_refresh else None
-                ): code
-                for code in requested_codes
-            }
-            for future in concurrent.futures.as_completed(future_to_code):
-                _raise_if_market_sync_cancelled(cancellation_checker, future_to_code)
-                completed += 1
-                if completed % 50 == 0:
-                    time.sleep(0.001)
-                pct = 100 * (completed / float(total))
-                current_step = int(pct / 10) * 10
-                should_log = (completed == total) or (current_step > last_log_at)
+            pending_futures = {}
+            code_iterator = iter(requested_codes)
 
-                if should_log:
-                    last_log_at = current_step
-                    percent = ("{0:.1f}").format(pct)
-                    elapsed = time.time() - start_time
-                    if elapsed > 2 and completed > 0:
-                        rate = completed / elapsed
-                        remaining_sec = (total - completed) / rate if rate > 0 else 0
-                        eta_msg = (
-                            f" ETA {int(remaining_sec / 60)} min"
-                            if remaining_sec >= 60
-                            else f" ETA {int(remaining_sec)} s"
-                        )
+            def _submit_next() -> bool:
+                try:
+                    code = next(code_iterator)
+                except StopIteration:
+                    return False
+                existing = self.cache_data.get(code) if not force_refresh else None
+                pending_futures[executor.submit(self._worker_fetch, code, force_refresh, existing)] = code
+                return True
+
+            pending_limit = min(total, max(workers, workers * _MARKET_SYNC_MAX_IN_FLIGHT_PER_WORKER))
+            for _index in range(pending_limit):
+                _submit_next()
+
+            while pending_futures:
+                _raise_if_market_sync_cancelled(cancellation_checker, pending_futures)
+                done_futures, _ = concurrent.futures.wait(
+                    pending_futures,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for future in done_futures:
+                    pending_futures.pop(future, None)
+                    _raise_if_market_sync_cancelled(cancellation_checker, pending_futures)
+                    completed += 1
+                    if completed % 50 == 0:
+                        time.sleep(0.001)
+                    pct = 100 * (completed / float(total))
+                    current_step = int(pct / 10) * 10
+                    should_log = (completed == total) or (current_step > last_log_at)
+
+                    if should_log:
+                        last_log_at = current_step
+                        percent = ("{0:.1f}").format(pct)
+                        elapsed = time.time() - start_time
+                        if elapsed > 2 and completed > 0:
+                            rate = completed / elapsed
+                            remaining_sec = (total - completed) / rate if rate > 0 else 0
+                            eta_msg = (
+                                f" ETA {int(remaining_sec / 60)} min"
+                                if remaining_sec >= 60
+                                else f" ETA {int(remaining_sec)} s"
+                            )
+                        else:
+                            eta_msg = ""
+                        _log.info(f" -> 同步进度: {percent}% [{completed}/{total}]{eta_msg}")
+                        if progress_callback:
+                            try:
+                                progress_callback(completed, total, eta_msg)
+                            except (RuntimeError, TypeError, ValueError) as _e:
+                                _log.debug(f"[数据中台] 进度回调异常: {_e}")
+                    res_code, res_df, status_msg = future.result()
+                    if res_df is not None:
+                        with self.cache_lock:
+                            self.cache_data[res_code] = res_df
                     else:
-                        eta_msg = ""
-                    _log.info(f" -> 同步进度: {percent}% [{completed}/{total}]{eta_msg}")
-                    if progress_callback:
-                        try:
-                            progress_callback(completed, total, eta_msg)
-                        except (RuntimeError, TypeError, ValueError) as _e:
-                            _log.debug(f"[数据中台] 进度回调异常: {_e}")
-                res_code, res_df, status_msg = future.result()
-                if res_df is not None:
-                    with self.cache_lock:
-                        self.cache_data[res_code] = res_df
-                else:
-                    audit_log.setdefault(status_msg, []).append(res_code)
+                        audit_log.setdefault(status_msg, []).append(res_code)
+                    _submit_next()
         gc.collect()
         failed_count = sum(len(v) for v in audit_log.values())
         _log.info(

@@ -9,8 +9,15 @@ from typing import Protocol
 
 from app.services.f5_job_contract import F5JobEvent, F5JobRequest, F5JobResult
 from core.f5_activation_gate import f5_snapshot_activation_boundary
+from core.f5_resource_guard import (
+    F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES,
+    ensure_f5_commit_headroom,
+)
 from infra.storage.f5_job_repository import F5JobRepository
 from infra.tasks.app_worker_process import spawn_f5_worker
+
+_TERMINAL_RESULT_READ_ATTEMPTS = 4
+_TERMINAL_RESULT_READ_DELAY_SECONDS = 0.05
 
 
 class F5JobHandle(Protocol):
@@ -58,10 +65,23 @@ class ProcessF5JobHandle(_RepositoryEventCursor):
     def result(self) -> F5JobResult | None:
         if self._result is not None:
             return self._result
-        payload = self.repository.read_result()
+        payload, read_error = self._read_terminal_payload()
         if payload is not None:
-            self._result = F5JobResult.from_dict(payload)
-        elif self._cancel_reason and not self.is_running():
+            try:
+                self._result = F5JobResult.from_dict(payload)
+            except Exception as exc:
+                if self.is_running():
+                    return None
+                self._result = self._abnormal_exit_result(exc)
+                self._persist_terminal_result()
+            else:
+                returncode = self._process_returncode()
+                if self._result.status.value == "ready_to_activate" and returncode not in (None, 0):
+                    self._result = self._ready_exit_failure_result(returncode)
+                    self._persist_terminal_result()
+        elif self.is_running():
+            return None
+        elif self._cancel_reason:
             error_code = "deadline_exceeded" if self._cancel_reason == "deadline_exceeded" else "cancelled"
             self._result = F5JobResult.cancelled(
                 self.request,
@@ -69,8 +89,85 @@ class ProcessF5JobHandle(_RepositoryEventCursor):
                 reason=self._cancel_reason,
                 error_code=error_code,
             )
-            self.repository.write_result(self._result.to_dict())
+            self._persist_terminal_result()
+        else:
+            self._result = self._abnormal_exit_result(read_error)
+            self._persist_terminal_result()
         return self._result
+
+    def _read_terminal_payload(self) -> tuple[dict | None, Exception | None]:
+        read_error = None
+        for attempt in range(_TERMINAL_RESULT_READ_ATTEMPTS):
+            try:
+                payload = self.repository.read_result()
+                if payload is not None:
+                    return payload, None
+            except Exception as exc:
+                read_error = exc
+            if self._process_returncode() is None:
+                return None, read_error
+            if attempt + 1 < _TERMINAL_RESULT_READ_ATTEMPTS:
+                time.sleep(_TERMINAL_RESULT_READ_DELAY_SECONDS)
+        return None, read_error
+
+    def _abnormal_exit_result(self, read_error: Exception | None) -> F5JobResult:
+        returncode = self._process_returncode()
+        stderr_tail = self.repository.read_worker_stderr_tail()
+        exit_display = _display_returncode(returncode)
+        message = f"F5 worker exited without a terminal result (exit_code={exit_display})"
+        error_code = "worker_process_exited"
+        if read_error is not None:
+            error_code = "worker_result_unreadable"
+            message = f"{message}; terminal result could not be read: {read_error}"
+        if stderr_tail:
+            message = f"{message}; stderr: {stderr_tail}"
+        return F5JobResult.failed(
+            self.request,
+            error_code=error_code,
+            error_message=message,
+            elapsed_seconds=time.monotonic() - self._started_at,
+            worker_exit_code=returncode,
+            worker_stderr_tail=stderr_tail,
+        )
+
+    def _ready_exit_failure_result(self, returncode: int) -> F5JobResult:
+        stderr_tail = self.repository.read_worker_stderr_tail()
+        message = (
+            "F5 worker reported ready_to_activate but exited before activation "
+            f"(exit_code={_display_returncode(returncode)}); activation was blocked"
+        )
+        if stderr_tail:
+            message = f"{message}; stderr: {stderr_tail}"
+        return F5JobResult.failed(
+            self.request,
+            error_code="worker_ready_exit_nonzero",
+            error_message=message,
+            elapsed_seconds=time.monotonic() - self._started_at,
+            worker_exit_code=returncode,
+            worker_stderr_tail=stderr_tail,
+        )
+
+    def _persist_terminal_result(self) -> None:
+        if self._result is None:
+            return
+        try:
+            self.repository.write_result(self._result.to_dict())
+        except Exception:
+            # The controller still receives the in-memory result and can make a
+            # second best-effort write after the monitor releases the process.
+            return
+
+    def _process_returncode(self) -> int | None:
+        try:
+            value = self.process.poll()
+        except OSError:
+            value = getattr(self.process, "returncode", None)
+        if value is None:
+            value = getattr(self.process, "returncode", None)
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def cancel(self, reason: str = "cancelled") -> None:
         if not self._cancel_reason:
@@ -139,6 +236,10 @@ class ProcessF5JobHandle(_RepositoryEventCursor):
 
 class ProcessF5JobRunner:
     def start(self, request: F5JobRequest) -> ProcessF5JobHandle:
+        ensure_f5_commit_headroom(
+            F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES,
+            stage="F5 启动",
+        )
         with f5_snapshot_activation_boundary():
             repository = F5JobRepository(request.job_dir)
             repository.write_request(request.to_dict())
@@ -148,6 +249,14 @@ class ProcessF5JobRunner:
 
 def persist_f5_terminal_result(request: F5JobRequest, result: F5JobResult) -> None:
     F5JobRepository(request.job_dir).write_result(result.to_dict())
+
+
+def _display_returncode(returncode: int | None) -> str:
+    if returncode is None:
+        return "unknown"
+    if returncode < 0:
+        return f"0x{returncode & 0xFFFFFFFF:08X}"
+    return str(returncode)
 
 
 __all__ = [

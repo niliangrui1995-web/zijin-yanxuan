@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from infra.storage.f5_job_repository import F5JobRepository
 from infra.tasks.process_runner import spawn_silent_process
 
 _F5_SINGLE_THREAD_MATH_ENV = (
@@ -67,6 +68,8 @@ def _f5_worker_environment() -> dict[str, str]:
     worker_env = os.environ.copy()
     logical_cpu_count = max(1, int(os.cpu_count() or 1))
     worker_env["POLARS_MAX_THREADS"] = str(max(1, min(2, logical_cpu_count // 2)))
+    worker_env["PYTHONFAULTHANDLER"] = "1"
+    worker_env["PYTHONUNBUFFERED"] = "1"
     for variable in _F5_SINGLE_THREAD_MATH_ENV:
         worker_env[variable] = "1"
     return worker_env
@@ -74,12 +77,16 @@ def _f5_worker_environment() -> dict[str, str]:
 
 def spawn_f5_worker(*, project_root: str, job_dir: str):
     creationflags = int(getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) or 0)
-    return spawn_silent_process(
-        build_f5_worker_command(project_root=project_root, job_dir=job_dir),
-        cwd=str(Path(project_root).resolve()),
-        creationflags=creationflags,
-        env=_f5_worker_environment(),
-    )
+    repository = F5JobRepository(job_dir)
+    with repository.worker_stdout_path.open("ab") as stdout, repository.worker_stderr_path.open("ab") as stderr:
+        return spawn_silent_process(
+            build_f5_worker_command(project_root=project_root, job_dir=job_dir),
+            cwd=str(Path(project_root).resolve()),
+            creationflags=creationflags,
+            env=_f5_worker_environment(),
+            stdout=stdout,
+            stderr=stderr,
+        )
 
 
 __all__ = [

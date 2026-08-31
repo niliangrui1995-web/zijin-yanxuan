@@ -452,6 +452,31 @@ def test_sync_market_data_reports_failures_progress_and_unsaved_parquet(monkeypa
     assert provider._market_data_snapshot_trade_date == ""
 
 
+def test_sync_market_data_keeps_only_a_bounded_number_of_futures_in_flight(monkeypatch):
+    provider = _Provider()
+    provider.tdx_vipdoc = ""
+    provider.load_cache_from_disk = lambda: None
+    provider._worker_fetch = lambda code, *_args: (code, _frame(250), "OK")
+    observed_pending_counts = []
+    real_wait = history.concurrent.futures.wait
+    codes = [f"{index:06d}" for index in range(31)]
+    _fixed_calendar(monkeypatch)
+
+    from vcp import polars_engine
+
+    monkeypatch.setattr(polars_engine, "save_cache_parquet", lambda *_args: True)
+
+    def _record_wait(futures, **kwargs):
+        observed_pending_counts.append(len(futures))
+        return real_wait(futures, **kwargs)
+
+    monkeypatch.setattr(history.concurrent.futures, "wait", _record_wait)
+
+    assert provider.sync_market_data(codes, force_refresh=True, max_workers=2) is True
+    assert observed_pending_counts
+    assert max(observed_pending_counts) <= 2 * history._MARKET_SYNC_MAX_IN_FLIGHT_PER_WORKER
+
+
 def test_sync_market_data_contains_parquet_exception_and_force_refresh(monkeypatch):
     provider = _Provider()
     provider.cache_data["000001"] = _frame(1, start="2026-07-13")

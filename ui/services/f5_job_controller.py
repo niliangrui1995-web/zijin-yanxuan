@@ -83,6 +83,12 @@ def _finish_missing_worker_result(controller, request: F5JobRequest) -> None:
     )
 
 
+def _monitor_failure_error(exc: BaseException) -> RuntimeError:
+    detail = str(exc).strip()
+    message = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+    return RuntimeError(f"F5 worker monitor failed: {message}")
+
+
 def _enforce_monitor_deadline(monitor, deadline_requested: bool) -> bool:
     if deadline_requested:
         return True
@@ -197,27 +203,27 @@ class _F5WorkerMonitor:
     def _abort_after_error(self, *, result_called: bool) -> None:
         try:
             self._handle.cancel("controller_failed")
-        except Exception:
+        except BaseException:
             pass
         try:
             running = self._handle.is_running()
-        except Exception:
+        except BaseException:
             running = True
         if running:
             try:
                 self._handle.force_terminate()
-            except Exception:
+            except BaseException:
                 pass
         if result_called:
             return
         try:
             running = self._handle.is_running()
-        except Exception:
+        except BaseException:
             running = True
         if not running:
             try:
                 self._handle.result()
-            except Exception:
+            except BaseException:
                 pass
 
     def _run(self) -> None:
@@ -253,9 +259,9 @@ class _F5WorkerMonitor:
 
                 self._wake_event.wait(self._poll_interval)
                 self._wake_event.clear()
-        except Exception as exc:
+        except BaseException as exc:
             self._abort_after_error(result_called=result_called)
-            self._publish("error", exc)
+            self._publish("error", _monitor_failure_error(exc))
         finally:
             self._done_event.set()
 
@@ -328,7 +334,7 @@ class F5JobController(QObject):
             self._finish(
                 F5JobResult.failed(
                     request,
-                    error_code="worker_start_failed",
+                    error_code=str(getattr(exc, "error_code", "worker_start_failed") or "worker_start_failed"),
                     error_message=str(exc),
                 )
             )

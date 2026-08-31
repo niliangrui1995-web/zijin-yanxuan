@@ -51,6 +51,8 @@ class F5JobRepository:
         self.result_path = self.job_dir / "result.json"
         self.cancel_path = self.job_dir / "cancel.request"
         self.log_path = self.job_dir / "worker.log"
+        self.worker_stdout_path = self.job_dir / "worker.stdout.log"
+        self.worker_stderr_path = self.job_dir / "worker.stderr.log"
         self.job_dir.mkdir(parents=True, exist_ok=True)
 
     def write_request(self, payload: dict[str, Any]) -> None:
@@ -82,6 +84,17 @@ class F5JobRepository:
         if not isinstance(payload, dict):
             raise ValueError("F5 result payload must be an object")
         return payload
+
+    def read_worker_stderr_tail(self, *, max_bytes: int = 16 * 1024) -> str:
+        try:
+            with self.worker_stderr_path.open("rb") as file_obj:
+                file_obj.seek(0, os.SEEK_END)
+                size = file_obj.tell()
+                file_obj.seek(max(0, size - max(0, int(max_bytes or 0))), os.SEEK_SET)
+                payload = file_obj.read()
+        except OSError:
+            return ""
+        return payload.decode("utf-8", errors="replace").strip()
 
     def request_cancel(self, reason: str = "cancelled") -> None:
         save_json_file(str(self.cancel_path), {"reason": str(reason or "cancelled")})

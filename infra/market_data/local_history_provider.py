@@ -6,7 +6,7 @@ from typing import cast
 import pandas as pd
 
 from core.logger import get_logger
-from core.runtime_paths import INCREMENTAL_BARS, MAX_HISTORY_BARS
+from core.runtime_paths import INCREMENTAL_BARS, MAX_HISTORY_BARS, MIN_HISTORY_BARS
 from domains.market_calendar import MarketCalendar
 from infra.tasks.lifecycle import (
     TaskCancelledError,
@@ -109,7 +109,7 @@ class LocalHistoryProvider:
         if local_df is None or len(local_df) == 0:
             self._log.error(f"[数据中台] 本地日线 {code} 异常，改用网络")
             return None
-        if len(local_df) < 250:
+        if len(local_df) < MIN_HISTORY_BARS:
             self._log.info(f"[缓存] 本地日线 {code}: 共 {len(local_df)} 条")
             return None
         try:
@@ -203,7 +203,7 @@ class LocalHistoryProvider:
                 code,
                 count=MAX_HISTORY_BARS,
             )
-            if full_df is not None and len(full_df) >= 250:
+            if full_df is not None and len(full_df) >= MIN_HISTORY_BARS:
                 return _cache_chart_frame(self.provider, code, full_df, cancellation_token)
             return None
         combined = pd.concat([existing_df, new])
@@ -218,7 +218,7 @@ class LocalHistoryProvider:
             code,
             count=MAX_HISTORY_BARS,
         )
-        if full_df is None or len(full_df) < 250:
+        if full_df is None or len(full_df) < MIN_HISTORY_BARS:
             return None
         return _cache_chart_frame(self.provider, code, full_df, cancellation_token)
 
@@ -243,7 +243,7 @@ class LocalHistoryProvider:
 
         api = invoke_with_cancellation(provider._get_thread_api, cancellation_token)
         try:
-            if existing_df is not None and len(existing_df) >= 250:
+            if existing_df is not None and len(existing_df) >= MIN_HISTORY_BARS:
                 refreshed = self._refresh_existing_chart_data(api, code, existing_df, cancellation_token)
             else:
                 refreshed = self._refresh_full_chart_data(api, code, cancellation_token)

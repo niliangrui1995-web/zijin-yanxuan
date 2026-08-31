@@ -15,6 +15,12 @@ from app.services.f5_job_contract import F5JobResult, F5JobStatus, F5SnapshotArt
 from app.services.f5_retention_service import discard_failed_f5_generation, prune_f5_runtime
 from core.exceptions import CacheIOError, DataFormatError
 from core.f5_activation_gate import f5_snapshot_activation_boundary
+from core.f5_resource_guard import (
+    F5_ACTIVATION_LOAD_MIN_COMMIT_HEADROOM_BYTES,
+    F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES,
+    F5MemoryPressureError,
+    ensure_f5_commit_headroom,
+)
 from core.logger import get_logger
 from infra.market_data.f5_market_snapshot_store import F5MarketSnapshotStore
 from infra.market_data.market_data_warehouse import MARKET_DATA_SCHEMA_VERSION, MARKET_DATASET, WarehouseReadResult
@@ -335,13 +341,30 @@ class F5SnapshotInstaller:
             return contract_error
         try:
             _raise_if_activation_cancelled(cancelled_checker)
+            ensure_f5_commit_headroom(
+                F5_ACTIVATION_LOAD_MIN_COMMIT_HEADROOM_BYTES,
+                stage="F5 快照激活加载",
+            )
             bundle = self._load_validated_bundle(result)
             _raise_if_activation_cancelled(cancelled_checker)
+            ensure_f5_commit_headroom(
+                F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES,
+                stage="F5 快照激活提交",
+            )
             snapshot = self._activate_bundle_atomically(result, bundle, cancelled_checker)
             if cancelled_checker is None or not cancelled_checker():
                 self._update_compatibility_mirrors(snapshot)
                 self._prune_runtime(result.run_id)
             return replace(result, status=F5JobStatus.SUCCEEDED, error_code="", error_message="")
+        except F5MemoryPressureError as exc:
+            log.warning("[F5] snapshot activation rejected by resource guard: %s", exc)
+            self._discard_failed_generation(result.run_id)
+            return replace(
+                result,
+                status=F5JobStatus.FAILED,
+                error_code=exc.error_code,
+                error_message=str(exc),
+            )
         except F5ActivationCancelled as exc:
             self._discard_failed_generation(result.run_id)
             return replace(

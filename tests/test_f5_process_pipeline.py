@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from app.services import f5_job_runner as f5_job_runner_module
 from app.services import f5_snapshot_installer as installer_module
 from app.services.f5_job_contract import (
     F5_JOB_SCHEMA_VERSION,
@@ -25,7 +26,7 @@ from app.services.f5_job_contract import (
     F5Phase,
     F5SnapshotArtifacts,
 )
-from app.services.f5_job_runner import ProcessF5JobHandle
+from app.services.f5_job_runner import ProcessF5JobHandle, ProcessF5JobRunner
 from app.services.f5_retention_service import (
     discard_failed_f5_generation,
     inspect_f5_runtime,
@@ -34,6 +35,7 @@ from app.services.f5_retention_service import (
 from app.services.f5_snapshot_installer import F5SnapshotInstaller
 from core import rps_precomputer as rps_module
 from core.f5_activation_gate import f5_snapshot_read_boundary
+from core.f5_resource_guard import F5MemoryPressureError
 from core.rps_precomputer import RPSPrecomputer
 from infra.market_data.f5_market_snapshot_store import F5MarketSnapshotStore
 from infra.market_data.market_data_warehouse import MARKET_DATASET, WarehouseReadResult, WarehouseStatus
@@ -342,8 +344,11 @@ def test_f5_worker_reserves_foreground_cpu_and_disables_nested_math_parallelism(
 
     assert result is not None
     assert captured["env"]["POLARS_MAX_THREADS"] == "2"
+    assert captured["env"]["PYTHONFAULTHANDLER"] == "1"
     for variable in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         assert captured["env"][variable] == "1"
+    assert Path(captured["stdout"].name) == Path(tmp_path / "job" / "worker.stdout.log")
+    assert Path(captured["stderr"].name) == Path(tmp_path / "job" / "worker.stderr.log")
 
 
 def test_f5_job_builds_job_local_coherent_bundle_with_effective_date(tmp_path, monkeypatch):
@@ -527,10 +532,18 @@ def test_real_subprocess_cancel_and_crash_without_result_are_terminal(tmp_path):
 
     crashed_request = _request(tmp_path, run_id="b" * 32)
     crashed_repository = F5JobRepository(crashed_request.job_dir)
+    crashed_repository.worker_stderr_path.write_text("fatal worker marker", encoding="utf-8")
     crashed_process = subprocess.Popen([sys.executable, "-c", "raise SystemExit(7)"])
     crashed_process.wait(timeout=5)
     crashed_handle = ProcessF5JobHandle(crashed_request, crashed_repository, crashed_process)
-    assert crashed_handle.result() is None
+    crashed = crashed_handle.result()
+    assert crashed is not None
+    assert crashed.status is F5JobStatus.FAILED
+    assert crashed.error_code == "worker_process_exited"
+    assert crashed.worker_exit_code == 7
+    assert "exit_code=7" in crashed.error_message
+    assert "fatal worker marker" in crashed.error_message
+    assert F5JobResult.from_dict(crashed_repository.read_result()).worker_exit_code == 7
 
     finished = []
     controller = F5JobController(
@@ -539,7 +552,137 @@ def test_real_subprocess_cancel_and_crash_without_result_are_terminal(tmp_path):
     )
     controller.start(crashed_request, on_finished=finished.append)
     _wait_for_worker_monitor(controller)
-    assert finished[0].error_code == "worker_exited_without_result"
+    assert finished[0].error_code == "worker_process_exited"
+
+
+def test_process_handle_treats_zero_exit_without_result_as_failure(tmp_path):
+    request = _request(tmp_path, run_id="c" * 32)
+    repository = F5JobRepository(request.job_dir)
+    repository.worker_stderr_path.write_text("native exit marker", encoding="utf-8")
+    process = subprocess.Popen([sys.executable, "-c", "import os; os._exit(0)"])
+    process.wait(timeout=5)
+
+    result = ProcessF5JobHandle(request, repository, process).result()
+
+    assert result is not None
+    assert result.status is F5JobStatus.FAILED
+    assert result.worker_exit_code == 0
+    assert "exit_code=0" in result.error_message
+
+
+def test_process_handle_retries_terminal_result_after_transient_read_error(tmp_path, monkeypatch):
+    request = _request(tmp_path, run_id="d" * 32)
+    repository = F5JobRepository(request.job_dir)
+    worker_result = F5JobResult.failed(
+        request,
+        error_code="worker_memory_exhausted",
+        error_message="MemoryError",
+    )
+    attempts = []
+
+    def _read_result():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise OSError("temporary sharing violation")
+        return worker_result.to_dict()
+
+    class _ExitedProcess:
+        returncode = 1
+
+        @staticmethod
+        def poll():
+            return 1
+
+        @staticmethod
+        def wait(timeout=None):
+            return 1
+
+    monkeypatch.setattr(repository, "read_result", _read_result)
+    monkeypatch.setattr(f5_job_runner_module.time, "sleep", lambda _seconds: None)
+
+    result = ProcessF5JobHandle(request, repository, _ExitedProcess()).result()
+
+    assert result is not None
+    assert result.error_code == "worker_memory_exhausted"
+    assert len(attempts) >= 2
+
+
+def test_process_handle_terminalizes_malformed_worker_result(tmp_path):
+    request = _request(tmp_path, run_id="e" * 32)
+    repository = F5JobRepository(request.job_dir)
+    repository.write_result({"schema_version": 0})
+
+    class _ExitedProcess:
+        returncode = 23
+
+        @staticmethod
+        def poll():
+            return 23
+
+        @staticmethod
+        def wait(timeout=None):
+            return 23
+
+    result = ProcessF5JobHandle(request, repository, _ExitedProcess()).result()
+
+    assert result is not None
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "worker_result_unreadable"
+    assert result.worker_exit_code == 23
+    assert "unsupported F5 result schema_version: 0" in result.error_message
+    persisted = F5JobResult.from_dict(repository.read_result())
+    assert persisted.error_code == "worker_result_unreadable"
+
+
+def test_process_handle_blocks_ready_result_when_worker_exits_nonzero(tmp_path):
+    request = _request(tmp_path, run_id="f" * 32)
+    repository = F5JobRepository(request.job_dir)
+    repository.write_result(_ready_result(request).to_dict())
+    repository.worker_stderr_path.write_text("native crash after result", encoding="utf-8")
+
+    class _ExitedProcess:
+        returncode = 7
+
+        @staticmethod
+        def poll():
+            return 7
+
+        @staticmethod
+        def wait(timeout=None):
+            return 7
+
+    result = ProcessF5JobHandle(request, repository, _ExitedProcess()).result()
+
+    assert result is not None
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "worker_ready_exit_nonzero"
+    assert result.worker_exit_code == 7
+    assert "ready_to_activate" in result.error_message
+    assert "native crash after result" in result.error_message
+    persisted = F5JobResult.from_dict(repository.read_result())
+    assert persisted.error_code == "worker_ready_exit_nonzero"
+
+
+def test_runner_rejects_critical_memory_pressure_before_spawning_worker(tmp_path, monkeypatch):
+    request = _request(tmp_path, run_id="e" * 32)
+    spawned = []
+    pressure = F5MemoryPressureError(stage="F5 启动", headroom_bytes=128 * 1024**2, minimum_bytes=2 * 1024**3)
+    monkeypatch.setattr(f5_job_runner_module, "ensure_f5_commit_headroom", lambda *_args, **_kwargs: (_ for _ in ()).throw(pressure))
+    monkeypatch.setattr(f5_job_runner_module, "spawn_f5_worker", lambda **_kwargs: spawned.append(True))
+
+    with pytest.raises(F5MemoryPressureError):
+        ProcessF5JobRunner().start(request)
+
+    assert spawned == []
+    assert not Path(request.job_dir).exists()
+
+    finished = []
+    controller = F5JobController(
+        runner=SimpleNamespace(start=lambda _request: (_ for _ in ()).throw(pressure)),
+        installer=SimpleNamespace(prune_after_terminal=lambda _result: None),
+    )
+    assert controller.start(request, on_finished=finished.append) is True
+    assert finished[0].error_code == "insufficient_memory_headroom"
 
 
 def test_process_handle_os_errors_still_attempt_kill_and_reap(tmp_path):
@@ -681,6 +824,47 @@ def test_controller_poll_error_terminates_and_reaps_worker(tmp_path):
     assert ("cancel", "controller_failed") in calls
     assert "force" in calls and "result" in calls
     assert finished[0].error_code == "f5_controller_failed"
+
+
+def test_controller_monitor_base_exception_publishes_terminal_failure(tmp_path):
+    request = _request(tmp_path)
+    calls = []
+
+    class _SystemExitHandle:
+        def __init__(self):
+            self.running = True
+
+        def poll_events(self):
+            raise SystemExit("poll events aborted")
+
+        def cancel(self, reason):
+            calls.append(("cancel", reason))
+
+        def is_running(self):
+            return self.running
+
+        def force_terminate(self):
+            calls.append("force")
+            self.running = False
+
+        def result(self):
+            calls.append("result")
+            return None
+
+    finished = []
+    controller = F5JobController(
+        runner=SimpleNamespace(start=lambda _request: _SystemExitHandle()),
+        installer=SimpleNamespace(prune_after_terminal=lambda _result: None),
+    )
+    controller.start(request, on_finished=finished.append)
+
+    _wait_for_worker_monitor(controller)
+
+    assert ("cancel", "controller_failed") in calls
+    assert "force" in calls and "result" in calls
+    assert finished[0].error_code == "f5_controller_failed"
+    assert "SystemExit: poll events aborted" in finished[0].error_message
+    assert controller._handle is None
 
 
 def test_controller_waits_for_worker_exit_after_result_is_written(tmp_path):
@@ -1563,6 +1747,77 @@ def test_installer_full_success_publishes_market_rps_and_gbbq(tmp_path, monkeypa
     assert engine.payload["date"] == "20260714"
     assert json.loads(Path(provider.gbbq_cache_file).read_text(encoding="utf-8"))["mtime"] == 2.0
     assert provider._local_gbbq_loaded is False
+
+
+def test_installer_rejects_memory_pressure_before_loading_next_full_market_bundle(tmp_path, monkeypatch):
+    request = _request(tmp_path)
+    ready = _stage_ready_generation(request)
+    provider = _parent_provider(tmp_path)
+    installer = F5SnapshotInstaller(
+        data_provider=provider,
+        engine=_ParentEngine(),
+        database_path=str(tmp_path / "manifest.db"),
+        cache_dir=request.cache_dir,
+    )
+    pressure = F5MemoryPressureError(
+        stage="F5 快照激活",
+        headroom_bytes=128 * 1024**2,
+        minimum_bytes=2 * 1024**3,
+    )
+    loaded = []
+    monkeypatch.setattr(
+        installer_module,
+        "ensure_f5_commit_headroom",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(pressure),
+    )
+    monkeypatch.setattr(installer, "_load_validated_bundle", lambda _result: loaded.append(True))
+
+    result = installer.activate(ready)
+
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "insufficient_memory_headroom"
+    assert loaded == []
+
+
+def test_installer_rechecks_memory_after_loading_next_full_market_bundle(tmp_path, monkeypatch):
+    request = _request(tmp_path)
+    ready = _stage_ready_generation(request)
+    provider = _parent_provider(tmp_path)
+    installer = F5SnapshotInstaller(
+        data_provider=provider,
+        engine=_ParentEngine(),
+        database_path=str(tmp_path / "manifest.db"),
+        cache_dir=request.cache_dir,
+    )
+    bundle = installer_module._ValidatedBundle(
+        market=WarehouseReadResult(
+            {"new": object()},
+            WarehouseStatus(ok=True, trade_date="20260714", symbol_count=1, row_count=60),
+        ),
+        rps120={"new": 90},
+        rps250={"new": 80},
+    )
+    calls = []
+    pressure = F5MemoryPressureError(
+        stage="F5 快照激活提交",
+        headroom_bytes=128 * 1024**2,
+        minimum_bytes=2 * 1024**3,
+    )
+
+    def _guard(_minimum_bytes, *, stage):
+        calls.append(stage)
+        if stage == "F5 快照激活提交":
+            raise pressure
+
+    monkeypatch.setattr(installer_module, "ensure_f5_commit_headroom", _guard)
+    monkeypatch.setattr(installer, "_load_validated_bundle", lambda _result: bundle)
+
+    result = installer.activate(ready)
+
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "insufficient_memory_headroom"
+    assert calls == ["F5 快照激活加载", "F5 快照激活提交"]
+    assert installer.repository.active() is None
 
 
 def test_activation_gate_never_exposes_mixed_pointer_memory_and_rps(tmp_path, monkeypatch):

@@ -115,6 +115,41 @@ def test_sync_market_data_refreshes_stale_nonempty_runtime_cache(monkeypatch):
     assert not any("[缓存] 阶段1完成" in message for message in error_logs)
 
 
+def test_sync_market_data_can_skip_disk_bootstrap_for_isolated_f5_full_reread(monkeypatch):
+    from core.market_calendar import MarketCalendar
+    from vcp import data_provider_history_mixin as history_mixin
+    from vcp import polars_engine
+
+    provider = _DummyProvider()
+    provider._offline = True
+    provider._is_before_930_today = lambda: False
+    provider._is_trading_day = lambda: True
+    provider._downcast_memory = lambda: None
+    provider.legacy_cache_file = ""
+    provider.legacy_fallback_cache_file = ""
+    loaded = []
+    provider.load_cache_from_disk = lambda: loaded.append(True) or provider.cache_data.update({"old": object()})
+    provider._worker_fetch = lambda code, force, existing: (code, pd.DataFrame({"close": [1.0]}), "OK")
+
+    monkeypatch.setattr(MarketCalendar, "today", classmethod(lambda cls, market="CN": date(2026, 7, 10)))
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_latest_trade_date",
+        classmethod(lambda cls, market="CN", ref_date=None: date(2026, 7, 10)),
+    )
+    monkeypatch.setattr(polars_engine, "save_cache_parquet", lambda *_args: True)
+    monkeypatch.setattr(history_mixin, "remove_cache_file", lambda _path: None)
+
+    assert provider.sync_market_data(
+        ["000001"],
+        force_refresh=True,
+        max_workers=1,
+        load_cached_snapshot_if_empty=False,
+    ) is True
+    assert loaded == []
+    assert set(provider.cache_data) == {"000001"}
+
+
 def test_sync_market_data_checks_every_requested_code_instead_of_global_latest(monkeypatch):
     from core.market_calendar import MarketCalendar
     from vcp import data_provider_history_mixin as history_mixin

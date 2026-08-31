@@ -42,6 +42,8 @@ def test_worker_logging_uses_job_local_utf8_file(monkeypatch, tmp_path):
         "FileHandler",
         lambda path, *, encoding: captured.update(path=path, encoding=encoding) or handler,
     )
+    attached = []
+    monkeypatch.setattr(worker, "attach_shared_log_handler", attached.append)
 
     try:
         worker._configure_worker_logging(repository)
@@ -53,6 +55,7 @@ def test_worker_logging_uses_job_local_utf8_file(monkeypatch, tmp_path):
     assert captured["encoding"] == "utf-8"
     assert handler.formatter is not None
     assert "%(asctime)s" in handler.formatter._fmt
+    assert attached == [handler]
 
 
 def test_execute_request_publishes_progress_and_ready_result(monkeypatch, tmp_path):
@@ -131,8 +134,37 @@ def test_execute_request_converts_deadline_and_worker_crash_to_terminal_results(
 
     assert crash_result.status is F5JobStatus.FAILED
     assert crash_result.error_code == "worker_crash"
-    assert crash_result.error_message == "deterministic crash"
+    assert crash_result.error_message == "RuntimeError: deterministic crash"
     assert discarded == [deadline_request, crash_request]
+
+
+@pytest.mark.parametrize(
+    ("exception_factory", "expected_code"),
+    [
+        (lambda: AssertionError("invariant failed"), "worker_crash"),
+        (lambda: MemoryError("out of memory"), "worker_memory_exhausted"),
+        (lambda: SystemExit(7), "worker_system_exit"),
+        (lambda: KeyboardInterrupt(), "worker_interrupted"),
+    ],
+)
+def test_execute_request_terminalizes_base_exceptions(monkeypatch, tmp_path, exception_factory, expected_code):
+    request = _request(tmp_path / expected_code)
+    repository = F5JobRepository(request.job_dir)
+    discarded = []
+    monkeypatch.setattr(
+        rps_module.RPSPrecomputer,
+        "run_f5_job",
+        staticmethod(lambda *_args, **_kwargs: (_ for _ in ()).throw(exception_factory())),
+    )
+    monkeypatch.setattr(worker, "_discard_failed_generation", discarded.append)
+
+    result = worker.execute_request(request, repository)
+
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == expected_code
+    assert type(exception_factory()).__name__ in result.error_message
+    assert F5JobResult.from_dict(repository.read_result()).error_code == expected_code
+    assert discarded == [request]
 
 
 def test_failed_generation_cleanup_is_best_effort(monkeypatch, tmp_path):
@@ -172,6 +204,24 @@ def test_worker_main_rejects_missing_and_mismatched_requests(monkeypatch, tmp_pa
     assert result.status is F5JobStatus.FAILED
     assert result.error_code == "worker_initialization_failed"
     assert "job_dir does not match" in result.error_message
+
+
+def test_worker_main_terminalizes_logging_initialization_failure(monkeypatch, tmp_path):
+    request = _request(tmp_path / "logging-failure")
+    repository = F5JobRepository(request.job_dir)
+    repository.write_request(request.to_dict())
+    monkeypatch.setattr(
+        worker,
+        "_configure_worker_logging",
+        lambda _repository: (_ for _ in ()).throw(OSError("job log unavailable")),
+    )
+
+    assert worker.main(["--job-dir", request.job_dir]) == 1
+
+    result = F5JobResult.from_dict(repository.read_result())
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "worker_initialization_failed"
+    assert "job log unavailable" in result.error_message
 
 
 @pytest.mark.parametrize(
