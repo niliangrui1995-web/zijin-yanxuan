@@ -547,6 +547,14 @@ class StockTableModel(QAbstractTableModel):
                 recorded = self._record_cell_flash(row, col, old_row.get(header), new_row.get(header)) or recorded
         return recorded
 
+    def _unchanged_cell_flashes(self, records: dict, old_row: dict, new_row: dict) -> dict:
+        return {
+            col: record
+            for col, record in records.items()
+            if 0 <= col < len(self._headers)
+            and old_row.get(self._headers[col]) == new_row.get(self._headers[col])
+        }
+
     def _flash_roles(self, *, include_flash: bool = True) -> list[Qt.ItemDataRole]:
         roles = [
             Qt.ItemDataRole.DisplayRole,
@@ -566,7 +574,7 @@ class StockTableModel(QAbstractTableModel):
             roles.insert(7, Qt.ItemDataRole.UserRole + 1)
         return roles
 
-    def _emit_incremental_rows(self, rows: list) -> list[int]:
+    def _emit_incremental_rows(self, rows: list, *, record_flash: bool = True) -> list[int]:
         _sync_serial_values(rows)
         changed_rows = []
         changed_rows_by_span = {}
@@ -578,7 +586,14 @@ class StockTableModel(QAbstractTableModel):
                 changed_keys = _changed_row_keys(old_row, new_row)
                 codes_changed = codes_changed or "代码" in changed_keys
                 changed_cols = _affected_columns_for_row_change(self._headers, changed_keys)
-                flash_recorded = self._record_row_flashes(row_idx, old_row, new_row) or flash_recorded
+                if record_flash:
+                    flash_recorded = self._record_row_flashes(row_idx, old_row, new_row) or flash_recorded
+                elif row_idx in self._flash_records:
+                    retained = self._unchanged_cell_flashes(self._flash_records[row_idx], old_row, new_row)
+                    if retained:
+                        self._flash_records[row_idx] = retained
+                    else:
+                        self._flash_records.pop(row_idx, None)
                 self._data[row_idx] = new_row
                 changed_rows.append(row_idx)
                 for span in _contiguous_column_spans(changed_cols):
@@ -603,15 +618,29 @@ class StockTableModel(QAbstractTableModel):
         return changed_rows
 
     def _emit_reordered_rows(self, rows: list) -> None:
+        old_ids = self._row_id_sequence(self._data)
+        new_ids = self._row_id_sequence(rows)
+        old_row_by_id = {row_id: row for row, row_id in enumerate(old_ids)}
+        retained_flashes = {}
+        for row, row_id in enumerate(new_ids):
+            old_row = old_row_by_id[row_id]
+            # 排序只迁移仍对应当前值的闪烁；同时覆盖的值沿用快照重排语义。
+            records = self._unchanged_cell_flashes(
+                self._flash_records.get(old_row, {}), self._data[old_row], rows[row]
+            )
+            if records:
+                retained_flashes[row] = records
         _sync_serial_values(rows)
         _replace_reordered_model_rows(self, rows, self._row_id_sequence)
         self._rebuild_code_row_index()
-        self._flash_records.clear()
+        self._flash_records = retained_flashes
         self._clear_sort_value_cache()
         self.clear_presentation_cache()
         self.layoutChanged.emit()
 
-    def _emit_single_row_membership_delta(self, rows: list, delta: tuple[str, int]) -> None:
+    def _emit_single_row_membership_delta(
+        self, rows: list, delta: tuple[str, int], *, record_flash: bool = True
+    ) -> None:
         action, row = delta
         _sync_serial_values(rows)
         self._flash_records.clear()
@@ -626,7 +655,7 @@ class StockTableModel(QAbstractTableModel):
             self._data.pop(row)
             self.endRemoveRows()
         self._rebuild_code_row_index()
-        self._emit_incremental_rows(rows)
+        self._emit_incremental_rows(rows, record_flash=record_flash)
 
     def update_data(
         self,
@@ -641,7 +670,7 @@ class StockTableModel(QAbstractTableModel):
         self._clear_money_bar_max_abs_cache()
         rows = list(new_data or [])
         if self._can_update_incrementally(rows):
-            changed_rows = self._emit_incremental_rows(rows)
+            changed_rows = self._emit_incremental_rows(rows, record_flash=record_flash)
             if hydrate_latest_quotes:
                 self._hydrate_latest_quotes_from_store(
                     _changed_row_codes(rows, changed_rows),
@@ -668,7 +697,7 @@ class StockTableModel(QAbstractTableModel):
                 },
             )
         if membership_delta is not None:
-            self._emit_single_row_membership_delta(rows, membership_delta)
+            self._emit_single_row_membership_delta(rows, membership_delta, record_flash=record_flash)
             if hydrate_latest_quotes:
                 self._hydrate_latest_quotes_from_store(record_flash=record_flash)
             return

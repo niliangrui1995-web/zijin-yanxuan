@@ -1,0 +1,1716 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-05T14:08:11.448240+08:00",
+  "protocol": "sequential Windows Qt processes; real schedule_restore_last_tab; actual paintEvent timing; no QWidget.grab",
+  "profiler_sha256_matches": true,
+  "cache_sha256_matches": {
+    "lhb_pool_30d.json": true,
+    "ai_industry_chain_stock_codes.json": true,
+    "ai_industry_chain_context_map.json": true,
+    "vcp_rps_precomputed.json": true
+  },
+  "row_codes_match": true,
+  "before": {
+    "status": "ok",
+    "acceptance": {
+      "passed": true,
+      "violations": []
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "1cb51e76822f9484a63360f18da3bbf4775f7505f752a1eb5e9628ad48c5e71f",
+      "ui/models/stock_table_model.py": "51a9ad755e5387b8770e3a8f072180826cd3c6bf835625f4eedcf54a48aedcb2",
+      "ui/components/table_controls.py": "e2bd87cd9d3c0792b4718fe153b98e9c16fc093f8cff9497106eda90521855ce",
+      "ui/models/table_model_helpers.py": "dccc2fe53b87f4dcce04a4a4bb84e3f8d035121448caf79530a94322927b1f9a",
+      "ui/tabs/base_stock_tab.py": "df825073bda0c2084b767fe8b3a95837769d5af6c0167c0c3623b864c1908fa3",
+      "ui/tabs/table_view_state_binding.py": "732e105a28987ef2afe3924d8c67e2c59344238368ff43afa75c6059854ec22f",
+      "infra/settings/table_view_state_store.py": "14e1615c6f86ed4b654a2805f71a80d8355c1458b7bca0b337f34ac15c57583d"
+    },
+    "environment": {
+      "system": "Windows-10-10.0.19045-SP0",
+      "python": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+      "qt": "6.11.0",
+      "pyqt": "6.11.0",
+      "pid": 2636,
+      "session_name": "",
+      "requested_qt_platform": "",
+      "actual_qt_platform": "windows",
+      "primary_screen": {
+        "name": "V2719Q",
+        "available_width": 2560,
+        "available_height": 1400,
+        "device_pixel_ratio": 1.0
+      },
+      "native_dataframe_runtime": {
+        "ready": true,
+        "initialization_ms": 860.744
+      }
+    },
+    "loaded_rows": 42,
+    "final_row_count": 42,
+    "prewarm_loaded_count": 11,
+    "prewarm_finished": true,
+    "network_attempts": 0,
+    "viewport": {
+      "size": [
+        1788,
+        873
+      ],
+      "opaque": false,
+      "auto_fill_background": false,
+      "style_sheet": "",
+      "background_role": "Base"
+    },
+    "actual_paint_count": 10,
+    "full_viewport_count": 8,
+    "actual_paint_duration": {
+      "count": 10,
+      "total_ms": 1129.196,
+      "max_ms": 219.095,
+      "p50_ms": 113.404,
+      "p95_ms": 182.744,
+      "p99_ms": 211.825,
+      "over_50ms": 9,
+      "over_100ms": 8
+    },
+    "actions": [
+      {
+        "phase": "quote_and_flash",
+        "active_flash_cells": 127
+      }
+    ],
+    "model_signal_counts": {
+      "sort_price": {
+        "proxy.layoutChanged": 1
+      },
+      "restore_last_tab": {
+        "proxy.modelReset": 1,
+        "source.modelReset": 1,
+        "proxy.dataChanged": 17,
+        "source.dataChanged": 17,
+        "proxy.layoutChanged": 2,
+        "source.layoutChanged": 2
+      },
+      "quote_and_flash": {
+        "proxy.dataChanged": 1,
+        "source.dataChanged": 1,
+        "proxy.layoutChanged": 1,
+        "source.layoutChanged": 1
+      }
+    },
+    "phases": {
+      "restore_last_tab": {
+        "actual_paint_count": 3,
+        "full_viewport_count": 3,
+        "actual_paint_duration": {
+          "count": 3,
+          "total_ms": 442.513,
+          "max_ms": 219.095,
+          "p50_ms": 112.18,
+          "p95_ms": 208.403,
+          "p99_ms": 216.957,
+          "over_50ms": 3,
+          "over_100ms": 3
+        },
+        "event_loop_stall": {
+          "count": 2,
+          "total_ms": 433.927,
+          "max_ms": 222.193,
+          "p50_ms": 216.963,
+          "p95_ms": 221.67,
+          "p99_ms": 222.088,
+          "over_50ms": 2,
+          "over_100ms": 2
+        },
+        "active_dispatch": {
+          "count": 570,
+          "total_ms": 1277.852,
+          "max_ms": 249.525,
+          "p50_ms": 0.153,
+          "p95_ms": 6.899,
+          "p99_ms": 34.82,
+          "over_50ms": 3,
+          "over_100ms": 2
+        }
+      },
+      "background_prewarm": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 2,
+          "total_ms": 181.673,
+          "max_ms": 94.803,
+          "p50_ms": 90.836,
+          "p95_ms": 94.406,
+          "p99_ms": 94.723,
+          "over_50ms": 2,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 646,
+          "total_ms": 2192.987,
+          "max_ms": 147.36,
+          "p50_ms": 0.132,
+          "p95_ms": 21.367,
+          "p99_ms": 60.93,
+          "over_50ms": 9,
+          "over_100ms": 2
+        }
+      },
+      "idle_after_restore": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 12.626,
+          "max_ms": 0.745,
+          "p50_ms": 0.068,
+          "p95_ms": 0.376,
+          "p99_ms": 0.44,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "same_snapshot": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 16.446,
+          "max_ms": 3.599,
+          "p50_ms": 0.068,
+          "p95_ms": 0.421,
+          "p99_ms": 0.789,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "quote_and_flash": {
+        "actual_paint_count": 4,
+        "full_viewport_count": 2,
+        "actual_paint_duration": {
+          "count": 4,
+          "total_ms": 310.802,
+          "max_ms": 138.316,
+          "p50_ms": 77.817,
+          "p95_ms": 132.777,
+          "p99_ms": 137.208,
+          "over_50ms": 3,
+          "over_100ms": 2
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 132.469,
+          "max_ms": 132.469,
+          "p50_ms": 132.469,
+          "p95_ms": 132.469,
+          "p99_ms": 132.469,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 94,
+          "total_ms": 362.125,
+          "max_ms": 144.972,
+          "p50_ms": 0.069,
+          "p95_ms": 9.065,
+          "p99_ms": 107.968,
+          "over_50ms": 3,
+          "over_100ms": 2
+        }
+      },
+      "sort_price": {
+        "actual_paint_count": 1,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 1,
+          "total_ms": 128.684,
+          "max_ms": 128.684,
+          "p50_ms": 128.684,
+          "p95_ms": 128.684,
+          "p99_ms": 128.684,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 135.04,
+          "max_ms": 135.04,
+          "p50_ms": 135.04,
+          "p95_ms": 135.04,
+          "p99_ms": 135.04,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 96,
+          "total_ms": 166.51,
+          "max_ms": 136.031,
+          "p50_ms": 0.071,
+          "p95_ms": 0.745,
+          "p99_ms": 18.564,
+          "over_50ms": 1,
+          "over_100ms": 1
+        }
+      },
+      "same_sort_indicator": {
+        "actual_paint_count": 1,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 1,
+          "total_ms": 132.568,
+          "max_ms": 132.568,
+          "p50_ms": 132.568,
+          "p95_ms": 132.568,
+          "p99_ms": 132.568,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 136.392,
+          "max_ms": 136.392,
+          "p50_ms": 136.392,
+          "p95_ms": 136.392,
+          "p99_ms": 136.392,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 96,
+          "total_ms": 149.574,
+          "max_ms": 137.376,
+          "p50_ms": 0.072,
+          "p95_ms": 0.381,
+          "p99_ms": 7.653,
+          "over_50ms": 1,
+          "over_100ms": 1
+        }
+      },
+      "parent_background_update": {
+        "actual_paint_count": 1,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 1,
+          "total_ms": 114.628,
+          "max_ms": 114.628,
+          "p50_ms": 114.628,
+          "p95_ms": 114.628,
+          "p99_ms": 114.628,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 124.588,
+          "max_ms": 124.588,
+          "p50_ms": 124.588,
+          "p95_ms": 124.588,
+          "p99_ms": 124.588,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 98,
+          "total_ms": 140.132,
+          "max_ms": 125.434,
+          "p50_ms": 0.08,
+          "p95_ms": 0.457,
+          "p99_ms": 4.84,
+          "over_50ms": 1,
+          "over_100ms": 1
+        }
+      }
+    }
+  },
+  "after": {
+    "status": "ok",
+    "acceptance": {
+      "passed": true,
+      "violations": []
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+      "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+      "ui/components/table_controls.py": "1549c4ce0562638a4c3605893b004de36a9306cb9df1dfd414714113c2ae5943",
+      "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+      "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+      "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+      "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+    },
+    "environment": {
+      "system": "Windows-10-10.0.19045-SP0",
+      "python": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+      "qt": "6.11.0",
+      "pyqt": "6.11.0",
+      "pid": 14764,
+      "session_name": "",
+      "requested_qt_platform": "",
+      "actual_qt_platform": "windows",
+      "primary_screen": {
+        "name": "V2719Q",
+        "available_width": 2560,
+        "available_height": 1400,
+        "device_pixel_ratio": 1.0
+      },
+      "native_dataframe_runtime": {
+        "ready": true,
+        "initialization_ms": 1234.357
+      }
+    },
+    "loaded_rows": 42,
+    "final_row_count": 42,
+    "prewarm_loaded_count": 11,
+    "prewarm_finished": true,
+    "network_attempts": 0,
+    "viewport": {
+      "size": [
+        1788,
+        873
+      ],
+      "opaque": false,
+      "auto_fill_background": true,
+      "style_sheet": "",
+      "background_role": "Base"
+    },
+    "actual_paint_count": 6,
+    "full_viewport_count": 4,
+    "actual_paint_duration": {
+      "count": 6,
+      "total_ms": 797.369,
+      "max_ms": 218.184,
+      "p50_ms": 143.381,
+      "p95_ms": 209.776,
+      "p99_ms": 216.502,
+      "over_50ms": 5,
+      "over_100ms": 4
+    },
+    "actions": [
+      {
+        "phase": "quote_and_flash",
+        "active_flash_cells": 127
+      }
+    ],
+    "model_signal_counts": {
+      "restore_last_tab": {
+        "proxy.modelReset": 1,
+        "source.modelReset": 1,
+        "proxy.dataChanged": 1,
+        "source.dataChanged": 1,
+        "proxy.layoutChanged": 1,
+        "source.layoutChanged": 1
+      },
+      "sort_price": {
+        "proxy.layoutChanged": 1
+      },
+      "quote_and_flash": {
+        "proxy.dataChanged": 1,
+        "source.dataChanged": 1,
+        "proxy.layoutChanged": 1,
+        "source.layoutChanged": 1
+      }
+    },
+    "phases": {
+      "restore_last_tab": {
+        "actual_paint_count": 1,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 1,
+          "total_ms": 184.552,
+          "max_ms": 184.552,
+          "p50_ms": 184.552,
+          "p95_ms": 184.552,
+          "p99_ms": 184.552,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 171.611,
+          "max_ms": 171.611,
+          "p50_ms": 171.611,
+          "p95_ms": 171.611,
+          "p99_ms": 171.611,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 622,
+          "total_ms": 1074.272,
+          "max_ms": 196.585,
+          "p50_ms": 0.157,
+          "p95_ms": 9.098,
+          "p99_ms": 29.24,
+          "over_50ms": 1,
+          "over_100ms": 1
+        }
+      },
+      "background_prewarm": {
+        "actual_paint_count": 1,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 1,
+          "total_ms": 116.067,
+          "max_ms": 116.067,
+          "p50_ms": 116.067,
+          "p95_ms": 116.067,
+          "p99_ms": 116.067,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 109.051,
+          "max_ms": 109.051,
+          "p50_ms": 109.051,
+          "p95_ms": 109.051,
+          "p99_ms": 109.051,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 759,
+          "total_ms": 1070.405,
+          "max_ms": 133.896,
+          "p50_ms": 0.09,
+          "p95_ms": 6.913,
+          "p99_ms": 20.907,
+          "over_50ms": 3,
+          "over_100ms": 1
+        }
+      },
+      "idle_after_restore": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 10.615,
+          "max_ms": 0.767,
+          "p50_ms": 0.069,
+          "p95_ms": 0.285,
+          "p99_ms": 0.623,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "same_snapshot": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 110,
+          "total_ms": 21.172,
+          "max_ms": 4.427,
+          "p50_ms": 0.09,
+          "p95_ms": 0.554,
+          "p99_ms": 1.277,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "quote_and_flash": {
+        "actual_paint_count": 3,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 3,
+          "total_ms": 326.055,
+          "max_ms": 218.184,
+          "p50_ms": 78.639,
+          "p95_ms": 204.229,
+          "p99_ms": 215.393,
+          "over_50ms": 2,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 2,
+          "total_ms": 297.715,
+          "max_ms": 222.767,
+          "p50_ms": 148.857,
+          "p95_ms": 215.376,
+          "p99_ms": 221.288,
+          "over_50ms": 2,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 90,
+          "total_ms": 382.813,
+          "max_ms": 224.118,
+          "p50_ms": 0.103,
+          "p95_ms": 7.36,
+          "p99_ms": 95.643,
+          "over_50ms": 2,
+          "over_100ms": 1
+        }
+      },
+      "sort_price": {
+        "actual_paint_count": 1,
+        "full_viewport_count": 1,
+        "actual_paint_duration": {
+          "count": 1,
+          "total_ms": 170.696,
+          "max_ms": 170.696,
+          "p50_ms": 170.696,
+          "p95_ms": 170.696,
+          "p99_ms": 170.696,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "event_loop_stall": {
+          "count": 1,
+          "total_ms": 167.988,
+          "max_ms": 167.988,
+          "p50_ms": 167.988,
+          "p95_ms": 167.988,
+          "p99_ms": 167.988,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "active_dispatch": {
+          "count": 95,
+          "total_ms": 208.604,
+          "max_ms": 180.159,
+          "p50_ms": 0.089,
+          "p95_ms": 0.712,
+          "p99_ms": 22.161,
+          "over_50ms": 1,
+          "over_100ms": 1
+        }
+      },
+      "same_sort_indicator": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 13.155,
+          "max_ms": 0.774,
+          "p50_ms": 0.084,
+          "p95_ms": 0.331,
+          "p99_ms": 0.431,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "parent_background_update": {
+        "actual_paint_count": 0,
+        "full_viewport_count": 0,
+        "actual_paint_duration": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "event_loop_stall": {
+          "count": 0,
+          "total_ms": 0,
+          "max_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 23.035,
+          "max_ms": 10.401,
+          "p50_ms": 0.092,
+          "p95_ms": 0.324,
+          "p99_ms": 0.705,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      }
+    }
+  },
+  "original_log": {
+    "path": "D:\\vcp_hunter\\紫金研选\\data\\logs\\vcp_20260905.log",
+    "sha256": "ba47390f696b983e269a54f7b0545bab2b28c52f2b8bde553f2a7b4d8e84479f",
+    "start_inclusive": "2026-09-05 03:08:26",
+    "end_exclusive": "2026-09-05 03:08:37",
+    "metrics": {
+      "lhb_table_paint_ms": [
+        {
+          "line": 69,
+          "timestamp": "2026-09-05 03:08:26,773",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548906.773397,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "changed_columns": "4",
+            "changed_indexes": "168",
+            "changed_rows": "42",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "structural_full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_cells": "126",
+            "dirty_region_rects": "1",
+            "includes_flash_role": "true",
+            "model_rows": "42",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "pending_reasons": "quote_data_changed,model_reset,model_layout_changed,viewport_refresh,flash_expiry",
+            "preload_staged": "false",
+            "quote_dirty_bounding_area_ratio": "0.1268",
+            "quote_dirty_region_full": "false",
+            "quote_dirty_region_rects": "1",
+            "reason": "model_reset",
+            "requested_dirty_bounding_area_ratio": "0.1073",
+            "requested_dirty_region_rects": "1",
+            "requested_full_viewport": "false",
+            "structural_reason": "model_reset",
+            "tab": "lhb",
+            "targeted_request_coalesced_with_structural": "true",
+            "targeted_request_reason": "flash_expiry",
+            "threshold_exceeded": "false",
+            "update_threshold": "10000",
+            "viewport_refresh_source": "sort_indicator",
+            "visible_dirty_cells": "126",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 400.33630000107223
+        },
+        {
+          "line": 73,
+          "timestamp": "2026-09-05 03:08:27,048",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.0484025,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 180.76160000055097
+        },
+        {
+          "line": 78,
+          "timestamp": "2026-09-05 03:08:27,256",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.2564297,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 184.97629999910714
+        },
+        {
+          "line": 83,
+          "timestamp": "2026-09-05 03:08:27,742",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.7419817,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 177.99309999827528
+        },
+        {
+          "line": 88,
+          "timestamp": "2026-09-05 03:08:27,936",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.936543,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 177.8057000010449
+        },
+        {
+          "line": 91,
+          "timestamp": "2026-09-05 03:08:28,579",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548908.5792315,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 190.8332999992126
+        },
+        {
+          "line": 107,
+          "timestamp": "2026-09-05 03:08:30,835",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548910.835038,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 196.69300000168732
+        },
+        {
+          "line": 110,
+          "timestamp": "2026-09-05 03:08:31,039",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548911.039437,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 187.30700000014622
+        },
+        {
+          "line": 115,
+          "timestamp": "2026-09-05 03:08:31,702",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548911.7027528,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 511.9395000001532
+        },
+        {
+          "line": 123,
+          "timestamp": "2026-09-05 03:08:32,276",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548912.276494,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 181.77189999914845
+        },
+        {
+          "line": 126,
+          "timestamp": "2026-09-05 03:08:32,486",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548912.4861732,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 192.28280000243103
+        },
+        {
+          "line": 142,
+          "timestamp": "2026-09-05 03:08:34,903",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548914.903115,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 177.768699999433
+        },
+        {
+          "line": 147,
+          "timestamp": "2026-09-05 03:08:35,086",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548915.0867548,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 167.7419000006921
+        },
+        {
+          "line": 151,
+          "timestamp": "2026-09-05 03:08:35,745",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548915.7453666,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 181.16689999806113
+        },
+        {
+          "line": 154,
+          "timestamp": "2026-09-05 03:08:35,934",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548915.934928,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 173.70279999886407
+        },
+        {
+          "line": 160,
+          "timestamp": "2026-09-05 03:08:36,128",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548916.1287255,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 172.96979999809992
+        }
+      ],
+      "lhb_table_paint_delay_ms": [
+        {
+          "line": 70,
+          "timestamp": "2026-09-05 03:08:26,774",
+          "metric": "lhb_table_paint_delay_ms",
+          "recorded_at": 1788548906.7746053,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "changed_columns": "4",
+            "changed_indexes": "168",
+            "changed_rows": "42",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "structural_full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_cells": "126",
+            "dirty_region_rects": "1",
+            "includes_flash_role": "true",
+            "model_rows": "42",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "pending_reasons": "quote_data_changed,model_reset,model_layout_changed,viewport_refresh,flash_expiry",
+            "preload_staged": "false",
+            "quote_dirty_bounding_area_ratio": "0.1268",
+            "quote_dirty_region_full": "false",
+            "quote_dirty_region_rects": "1",
+            "reason": "model_reset",
+            "requested_dirty_bounding_area_ratio": "0.1073",
+            "requested_dirty_region_rects": "1",
+            "requested_full_viewport": "false",
+            "structural_reason": "model_reset",
+            "tab": "lhb",
+            "targeted_request_coalesced_with_structural": "true",
+            "targeted_request_reason": "flash_expiry",
+            "threshold_exceeded": "false",
+            "update_threshold": "10000",
+            "viewport_refresh_source": "sort_indicator",
+            "visible_dirty_cells": "126",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 31477213.6668
+        }
+      ],
+      "ui_event_loop_stall_ms": [
+        {
+          "line": 75,
+          "timestamp": "2026-09-05 03:08:27,055",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548907.0558667,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 1216.3728999999876
+        },
+        {
+          "line": 80,
+          "timestamp": "2026-09-05 03:08:27,260",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548907.2605667,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 170.2761000029568
+        },
+        {
+          "line": 85,
+          "timestamp": "2026-09-05 03:08:27,748",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548907.7481105,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 183.86539999992237
+        },
+        {
+          "line": 93,
+          "timestamp": "2026-09-05 03:08:28,584",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548908.5839784,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 194.47609999915585
+        },
+        {
+          "line": 102,
+          "timestamp": "2026-09-05 03:08:30,602",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548910.60227,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 638.0920000025071
+        },
+        {
+          "line": 112,
+          "timestamp": "2026-09-05 03:08:31,105",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548911.105092,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 478.213500000129
+        },
+        {
+          "line": 117,
+          "timestamp": "2026-09-05 03:08:31,707",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548911.7079186,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 577.8937999981281
+        },
+        {
+          "line": 120,
+          "timestamp": "2026-09-05 03:08:32,070",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548912.070042,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 326.42829999676906
+        },
+        {
+          "line": 128,
+          "timestamp": "2026-09-05 03:08:32,564",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548912.564759,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 469.88470000142115
+        },
+        {
+          "line": 144,
+          "timestamp": "2026-09-05 03:08:34,908",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548914.9080718,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 168.1142000030377
+        },
+        {
+          "line": 157,
+          "timestamp": "2026-09-05 03:08:35,948",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548915.9482646,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 373.4978999978921
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "single native run per revision; elapsed time is machine/load dependent",
+    "startup event-loop stalls are separate from the LHB restore and interaction phases",
+    "necessary first paint and genuine row sorting retain full viewport delivery",
+    "After run delivered one additional native WindowActivate full frame during background prewarm; retained and included in totals."
+  ],
+  "artifacts": {
+    "before": {
+      "report": "D:\\vcp_hunter\\紫金研选\\artifacts\\audit\\20260905_lhb_restore\\before\\native_lhb_restore_profile.json",
+      "screenshot": "D:\\vcp_hunter\\紫金研选\\artifacts\\audit\\20260905_lhb_restore\\before\\native_lhb.png"
+    },
+    "after": {
+      "report": "D:\\vcp_hunter\\紫金研选\\artifacts\\audit\\20260905_lhb_restore\\after\\native_lhb_restore_profile.json",
+      "screenshot": "D:\\vcp_hunter\\紫金研选\\artifacts\\audit\\20260905_lhb_restore\\after\\native_lhb.png"
+    }
+  },
+  "diagnostic_experiments": [
+    {
+      "name": "trace_skip_current",
+      "quote_and_flash": {
+        "actual_paint": {
+          "count": 4,
+          "total_ms": 367.868,
+          "max_ms": 164.41,
+          "p50_ms": 90.025,
+          "p95_ms": 158.575,
+          "p99_ms": 163.243,
+          "over_50ms": 3,
+          "over_100ms": 2
+        },
+        "full_viewport_count": 2,
+        "local_region_count": 2,
+        "first_rows": 42
+      },
+      "source_sha256": {
+        "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+        "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+        "ui/components/table_controls.py": "6c92631cb2028acf57d9fc66a4bae338d92c9a98ee6b35d538102bbe8658b7e9",
+        "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+        "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+        "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+        "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+      },
+      "path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\trace_skip_current\\native_lhb_restore_profile.json"
+    },
+    {
+      "name": "trace_skip_header",
+      "quote_and_flash": {
+        "actual_paint": {
+          "count": 4,
+          "total_ms": 361.225,
+          "max_ms": 155.921,
+          "p50_ms": 91.221,
+          "p95_ms": 151.663,
+          "p99_ms": 155.069,
+          "over_50ms": 3,
+          "over_100ms": 2
+        },
+        "full_viewport_count": 2,
+        "local_region_count": 2,
+        "first_rows": 42
+      },
+      "source_sha256": {
+        "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+        "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+        "ui/components/table_controls.py": "6c92631cb2028acf57d9fc66a4bae338d92c9a98ee6b35d538102bbe8658b7e9",
+        "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+        "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+        "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+        "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+      },
+      "path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\trace_skip_header\\native_lhb_restore_profile.json"
+    },
+    {
+      "name": "trace_skip_restore",
+      "quote_and_flash": {
+        "actual_paint": {
+          "count": 4,
+          "total_ms": 346.218,
+          "max_ms": 152.473,
+          "p50_ms": 85.574,
+          "p95_ms": 147.526,
+          "p99_ms": 151.484,
+          "over_50ms": 3,
+          "over_100ms": 2
+        },
+        "full_viewport_count": 2,
+        "local_region_count": 2,
+        "first_rows": 42
+      },
+      "source_sha256": {
+        "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+        "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+        "ui/components/table_controls.py": "b1ffb51d50361ad7928d8237558713833457c3de9f535d51998341e0feda5f16",
+        "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+        "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+        "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+        "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+      },
+      "path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\trace_skip_restore\\native_lhb_restore_profile.json"
+    },
+    {
+      "name": "trace_delayed_layout",
+      "quote_and_flash": {
+        "actual_paint": {
+          "count": 4,
+          "total_ms": 345.951,
+          "max_ms": 154.714,
+          "p50_ms": 82.489,
+          "p95_ms": 147.579,
+          "p99_ms": 153.287,
+          "over_50ms": 3,
+          "over_100ms": 2
+        },
+        "full_viewport_count": 2,
+        "local_region_count": 2,
+        "first_rows": 42
+      },
+      "source_sha256": {
+        "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+        "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+        "ui/components/table_controls.py": "b1ffb51d50361ad7928d8237558713833457c3de9f535d51998341e0feda5f16",
+        "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+        "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+        "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+        "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+      },
+      "path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\trace_delayed_layout\\native_lhb_restore_profile.json"
+    },
+    {
+      "name": "trace_header_resize",
+      "quote_and_flash": {
+        "actual_paint": {
+          "count": 3,
+          "total_ms": 269.13,
+          "max_ms": 183.886,
+          "p50_ms": 59.324,
+          "p95_ms": 171.43,
+          "p99_ms": 181.395,
+          "over_50ms": 2,
+          "over_100ms": 1
+        },
+        "full_viewport_count": 1,
+        "local_region_count": 2,
+        "first_rows": 42
+      },
+      "source_sha256": {
+        "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+        "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+        "ui/components/table_controls.py": "6c92631cb2028acf57d9fc66a4bae338d92c9a98ee6b35d538102bbe8658b7e9",
+        "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+        "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+        "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+        "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+      },
+      "path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\trace_header_resize\\native_lhb_restore_profile.json"
+    },
+    {
+      "name": "trace_header_semantics",
+      "quote_and_flash": {
+        "actual_paint": {
+          "count": 4,
+          "total_ms": 322.645,
+          "max_ms": 141.275,
+          "p50_ms": 81.885,
+          "p95_ms": 136.124,
+          "p99_ms": 140.245,
+          "over_50ms": 3,
+          "over_100ms": 2
+        },
+        "full_viewport_count": 2,
+        "local_region_count": 2,
+        "first_rows": 42
+      },
+      "source_sha256": {
+        "ui/tabs/lhb_tab.py": "1cb51e76822f9484a63360f18da3bbf4775f7505f752a1eb5e9628ad48c5e71f",
+        "ui/models/stock_table_model.py": "51a9ad755e5387b8770e3a8f072180826cd3c6bf835625f4eedcf54a48aedcb2",
+        "ui/components/table_controls.py": "e2bd87cd9d3c0792b4718fe153b98e9c16fc093f8cff9497106eda90521855ce",
+        "ui/models/table_model_helpers.py": "dccc2fe53b87f4dcce04a4a4bb84e3f8d035121448caf79530a94322927b1f9a",
+        "ui/tabs/base_stock_tab.py": "df825073bda0c2084b767fe8b3a95837769d5af6c0167c0c3623b864c1908fa3",
+        "ui/tabs/table_view_state_binding.py": "732e105a28987ef2afe3924d8c67e2c59344238368ff43afa75c6059854ec22f",
+        "infra/settings/table_view_state_store.py": "14e1615c6f86ed4b654a2805f71a80d8355c1458b7bca0b337f34ac15c57583d"
+      },
+      "path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\trace_header_semantics\\native_lhb_restore_profile.json"
+    }
+  ],
+  "retained_native_window_activation_frames": [
+    {
+      "value": 115.6184999999823,
+      "tags": {
+        "dirty_bounding_area_ratio": "1.0000",
+        "delivered_dirty_bounding_area_ratio": "1.0000",
+        "delivered_full_viewport": "true",
+        "dirty_region_rects": "1",
+        "paint_event_spontaneous": "true",
+        "reason": "other",
+        "tab": "lhb",
+        "native_window_signal": "window_activate",
+        "native_window_signal_age_ms": "10.644",
+        "native_window_last_event": "window_update_request",
+        "native_window_last_event_age_ms": "9.054",
+        "native_window_inactive": "false",
+        "native_window_requires_full_paint": "true",
+        "delivery_kind": "full_viewport",
+        "workspace_load_reason": "restore_last_tab",
+        "background_preload_ready": "true",
+        "preload_staged": "false",
+        "source_tab": "watchlist",
+        "target_tab": "lhb",
+        "transition_reason": "restore_last_tab",
+        "preload_state": "cold",
+        "mounted_before": "false",
+        "transition_phase": "paint",
+        "background_prewarm_active_key_at_paint": "scan"
+      },
+      "recorded_at": 1788588387.7733724
+    }
+  ]
+}

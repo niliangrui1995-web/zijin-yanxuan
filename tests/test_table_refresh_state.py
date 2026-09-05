@@ -564,7 +564,7 @@ def test_lhb_shell_nav_guard_bounds_redundant_full_paint_suppression_within_acti
         assert table._maybe_defer_shell_nav_full_paint(_full_viewport_paint_event(table)) is False
         assert table._shell_nav_repaint_guard is None
 
-        decisions = [item[2]["tags"]["decision"] for item in recorded]
+        decisions = [item[2]["tags"]["decision"] for item in recorded if "decision" in item[2]["tags"]]
         assert decisions == [
             "first_full_allowed",
             "suppress_redundant_full",
@@ -771,7 +771,7 @@ def test_vcp_table_view_shell_nav_guard_blocks_post_budget_full_paint_event(qt_a
             QCoreApplication.sendEvent(table.viewport(), _full_viewport_paint_event(table))
 
         assert table.actual_paint_calls == 2
-        decisions = [item[2]["tags"]["decision"] for item in recorded]
+        decisions = [item[2]["tags"]["decision"] for item in recorded if "decision" in item[2]["tags"]]
         assert decisions == [
             "first_full_allowed",
             "suppress_redundant_full",

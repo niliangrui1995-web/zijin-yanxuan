@@ -332,7 +332,7 @@ def test_base_stock_header_persistence_delegates_to_view_state_binding(monkeypat
     monkeypatch.setattr(
         base_stock_tab_module,
         "bind_table_view_state",
-        lambda owner, bound_table, bound_settings, savers, settings_key="header_state": (
+        lambda owner, bound_table, bound_settings, savers, settings_key="header_state", restore_sort=True: (
             captured.update(
                 {
                     "owner": owner,

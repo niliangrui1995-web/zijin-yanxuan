@@ -1156,7 +1156,7 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
             legacy_scope=self.__class__.__name__,
         )
 
-    def bind_header_persistence(self, table, settings_key: str = "header_state") -> bool:
+    def bind_header_persistence(self, table, settings_key: str = "header_state", *, restore_sort: bool = True) -> bool:
         """通用：绑定表格列宽/列顺序/排序状态自动保存，并恢复上次保存的视图状态"""
         settings = self._settings_section()
         return bind_table_view_state(
@@ -1165,6 +1165,7 @@ class BaseStockTab(_WorkspaceBackgroundSnapshotMixin, _ProviderHealthMixin, QWid
             settings,
             self._header_state_savers,
             settings_key=settings_key,
+            restore_sort=restore_sort,
         )
 
     # ================================================================

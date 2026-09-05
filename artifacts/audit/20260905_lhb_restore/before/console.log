@@ -1,0 +1,139 @@
+[14:05:53] INFO  | [事件] settings.schema_migrated | application=NativeLhbRestore_2636 | description=bootstrap centralized settings repository | from_version=0 | organization=VCPHunterDiagnostics
+[14:05:53] INFO  | [watchdog] watchdog.started | pid=2636 | rss=142MB | private=139MB | wset=142MB | vms=139MB | threads=10 | source=psutil
+[14:05:53] INFO  | [watchdog] main_window.init.begin | pid=2636 | rss=142MB | private=139MB | wset=142MB | vms=139MB | threads=10 | source=psutil
+[14:05:55] WARNING | [事件] ui.stall.method | elapsed_ms=1104.483 | method=MainWindowQT.create_workspace | severity=critical | threshold_ms=100.0
+[14:05:55] INFO  | [启动] 工作区已加载 | 11页 | 1.2秒
+[14:05:55] INFO  | [startup] auto refresh scheduler disabled for controlled window construction
+[14:05:55] INFO  | [watchdog] main_window.init.ready | pid=2636 | rss=208MB | private=169MB | wset=208MB | vms=169MB | threads=11 | source=psutil
+[14:05:55] WARNING | [事件] ui.stall.event_loop | elapsed_ms=1474.727 | event_loop_gap_ms=1499.727 | severity=critical | tab=watchlist
+[14:05:55] INFO  | [启动] 主界面已显示 | 1.7秒
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=1.171 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=1.89 | succeeded=False
+[14:05:55] INFO  | [启动] 已启用通达信本地K线数据: D:\HT\vipdoc
+[14:05:55] INFO  | [启动] gbbq 复权缓存改为按需加载
+[14:05:55] WARNING | [启动] 离线模式启动：跳过联网检测，使用本地数据
+[14:05:55] INFO  | [DataStore] SQLite 存储已就绪: D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\before\profile.db
+[14:05:55] INFO  | [名称映射] 已从缓存载入 54161 条标的名称
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.184 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=2.306 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.202 | succeeded=False
+[14:05:55] INFO  | [UI] central quotes disabled for controlled window construction
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.278 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.178 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=9.87 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.098 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.077 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.122 | succeeded=False
+[14:05:55] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.053 | succeeded=True
+[14:05:55] INFO  | [事件] workspace.tab_transition_stage | callback_kind=currentChanged | elapsed_ms=0.117 | mounted_before=false | preload_active_key=watchlist
+[14:05:55] INFO  | [事件] workspace.tab_transition_stage | elapsed_ms=1.247 | mounted_before=false | preload_active_key=watchlist | preload_state=cold
+[14:05:56] INFO  | [指标] watchlist_context_snapshot_capture_ms | 1ms | cached_rows=,candidate_source_rows=,captured_source_rows=,selected_sources=ai_industry_chain,earnings,foreign_block,lhb,na_daily,source_rows=,target_count=55,target_filter=True
+[14:05:56] WARNING | [警告] 本地 gbbq 缓存不可用，前复权一致性可能下降
+[14:05:56] INFO  | [提示] 请确认通达信目录下存在 T0002/hq_cache/gbbq 文件
+[14:05:56] INFO  | [Workspace] background preload Watchlist terminal state=staged_ready; continue hidden staging remaining=10
+[14:05:56] ERROR | [任务调度][ai_industry_chain_load] Worker 异常: D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\产业链投研\watchlists\AI产业链.xlsx
+Traceback (most recent call last):
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\task_scheduler.py", line 118, in run
+    result = invoke_with_cancellation(
+        self.fn,
+    ...<2 lines>...
+        **self.kwargs,
+    )
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\lifecycle.py", line 160, in invoke_with_cancellation
+    result = fn(*call_args, **call_kwargs)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\owner_lifecycle.py", line 341, in run_owned
+    return _run_owned_callable(token, fn)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\owner_lifecycle.py", line 80, in _run_owned_callable
+    result = fn(token)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\ui\tabs\ai_industry_chain_tab.py", line 158, in <lambda>
+    lambda token: _load_chain_rows(
+                  ~~~~~~~~~~~~~~~~^
+        workbook_path,
+        ^^^^^^^^^^^^^^
+        prefer_cache=not force_workbook,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cancellation_token=token,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ),
+    ^
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\ui\tabs\ai_industry_chain_tab.py", line 50, in _load_chain_rows
+    rows = refresh_ai_industry_chain_rows(workbook_path)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\app\services\ui_industry_chain_service.py", line 64, in refresh_ai_industry_chain_rows
+    rows = load_ai_industry_chain_rows(path)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\app\services\ui_industry_chain_service.py", line 47, in load_ai_industry_chain_rows
+    return _repository().read_rows(_source_path(workbook_path))
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\storage\industry_chain_repository.py", line 186, in read_rows
+    raise FileNotFoundError(str(path))
+FileNotFoundError: D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\产业链投研\watchlists\AI产业链.xlsx
+
+[14:05:57] INFO  | [龙虎榜池] 缓存加载成功，包含 30 个交易日数据
+[14:05:57] INFO  | [龙虎榜池] 剔除次新及RPS250<85共 14 只
+[14:05:57] INFO  | [事件] workspace.tab_transition_stage | elapsed_ms=22.337 | layout_signal=placeholder_replace | mounted_before=false | preload_active_key=watchlist
+[14:05:57] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=218.05 | method=VCPTableView.paintEvent
+[14:05:57] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=211.734 | event_loop_gap_ms=236.734
+[14:05:57] INFO  | [事件] workspace.tab_transition_stage | callback_kind=on_workspace_tab_activated | elapsed_ms=0.31 | mounted_before=false | preload_active_key=watchlist
+[14:05:58] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=110.377 | method=VCPTableView.paintEvent
+[14:05:58] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=111.39 | method=VCPTableView.paintEvent
+[14:05:58] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=222.193 | event_loop_gap_ms=247.193
+[14:06:00] ERROR | [任务调度][foreign_block_trade_local_cache] Worker 异常: cache read failed: D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\data\Cache\foreign_block_trade_latest.json
+Traceback (most recent call last):
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\storage\json_cache_repository.py", line 44, in load_json_file
+    with open(path, "r", encoding="utf-8") as file_obj:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\baseline_source\\data\\Cache\\foreign_block_trade_latest.json'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\task_scheduler.py", line 118, in run
+    result = invoke_with_cancellation(
+        self.fn,
+    ...<2 lines>...
+        **self.kwargs,
+    )
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\lifecycle.py", line 160, in invoke_with_cancellation
+    result = fn(*call_args, **call_kwargs)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\owner_lifecycle.py", line 341, in run_owned
+    return _run_owned_callable(token, fn)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\owner_lifecycle.py", line 80, in _run_owned_callable
+    result = fn(token)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\ui\tabs\foreign_block_trade_tab.py", line 144, in _load_cache_payload
+    invoke_with_cancellation(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        load_foreign_block_cache,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+        cancellation_token,
+        ^^^^^^^^^^^^^^^^^^^
+        row_filter=filter_foreign_block_rows_to_ai_chain,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\tasks\lifecycle.py", line 160, in invoke_with_cancellation
+    result = fn(*call_args, **call_kwargs)
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\app\services\foreign_block_cache_service.py", line 67, in load_foreign_block_cache
+    payload = foreign_block_repository.load_foreign_block_cache_payload()
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\storage\foreign_block_repository.py", line 39, in load_foreign_block_cache_payload
+    payload = json_cache_repository.load_json_file(str(_CACHE_FILE))
+  File "D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\infra\storage\json_cache_repository.py", line 47, in load_json_file
+    raise CacheIOError(f"cache read failed: {path}") from exc
+core.exceptions.CacheIOError: cache read failed: D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\baseline_source\data\Cache\foreign_block_trade_latest.json
+
+[14:06:01] INFO  | [事件] ui.stall.event_loop | elapsed_ms=94.803 | event_loop_gap_ms=119.803 | severity=warn | tab=lhb
+[14:06:03] INFO  | [事件] ui.stall.event_loop | elapsed_ms=86.87 | event_loop_gap_ms=111.87 | severity=warn | tab=lhb
+[14:06:04] INFO  | [Workspace] background tab preload finished scope=all_planned completed=11 startup_lazy_handoff=0 failures=[]
+[14:06:07] INFO  | [事件] ui.stall.method | delivered_full_viewport=false | dirty_bounding_area_ratio=0.1829 | elapsed_ms=53.331 | method=VCPTableView.paintEvent
+[14:06:07] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=137.436 | method=VCPTableView.paintEvent
+[14:06:07] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=132.469 | event_loop_gap_ms=157.469
+[14:06:07] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=100.579 | method=VCPTableView.paintEvent
+[14:06:08] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=127.815 | method=VCPTableView.paintEvent
+[14:06:08] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=135.04 | event_loop_gap_ms=160.04
+[14:06:09] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=131.482 | method=VCPTableView.paintEvent
+[14:06:09] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=136.392 | event_loop_gap_ms=161.392
+[14:06:10] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=113.823 | method=VCPTableView.paintEvent
+[14:06:10] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=124.588 | event_loop_gap_ms=149.588
+[14:06:12] INFO  | [事件] kline.webengine_preflight_shutdown | clean=True | elapsed_ms=0.005
+[14:06:12] INFO  | [事件] kline.manager_shutdown | active_close_attempted=0 | active_close_clean=True | active_close_succeeded=0 | active_fallback_disposed=0
+[14:06:12] INFO  | [watchdog] watchdog.stopped | pid=2636 | rss=334MB | private=286MB | wset=334MB | vms=286MB | threads=29 | source=psutil
+{"status": "ok", "loaded_rows": 42, "report": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\before\\native_lhb_restore_profile.json", "paint_summary": {"restore_last_tab": {"actual_paint": {"count": 3, "total_ms": 442.513, "max_ms": 219.095, "p50_ms": 112.18, "p95_ms": 208.403, "p99_ms": 216.957, "over_50ms": 3, "over_100ms": 3}, "full_viewport_count": 3, "local_region_count": 0, "first_rows": 42}, "quote_and_flash": {"actual_paint": {"count": 4, "total_ms": 310.802, "max_ms": 138.316, "p50_ms": 77.817, "p95_ms": 132.777, "p99_ms": 137.208, "over_50ms": 3, "over_100ms": 2}, "full_viewport_count": 2, "local_region_count": 2, "first_rows": 42}, "sort_price": {"actual_paint": {"count": 1, "total_ms": 128.684, "max_ms": 128.684, "p50_ms": 128.684, "p95_ms": 128.684, "p99_ms": 128.684, "over_50ms": 1, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 0, "first_rows": 42}, "same_sort_indicator": {"actual_paint": {"count": 1, "total_ms": 132.568, "max_ms": 132.568, "p50_ms": 132.568, "p95_ms": 132.568, "p99_ms": 132.568, "over_50ms": 1, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 0, "first_rows": 42}, "parent_background_update": {"actual_paint": {"count": 1, "total_ms": 114.628, "max_ms": 114.628, "p50_ms": 114.628, "p95_ms": 114.628, "p99_ms": 114.628, "over_50ms": 1, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 0, "first_rows": 42}}, "errors": []}
+[14:06:12] INFO  | [DataStore] SQLite 连接已关闭

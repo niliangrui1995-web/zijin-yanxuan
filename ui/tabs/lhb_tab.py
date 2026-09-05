@@ -783,7 +783,7 @@ def _deliver_or_stage_lhb_pool(
         if isinstance(previous_pending, dict) and previous_pending.get("signature") == signature:
             event_emitted = bool(previous_pending.get("event_emitted", False))
         else:
-            event_emitted = bool(not previous_pending and signature == owner._last_lhb_signature)
+            event_emitted = bool(not previous_pending and signature == owner._last_lhb_pool_signature)
         should_emit = bool(emit_event and not event_emitted)
         pending_payload = {
             "pool": pool_rows,
@@ -1055,6 +1055,8 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         )
         self._last_lhb_result = None
         self._last_lhb_signature = ""
+        # 行情重排会改变展示 lineage；池去重必须保留上次交付载荷的签名。
+        self._last_lhb_pool_signature = ""
         self._ai_chain_context_map: dict[str, str] | None = None
         self._handling_lhb_pool_update = False
         self._pending_pool_refresh = False
@@ -1480,6 +1482,8 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
             self.AI_CHAIN_CONTEXT_COLUMN,
         ]
         self.table = VCPTableView(default_row_height=30)
+        self.table.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.table.set_viewport_base_background_enabled(True)
         self.model = StockTableModel(self.columns)
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
@@ -1501,10 +1505,8 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         )
 
         # 持久化表头（v9: 外资净买入列摘要+tooltip重构版）
-        restored_sort = self.bind_header_persistence(self.table, "lhb_header_state_v9")
         self._clear_proxy_sort_for_default_lhb_order()
-        if restored_sort:
-            QTimer.singleShot(0, self._clear_proxy_sort_for_default_lhb_order)
+        self.bind_header_persistence(self.table, "lhb_header_state_v9", restore_sort=False)
 
         # 交互：双击查看 K 线，右键菜单
         self.table.doubleClicked.connect(self._on_double_click)
@@ -1743,6 +1745,9 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
 
     def _clear_proxy_sort_for_default_lhb_order(self) -> None:
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            header = self.table.horizontalHeader()
+            if int(self.proxy_model.sortColumn()) < 0 and header.sortIndicatorSection() < 0:
+                return
             self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
     def _sort_model_for_default_lhb_order(self) -> None:
@@ -1921,11 +1926,15 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
         else:
             row_data = [dict(row) for row in row_data]
         row_signature = self._describe_lhb_rows(row_data).signature
-        rows_changed = row_signature != self._last_lhb_signature
+        rows_changed = row_signature != self._last_lhb_pool_signature
 
         if rows_changed:
-            self._clear_proxy_sort_for_default_lhb_order()
-            self.model.update_data([dict(row) for row in row_data], hydrate_latest_quotes=False)
+            self.model.update_data(
+                [dict(row) for row in row_data],
+                hydrate_latest_quotes=False,
+                record_flash=record_quote_flash,
+            )
+            self._last_lhb_pool_signature = row_signature
 
         cached_days = self._cached_pool_day_count()
         latest_date = self._latest_loaded_cached_trade_date()
@@ -1942,7 +1951,7 @@ class LhbTab(_LhbBackgroundPreloadMixin, BaseStockTab):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
-        self._refresh_lhb_lineage(row_data)
+        self._refresh_lhb_lineage()
 
         if rows_changed and emit_event:
             previous_handling = self._handling_lhb_pool_update

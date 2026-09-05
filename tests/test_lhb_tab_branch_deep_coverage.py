@@ -646,11 +646,11 @@ def test_sort_opening_quote_and_display_empty_branches(monkeypatch):
     tab._build_pool_display_rows = lambda pool, context: []
     tab._get_ai_chain_context_map = lambda: {}
     tab._describe_lhb_rows = lambda rows: SimpleNamespace(signature="same")
-    tab._last_lhb_signature = "same"
+    tab._last_lhb_pool_signature = "same"
     tab._cached_pool_day_count = lambda: 2
     tab._status_metric = lambda prefix, value, suffix="": f"{prefix}{value}{suffix}"
     tab._latest_loaded_cached_trade_date = lambda: ""
-    tab._refresh_lhb_lineage = lambda rows: None
+    tab._refresh_lhb_lineage = lambda rows=None: None
     lhb.LhbTab._display_pool(tab, [], row_data=None)
     assert tab.table_state.calls[-1][0] == "empty"
 

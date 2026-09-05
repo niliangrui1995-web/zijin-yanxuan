@@ -6,6 +6,7 @@ import time
 from contextlib import suppress
 
 from PyQt6.QtCore import (
+    QAbstractItemModel,
     QEasingCurve,
     QEvent,
     QItemSelection,
@@ -346,7 +347,36 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
     def _on_sort_indicator_changed(self, column: int, _order):
         if not (self._restoring_refresh_state and self._paint_metric_scope == "lhb"):
             self._invalidate_shell_nav_repaint_guard("sort_changed")
+        previous_column = self._sorted_column
         self._sorted_column = column
+        if self._paint_metric_scope == "lhb":
+            # The delegate's sort tint only depends on the column. Actual row
+            # reordering already reaches Qt through the model's layout signal.
+            if previous_column == column:
+                return
+            model = self.model()
+            viewport = self.viewport()
+            if model is None or viewport is None or model.rowCount() == 0:
+                return
+            region = QRegion()
+            for changed_column in (previous_column, column):
+                if 0 <= changed_column < model.columnCount():
+                    selection = QItemSelection(
+                        model.index(0, changed_column), model.index(model.rowCount() - 1, changed_column)
+                    )
+                    region = region.united(self.visualRegionForSelection(selection))
+            region = region.intersected(QRegion(viewport.rect()))
+            if not region.isEmpty():
+                ratio, rects, full = _paint_region_metrics(region, viewport.rect())
+                self._mark_pending_paint_metric(
+                    "viewport_refresh",
+                    viewport_refresh_source="sort_indicator",
+                    requested_dirty_bounding_area_ratio=f"{ratio:.4f}",
+                    requested_dirty_region_rects=rects,
+                    requested_full_viewport=full,
+                )
+                viewport.update(region)
+            return
         self._mark_pending_paint_metric("viewport_refresh", viewport_refresh_source="sort_indicator")
         self.viewport().update()
 
@@ -569,6 +599,18 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         self._invalidate_shell_nav_repaint_guard("model_layout_changed")
         self._mark_pending_paint_metric("model_layout_changed", model_rows=self._model_row_count())
         self._schedule_refresh_state_restore(*_args)
+        hint = _args[1] if len(_args) > 1 else QAbstractItemModel.LayoutChangeHint.NoLayoutChangeHint
+        if (
+            self._paint_metric_scope == "lhb"
+            and self.isVisible()
+            and hint == QAbstractItemModel.LayoutChangeHint.NoLayoutChangeHint
+            and self.horizontalHeader().stretchLastSection()
+        ):
+            # The proxy drops source layout hints. Qt then temporarily shrinks
+            # its stretched header section and defers resizing it again, which
+            # can queue a second full viewport paint after this layout's frame.
+            # Finish that resize now using the existing section resize modes.
+            self.horizontalHeader().resizeSections()
 
     def _restore_pending_refresh_state(self) -> None:
         snapshot = self._pending_refresh_state_restore
@@ -600,10 +642,6 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
                         self.sortByColumn(sort_column, sort_order)
 
             selection_model = self.selectionModel()
-            if selection_model is not None:
-                with suppress(AttributeError, RuntimeError):
-                    selection_model.clearSelection()
-
             restored_rows = []
             for code in snapshot.get("selected_codes", []) or []:
                 row = self._find_row_by_identity(code)
@@ -622,18 +660,29 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             current_col = max(0, int(snapshot.get("current_col", 0) or 0))
 
             if selection_model is not None:
-                for row in restored_rows:
-                    index = self.model().index(row, 0)
-                    selection_model.select(
-                        index,
-                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                    )
+                selection_already_restored = (
+                    self._paint_metric_scope == "lhb"
+                    and {index.row() for index in selection_model.selectedRows()} == set(restored_rows)
+                )
+                if not selection_already_restored:
+                    with suppress(AttributeError, RuntimeError):
+                        selection_model.clearSelection()
+                    for row in restored_rows:
+                        index = self.model().index(row, 0)
+                        selection_model.select(
+                            index,
+                            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                        )
 
             if current_row >= 0:
                 current_index = self.model().index(
                     current_row, min(current_col, max(0, self.model().columnCount() - 1))
                 )
-                self.setCurrentIndex(current_index)
+                # Layout changes already move Qt's persistent selection with
+                # the stock. Reapplying it can scroll to an off-screen row,
+                # only for our scrollbar restoration to immediately undo it.
+                if self._paint_metric_scope != "lhb" or self.currentIndex() != current_index:
+                    self.setCurrentIndex(current_index)
 
             self._restore_scrollbars(v_scroll, h_scroll)
             self._pending_scrollbar_restore = (v_scroll, h_scroll)
@@ -781,7 +830,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
         self._pending_paint_metric = None
         self._flash_repaint_scheduled_at = 0.0
         self._flash_dirty_indexes.clear()
-        if self._paint_metric_scope != "watchlist":
+        if self._paint_metric_scope not in {"watchlist", "lhb"}:
             self._remove_native_window_event_filter()
         elif self.isVisible():
             self._native_window_requires_full_paint = True
@@ -1647,6 +1696,7 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             "viewport_refresh_source",
             "targeted_request_reason",
             "structural_reason",
+            "hidden_pending_age_ms",
         ):
             if metric is not None and key in metric:
                 value = metric[key]
@@ -1729,10 +1779,10 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
             self._native_window_requires_full_paint = False
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
 
-        if metric is not None or elapsed_ms >= 25.0 or (scope == "watchlist" and delivered_full):
+        if metric is not None or elapsed_ms >= 25.0 or (scope in {"watchlist", "lhb"} and delivered_full):
             from core.observability import record_metric
 
-            # A complete Watchlist PaintEvent is a display-correctness
+            # A complete Watchlist/LHB PaintEvent is a display-correctness
             # boundary, even when it is fast and has no business metric.  The
             # native profile compares this evidence with the incoming viewport
             # PaintEvents so a future guard cannot silently consume a full
@@ -1753,21 +1803,28 @@ class VCPTableView(_ViewportBaseBackgroundTableView):
     def showEvent(self, event):
         if self._closing:
             return
-        if self._paint_metric_scope == "watchlist":
-            # Reset native provenance for diagnostics. Visible Watchlist
-            # PaintEvents always continue to QTableView.paintEvent.
+        if self._paint_metric_scope in {"watchlist", "lhb"}:
+            # Reset native provenance at the visible boundary for diagnostics.
             self._native_window_requires_full_paint = True
             self._native_window_inactive = False
             self._native_window_paint_event = None
             self._native_window_last_event = None
             self._install_native_window_event_filter()
+        if self._paint_metric_scope == "lhb" and self._pending_paint_metric is not None:
+            # Hidden model work is not an event-loop paint delay. Retain its
+            # provenance but start the delivery clock at the visible boundary.
+            now = time.perf_counter()
+            metric = dict(self._pending_paint_metric)
+            metric["hidden_pending_age_ms"] = max(0.0, (now - float(metric.get("scheduled_at", now))) * 1000.0)
+            metric["scheduled_at"] = now
+            self._pending_paint_metric = metric
         self._apply_screen_width_limit()
         self._sync_ambient_repaint_timer()
         self._activate_shell_nav_repaint_guard()
         super().showEvent(event)
 
     def hideEvent(self, event):
-        if self._paint_metric_scope == "watchlist":
+        if self._paint_metric_scope in {"watchlist", "lhb"}:
             self._native_window_requires_full_paint = True
             self._native_window_inactive = False
             self._native_window_paint_event = None

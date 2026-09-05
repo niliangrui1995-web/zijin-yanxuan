@@ -2,7 +2,7 @@
 import time
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtTest import QSignalSpy
 
 from core.global_store import global_store
@@ -144,6 +144,109 @@ def test_stock_table_model_incremental_update_emits_only_changed_visible_columns
     assert spy[0][1].column() == changed_col
     roles = {int(getattr(role, "value", role)) for role in spy[0][2]}
     assert STOCK_CELL_RENDER_ROLE in roles
+
+
+def test_stock_table_model_incremental_snapshot_respects_disabled_flash():
+    model = StockTableModel(["代码", "现价"])
+    model.update_data([{"代码": "000001", "现价": "10.00"}], hydrate_latest_quotes=False)
+    changes = QSignalSpy(model.dataChanged)
+
+    model.update_data(
+        [{"代码": "000001", "现价": "11.00"}],
+        hydrate_latest_quotes=False,
+        record_flash=False,
+    )
+
+    assert model.row_data[0]["现价"] == "11.00"
+    assert model._flash_records == {}
+    assert len(changes) == 1
+    assert int(Qt.ItemDataRole.UserRole) + 1 not in changes[0][2]
+
+
+def test_stock_table_model_silent_snapshot_clears_flash_for_overwritten_value():
+    model = StockTableModel(["代码", "现价"])
+    model.update_data([{"代码": "000001", "现价": "10.00"}], hydrate_latest_quotes=False)
+    model.update_quotes({"000001": {"close": 11.0, "last_close": 10.0}})
+    price_column = model.headers.index("现价")
+    assert model._flash_records[0][price_column]["diff"] == 1.0
+
+    model.update_data(
+        [{"代码": "000001", "现价": "9.00"}],
+        hydrate_latest_quotes=False,
+        record_flash=False,
+    )
+
+    assert model.data(model.index(0, price_column), Qt.ItemDataRole.DisplayRole) == "9.00"
+    assert model.data(model.index(0, price_column), Qt.ItemDataRole.UserRole + 1) is None
+
+
+@pytest.mark.parametrize("record_flash", [True, False])
+def test_stock_table_model_reorder_clears_overwritten_flash_and_keeps_unchanged_value(record_flash):
+    model = StockTableModel(["代码", "现价"])
+    model.update_data(
+        [{"代码": "000001", "现价": "10.00"}, {"代码": "000002", "现价": "20.00"}],
+        hydrate_latest_quotes=False,
+    )
+    model.update_quotes(
+        {"000001": {"close": 11.0, "last_close": 10.0}, "000002": {"close": 21.0, "last_close": 20.0}}
+    )
+    price_column = model.headers.index("现价")
+    unchanged_flash = dict(model._flash_records[1][price_column])
+    assert model._flash_records[0][price_column]["diff"] == 1.0
+
+    model.update_data(
+        [{"代码": "000002", "现价": "21.00"}, {"代码": "000001", "现价": "9.00"}],
+        hydrate_latest_quotes=False,
+        record_flash=record_flash,
+    )
+
+    assert model.data(model.index(1, price_column), Qt.ItemDataRole.DisplayRole) == "9.00"
+    assert model.data(model.index(1, price_column), Qt.ItemDataRole.UserRole + 1) is None
+    assert model.data(model.index(0, price_column), Qt.ItemDataRole.UserRole + 1) == unchanged_flash
+
+
+def test_stock_table_model_reorder_moves_existing_flash_with_stock_and_persistent_index():
+    model = StockTableModel(["代码", "现价"])
+    model.update_data(
+        [{"代码": "000001", "现价": "10.00"}, {"代码": "000002", "现价": "20.00"}],
+        hydrate_latest_quotes=False,
+    )
+    price_column = model.headers.index("现价")
+    persistent = QPersistentModelIndex(model.index(0, price_column))
+    model.update_quotes({"000001": {"close": 11.0, "last_close": 10.0}})
+    flash = dict(model._flash_records[0][price_column])
+    source_rows = [dict(row) for row in reversed(model.row_data)]
+    layouts = QSignalSpy(model.layoutChanged)
+    resets = QSignalSpy(model.modelReset)
+
+    model.update_data(source_rows, hydrate_latest_quotes=False, record_flash=False)
+
+    assert len(layouts) == 1
+    assert len(resets) == 0
+    assert persistent.isValid() and persistent.row() == 1
+    assert persistent.data(Qt.ItemDataRole.DisplayRole) == "11.00"
+    assert model._flash_records == {1: {price_column: flash}}
+    assert model.data(model.index(1, price_column), Qt.ItemDataRole.UserRole + 1) == flash
+    assert model.data(model.index(0, price_column), Qt.ItemDataRole.UserRole + 1) is None
+
+
+def test_stock_table_model_reorder_tracks_persistent_index_created_by_layout_listener():
+    model = StockTableModel(["代码", "名称"])
+    model.update_data(
+        [{"代码": "000001", "名称": "甲"}, {"代码": "000002", "名称": "乙"}],
+        hydrate_latest_quotes=False,
+    )
+    indexes = []
+    code_column = model.headers.index("代码")
+    model.layoutAboutToBeChanged.connect(
+        lambda: indexes.append(QPersistentModelIndex(model.index(0, code_column)))
+    )
+
+    model.update_data([dict(row) for row in reversed(model.row_data)], hydrate_latest_quotes=False)
+
+    assert len(indexes) == 1
+    assert indexes[0].isValid() and indexes[0].row() == 1
+    assert indexes[0].data(Qt.ItemDataRole.DisplayRole) == "000001"
 
 
 def test_stock_table_model_hidden_row_style_change_notifies_accent_rail_column():

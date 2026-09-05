@@ -1,0 +1,4846 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-05T14:06:21.636861+08:00",
+  "status": "ok",
+  "environment": {
+    "system": "Windows-10-10.0.19045-SP0",
+    "python": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+    "qt": "6.11.0",
+    "pyqt": "6.11.0",
+    "pid": 14764,
+    "session_name": "",
+    "requested_qt_platform": "",
+    "actual_qt_platform": "windows",
+    "primary_screen": {
+      "name": "V2719Q",
+      "available_width": 2560,
+      "available_height": 1400,
+      "device_pixel_ratio": 1.0
+    },
+    "native_dataframe_runtime": {
+      "ready": true,
+      "initialization_ms": 1234.357
+    }
+  },
+  "isolation": {
+    "cache": {
+      "lhb_pool_30d.json": {
+        "source": "D:\\vcp_hunter\\紫金研选\\data\\Cache\\lhb_pool_30d.json",
+        "copy": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\runtime\\data\\Cache\\lhb_pool_30d.json",
+        "sha256": "300d032eb6c9610bf064288740e264d43c412ac4eb0614db00f9d94a462574ab"
+      },
+      "ai_industry_chain_stock_codes.json": {
+        "source": "D:\\vcp_hunter\\紫金研选\\data\\Cache\\ai_industry_chain_stock_codes.json",
+        "copy": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\runtime\\data\\Cache\\ai_industry_chain_stock_codes.json",
+        "sha256": "20b2c5c8f155aec46f2031e75edd8e5329e33fdabdf336d122beb98758615458"
+      },
+      "ai_industry_chain_context_map.json": {
+        "source": "D:\\vcp_hunter\\紫金研选\\data\\Cache\\ai_industry_chain_context_map.json",
+        "copy": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\runtime\\data\\Cache\\ai_industry_chain_context_map.json",
+        "sha256": "a63dd7da7e0fa33588e92df0cfcdb024efcc9dca5db34e066eb32d18af57371b"
+      },
+      "vcp_rps_precomputed.json": {
+        "source": "D:\\vcp_hunter\\紫金研选\\data\\Cache\\vcp_rps_precomputed.json",
+        "copy": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\runtime\\data\\Cache\\vcp_rps_precomputed.json",
+        "sha256": "a83e602eba62fbde8c7aec83f4135b5cf89f6bda16ed9e93a356fe967b0cf5eb"
+      }
+    },
+    "database": {
+      "mode": "sqlite_backup_copy",
+      "source": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "target": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\profile.db",
+      "source_size_bytes": 23805952,
+      "target_size_bytes": 23805952,
+      "cleanup_on_process_exit": true
+    },
+    "startup_orchestrator_suppressed": true,
+    "central_quotes_suppressed": true,
+    "network_blocked": true,
+    "quote_input": "deterministic replay against actual local cache rows",
+    "calendar_input": "dates in copied LHB cache",
+    "background_prewarm_enabled": true,
+    "screenshot_method": "QScreen.grabWindow only after measurement ends"
+  },
+  "configuration": {
+    "source_root": "D:\\vcp_hunter\\紫金研选",
+    "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\after",
+    "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+    "expected_rows": 42,
+    "timeout_ms": 90000,
+    "phase_ms": 1200,
+    "trace_layout": false,
+    "skip_refresh_state_restore": false,
+    "skip_same_current_index": false,
+    "skip_header_restore": false,
+    "execute_delayed_items_layout": false,
+    "resize_header_sections": false
+  },
+  "errors": [],
+  "phases": [
+    {
+      "name": "restore_last_tab",
+      "at_ms": 1840.099999999893,
+      "recorded_at": 1788588383.8389516
+    },
+    {
+      "name": "background_prewarm",
+      "at_ms": 5649.359999999888,
+      "recorded_at": 1788588387.6482112
+    },
+    {
+      "name": "idle_after_restore",
+      "at_ms": 10815.630600000077,
+      "recorded_at": 1788588392.8144815
+    },
+    {
+      "name": "same_snapshot",
+      "at_ms": 12015.66559999992,
+      "recorded_at": 1788588394.0145166
+    },
+    {
+      "name": "quote_and_flash",
+      "at_ms": 13220.158999999967,
+      "recorded_at": 1788588395.2190106
+    },
+    {
+      "name": "sort_price",
+      "at_ms": 14420.235999999932,
+      "recorded_at": 1788588396.4190876
+    },
+    {
+      "name": "same_sort_indicator",
+      "at_ms": 15623.598799999854,
+      "recorded_at": 1788588397.62245
+    },
+    {
+      "name": "parent_background_update",
+      "at_ms": 16823.90889999988,
+      "recorded_at": 1788588398.8227603
+    }
+  ],
+  "actual_paints": [
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4444.983999999749,
+      "elapsed_ms": 184.55210000001898,
+      "full_viewport": true,
+      "rect_count": 1,
+      "rows": 42,
+      "spontaneous": true,
+      "visible": true,
+      "bounds": [
+        0,
+        0,
+        1788,
+        873
+      ]
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5658.572899999854,
+      "elapsed_ms": 116.06669999991936,
+      "full_viewport": true,
+      "rect_count": 1,
+      "rows": 42,
+      "spontaneous": true,
+      "visible": true,
+      "bounds": [
+        0,
+        0,
+        1788,
+        873
+      ]
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13331.871599999886,
+      "elapsed_ms": 78.63880000013523,
+      "full_viewport": false,
+      "rect_count": 1,
+      "rows": 42,
+      "spontaneous": true,
+      "visible": true,
+      "bounds": [
+        212,
+        0,
+        327,
+        873
+      ]
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13463.081899999906,
+      "elapsed_ms": 218.1839999998374,
+      "full_viewport": true,
+      "rect_count": 1,
+      "rows": 42,
+      "spontaneous": true,
+      "visible": true,
+      "bounds": [
+        0,
+        0,
+        1788,
+        873
+      ]
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13837.255200000072,
+      "elapsed_ms": 29.23209999971732,
+      "full_viewport": false,
+      "rect_count": 2,
+      "rows": 42,
+      "spontaneous": true,
+      "visible": true,
+      "bounds": [
+        212,
+        0,
+        326,
+        873
+      ]
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14428.928799999994,
+      "elapsed_ms": 170.69569999966916,
+      "full_viewport": true,
+      "rect_count": 1,
+      "rows": 42,
+      "spontaneous": true,
+      "visible": true,
+      "bounds": [
+        0,
+        0,
+        1788,
+        873
+      ]
+    }
+  ],
+  "model_signals": [
+    {
+      "phase": "restore_last_tab",
+      "name": "proxy.modelReset",
+      "at_ms": 4244.309700000031,
+      "args": []
+    },
+    {
+      "phase": "restore_last_tab",
+      "name": "source.modelReset",
+      "at_ms": 4244.316699999672,
+      "args": []
+    },
+    {
+      "phase": "restore_last_tab",
+      "name": "proxy.dataChanged",
+      "at_ms": 4248.117999999977,
+      "args": [
+        0,
+        41,
+        3,
+        6,
+        [
+          0,
+          3,
+          9,
+          8,
+          6,
+          7,
+          256,
+          258,
+          260,
+          261,
+          262,
+          263
+        ]
+      ]
+    },
+    {
+      "phase": "restore_last_tab",
+      "name": "source.dataChanged",
+      "at_ms": 4248.123999999734,
+      "args": [
+        0,
+        41,
+        3,
+        6,
+        [
+          0,
+          3,
+          9,
+          8,
+          6,
+          7,
+          256,
+          258,
+          260,
+          261,
+          262,
+          263
+        ]
+      ]
+    },
+    {
+      "phase": "restore_last_tab",
+      "name": "proxy.layoutChanged",
+      "at_ms": 4248.827599999913,
+      "args": []
+    },
+    {
+      "phase": "restore_last_tab",
+      "name": "source.layoutChanged",
+      "at_ms": 4248.831200000041,
+      "args": []
+    },
+    {
+      "phase": "quote_and_flash",
+      "name": "proxy.dataChanged",
+      "at_ms": 13330.907000000025,
+      "args": [
+        0,
+        41,
+        3,
+        6,
+        [
+          0,
+          3,
+          9,
+          8,
+          6,
+          7,
+          256,
+          257,
+          258,
+          260,
+          261,
+          262,
+          263
+        ]
+      ]
+    },
+    {
+      "phase": "quote_and_flash",
+      "name": "source.dataChanged",
+      "at_ms": 13330.915600000026,
+      "args": [
+        0,
+        41,
+        3,
+        6,
+        [
+          0,
+          3,
+          9,
+          8,
+          6,
+          7,
+          256,
+          257,
+          258,
+          260,
+          261,
+          262,
+          263
+        ]
+      ]
+    },
+    {
+      "phase": "quote_and_flash",
+      "name": "proxy.layoutChanged",
+      "at_ms": 13458.5890999997,
+      "args": []
+    },
+    {
+      "phase": "quote_and_flash",
+      "name": "source.layoutChanged",
+      "at_ms": 13458.5933999997,
+      "args": []
+    },
+    {
+      "phase": "sort_price",
+      "name": "proxy.layoutChanged",
+      "at_ms": 14423.33039999994,
+      "args": []
+    }
+  ],
+  "actions": [
+    {
+      "phase": "quote_and_flash",
+      "active_flash_cells": 127
+    }
+  ],
+  "blocked_network_attempts": [],
+  "parent_events": [
+    {
+      "phase": "startup",
+      "at_ms": 1269.5593999997072,
+      "type": "Resize",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1342.8862999999183,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1349.3303000000196,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1349.4387000000643,
+      "type": "WindowActivate",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1356.2197000001106,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1384.4607999999425,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1389.0167999998084,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1389.1650000000482,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1395.5361999996967,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1402.0148999998128,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1405.8980999998312,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1406.104299999697,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1408.5163999998258,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1420.110499999737,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1424.7253999997156,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1424.831699999686,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1428.6416999998437,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1455.500999999913,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1455.5932999996912,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1553.4121000000596,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1556.6831999999522,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1576.2353000000076,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1576.3143999997737,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1580.9771999997793,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1581.054899999799,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1581.6414999999324,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1596.3062999999238,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1596.4100999999573,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1647.763699999814,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1647.874100000081,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1696.1750999998912,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1696.2620999997853,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1712.4690999999075,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1712.604299999839,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1714.4814999996925,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1715.7001000000491,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1724.399799999901,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1737.3497999997198,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1737.4434999996993,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1787.1593999998368,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1787.2471000000587,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1836.7599999996855,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "startup",
+      "at_ms": 1836.8370999996841,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1862.2440999997707,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1863.6125999996693,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1903.1347999998616,
+      "type": "WindowDeactivate",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1903.8126999998894,
+      "type": "WindowActivate",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1908.09629999967,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1909.6365000000333,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1919.3600999997216,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1934.580399999959,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1934.6488000001045,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1937.298699999701,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1941.8127999997523,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1979.8593999998957,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 1979.9097999998594,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2027.0845000000008,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2027.1570999998403,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2065.2224999998907,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2065.299800000048,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2112.0892999997523,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2112.2998000000734,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2159.822399999939,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2159.9115999997593,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2207.1093999998084,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2207.2524000000158,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2252.5072999997064,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2252.6004999999714,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2268.270399999892,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2268.3618999999453,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2269.23910000005,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2315.823899999941,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2315.9115999997084,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2349.895099999685,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2349.977399999716,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2393.495299999813,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2393.5695999998643,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2440.2380999999878,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2440.3274999999667,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2487.474099999872,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2487.5597999998718,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2528.6410999997315,
+      "type": "WindowDeactivate",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2530.4556000000957,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2533.0470999997488,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2547.664199999872,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2560.1470999999947,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2560.2813000000424,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2595.499799999743,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2595.759399999679,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2632.3865999997906,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2632.59939999989,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2678.735399999823,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2679.1072000000895,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2722.2413999998025,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2722.400199999811,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2767.4919000000955,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2767.68119999997,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2846.9861999997192,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2847.2759999999653,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2862.2175999998944,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2862.46889999984,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2925.2157999999326,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2925.4367999997157,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2943.37859999996,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2943.4794999997393,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2957.7405,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2957.965300000069,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2987.243600000056,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 2987.3620999997,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3018.523499999901,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3018.6487000000852,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3049.5335000000523,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3049.715399999968,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3086.582599999929,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3086.6871999996874,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3112.667099999726,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3112.8027999998267,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3151.725599999736,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3151.8559999999525,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3274.2371999997886,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3274.3311999997786,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3275.3460999997515,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3313.712099999975,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3313.8198999999986,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3340.226100000109,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3340.4069999996864,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3367.671699999846,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3367.779899999732,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3396.302199999809,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3396.3918999997986,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3425.7911999998214,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3425.8817999998428,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3457.081300000027,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3457.185700000082,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3489.117399999941,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3489.2101999998886,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3522.7861999997003,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3522.8845999999976,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3551.6147999996974,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3551.7322000000604,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3580.653199999688,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 3580.882599999768,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4271.751700000095,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4271.877499999846,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4272.027699999853,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4272.396599999865,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4272.478599999886,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4431.905200000074,
+      "type": "Resize",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4432.349199999862,
+      "type": "Resize",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4437.126599999829,
+      "type": "LayoutRequest",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4437.188599999899,
+      "type": "LayoutRequest",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4437.54059999992,
+      "type": "LayoutRequest",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4438.898299999892,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4439.183899999989,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4439.742099999876,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4440.007899999728,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4440.04649999988,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4440.203999999994,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4443.635399999948,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4633.668699999816,
+      "type": "LayoutRequest",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4633.704500000022,
+      "type": "LayoutRequest",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4633.734699999877,
+      "type": "LayoutRequest",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4633.875699999862,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4633.889199999885,
+      "type": "LayoutRequest",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4633.938099999796,
+      "type": "LayoutRequest",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4634.049100000084,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4634.065199999895,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4634.093799999846,
+      "type": "LayoutRequest",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4634.135299999798,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4634.3652000000475,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4634.884399999919,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4635.185499999807,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4635.217099999863,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4635.378200000105,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4636.446799999703,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.562500000011,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.612899999975,
+      "type": "LayoutRequest",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.6271999997225,
+      "type": "LayoutRequest",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.759400000003,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.775099999952,
+      "type": "LayoutRequest",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.7864999999,
+      "type": "LayoutRequest",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.801599999828,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4639.963099999932,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4640.49279999972,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4640.737599999738,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4640.772199999901,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4640.922300000057,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4641.982300000109,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4645.7188999997925,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4645.757799999956,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4645.783200000096,
+      "type": "LayoutRequest",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4646.133299999747,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4646.168299999772,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 4646.337599999697,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5260.466700000052,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5260.5516999997235,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5260.713499999838,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5267.848999999842,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5267.936299999747,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5268.087899999955,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5268.613499999901,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5268.708300000071,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5287.492399999792,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5287.6446000000215,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5287.878600000113,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5325.1451000001,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5325.247899999795,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5325.472699999864,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5355.643800000053,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5355.750899999748,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5355.913200000032,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5386.473799999749,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5386.56119999996,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5386.748200000056,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5410.844499999712,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5410.972299999685,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5411.193999999796,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5439.955499999996,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5440.153000000009,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5440.409199999976,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5471.8456000000515,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5471.968899999865,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5472.133499999927,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5503.201799999715,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5503.2907999998315,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5503.524899999775,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5535.8430000001135,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5535.965399999895,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5536.20809999984,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5647.545099999661,
+      "type": "WindowActivate",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5647.563399999854,
+      "type": "WindowActivate",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5647.707000000082,
+      "type": "WindowActivate",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5647.716899999978,
+      "type": "WindowActivate",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5647.754900000109,
+      "type": "WindowActivate",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "restore_last_tab",
+      "at_ms": 5647.836799999823,
+      "type": "WindowActivate",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5649.554399999943,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5649.960199999896,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5650.551199999882,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5653.302299999723,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5653.336800000034,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5653.495999999905,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5654.463299999861,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5775.053399999706,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5775.741599999947,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5778.3777999998165,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5778.4286999999495,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5778.625899999952,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5779.776699999729,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5951.9648999998935,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5952.08249999996,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5952.331199999662,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5953.975399999763,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 5954.170799999702,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6048.769099999845,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6048.837299999832,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6048.977599999944,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6068.965999999818,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6069.028099999741,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6069.177899999886,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6095.871499999703,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6095.943100000113,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6096.088499999951,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6128.26079999968,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6128.349000000071,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6128.508299999794,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6159.774599999764,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6159.876799999893,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6160.032700000102,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6191.612199999781,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6191.698600000109,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6191.883299999972,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6221.564999999828,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6221.65219999988,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6221.886799999993,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6255.877000000055,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6255.956099999821,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6256.104900000082,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6271.891500000038,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6271.960399999898,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6272.104199999831,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6272.599399999763,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6272.686499999963,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6282.878399999845,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6282.955899999706,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6283.150299999761,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6319.524999999885,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6319.6170000001075,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6319.780499999979,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6349.695999999767,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6349.792999999863,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 6350.007699999878,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 7274.681899999905,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 7274.75000000004,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 7274.891600000046,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 7275.402199999917,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 7275.492299999769,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 8271.941999999854,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 8272.018799999842,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 8272.175300000072,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 8272.607699999753,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 8272.716899999978,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 9277.307599999858,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 9277.37819999993,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 9277.5587000001,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 9277.93440000005,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 9278.02389999988,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 10290.293399999882,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 10290.369599999849,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 10290.514999999687,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 10290.903099999923,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "background_prewarm",
+      "at_ms": 10291.031299999759,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "idle_after_restore",
+      "at_ms": 11270.173200000045,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "idle_after_restore",
+      "at_ms": 11270.24369999981,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "idle_after_restore",
+      "at_ms": 11270.38820000007,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "idle_after_restore",
+      "at_ms": 11270.7347999999,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "idle_after_restore",
+      "at_ms": 11270.822699999826,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "same_snapshot",
+      "at_ms": 12271.500299999843,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "same_snapshot",
+      "at_ms": 12271.594599999844,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "same_snapshot",
+      "at_ms": 12271.862000000056,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "same_snapshot",
+      "at_ms": 12272.418799999741,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "same_snapshot",
+      "at_ms": 12272.567900000013,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13276.397699999961,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13276.496799999677,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13276.720699999714,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13277.236500000072,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13277.367599999707,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13331.47259999987,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13462.10689999998,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13681.419099999857,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13681.574499999897,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13681.620699999712,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13681.641799999852,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13681.737599999906,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13681.753699999717,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 13836.89269999968,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 14289.592999999968,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 14289.661100000103,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 14289.812199999687,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 14290.268899999774,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "quote_and_flash",
+      "at_ms": 14290.389100000084,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14427.577999999812,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14599.765699999807,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14600.136199999724,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14600.227999999788,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14600.263299999824,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14600.4097,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 14600.42969999995,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 15267.997099999775,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 15268.077599999742,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 15268.234599999687,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 15268.629799999871,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "sort_price",
+      "at_ms": 15268.754199999876,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "same_sort_indicator",
+      "at_ms": 16271.9804999997,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "same_sort_indicator",
+      "at_ms": 16272.053099999994,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "same_sort_indicator",
+      "at_ms": 16272.1904,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "same_sort_indicator",
+      "at_ms": 16272.571299999981,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "same_sort_indicator",
+      "at_ms": 16272.669899999983,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16824.07830000011,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16824.455500000113,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16825.22979999976,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16828.372500000114,
+      "type": "Paint",
+      "class": "QFrame",
+      "name": "tabsWrapperFrame"
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16828.412500000013,
+      "type": "Paint",
+      "class": "ClassicWorkspace",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16828.650899999957,
+      "type": "Paint",
+      "class": "LhbTab",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 16829.766099999688,
+      "type": "Paint",
+      "class": "TableStateWrapper",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 17269.90799999976,
+      "type": "UpdateRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 17269.979499999863,
+      "type": "Paint",
+      "class": "MainWindowQT",
+      "name": ""
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 17270.119599999816,
+      "type": "Paint",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 17270.46930000006,
+      "type": "LayoutRequest",
+      "class": "QWidget",
+      "name": "mainWindowFrame"
+    },
+    {
+      "phase": "parent_background_update",
+      "at_ms": 17270.563799999763,
+      "type": "LayoutRequest",
+      "class": "MainWindowQT",
+      "name": ""
+    }
+  ],
+  "activation_path": "ClassicWorkspace.schedule_restore_last_tab('lhb', delay_ms=0)",
+  "profiler_sha256": "272aae1d140d358ab22b274bdcdf5a0cd68fb014fc0bdefe5f26a9340df3d29d",
+  "diagnostic_only": false,
+  "source_sha256": {
+    "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+    "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+    "ui/components/table_controls.py": "1549c4ce0562638a4c3605893b004de36a9306cb9df1dfd414714113c2ae5943",
+    "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+    "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+    "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+    "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+  },
+  "original_log": {
+    "path": "D:\\vcp_hunter\\紫金研选\\data\\logs\\vcp_20260905.log",
+    "sha256": "46013058824a9e20f353740f805fde52c0e1fca838cd195d74f094295ee1e151",
+    "start_inclusive": "2026-09-05 03:08:26",
+    "end_exclusive": "2026-09-05 03:08:37",
+    "metrics": {
+      "lhb_table_paint_ms": [
+        {
+          "line": 69,
+          "timestamp": "2026-09-05 03:08:26,773",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548906.773397,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "changed_columns": "4",
+            "changed_indexes": "168",
+            "changed_rows": "42",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "structural_full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_cells": "126",
+            "dirty_region_rects": "1",
+            "includes_flash_role": "true",
+            "model_rows": "42",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "pending_reasons": "quote_data_changed,model_reset,model_layout_changed,viewport_refresh,flash_expiry",
+            "preload_staged": "false",
+            "quote_dirty_bounding_area_ratio": "0.1268",
+            "quote_dirty_region_full": "false",
+            "quote_dirty_region_rects": "1",
+            "reason": "model_reset",
+            "requested_dirty_bounding_area_ratio": "0.1073",
+            "requested_dirty_region_rects": "1",
+            "requested_full_viewport": "false",
+            "structural_reason": "model_reset",
+            "tab": "lhb",
+            "targeted_request_coalesced_with_structural": "true",
+            "targeted_request_reason": "flash_expiry",
+            "threshold_exceeded": "false",
+            "update_threshold": "10000",
+            "viewport_refresh_source": "sort_indicator",
+            "visible_dirty_cells": "126",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 400.33630000107223
+        },
+        {
+          "line": 73,
+          "timestamp": "2026-09-05 03:08:27,048",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.0484025,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 180.76160000055097
+        },
+        {
+          "line": 78,
+          "timestamp": "2026-09-05 03:08:27,256",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.2564297,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 184.97629999910714
+        },
+        {
+          "line": 83,
+          "timestamp": "2026-09-05 03:08:27,742",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.7419817,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 177.99309999827528
+        },
+        {
+          "line": 88,
+          "timestamp": "2026-09-05 03:08:27,936",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548907.936543,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 177.8057000010449
+        },
+        {
+          "line": 91,
+          "timestamp": "2026-09-05 03:08:28,579",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548908.5792315,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 190.8332999992126
+        },
+        {
+          "line": 107,
+          "timestamp": "2026-09-05 03:08:30,835",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548910.835038,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 196.69300000168732
+        },
+        {
+          "line": 110,
+          "timestamp": "2026-09-05 03:08:31,039",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548911.039437,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 187.30700000014622
+        },
+        {
+          "line": 115,
+          "timestamp": "2026-09-05 03:08:31,702",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548911.7027528,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 511.9395000001532
+        },
+        {
+          "line": 123,
+          "timestamp": "2026-09-05 03:08:32,276",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548912.276494,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 181.77189999914845
+        },
+        {
+          "line": 126,
+          "timestamp": "2026-09-05 03:08:32,486",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548912.4861732,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 192.28280000243103
+        },
+        {
+          "line": 142,
+          "timestamp": "2026-09-05 03:08:34,903",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548914.903115,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 177.768699999433
+        },
+        {
+          "line": 147,
+          "timestamp": "2026-09-05 03:08:35,086",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548915.0867548,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 167.7419000006921
+        },
+        {
+          "line": 151,
+          "timestamp": "2026-09-05 03:08:35,745",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548915.7453666,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 181.16689999806113
+        },
+        {
+          "line": 154,
+          "timestamp": "2026-09-05 03:08:35,934",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548915.934928,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 173.70279999886407
+        },
+        {
+          "line": 160,
+          "timestamp": "2026-09-05 03:08:36,128",
+          "metric": "lhb_table_paint_ms",
+          "recorded_at": 1788548916.1287255,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_region_rects": "1",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "preload_staged": "false",
+            "reason": "other",
+            "tab": "lhb",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 172.96979999809992
+        }
+      ],
+      "lhb_table_paint_delay_ms": [
+        {
+          "line": 70,
+          "timestamp": "2026-09-05 03:08:26,774",
+          "metric": "lhb_table_paint_delay_ms",
+          "recorded_at": 1788548906.7746053,
+          "tags": {
+            "background_preload_ready": "true",
+            "background_prewarm_active_key_at_paint": "",
+            "changed_columns": "4",
+            "changed_indexes": "168",
+            "changed_rows": "42",
+            "delivered_dirty_bounding_area_ratio": "1.0000",
+            "delivered_full_viewport": "true",
+            "delivery_kind": "structural_full_viewport",
+            "dirty_bounding_area_ratio": "1.0000",
+            "dirty_cells": "126",
+            "dirty_region_rects": "1",
+            "includes_flash_role": "true",
+            "model_rows": "42",
+            "native_window_inactive": "false",
+            "native_window_last_event": "",
+            "native_window_last_event_age_ms": "",
+            "native_window_requires_full_paint": "false",
+            "native_window_signal": "",
+            "native_window_signal_age_ms": "",
+            "paint_event_spontaneous": "true",
+            "pending_reasons": "quote_data_changed,model_reset,model_layout_changed,viewport_refresh,flash_expiry",
+            "preload_staged": "false",
+            "quote_dirty_bounding_area_ratio": "0.1268",
+            "quote_dirty_region_full": "false",
+            "quote_dirty_region_rects": "1",
+            "reason": "model_reset",
+            "requested_dirty_bounding_area_ratio": "0.1073",
+            "requested_dirty_region_rects": "1",
+            "requested_full_viewport": "false",
+            "structural_reason": "model_reset",
+            "tab": "lhb",
+            "targeted_request_coalesced_with_structural": "true",
+            "targeted_request_reason": "flash_expiry",
+            "threshold_exceeded": "false",
+            "update_threshold": "10000",
+            "viewport_refresh_source": "sort_indicator",
+            "visible_dirty_cells": "126",
+            "workspace_load_reason": "restore_last_tab"
+          },
+          "unit": "ms",
+          "value": 31477213.6668
+        }
+      ],
+      "ui_event_loop_stall_ms": [
+        {
+          "line": 75,
+          "timestamp": "2026-09-05 03:08:27,055",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548907.0558667,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 1216.3728999999876
+        },
+        {
+          "line": 80,
+          "timestamp": "2026-09-05 03:08:27,260",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548907.2605667,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 170.2761000029568
+        },
+        {
+          "line": 85,
+          "timestamp": "2026-09-05 03:08:27,748",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548907.7481105,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 183.86539999992237
+        },
+        {
+          "line": 93,
+          "timestamp": "2026-09-05 03:08:28,584",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548908.5839784,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 194.47609999915585
+        },
+        {
+          "line": 102,
+          "timestamp": "2026-09-05 03:08:30,602",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548910.60227,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 638.0920000025071
+        },
+        {
+          "line": 112,
+          "timestamp": "2026-09-05 03:08:31,105",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548911.105092,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 478.213500000129
+        },
+        {
+          "line": 117,
+          "timestamp": "2026-09-05 03:08:31,707",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548911.7079186,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 577.8937999981281
+        },
+        {
+          "line": 120,
+          "timestamp": "2026-09-05 03:08:32,070",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548912.070042,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 326.42829999676906
+        },
+        {
+          "line": 128,
+          "timestamp": "2026-09-05 03:08:32,564",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548912.564759,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 469.88470000142115
+        },
+        {
+          "line": 144,
+          "timestamp": "2026-09-05 03:08:34,908",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548914.9080718,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 168.1142000030377
+        },
+        {
+          "line": 157,
+          "timestamp": "2026-09-05 03:08:35,948",
+          "metric": "ui_event_loop_stall_ms",
+          "recorded_at": 1788548915.9482646,
+          "tags": {
+            "callback_kind": "",
+            "layout_signal": "",
+            "method": "VCPTableView.paintEvent",
+            "preload_state": "",
+            "reason": "",
+            "severity": "critical",
+            "signal": "other",
+            "source_tab": "",
+            "tab": "lhb",
+            "target_tab": "",
+            "transition_phase": ""
+          },
+          "unit": "ms",
+          "value": 373.4978999978921
+        }
+      ]
+    }
+  },
+  "origin_epoch": 1788588381.9988508,
+  "method_trace": [],
+  "loaded_rows": 42,
+  "load_reason": "restore_last_tab",
+  "row_codes": [
+    "688170",
+    "002536",
+    "688300",
+    "001309",
+    "688368",
+    "601869",
+    "600487",
+    "600110",
+    "688328",
+    "688112",
+    "300570",
+    "002156",
+    "002436",
+    "603083",
+    "688662",
+    "003031",
+    "688167",
+    "000636",
+    "603650",
+    "603773",
+    "688549",
+    "600206",
+    "600330",
+    "002428",
+    "600584",
+    "603061",
+    "688596",
+    "002384",
+    "920045",
+    "300620",
+    "002281",
+    "688313",
+    "688661",
+    "688668",
+    "002409",
+    "002851",
+    "688663",
+    "601133",
+    "300502",
+    "300308",
+    "688146",
+    "301526"
+  ],
+  "viewport": {
+    "size": [
+      1788,
+      873
+    ],
+    "opaque": false,
+    "auto_fill_background": true,
+    "style_sheet": "",
+    "background_role": "Base"
+  },
+  "background_prewarm": {
+    "enabled": true,
+    "started": true,
+    "finished": true,
+    "completion_scope": "all_planned",
+    "visible_watchlist_state": "staged_ready",
+    "visible_watchlist_at": 3656.7273841,
+    "visible_watchlist_detail": "ready",
+    "startup_lazy_handoff_keys": [],
+    "startup_lazy_handoff_count": 0,
+    "interactive_handoff_targets": [],
+    "watchlist_resume_pause_requested": false,
+    "foreground_hold_reason": "",
+    "foreground_hold_active_key": "",
+    "foreground_hold_mode": "",
+    "foreground_hold_count": 0,
+    "foreground_hold_requeued_keys": [],
+    "planned_order": [
+      "watchlist",
+      "system_log",
+      "ai_industry_chain",
+      "na_daily",
+      "scan",
+      "foreign_block",
+      "earnings",
+      "fund_holdings",
+      "lhb",
+      "asian_market",
+      "stock_candidates"
+    ],
+    "planned_count": 11,
+    "start_order": [
+      "watchlist",
+      "ai_industry_chain",
+      "lhb",
+      "system_log",
+      "na_daily",
+      "scan",
+      "foreign_block",
+      "earnings",
+      "fund_holdings",
+      "asian_market",
+      "stock_candidates"
+    ],
+    "completion_order": [
+      "watchlist",
+      "ai_industry_chain",
+      "lhb",
+      "system_log",
+      "na_daily",
+      "scan",
+      "foreign_block",
+      "earnings",
+      "fund_holdings",
+      "asian_market",
+      "stock_candidates"
+    ],
+    "ready_keys": [
+      "watchlist",
+      "system_log",
+      "ai_industry_chain",
+      "na_daily",
+      "scan",
+      "foreign_block",
+      "earnings",
+      "fund_holdings",
+      "lhb",
+      "asian_market",
+      "stock_candidates"
+    ],
+    "loaded_keys": [
+      "watchlist",
+      "lhb",
+      "asian_market",
+      "na_daily",
+      "stock_candidates",
+      "ai_industry_chain",
+      "scan",
+      "foreign_block",
+      "earnings",
+      "fund_holdings",
+      "system_log"
+    ],
+    "loaded_count": 11,
+    "active_key": "",
+    "remaining_keys": [],
+    "failures": {},
+    "timeouts": [],
+    "promoted_order": [
+      "watchlist",
+      "lhb"
+    ],
+    "pending_priority_keys": [],
+    "priority_closures": {},
+    "dependency_failures": {},
+    "cancelling_key": "",
+    "cancel_receipt": {},
+    "cancellation_settlement_timeout_ms": 5000,
+    "cancellation_blocked_poll_interval_ms": 500,
+    "cancellation_timeouts": {},
+    "cancellation_timeout_keys": [],
+    "cancellation_blocked": false,
+    "blocked_reason": "",
+    "active_step_count": 0,
+    "max_concurrent_steps": 1,
+    "active_phase": "",
+    "timer_active": false,
+    "interaction_quiet_remaining_ms": 0,
+    "shutdown_cancel_receipts": [],
+    "shutdown_cancellation_settled": true,
+    "startup_cache_bootstrap_required": true,
+    "startup_cache_bootstrap_ready": true
+  },
+  "dispatcher": {
+    "interpretation": {
+      "active_dispatch": "time between dispatcher awake and aboutToBlock; long spans indicate event handling work",
+      "blocked_wait": "time spent in the native dispatcher wait; this is sleep/wake time, not UI work"
+    },
+    "phases": {
+      "background_prewarm": {
+        "active_dispatch": {
+          "count": 759,
+          "total_ms": 1070.405,
+          "max_ms": 133.896,
+          "p50_ms": 0.09,
+          "p95_ms": 6.913,
+          "p99_ms": 20.907,
+          "over_50ms": 3,
+          "over_100ms": 1
+        },
+        "blocked_wait": {
+          "count": 306,
+          "total_ms": 4095.883,
+          "max_ms": 30.75,
+          "p50_ms": 13.486,
+          "p95_ms": 25.017,
+          "p99_ms": 25.543,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "idle_after_restore": {
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 10.615,
+          "max_ms": 0.767,
+          "p50_ms": 0.069,
+          "p95_ms": 0.285,
+          "p99_ms": 0.623,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 51,
+          "total_ms": 1189.422,
+          "max_ms": 25.402,
+          "p50_ms": 24.841,
+          "p95_ms": 25.285,
+          "p99_ms": 25.381,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "parent_background_update": {
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 23.035,
+          "max_ms": 10.401,
+          "p50_ms": 0.092,
+          "p95_ms": 0.324,
+          "p99_ms": 0.705,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 51,
+          "total_ms": 1177.715,
+          "max_ms": 25.553,
+          "p50_ms": 24.735,
+          "p95_ms": 25.291,
+          "p99_ms": 25.479,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "quote_and_flash": {
+        "active_dispatch": {
+          "count": 90,
+          "total_ms": 382.813,
+          "max_ms": 224.118,
+          "p50_ms": 0.103,
+          "p95_ms": 7.36,
+          "p99_ms": 95.643,
+          "over_50ms": 2,
+          "over_100ms": 1
+        },
+        "blocked_wait": {
+          "count": 39,
+          "total_ms": 817.265,
+          "max_ms": 25.668,
+          "p50_ms": 24.421,
+          "p95_ms": 25.202,
+          "p99_ms": 25.582,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "restore_last_tab": {
+        "active_dispatch": {
+          "count": 622,
+          "total_ms": 1074.272,
+          "max_ms": 196.585,
+          "p50_ms": 0.157,
+          "p95_ms": 9.098,
+          "p99_ms": 29.24,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "blocked_wait": {
+          "count": 240,
+          "total_ms": 2734.995,
+          "max_ms": 25.956,
+          "p50_ms": 9.743,
+          "p95_ms": 24.869,
+          "p99_ms": 25.423,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "same_snapshot": {
+        "active_dispatch": {
+          "count": 110,
+          "total_ms": 21.172,
+          "max_ms": 4.427,
+          "p50_ms": 0.09,
+          "p95_ms": 0.554,
+          "p99_ms": 1.277,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 52,
+          "total_ms": 1183.316,
+          "max_ms": 25.773,
+          "p50_ms": 24.556,
+          "p95_ms": 25.613,
+          "p99_ms": 25.753,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "same_sort_indicator": {
+        "active_dispatch": {
+          "count": 107,
+          "total_ms": 13.155,
+          "max_ms": 0.774,
+          "p50_ms": 0.084,
+          "p95_ms": 0.331,
+          "p99_ms": 0.431,
+          "over_50ms": 0,
+          "over_100ms": 0
+        },
+        "blocked_wait": {
+          "count": 51,
+          "total_ms": 1187.149,
+          "max_ms": 26.695,
+          "p50_ms": 24.775,
+          "p95_ms": 25.444,
+          "p99_ms": 26.09,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "sort_price": {
+        "active_dispatch": {
+          "count": 95,
+          "total_ms": 208.604,
+          "max_ms": 180.159,
+          "p50_ms": 0.089,
+          "p95_ms": 0.712,
+          "p99_ms": 22.161,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "blocked_wait": {
+          "count": 44,
+          "total_ms": 994.761,
+          "max_ms": 25.426,
+          "p50_ms": 24.774,
+          "p95_ms": 25.26,
+          "p99_ms": 25.406,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      },
+      "startup": {
+        "active_dispatch": {
+          "count": 71,
+          "total_ms": 1524.535,
+          "max_ms": 1340.703,
+          "p50_ms": 0.581,
+          "p95_ms": 14.48,
+          "p99_ms": 431.61,
+          "over_50ms": 1,
+          "over_100ms": 1
+        },
+        "blocked_wait": {
+          "count": 20,
+          "total_ms": 315.462,
+          "max_ms": 43.989,
+          "p50_ms": 13.482,
+          "p95_ms": 25.967,
+          "p99_ms": 40.385,
+          "over_50ms": 0,
+          "over_100ms": 0
+        }
+      }
+    },
+    "largest_active_dispatch_segments": [
+      {
+        "kind": "active_dispatch",
+        "phase": "startup",
+        "elapsed_ms": 1340.703,
+        "ended_at_ms": 1340.748
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "quote_and_flash",
+        "elapsed_ms": 224.118,
+        "ended_at_ms": 13684.25
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "restore_last_tab",
+        "elapsed_ms": 196.585,
+        "ended_at_ms": 4632.947
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "sort_price",
+        "elapsed_ms": 180.159,
+        "ended_at_ms": 14604.125
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "background_prewarm",
+        "elapsed_ms": 133.896,
+        "ended_at_ms": 5783.194
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "background_prewarm",
+        "elapsed_ms": 85.774,
+        "ended_at_ms": 5943.689
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "quote_and_flash",
+        "elapsed_ms": 79.764,
+        "ended_at_ms": 13411.113
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "background_prewarm",
+        "elapsed_ms": 61.297,
+        "ended_at_ms": 7711.69
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "background_prewarm",
+        "elapsed_ms": 47.607,
+        "ended_at_ms": 8388.373
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "restore_last_tab",
+        "elapsed_ms": 43.405,
+        "ended_at_ms": 3643.512
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "startup",
+        "elapsed_ms": 41.999,
+        "ended_at_ms": 1382.746
+      },
+      {
+        "kind": "active_dispatch",
+        "phase": "restore_last_tab",
+        "elapsed_ms": 37.524,
+        "ended_at_ms": 2918.029
+      }
+    ],
+    "largest_blocked_wait_segments": [
+      {
+        "kind": "blocked_wait",
+        "phase": "startup",
+        "elapsed_ms": 43.989,
+        "ended_at_ms": 1531.588
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "background_prewarm",
+        "elapsed_ms": 30.75,
+        "ended_at_ms": 8542.342
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "same_sort_indicator",
+        "elapsed_ms": 26.695,
+        "ended_at_ms": 16113.513
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "background_prewarm",
+        "elapsed_ms": 26.265,
+        "ended_at_ms": 8416.475
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "restore_last_tab",
+        "elapsed_ms": 25.956,
+        "ended_at_ms": 3987.828
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "background_prewarm",
+        "elapsed_ms": 25.781,
+        "ended_at_ms": 7312.003
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "same_snapshot",
+        "elapsed_ms": 25.773,
+        "ended_at_ms": 12086.97
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "same_snapshot",
+        "elapsed_ms": 25.734,
+        "ended_at_ms": 12462.01
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "quote_and_flash",
+        "elapsed_ms": 25.668,
+        "ended_at_ms": 14111.906
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "same_snapshot",
+        "elapsed_ms": 25.614,
+        "ended_at_ms": 12911.909
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "same_snapshot",
+        "elapsed_ms": 25.612,
+        "ended_at_ms": 12712.001
+      },
+      {
+        "kind": "blocked_wait",
+        "phase": "restore_last_tab",
+        "elapsed_ms": 25.602,
+        "ended_at_ms": 3687.044
+      }
+    ]
+  },
+  "paint_summary": {
+    "restore_last_tab": {
+      "actual_paint": {
+        "count": 1,
+        "total_ms": 184.552,
+        "max_ms": 184.552,
+        "p50_ms": 184.552,
+        "p95_ms": 184.552,
+        "p99_ms": 184.552,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "local_region_count": 0,
+      "first_rows": 42
+    },
+    "background_prewarm": {
+      "actual_paint": {
+        "count": 1,
+        "total_ms": 116.067,
+        "max_ms": 116.067,
+        "p50_ms": 116.067,
+        "p95_ms": 116.067,
+        "p99_ms": 116.067,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "local_region_count": 0,
+      "first_rows": 42
+    },
+    "quote_and_flash": {
+      "actual_paint": {
+        "count": 3,
+        "total_ms": 326.055,
+        "max_ms": 218.184,
+        "p50_ms": 78.639,
+        "p95_ms": 204.229,
+        "p99_ms": 215.393,
+        "over_50ms": 2,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "local_region_count": 2,
+      "first_rows": 42
+    },
+    "sort_price": {
+      "actual_paint": {
+        "count": 1,
+        "total_ms": 170.696,
+        "max_ms": 170.696,
+        "p50_ms": 170.696,
+        "p95_ms": 170.696,
+        "p99_ms": 170.696,
+        "over_50ms": 1,
+        "over_100ms": 1
+      },
+      "full_viewport_count": 1,
+      "local_region_count": 0,
+      "first_rows": 42
+    }
+  },
+  "model_signal_counts": {
+    "restore_last_tab": {
+      "proxy.modelReset": 1,
+      "source.modelReset": 1,
+      "proxy.dataChanged": 1,
+      "source.dataChanged": 1,
+      "proxy.layoutChanged": 1,
+      "source.layoutChanged": 1
+    },
+    "sort_price": {
+      "proxy.layoutChanged": 1
+    },
+    "quote_and_flash": {
+      "proxy.dataChanged": 1,
+      "source.dataChanged": 1,
+      "proxy.layoutChanged": 1,
+      "source.layoutChanged": 1
+    }
+  },
+  "metrics": {
+    "lhb_table_paint_ms": [
+      {
+        "value": 183.96649999976944,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "preload_reveal",
+          "tab": "lhb",
+          "native_window_signal": "",
+          "native_window_signal_age_ms": "",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "6.115",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "model_rows": "42",
+          "structural_reason": "preload_reveal",
+          "hidden_pending_age_ms": "24.946700000327837",
+          "pending_reasons": "preload_reveal",
+          "delivery_kind": "structural_full_viewport",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "source_tab": "watchlist",
+          "target_tab": "lhb",
+          "transition_reason": "restore_last_tab",
+          "preload_state": "cold",
+          "mounted_before": "false",
+          "transition_phase": "paint",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588386.6281142
+      },
+      {
+        "value": 115.6184999999823,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "other",
+          "tab": "lhb",
+          "native_window_signal": "window_activate",
+          "native_window_signal_age_ms": "10.644",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "9.054",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "delivery_kind": "full_viewport",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "source_tab": "watchlist",
+          "target_tab": "lhb",
+          "transition_reason": "restore_last_tab",
+          "preload_state": "cold",
+          "mounted_before": "false",
+          "transition_phase": "paint",
+          "background_prewarm_active_key_at_paint": "scan"
+        },
+        "recorded_at": 1788588387.7733724
+      },
+      {
+        "value": 77.96749999988606,
+        "tags": {
+          "dirty_bounding_area_ratio": "0.1829",
+          "delivered_dirty_bounding_area_ratio": "0.1829",
+          "delivered_full_viewport": "false",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "quote_data_changed",
+          "tab": "lhb",
+          "changed_rows": "42",
+          "changed_columns": "4",
+          "changed_indexes": "168",
+          "update_threshold": "10000",
+          "threshold_exceeded": "false",
+          "includes_flash_role": "true",
+          "dirty_cells": "127",
+          "quote_dirty_bounding_area_ratio": "0.1823",
+          "quote_dirty_region_rects": "1",
+          "quote_dirty_region_full": "false",
+          "pending_reasons": "quote_data_changed",
+          "delivery_kind": "partial_region",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588395.4091382
+      },
+      {
+        "value": 217.63629999986733,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "model_layout_changed",
+          "tab": "lhb",
+          "native_window_signal": "window_layout_request",
+          "native_window_signal_age_ms": "185.753",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "1.014",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "model_rows": "42",
+          "structural_reason": "model_layout_changed",
+          "pending_reasons": "model_layout_changed",
+          "delivery_kind": "structural_full_viewport",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588395.6799006
+      },
+      {
+        "value": 28.541499999846565,
+        "tags": {
+          "dirty_bounding_area_ratio": "0.1823",
+          "delivered_dirty_bounding_area_ratio": "0.1823",
+          "delivered_full_viewport": "false",
+          "dirty_region_rects": "2",
+          "paint_event_spontaneous": "true",
+          "reason": "flash_expiry",
+          "tab": "lhb",
+          "dirty_cells": "127",
+          "visible_dirty_cells": "85",
+          "requested_dirty_bounding_area_ratio": "0.1823",
+          "requested_dirty_region_rects": "2",
+          "requested_full_viewport": "false",
+          "targeted_request_reason": "flash_expiry",
+          "pending_reasons": "flash_expiry",
+          "delivery_kind": "requested_region",
+          "region_expanded": "false",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588395.8649638
+      },
+      {
+        "value": 169.96160000007876,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "model_layout_changed",
+          "tab": "lhb",
+          "native_window_signal": "window_layout_request",
+          "native_window_signal_age_ms": "138.586",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "1.400",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "model_rows": "42",
+          "requested_dirty_bounding_area_ratio": "0.0403",
+          "requested_dirty_region_rects": "1",
+          "requested_full_viewport": "false",
+          "viewport_refresh_source": "sort_indicator",
+          "targeted_request_reason": "viewport_refresh",
+          "structural_reason": "model_layout_changed",
+          "pending_reasons": "model_layout_changed,viewport_refresh",
+          "delivery_kind": "structural_full_viewport",
+          "targeted_request_coalesced_with_structural": "true",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588396.5982063
+      }
+    ],
+    "lhb_table_paint_delay_ms": [
+      {
+        "value": 10.919499999999971,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "preload_reveal",
+          "tab": "lhb",
+          "native_window_signal": "",
+          "native_window_signal_age_ms": "",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "6.115",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "model_rows": "42",
+          "structural_reason": "preload_reveal",
+          "hidden_pending_age_ms": "24.946700000327837",
+          "pending_reasons": "preload_reveal",
+          "delivery_kind": "structural_full_viewport",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "source_tab": "watchlist",
+          "target_tab": "lhb",
+          "transition_reason": "restore_last_tab",
+          "preload_state": "cold",
+          "mounted_before": "false",
+          "transition_phase": "paint",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588386.6282623
+      },
+      {
+        "value": 5.858699999862438,
+        "tags": {
+          "dirty_bounding_area_ratio": "0.1829",
+          "delivered_dirty_bounding_area_ratio": "0.1829",
+          "delivered_full_viewport": "false",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "quote_data_changed",
+          "tab": "lhb",
+          "changed_rows": "42",
+          "changed_columns": "4",
+          "changed_indexes": "168",
+          "update_threshold": "10000",
+          "threshold_exceeded": "false",
+          "includes_flash_role": "true",
+          "dirty_cells": "127",
+          "quote_dirty_bounding_area_ratio": "0.1823",
+          "quote_dirty_region_rects": "1",
+          "quote_dirty_region_full": "false",
+          "pending_reasons": "quote_data_changed",
+          "delivery_kind": "partial_region",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588395.409258
+      },
+      {
+        "value": 4.92000000031112,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "model_layout_changed",
+          "tab": "lhb",
+          "native_window_signal": "window_layout_request",
+          "native_window_signal_age_ms": "185.753",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "1.014",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "model_rows": "42",
+          "structural_reason": "model_layout_changed",
+          "pending_reasons": "model_layout_changed",
+          "delivery_kind": "structural_full_viewport",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588395.680015
+      },
+      {
+        "value": 0.809900000149355,
+        "tags": {
+          "dirty_bounding_area_ratio": "0.1823",
+          "delivered_dirty_bounding_area_ratio": "0.1823",
+          "delivered_full_viewport": "false",
+          "dirty_region_rects": "2",
+          "paint_event_spontaneous": "true",
+          "reason": "flash_expiry",
+          "tab": "lhb",
+          "dirty_cells": "127",
+          "visible_dirty_cells": "85",
+          "requested_dirty_bounding_area_ratio": "0.1823",
+          "requested_dirty_region_rects": "2",
+          "requested_full_viewport": "false",
+          "targeted_request_reason": "flash_expiry",
+          "pending_reasons": "flash_expiry",
+          "delivery_kind": "requested_region",
+          "region_expanded": "false",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588395.8651946
+      },
+      {
+        "value": 6.091400000059366,
+        "tags": {
+          "dirty_bounding_area_ratio": "1.0000",
+          "delivered_dirty_bounding_area_ratio": "1.0000",
+          "delivered_full_viewport": "true",
+          "dirty_region_rects": "1",
+          "paint_event_spontaneous": "true",
+          "reason": "model_layout_changed",
+          "tab": "lhb",
+          "native_window_signal": "window_layout_request",
+          "native_window_signal_age_ms": "138.586",
+          "native_window_last_event": "window_update_request",
+          "native_window_last_event_age_ms": "1.400",
+          "native_window_inactive": "false",
+          "native_window_requires_full_paint": "true",
+          "model_rows": "42",
+          "requested_dirty_bounding_area_ratio": "0.0403",
+          "requested_dirty_region_rects": "1",
+          "requested_full_viewport": "false",
+          "viewport_refresh_source": "sort_indicator",
+          "targeted_request_reason": "viewport_refresh",
+          "structural_reason": "model_layout_changed",
+          "pending_reasons": "model_layout_changed,viewport_refresh",
+          "delivery_kind": "structural_full_viewport",
+          "targeted_request_coalesced_with_structural": "true",
+          "workspace_load_reason": "restore_last_tab",
+          "background_preload_ready": "true",
+          "preload_staged": "false",
+          "background_prewarm_active_key_at_paint": ""
+        },
+        "recorded_at": 1788588396.5983243
+      }
+    ],
+    "ui_event_loop_stall_ms": [
+      {
+        "value": 1058.5283999999774,
+        "tags": {
+          "severity": "critical",
+          "tab": "watchlist",
+          "method": "",
+          "signal": "",
+          "transition_phase": "",
+          "callback_kind": "",
+          "preload_state": "",
+          "layout_signal": "",
+          "source_tab": "",
+          "target_tab": "",
+          "reason": ""
+        },
+        "recorded_at": 1788588383.3446422
+      },
+      {
+        "value": 171.610999999848,
+        "tags": {
+          "severity": "critical",
+          "tab": "lhb",
+          "method": "VCPTableView.paintEvent",
+          "signal": "preload_reveal",
+          "transition_phase": "paint",
+          "callback_kind": "",
+          "preload_state": "cold",
+          "layout_signal": "",
+          "source_tab": "watchlist",
+          "target_tab": "lhb",
+          "reason": "restore_last_tab"
+        },
+        "recorded_at": 1788588386.6322148
+      },
+      {
+        "value": 109.05109999985143,
+        "tags": {
+          "severity": "critical",
+          "tab": "lhb",
+          "method": "VCPTableView.paintEvent",
+          "signal": "window_activate",
+          "transition_phase": "paint",
+          "callback_kind": "",
+          "preload_state": "cold",
+          "layout_signal": "",
+          "source_tab": "watchlist",
+          "target_tab": "lhb",
+          "reason": "restore_last_tab"
+        },
+        "recorded_at": 1788588387.7825186
+      },
+      {
+        "value": 74.94809999989229,
+        "tags": {
+          "severity": "warn",
+          "tab": "lhb",
+          "method": "VCPTableView.paintEvent",
+          "signal": "quote_data_changed",
+          "transition_phase": "",
+          "callback_kind": "",
+          "preload_state": "",
+          "layout_signal": "",
+          "source_tab": "",
+          "target_tab": "",
+          "reason": ""
+        },
+        "recorded_at": 1788588395.4106822
+      },
+      {
+        "value": 222.7665999999772,
+        "tags": {
+          "severity": "critical",
+          "tab": "lhb",
+          "method": "VCPTableView.paintEvent",
+          "signal": "model_layout_changed",
+          "transition_phase": "",
+          "callback_kind": "",
+          "preload_state": "",
+          "layout_signal": "",
+          "source_tab": "",
+          "target_tab": "",
+          "reason": ""
+        },
+        "recorded_at": 1788588395.6834433
+      },
+      {
+        "value": 167.98780000008264,
+        "tags": {
+          "severity": "critical",
+          "tab": "lhb",
+          "method": "VCPTableView.paintEvent",
+          "signal": "model_layout_changed",
+          "transition_phase": "",
+          "callback_kind": "",
+          "preload_state": "",
+          "layout_signal": "",
+          "source_tab": "",
+          "target_tab": "",
+          "reason": ""
+        },
+        "recorded_at": 1788588396.6034784
+      }
+    ]
+  },
+  "ui_stall_snapshot": {
+    "installed": true,
+    "total_count": 13,
+    "critical_count": 10,
+    "event_loop_count": 6,
+    "event_loop_critical_count": 5,
+    "method_count": 7,
+    "method_critical_count": 5,
+    "max_elapsed_ms": 1058.528,
+    "warn_threshold_ms": 50.0,
+    "critical_threshold_ms": 100.0
+  },
+  "final_sorted_prices": [
+    "20.41",
+    "20.40",
+    "20.39",
+    "20.38",
+    "20.37",
+    "20.36",
+    "20.35",
+    "20.34",
+    "20.33",
+    "20.32",
+    "20.31",
+    "20.30",
+    "20.29",
+    "20.28",
+    "20.27",
+    "20.26",
+    "20.25",
+    "20.24",
+    "20.23",
+    "20.22",
+    "20.21",
+    "20.20",
+    "20.19",
+    "20.18",
+    "20.17",
+    "20.16",
+    "20.15",
+    "20.14",
+    "20.13",
+    "20.12",
+    "20.11",
+    "20.10",
+    "20.09",
+    "20.08",
+    "20.07",
+    "20.06",
+    "20.05",
+    "20.04",
+    "20.03",
+    "20.02",
+    "20.01",
+    "20.00"
+  ],
+  "final_row_count": 42,
+  "acceptance": {
+    "passed": true,
+    "violations": []
+  },
+  "screenshot": {
+    "path": "D:\\vcp_hunter\\紫金研选\\artifacts\\audit\\20260905_lhb_restore\\after\\native_lhb.png",
+    "saved": true,
+    "size": [
+      1800,
+      1050
+    ],
+    "original_path": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\native_lhb.png",
+    "sha256": "57265824da15a542ab1ad5cde7e72441b93acf12c21305fb2d0aaffdff201384"
+  },
+  "archived_report_path": "D:\\vcp_hunter\\紫金研选\\artifacts\\audit\\20260905_lhb_restore\\after\\native_lhb_restore_profile.json"
+}

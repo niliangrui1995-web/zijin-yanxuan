@@ -671,8 +671,8 @@ def _sync_serial_values(rows):
 
 def _replace_reordered_model_rows(model, rows, row_id_sequence) -> None:
     old_ids = row_id_sequence(model._data)
-    persistent_indexes = model.persistentIndexList()
     model.layoutAboutToBeChanged.emit()
+    persistent_indexes = model.persistentIndexList()
     model._data = rows
     new_row_by_id = {row_id: row for row, row_id in enumerate(row_id_sequence(rows))}
     model.changePersistentIndexList(

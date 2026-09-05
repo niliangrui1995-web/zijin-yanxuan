@@ -3,7 +3,7 @@ import datetime as dt
 import threading
 from types import SimpleNamespace
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QShowEvent
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QTabWidget, QWidget
@@ -820,6 +820,53 @@ def test_lhb_quote_default_resort_emits_one_layout_and_targeted_data_span():
         tab.deleteLater()
 
 
+def test_lhb_default_quote_resort_keeps_flash_expiry_on_moved_stock(monkeypatch, qt_application):
+    tab = LhbTab(object(), autoload_pool=False)
+    monkeypatch.setattr(tab, "_should_start_pool_on_show", lambda: False)
+    monkeypatch.setattr(tab, "_prime_visible_local_quote_snapshot", lambda: None)
+    tab.model.update_data(
+        [
+            {"代码": f"{row:06d}", "名称": f"股票{row}", "现价": "10.00", "涨幅%": 0.0}
+            for row in range(1, 4)
+        ],
+        hydrate_latest_quotes=False,
+    )
+    tab.table_state.show_table()
+    tab.resize(1200, 500)
+    tab.show()
+    qt_application.processEvents()
+    try:
+        assert tab.table.viewport().autoFillBackground()
+        assert not tab.table.viewport().testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        tab.table._on_theme_changed("dark")
+        assert tab.table.viewport().autoFillBackground()
+        assert not tab.table.viewport().testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        tab._apply_quote_snapshot_now({"000003": {"close": 11.0, "last_close": 10.0}})
+
+        assert _visible_lhb_codes(tab) == ["000003", "000001", "000002"]
+        assert tab.table._flash_repaint_timer.isActive()
+        tab.table._flash_repaint_timer.stop()
+        price_column = tab.model.headers.index("现价")
+        assert tab.model.data(tab.model.index(0, price_column), Qt.ItemDataRole.UserRole + 1)
+        assert tab.model.data(tab.model.index(2, price_column), Qt.ItemDataRole.UserRole + 1) is None
+        region, dirty_cells, visible_dirty_cells = tab.table._flash_repaint_region()
+        price_rect = tab.table.visualRect(tab.proxy_model.index(0, price_column))
+        assert region.contains(price_rect)
+        assert dirty_cells == visible_dirty_cells > 0
+        assert region.boundingRect() != tab.table.viewport().rect()
+        updates = []
+        monkeypatch.setattr(tab.table.viewport(), "update", lambda *args: updates.append(args))
+
+        tab.table._tick_flash_repaint()
+
+        assert updates == [(region,)]
+        assert not tab.table._flash_repaint_timer.isActive()
+        assert tab.table._flash_dirty_indexes == set()
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
 def test_lhb_hidden_cache_only_preload_stages_rows_without_model_invalidation(monkeypatch):
     tab = LhbTab(object(), autoload_pool=False)
     model_reset = QSignalSpy(tab.model.modelReset)
@@ -1183,6 +1230,66 @@ def test_lhb_display_pool_leaves_quote_hydration_to_refresh_path(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_duplicate_pool_after_quote_resort_does_not_replay_stale_rows(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda **kwargs: None)
+    pool = [
+        {"代码": "000001", "名称": "甲", "现价": "10.00", "涨幅%": 0.0},
+        {"代码": "000002", "名称": "乙", "现价": "10.00", "涨幅%": 0.0},
+    ]
+    try:
+        tab._display_pool(pool, row_data=pool, refresh_quotes=False)
+        tab._apply_quote_snapshot_now({"000002": {"close": 11.0, "last_close": 10.0}})
+        assert _visible_lhb_codes(tab) == ["000002", "000001"]
+        resets = QSignalSpy(tab.model.modelReset)
+        layouts = QSignalSpy(tab.model.layoutChanged)
+        changes = QSignalSpy(tab.model.dataChanged)
+        events = QSignalSpy(lhb_tab_module.event_bus.sig_lhb_pool_updated)
+
+        tab._display_pool(pool, row_data=pool, refresh_quotes=False)
+
+        assert len(resets) == len(layouts) == len(changes) == len(events) == 0
+        assert _visible_lhb_codes(tab) == ["000002", "000001"]
+        assert tab.model.row_data[0]["现价"] == "11.00"
+        assert "序号" not in pool[0]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_refresh_preserves_user_header_sort(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda **kwargs: None)
+    rows = [{"代码": "000001", "名称": "甲"}, {"代码": "000002", "名称": "乙"}]
+    try:
+        tab._display_pool(rows, row_data=rows, refresh_quotes=False)
+        code_column = tab.model.headers.index("代码")
+        tab.table.sortByColumn(code_column, Qt.SortOrder.DescendingOrder)
+        indicators = QSignalSpy(tab.table.horizontalHeader().sortIndicatorChanged)
+        rows[0]["名称"] = "甲更新"
+
+        tab._display_pool(rows, row_data=rows, refresh_quotes=False)
+
+        assert tab.proxy_model.sortColumn() == code_column
+        assert tab.proxy_model.sortOrder() == Qt.SortOrder.DescendingOrder
+        assert _visible_lhb_codes(tab) == ["000002", "000001"]
+        assert len(indicators) == 0
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_clearing_default_sort_is_idempotent(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    calls = []
+    monkeypatch.setattr(tab.table, "sortByColumn", lambda *args: calls.append(args))
+    try:
+        tab._clear_proxy_sort_for_default_lhb_order()
+        tab._clear_proxy_sort_for_default_lhb_order()
+
+        assert calls == []
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_visible_quote_snapshot_is_coalesced_before_apply(monkeypatch, qt_application):
     applied = []
 
@@ -1532,11 +1639,9 @@ def test_lhb_display_default_order_overrides_restored_header_sort(monkeypatch, q
         raising=False,
     )
 
-    def fake_bind_header_persistence(self, table, settings_key="header_state"):
-        QTimer.singleShot(
-            0,
-            lambda: table.sortByColumn(self.model.headers.index("最近上榜"), Qt.SortOrder.DescendingOrder),
-        )
+    def fake_bind_header_persistence(self, table, settings_key="header_state", *, restore_sort=True):
+        assert restore_sort is False
+        assert table.horizontalHeader().sortIndicatorSection() == -1
         return True
 
     monkeypatch.setattr(LhbTab, "bind_header_persistence", fake_bind_header_persistence)

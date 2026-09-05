@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-05",
+  "status": "passed",
+  "pytest": {
+    "passed": 535,
+    "failed": 0,
+    "warnings": 2,
+    "elapsed_seconds": 96.69,
+    "warning_source": "Existing pypinyin codecs.open DeprecationWarning",
+    "command": ".venv\\Scripts\\python.exe -m pytest tests/test_lhb_tab.py tests/test_lhb_tab_branch_deep_coverage.py tests/test_lhb_foreign_display.py tests/test_lhb_view_invalidation.py tests/test_lhb_layout_paint.py tests/test_native_lhb_restore_profile.py tests/test_stock_table_model_quotes.py tests/test_ui_models_deep_coverage.py tests/test_table_model_helpers.py tests/test_table_refresh_state.py tests/test_table_controls_deep_coverage.py tests/test_table_view_state_store.py tests/test_base_stock_tab.py tests/test_base_stock_tab_coverage_edges.py tests/test_base_stock_refresh.py tests/test_base_stock_refresh_branch_deep_coverage.py tests/test_workspace_lifecycle.py tests/test_workspace_background_preload.py tests/test_workspace_background_preload_full_staging.py tests/test_classic_workspace_deep_coverage.py tests/test_watchlist_table_state.py tests/test_table_serial_column.py tests/test_tab_data_lineage_service.py -q"
+  },
+  "ruff": "passed",
+  "utf8_changed_files": "passed",
+  "git_diff_check": "passed",
+  "native_before_acceptance": "passed",
+  "native_after_acceptance": "passed",
+  "native_source_hashes_match_final_workspace": true,
+  "baseline_seven_source_files_match_initial_head_content": true,
+  "committed": false,
+  "pushed": false,
+  "preexisting_changes_preserved": [
+    "data/Cache/ai_industry_chain_rows.json",
+    "domains/global_earnings_calendar/confirmed_events.json"
+  ]
+}

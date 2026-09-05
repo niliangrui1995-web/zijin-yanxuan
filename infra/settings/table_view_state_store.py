@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QSignalBlocker, Qt, QTimer
 
 
 class TableViewStateStore:
@@ -15,7 +15,7 @@ class TableViewStateStore:
         self._sort_column_key = f"{self._settings_key}/sort_column"
         self._sort_order_key = f"{self._settings_key}/sort_order"
 
-    def bind(self, owner, table, header_state_savers: list) -> bool:
+    def bind(self, owner, table, header_state_savers: list, *, restore_sort: bool = True) -> bool:
         header = table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         restored_sort = False
@@ -24,12 +24,22 @@ class TableViewStateStore:
 
         if self._settings.contains(self._settings_key):
             try:
-                header.restoreState(self._settings.value(self._settings_key))
+                if restore_sort:
+                    header.restoreState(self._settings.value(self._settings_key))
+                else:
+                    # Header state also embeds a sort indicator. A tab that
+                    # owns its initial ordering must restore geometry without
+                    # sorting its model and then clearing that sort next turn.
+                    current_column = header.sortIndicatorSection()
+                    current_order = header.sortIndicatorOrder()
+                    with QSignalBlocker(header):
+                        header.restoreState(self._settings.value(self._settings_key))
+                        header.setSortIndicator(current_column, current_order)
                 header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 logging.getLogger(__name__).warning(f"恢复列表头配置异常 {self._settings_key}: {exc}")
 
-        if self._settings.contains(self._sort_column_key):
+        if restore_sort and self._settings.contains(self._sort_column_key):
             try:
                 sort_column = int(self._settings.value(self._sort_column_key, -1) or -1)
                 sort_order_value = self._settings.value(

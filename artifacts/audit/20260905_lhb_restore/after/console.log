@@ -1,0 +1,54 @@
+[14:06:21] INFO  | [事件] settings.schema_migrated | application=NativeLhbRestore_14764 | description=bootstrap centralized settings repository | from_version=0 | organization=VCPHunterDiagnostics
+[14:06:22] INFO  | [watchdog] watchdog.started | pid=14764 | rss=141MB | private=139MB | wset=141MB | vms=139MB | threads=10 | source=psutil
+[14:06:22] INFO  | [watchdog] main_window.init.begin | pid=14764 | rss=142MB | private=139MB | wset=142MB | vms=139MB | threads=10 | source=psutil
+[14:06:22] WARNING | [事件] ui.stall.method | elapsed_ms=642.404 | method=MainWindowQT.create_workspace | severity=critical | threshold_ms=100.0
+[14:06:23] INFO  | [启动] 工作区已加载 | 11页 | 732ms
+[14:06:23] INFO  | [startup] auto refresh scheduler disabled for controlled window construction
+[14:06:23] INFO  | [watchdog] main_window.init.ready | pid=14764 | rss=207MB | private=168MB | wset=207MB | vms=168MB | threads=11 | source=psutil
+[14:06:23] WARNING | [事件] ui.stall.event_loop | elapsed_ms=1058.528 | event_loop_gap_ms=1083.528 | severity=critical | tab=watchlist
+[14:06:23] INFO  | [启动] 主界面已显示 | 1.3秒
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=1.93 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=2.248 | succeeded=False
+[14:06:23] INFO  | [启动] 已启用通达信本地K线数据: D:\HT\vipdoc
+[14:06:23] INFO  | [启动] gbbq 复权缓存改为按需加载
+[14:06:23] WARNING | [启动] 离线模式启动：跳过联网检测，使用本地数据
+[14:06:23] INFO  | [DataStore] SQLite 存储已就绪: D:\vcp_hunter\紫金研选\tmp\native_lhb_restore_profile\20260905\after\profile.db
+[14:06:23] INFO  | [名称映射] 已从缓存载入 54161 条标的名称
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.298 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=1.988 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.191 | succeeded=False
+[14:06:23] INFO  | [UI] central quotes disabled for controlled window construction
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.261 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.163 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=9.602 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.101 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.125 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.161 | succeeded=False
+[14:06:23] INFO  | [事件] main_window.post_paint_runtime | elapsed_ms=0.097 | succeeded=True
+[14:06:23] INFO  | [事件] workspace.tab_transition_stage | callback_kind=currentChanged | elapsed_ms=0.108 | mounted_before=false | preload_active_key=watchlist
+[14:06:23] INFO  | [事件] workspace.tab_transition_stage | elapsed_ms=1.149 | mounted_before=false | preload_active_key=watchlist | preload_state=cold
+[14:06:24] INFO  | [指标] watchlist_context_snapshot_capture_ms | 1ms | cached_rows=,candidate_source_rows=,captured_source_rows=,selected_sources=ai_industry_chain,earnings,foreign_block,lhb,na_daily,source_rows=,target_count=55,target_filter=True
+[14:06:24] WARNING | [警告] 本地 gbbq 缓存不可用，前复权一致性可能下降
+[14:06:24] INFO  | [提示] 请确认通达信目录下存在 T0002/hq_cache/gbbq 文件
+[14:06:24] INFO  | [Workspace] background preload Watchlist terminal state=staged_ready; continue hidden staging remaining=10
+[14:06:25] INFO  | [龙虎榜池] 缓存加载成功，包含 30 个交易日数据
+[14:06:25] INFO  | [龙虎榜池] 剔除次新及RPS250<85共 14 只
+[14:06:26] INFO  | [事件] workspace.tab_transition_stage | elapsed_ms=26.75 | layout_signal=placeholder_replace | mounted_before=false | preload_active_key=watchlist
+[14:06:26] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=183.437 | method=VCPTableView.paintEvent
+[14:06:26] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=171.611 | event_loop_gap_ms=196.611
+[14:06:26] INFO  | [事件] workspace.tab_transition_stage | callback_kind=on_workspace_tab_activated | elapsed_ms=0.226 | mounted_before=false | preload_active_key=watchlist
+[14:06:27] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=115.184 | method=VCPTableView.paintEvent
+[14:06:27] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=109.051 | event_loop_gap_ms=134.051
+[14:06:29] INFO  | [事件] ui.stall.method | elapsed_ms=59.144 | method=EarningsTab._apply_display_trade_window | severity=warn | signal=model_refresh
+[14:06:32] INFO  | [Workspace] background tab preload finished scope=all_planned completed=11 startup_lazy_handoff=0 failures=[]
+[14:06:35] INFO  | [事件] ui.stall.method | delivered_full_viewport=false | dirty_bounding_area_ratio=0.1829 | elapsed_ms=77.51 | method=VCPTableView.paintEvent
+[14:06:35] INFO  | [事件] ui.stall.event_loop | delivered_full_viewport=false | dirty_bounding_area_ratio=0.1829 | elapsed_ms=74.948 | event_loop_gap_ms=99.948
+[14:06:35] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=217.228 | method=VCPTableView.paintEvent
+[14:06:35] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=222.767 | event_loop_gap_ms=247.767
+[14:06:36] WARNING | [事件] ui.stall.method | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=169.484 | method=VCPTableView.paintEvent
+[14:06:36] WARNING | [事件] ui.stall.event_loop | delivered_full_viewport=true | dirty_bounding_area_ratio=1.0000 | elapsed_ms=167.988 | event_loop_gap_ms=192.988
+[14:06:40] INFO  | [事件] kline.webengine_preflight_shutdown | clean=True | elapsed_ms=0.008
+[14:06:40] INFO  | [事件] kline.manager_shutdown | active_close_attempted=0 | active_close_clean=True | active_close_succeeded=0 | active_fallback_disposed=0
+[14:06:40] INFO  | [watchdog] watchdog.stopped | pid=14764 | rss=346MB | private=432MB | wset=346MB | vms=432MB | threads=38 | source=psutil
+{"status": "ok", "loaded_rows": 42, "report": "D:\\vcp_hunter\\紫金研选\\tmp\\native_lhb_restore_profile\\20260905\\after\\native_lhb_restore_profile.json", "paint_summary": {"restore_last_tab": {"actual_paint": {"count": 1, "total_ms": 184.552, "max_ms": 184.552, "p50_ms": 184.552, "p95_ms": 184.552, "p99_ms": 184.552, "over_50ms": 1, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 0, "first_rows": 42}, "background_prewarm": {"actual_paint": {"count": 1, "total_ms": 116.067, "max_ms": 116.067, "p50_ms": 116.067, "p95_ms": 116.067, "p99_ms": 116.067, "over_50ms": 1, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 0, "first_rows": 42}, "quote_and_flash": {"actual_paint": {"count": 3, "total_ms": 326.055, "max_ms": 218.184, "p50_ms": 78.639, "p95_ms": 204.229, "p99_ms": 215.393, "over_50ms": 2, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 2, "first_rows": 42}, "sort_price": {"actual_paint": {"count": 1, "total_ms": 170.696, "max_ms": 170.696, "p50_ms": 170.696, "p95_ms": 170.696, "p99_ms": 170.696, "over_50ms": 1, "over_100ms": 1}, "full_viewport_count": 1, "local_region_count": 0, "first_rows": 42}}, "errors": []}
+[14:06:40] INFO  | [DataStore] SQLite 连接已关闭

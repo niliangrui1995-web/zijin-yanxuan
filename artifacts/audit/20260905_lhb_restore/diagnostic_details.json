@@ -1,0 +1,4196 @@
+[
+  {
+    "name": "trace_skip_current",
+    "configuration": {
+      "source_root": "D:\\vcp_hunter\\紫金研选",
+      "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\trace_skip_current",
+      "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "expected_rows": 42,
+      "timeout_ms": 90000,
+      "phase_ms": 1200,
+      "trace_layout": true,
+      "skip_refresh_state_restore": false,
+      "skip_same_current_index": true
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+      "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+      "ui/components/table_controls.py": "6c92631cb2028acf57d9fc66a4bae338d92c9a98ee6b35d538102bbe8658b7e9",
+      "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+      "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+      "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+      "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+    },
+    "events": [
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.dataChanged",
+        "at_ms": 12600.217499999872,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.dataChanged",
+        "at_ms": 12600.223700000242,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12600.67429999981,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12601.016300000083,
+        "elapsed_ms": 54.53799999986586,
+        "full_viewport": false,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          327,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_capture_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12718.835900000158,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.23319999991144869,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_schedule_refresh_state_restore",
+        "phase": "quote_and_flash",
+        "at_ms": 12720.384000000195,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.013500000022759195,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.layoutChanged",
+        "at_ms": 12720.404199999848,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.layoutChanged",
+        "at_ms": 12720.407299999806,
+        "args": []
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12722.121499999957,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.5903999999645748,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12722.743700000137,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.3281999997852836,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12722.75159999981,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.3177000003233843,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "restoreState",
+        "phase": "quote_and_flash",
+        "at_ms": 12722.77350000013,
+        "class": "QHeaderView",
+        "pending_reason": "",
+        "elapsed_ms": 0.09129999989454518
+      },
+      {
+        "kind": "method_trace",
+        "name": "_on_sort_indicator_changed",
+        "phase": "quote_and_flash",
+        "at_ms": 12722.84290000016,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.0068999997893115506,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12723.053900000195,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.008900000011635711,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12723.10030000017,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12723.8926,
+        "elapsed_ms": 164.40990000000966,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.462599999912,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.754300000073,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.901700000133,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12889.008499999818,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12889.26760000004,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12889.28530000021,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12892.179500000111,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.5433999999695516,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12892.761000000064,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.01900000006571645,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12892.770299999938,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.007800000275892671,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12893.195699999978,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12893.833600000107,
+        "elapsed_ms": 125.51209999992352,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13019.506799999817,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13019.664700000249,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13019.715500000075,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13019.739299999856,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13019.83650000011,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13019.849400000112,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13096.023999999943,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13096.32909999982,
+        "elapsed_ms": 23.407800000313728,
+        "full_viewport": false,
+        "rect_count": 2,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          326,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13270.562900000186,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13270.641800000249,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13270.797099999982,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13271.162200000163,
+        "type": "LayoutRequest",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13271.25100000012,
+        "type": "LayoutRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "name": "trace_skip_header",
+    "configuration": {
+      "source_root": "D:\\vcp_hunter\\紫金研选",
+      "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\trace_skip_header",
+      "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "expected_rows": 42,
+      "timeout_ms": 90000,
+      "phase_ms": 1200,
+      "trace_layout": true,
+      "skip_refresh_state_restore": false,
+      "skip_same_current_index": false,
+      "skip_header_restore": true
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+      "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+      "ui/components/table_controls.py": "6c92631cb2028acf57d9fc66a4bae338d92c9a98ee6b35d538102bbe8658b7e9",
+      "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+      "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+      "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+      "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+    },
+    "events": [
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.dataChanged",
+        "at_ms": 12387.395300000207,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.dataChanged",
+        "at_ms": 12387.400600000092,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12387.786600000254,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12388.208500000019,
+        "elapsed_ms": 54.90470000040659,
+        "full_viewport": false,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          327,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_capture_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12509.242900000118,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.23310000005949405,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_schedule_refresh_state_restore",
+        "phase": "quote_and_flash",
+        "at_ms": 12510.77400000031,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.014100000043981709,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.layoutChanged",
+        "at_ms": 12510.795500000313,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.layoutChanged",
+        "at_ms": 12510.79850000042,
+        "args": []
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12512.47900000044,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.531199999841192,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12513.04170000003,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.25720000030560186,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12513.0494,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.2465000002302986,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12513.261300000067,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.010000000202126103,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12513.326800000414,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12513.992700000017,
+        "elapsed_ms": 155.92060000017227,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12670.058100000006,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12670.204200000171,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12670.248900000388,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12670.269500000359,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12670.354600000337,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12670.368800000233,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12672.705100000258,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.4748999999719672,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12673.216800000318,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.017800000023271423,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12673.22540000032,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.0073999999585794285,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12673.642100000052,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12674.23460000009,
+        "elapsed_ms": 127.53790000033405,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12885.451800000283,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12885.736800000359,
+        "elapsed_ms": 22.861599999941973,
+        "full_viewport": false,
+        "rect_count": 2,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          326,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12955.462200000056,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12955.541600000288,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12955.675500000325,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12956.07770000015,
+        "type": "LayoutRequest",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12956.22000000003,
+        "type": "LayoutRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "name": "trace_skip_restore",
+    "configuration": {
+      "source_root": "D:\\vcp_hunter\\紫金研选",
+      "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\trace_skip_restore",
+      "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "expected_rows": 42,
+      "timeout_ms": 90000,
+      "phase_ms": 1200,
+      "trace_layout": true,
+      "skip_refresh_state_restore": true,
+      "skip_same_current_index": false,
+      "skip_header_restore": false
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+      "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+      "ui/components/table_controls.py": "b1ffb51d50361ad7928d8237558713833457c3de9f535d51998341e0feda5f16",
+      "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+      "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+      "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+      "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+    },
+    "events": [
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.dataChanged",
+        "at_ms": 12727.288999999928,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.dataChanged",
+        "at_ms": 12727.29389999995,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12727.659399999993,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12727.87049999988,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12727.949099999933,
+        "elapsed_ms": 51.65260000012495,
+        "full_viewport": false,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          327,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_capture_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12847.103399999924,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": -1,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              100,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d"
+        },
+        "elapsed_ms": 0.1434000000699598,
+        "v_scroll_after": 0,
+        "current_row_after": -1
+      },
+      {
+        "kind": "method_trace",
+        "name": "_schedule_refresh_state_restore",
+        "phase": "quote_and_flash",
+        "at_ms": 12850.226699999894,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": -1,
+        "elapsed_ms": 0.01629999997021514,
+        "v_scroll_after": 0,
+        "current_row_after": -1
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.layoutChanged",
+        "at_ms": 12850.250899999992,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.layoutChanged",
+        "at_ms": 12850.25369999994,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "horizontal.sectionResized",
+        "at_ms": 12851.990900000146,
+        "args": [
+          13,
+          100,
+          504
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12852.019299999938,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": -1,
+        "elapsed_ms": 0.5916000000070198,
+        "v_scroll_after": 0,
+        "current_row_after": -1
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12852.644000000055,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": -1,
+        "elapsed_ms": 0.009500000032858225,
+        "v_scroll_after": 0,
+        "current_row_after": -1
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12852.673200000027,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12853.398499999912,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12853.47899999988,
+        "elapsed_ms": 152.47309999995196,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.098299999849,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.24710000011,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.296499999735,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.320500000129,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.412700000055,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.426999999803,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.464300000061,
+        "type": "Paint",
+        "class": "VCPTableView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.513799999993,
+        "type": "Paint",
+        "class": "QHeaderView",
+        "name": ""
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 13008.652299999994,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": -1,
+        "elapsed_ms": 0.5304000001160603,
+        "v_scroll_after": 0,
+        "current_row_after": -1
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13009.628299999804,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13010.120200000074,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13010.19580000002,
+        "elapsed_ms": 119.49460000005274,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13129.79949999999,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13129.94609999987,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13131.051899999875,
+        "type": "LayoutRequest",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13131.159600000046,
+        "type": "LayoutRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13223.118599999907,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13223.314100000152,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13223.40209999993,
+        "elapsed_ms": 22.598099999868282,
+        "full_viewport": false,
+        "rect_count": 2,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          326,
+          873
+        ]
+      }
+    ]
+  },
+  {
+    "name": "trace_delayed_layout",
+    "configuration": {
+      "source_root": "D:\\vcp_hunter\\紫金研选",
+      "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\trace_delayed_layout",
+      "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "expected_rows": 42,
+      "timeout_ms": 90000,
+      "phase_ms": 1200,
+      "trace_layout": true,
+      "skip_refresh_state_restore": false,
+      "skip_same_current_index": false,
+      "skip_header_restore": false,
+      "execute_delayed_items_layout": true
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+      "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+      "ui/components/table_controls.py": "b1ffb51d50361ad7928d8237558713833457c3de9f535d51998341e0feda5f16",
+      "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+      "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+      "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+      "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+    },
+    "events": [
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.321899999937,
+        "type": "WindowDeactivate",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.375399999859,
+        "type": "WindowDeactivate",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.563800000156,
+        "type": "WindowDeactivate",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.576199999989,
+        "type": "WindowDeactivate",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.624400000026,
+        "type": "WindowDeactivate",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.733199999933,
+        "type": "WindowDeactivate",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.745700000072,
+        "type": "WindowDeactivate",
+        "class": "VCPTableView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.762900000074,
+        "type": "WindowDeactivate",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.781999999992,
+        "type": "WindowDeactivate",
+        "class": "QHeaderView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12888.95790000015,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12889.340400000037,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12889.81670000021,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12892.22030000019,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12892.254100000173,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12892.39170000019,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12893.382499999916,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12893.45289999983,
+        "type": "Paint",
+        "class": "VCPTableView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12893.514800000048,
+        "type": "Paint",
+        "class": "QHeaderView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12899.077699999907,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12899.163999999928,
+        "elapsed_ms": 107.1458999999777,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13006.634100000156,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13007.104400000117,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13009.929899999861,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13009.964100000161,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13010.107799999787,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13011.091599999872,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13011.16090000005,
+        "type": "Paint",
+        "class": "VCPTableView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13011.219800000163,
+        "type": "Paint",
+        "class": "QHeaderView",
+        "name": ""
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.dataChanged",
+        "at_ms": 13020.594799999799,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.dataChanged",
+        "at_ms": 13020.600100000138,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13021.62589999989,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13021.840400000201,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13021.91959999982,
+        "elapsed_ms": 57.831200000237004,
+        "full_viewport": false,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          327,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_capture_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 13153.574599999956,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              100,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d"
+        },
+        "elapsed_ms": 0.3320999999232299,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_schedule_refresh_state_restore",
+        "phase": "quote_and_flash",
+        "at_ms": 13155.659200000173,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.013299999864102574,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 13155.679599999985,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.6253000001379405,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "horizontal.sectionResized",
+        "at_ms": 13156.28770000012,
+        "args": [
+          13,
+          100,
+          504
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.layoutChanged",
+        "at_ms": 13156.31600000006,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.layoutChanged",
+        "at_ms": 13156.318700000156,
+        "args": []
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 13157.893499999773,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.4843000001528708,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 13157.904000000144,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        },
+        "elapsed_ms": 0.47059999997145496,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "restoreState",
+        "phase": "quote_and_flash",
+        "at_ms": 13157.976099999814,
+        "class": "QHeaderView",
+        "pending_reason": "",
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        },
+        "restore_bytes_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d",
+        "elapsed_ms": 0.1472000003559515,
+        "header_after": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        }
+      },
+      {
+        "kind": "method_trace",
+        "name": "_on_sort_indicator_changed",
+        "phase": "quote_and_flash",
+        "at_ms": 13158.100499999819,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.007999999979801942,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "horizontal.sectionResized",
+        "at_ms": 13158.143099999961,
+        "args": [
+          13,
+          100,
+          504
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13158.35879999986,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.008600000001024455,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 13158.410300000014,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.5136999998285319,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13158.957600000122,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13159.517900000083,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13159.600800000135,
+        "elapsed_ms": 154.71389999993335,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.446800000042,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.594399999805,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.644000000044,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.6670000001,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.758299999994,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.770800000133,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.816000000064,
+        "type": "Paint",
+        "class": "VCPTableView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13314.868599999954,
+        "type": "Paint",
+        "class": "QHeaderView",
+        "name": ""
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13318.172700000105,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.03389999983482994,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13318.194500000118,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.010100000054080738,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13318.831000000046,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13318.902999999864,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13319.042399999944,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13319.370700000036,
+        "type": "LayoutRequest",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13319.459199999983,
+        "type": "LayoutRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13521.650300000147,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13521.84699999998,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13521.943499999907,
+        "elapsed_ms": 26.25979999993433,
+        "full_viewport": false,
+        "rect_count": 2,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          326,
+          873
+        ]
+      }
+    ]
+  },
+  {
+    "name": "trace_header_resize",
+    "configuration": {
+      "source_root": "D:\\vcp_hunter\\紫金研选",
+      "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\trace_header_resize",
+      "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "expected_rows": 42,
+      "timeout_ms": 90000,
+      "phase_ms": 1200,
+      "trace_layout": true,
+      "skip_refresh_state_restore": false,
+      "skip_same_current_index": false,
+      "skip_header_restore": false,
+      "execute_delayed_items_layout": false,
+      "resize_header_sections": true
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "9b09bfde863dc591f17ce0022dd6a30e10e07b0e2f2899989ddb01d0afac44eb",
+      "ui/models/stock_table_model.py": "acd6ea01f5ce15480fbf2037acbd25c7f6adc12ccfd8e6f3210c9b7306c5f786",
+      "ui/components/table_controls.py": "6c92631cb2028acf57d9fc66a4bae338d92c9a98ee6b35d538102bbe8658b7e9",
+      "ui/models/table_model_helpers.py": "cfc243f897ec2bbde2562cbe67775302bbccf90f3c7059de5360f0dcbd8bea7c",
+      "ui/tabs/base_stock_tab.py": "a32a7af201680c3537932910728a90c29b513f01967a820d7dac022b26c9bcee",
+      "ui/tabs/table_view_state_binding.py": "8fce088ef398d6f3871673e48373f7a91ea4d8a79ceea5d806f428e24f52fa25",
+      "infra/settings/table_view_state_store.py": "e7296408753b5f04bf431b8fd97cbb86fff7c563ecb9e22c0564670191a9610c"
+    },
+    "events": [
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.dataChanged",
+        "at_ms": 12821.574100000362,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.dataChanged",
+        "at_ms": 12821.579100000235,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12821.987600000284,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12822.429900000316,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12822.517600000083,
+        "elapsed_ms": 59.32370000027731,
+        "full_viewport": false,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          327,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_capture_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12943.618799999967,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              100,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d"
+        },
+        "elapsed_ms": 0.542900000255031,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_schedule_refresh_state_restore",
+        "phase": "quote_and_flash",
+        "at_ms": 12947.052200000144,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.03749999996216502,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "horizontal.sectionResized",
+        "at_ms": 12947.262300000148,
+        "args": [
+          13,
+          100,
+          504
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.layoutChanged",
+        "at_ms": 12947.278800000277,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.layoutChanged",
+        "at_ms": 12947.283400000288,
+        "args": []
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12950.50620000029,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 1.0761999997157545,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12951.672400000007,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.8919000001696986,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 12951.694100000168,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        },
+        "elapsed_ms": 0.864499999806867,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "restoreState",
+        "phase": "quote_and_flash",
+        "at_ms": 12951.835200000005,
+        "class": "QHeaderView",
+        "pending_reason": "",
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        },
+        "restore_bytes_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d",
+        "elapsed_ms": 0.24310000026162015,
+        "header_after": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        }
+      },
+      {
+        "kind": "method_trace",
+        "name": "_on_sort_indicator_changed",
+        "phase": "quote_and_flash",
+        "at_ms": 12952.027799999996,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.01939999992828234,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "horizontal.sectionResized",
+        "at_ms": 12952.11670000026,
+        "args": [
+          13,
+          100,
+          504
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 12952.529600000162,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.015699999948992627,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 12952.623300000141,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 1.1414000000513624,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12953.827900000306,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 12954.731400000128,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 12954.86320000009,
+        "elapsed_ms": 183.88610000010885,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13138.913199999934,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.07300000028,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.12670000036,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.151300000321,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.249800000016,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.26360000005,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.301900000191,
+        "type": "Paint",
+        "class": "VCPTableView",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13139.353100000335,
+        "type": "Paint",
+        "class": "QHeaderView",
+        "name": ""
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13142.447500000344,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.03930000002583256,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13142.474400000083,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.010400000064691994,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13318.728700000065,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13318.922400000247,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "qt_scrollarea_viewport"
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13319.009000000278,
+        "elapsed_ms": 25.920600000063132,
+        "full_viewport": false,
+        "rect_count": 2,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          326,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13345.452600000044,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13345.515200000136,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13345.650400000068,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13346.002799999951,
+        "type": "LayoutRequest",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13347.11440000001,
+        "type": "LayoutRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "name": "trace_header_semantics",
+    "configuration": {
+      "source_root": "tmp\\native_lhb_restore_profile\\20260905\\baseline_source",
+      "output_dir": "tmp\\native_lhb_restore_profile\\20260905\\trace_header_semantics",
+      "source_db": "D:\\vcp_hunter\\紫金研选\\data\\vcp_hunter.db",
+      "expected_rows": 42,
+      "timeout_ms": 90000,
+      "phase_ms": 1200,
+      "trace_layout": true,
+      "skip_refresh_state_restore": false,
+      "skip_same_current_index": false,
+      "skip_header_restore": false
+    },
+    "source_sha256": {
+      "ui/tabs/lhb_tab.py": "1cb51e76822f9484a63360f18da3bbf4775f7505f752a1eb5e9628ad48c5e71f",
+      "ui/models/stock_table_model.py": "51a9ad755e5387b8770e3a8f072180826cd3c6bf835625f4eedcf54a48aedcb2",
+      "ui/components/table_controls.py": "e2bd87cd9d3c0792b4718fe153b98e9c16fc093f8cff9497106eda90521855ce",
+      "ui/models/table_model_helpers.py": "dccc2fe53b87f4dcce04a4a4bb84e3f8d035121448caf79530a94322927b1f9a",
+      "ui/tabs/base_stock_tab.py": "df825073bda0c2084b767fe8b3a95837769d5af6c0167c0c3623b864c1908fa3",
+      "ui/tabs/table_view_state_binding.py": "732e105a28987ef2afe3924d8c67e2c59344238368ff43afa75c6059854ec22f",
+      "infra/settings/table_view_state_store.py": "14e1615c6f86ed4b654a2805f71a80d8355c1458b7bca0b337f34ac15c57583d"
+    },
+    "events": [
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.dataChanged",
+        "at_ms": 13085.37320000005,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.dataChanged",
+        "at_ms": 13085.379200000261,
+        "args": [
+          0,
+          41,
+          3,
+          6,
+          [
+            0,
+            3,
+            9,
+            8,
+            6,
+            7,
+            256,
+            257,
+            258,
+            260,
+            261,
+            262,
+            263
+          ]
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13085.792900000342,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.116800000127,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.31719999994,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.49110000033,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.521100000027,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.690099999942,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.704499999996,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13086.909000000105,
+        "elapsed_ms": 56.83249999992768,
+        "full_viewport": false,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          327,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "_capture_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 13204.791699999987,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              100,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d"
+        },
+        "elapsed_ms": 0.3061000002162473,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_schedule_refresh_state_restore",
+        "phase": "quote_and_flash",
+        "at_ms": 13205.671200000324,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.012900000001536682,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "proxy.layoutChanged",
+        "at_ms": 13205.691200000274,
+        "args": []
+      },
+      {
+        "kind": "model_signals",
+        "phase": "quote_and_flash",
+        "name": "source.layoutChanged",
+        "at_ms": 13205.694100000073,
+        "args": []
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 13207.184300000335,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.5146999997123203,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 13207.730699999956,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.42940000003000023,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_refresh_state",
+        "phase": "quote_and_flash",
+        "at_ms": 13207.737799999904,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        },
+        "elapsed_ms": 0.4195000001345761,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "restoreState",
+        "phase": "quote_and_flash",
+        "at_ms": 13207.797999999912,
+        "class": "QHeaderView",
+        "pending_reason": "",
+        "header_before": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        },
+        "restore_bytes_sha256": "03f3ada7b7989484a80746cb8c935ad59e953c4bed3c5c45d0ccc126d680b22d",
+        "elapsed_ms": 0.14170000031299423,
+        "header_after": {
+          "sections": [
+            [
+              64,
+              0,
+              false,
+              "Interactive"
+            ],
+            [
+              76,
+              1,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              2,
+              false,
+              "Interactive"
+            ],
+            [
+              72,
+              3,
+              false,
+              "Interactive"
+            ],
+            [
+              88,
+              4,
+              false,
+              "Interactive"
+            ],
+            [
+              84,
+              5,
+              false,
+              "Interactive"
+            ],
+            [
+              82,
+              6,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              7,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              8,
+              false,
+              "Interactive"
+            ],
+            [
+              118,
+              9,
+              false,
+              "Interactive"
+            ],
+            [
+              106,
+              10,
+              false,
+              "Interactive"
+            ],
+            [
+              92,
+              11,
+              false,
+              "Interactive"
+            ],
+            [
+              220,
+              12,
+              false,
+              "Interactive"
+            ],
+            [
+              504,
+              13,
+              false,
+              "Interactive"
+            ]
+          ],
+          "sort_section": -1,
+          "sort_order": "AscendingOrder",
+          "stretch_last_section": true,
+          "state_sha256": "c0ebf15bf209a7385bd036349a5f0b71022b2fdcf81a5f2e93c8e1646de271d8"
+        }
+      },
+      {
+        "kind": "method_trace",
+        "name": "_on_sort_indicator_changed",
+        "phase": "quote_and_flash",
+        "at_ms": 13207.90130000023,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.02189999986512703,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "setCurrentIndex",
+        "phase": "quote_and_flash",
+        "at_ms": 13208.119500000066,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.020700000277429353,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13208.143300000302,
+        "class": "VCPTableView",
+        "pending_reason": "model_layout_changed",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.007199999799922807,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13208.178000000316,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13209.47120000028,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13210.050800000317,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13211.082900000292,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13211.1546000001,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13212.179699999979,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13212.19790000032,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13213.18250000013,
+        "elapsed_ms": 141.27499999995052,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "method_trace",
+        "name": "updateGeometries",
+        "phase": "quote_and_flash",
+        "at_ms": 13357.853200000136,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.9979999999814027,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_pending_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13358.915600000273,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.03389999983482994,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "method_trace",
+        "name": "_restore_scrollbars",
+        "phase": "quote_and_flash",
+        "at_ms": 13358.928300000116,
+        "class": "VCPTableView",
+        "pending_reason": "",
+        "v_scroll_before": 0,
+        "current_row_before": 0,
+        "elapsed_ms": 0.017800000023271423,
+        "v_scroll_after": 0,
+        "current_row_after": 0
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13360.159400000157,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13362.290900000062,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13363.036799999918,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13363.340100000187,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13363.381800000298,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13363.84739999994,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13363.863500000207,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13364.390400000048,
+        "elapsed_ms": 106.93820000005871,
+        "full_viewport": true,
+        "rect_count": 1,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          0,
+          0,
+          1788,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13588.94700000019,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13589.226099999905,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13589.450800000122,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13589.608300000236,
+        "type": "Paint",
+        "class": "QFrame",
+        "name": "tabsWrapperFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13589.63410000024,
+        "type": "Paint",
+        "class": "ClassicWorkspace",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13589.787800000067,
+        "type": "Paint",
+        "class": "LhbTab",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13589.803000000302,
+        "type": "Paint",
+        "class": "TableStateWrapper",
+        "name": ""
+      },
+      {
+        "kind": "actual_paints",
+        "phase": "quote_and_flash",
+        "at_ms": 13590.00640000022,
+        "elapsed_ms": 17.599499999960244,
+        "full_viewport": false,
+        "rect_count": 2,
+        "rows": 42,
+        "spontaneous": true,
+        "visible": true,
+        "bounds": [
+          212,
+          0,
+          326,
+          873
+        ]
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13861.999799999921,
+        "type": "UpdateRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13862.104799999997,
+        "type": "Paint",
+        "class": "MainWindowQT",
+        "name": ""
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13862.324300000182,
+        "type": "Paint",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13862.832300000264,
+        "type": "LayoutRequest",
+        "class": "QWidget",
+        "name": "mainWindowFrame"
+      },
+      {
+        "kind": "parent_events",
+        "phase": "quote_and_flash",
+        "at_ms": 13862.963600000057,
+        "type": "LayoutRequest",
+        "class": "MainWindowQT",
+        "name": ""
+      }
+    ]
+  }
+]
