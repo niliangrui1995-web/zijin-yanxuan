@@ -103,7 +103,7 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
         HOTSPOT_BUDGETS["scripts/native_watchlist_profile.py"][
             "_NativeProfileController._poll_background_prewarm_finished"
         ]
-        == 219
+        == 204
     )
     assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 222
     assert HOTSPOT_BUDGETS["ui/kline_chart_payload.py"]["build_kline_html"] == 28

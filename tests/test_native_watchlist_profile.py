@@ -1612,6 +1612,70 @@ def test_native_watchlist_profile_quote_acceptance_enforces_local_direct_repaint
     assert "cycle=2 result_count=0" in acceptance["violations"]
 
 
+def _quote_settle_controller(tab):
+    callbacks, started, errors = [], [], []
+    controller = _NativeProfileController.__new__(_NativeProfileController)
+    controller._done = False
+    controller.args = SimpleNamespace(quote_cycles=2, load_timeout_ms=1000)
+    controller.window = SimpleNamespace(_workspace=SimpleNamespace(get_loaded_tab=lambda _key: tab))
+    controller.report = {"watchlist": {}}
+    controller.QTimer = SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback))
+    controller._set_phase = lambda _phase: None
+    controller._start_quote_cycle = lambda: started.append(True)
+    controller._fail = errors.append
+    return controller, callbacks, started, errors
+
+
+def test_native_quote_cycles_wait_for_worker_apply_timer_and_quiet_frames(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr(native_watchlist_profile.time, "perf_counter", lambda: clock[0])
+    timer = SimpleNamespace(active=True)
+    timer.isActive = lambda: timer.active
+    lifecycle = SimpleNamespace(active_names=())
+    tab = SimpleNamespace(_vcp_calc_timer=timer, _task_lifecycle=lifecycle)
+    controller, callbacks, started, errors = _quote_settle_controller(tab)
+
+    controller._continue_after_watchlist_settle()
+    assert not started
+    assert len(callbacks) == 1
+    timer.active = False
+    lifecycle.active_names = ("vcp_refresh",)
+    clock[0] = 10.05
+    callbacks.pop(0)()
+    assert not started
+    lifecycle.active_names = ()
+    tab._pending_vcp_apply_payload = {"000001": {"remark": "fixture"}}
+    clock[0] = 10.1
+    callbacks.pop(0)()
+    assert not started
+    tab._pending_vcp_apply_payload = None
+    clock[0] = 10.15
+    callbacks.pop(0)()
+    assert not started
+    clock[0] = 10.3
+    callbacks.pop(0)()
+
+    assert started == [True]
+    assert not callbacks and not errors
+    assert controller.report["watchlist"]["quote_runtime_settle"]["status"] == "pass"
+
+
+def test_native_quote_cycles_fail_if_indicator_runtime_never_settles(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr(native_watchlist_profile.time, "perf_counter", lambda: clock[0])
+    tab = SimpleNamespace(_task_lifecycle=SimpleNamespace(active_names=("vcp_refresh",)))
+    controller, callbacks, started, errors = _quote_settle_controller(tab)
+
+    controller._continue_after_watchlist_settle()
+    assert not started
+    clock[0] = 11.1
+    callbacks.pop(0)()
+
+    assert errors == ["watchlist quote runtime settle timeout: task:vcp_refresh"]
+    assert not started and not callbacks
+    assert controller.report["watchlist"]["quote_runtime_settle"]["status"] == "timeout"
+
+
 def test_native_watchlist_profile_cleans_isolated_database_on_exit(tmp_path, monkeypatch):
     callbacks = []
     database_path = tmp_path / "profile.db"

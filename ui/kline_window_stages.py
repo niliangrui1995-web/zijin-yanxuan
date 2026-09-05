@@ -994,13 +994,22 @@ class KLineOpenStageCoordinator(_KLineOpenStageControls):
         window = self.window
         if window._closing or window.browser is not failed_browser:
             return False
+        failed_page = None
+        page_owned_by_browser = False
+        with suppress(AttributeError, RuntimeError, TypeError):
+            failed_page = failed_browser.page()
+            page_owned_by_browser = failed_page.parent() is failed_browser
         pending_browser, pending_page = _cancel_browser_pipeline(self)
         if pending_browser is not None and pending_browser is not failed_browser:
             self._rollback_browser_attachment(pending_browser)
-        _release_or_dispose_pending_page(pending_page)
+        if pending_page is not failed_page:
+            _release_or_dispose_pending_page(pending_page)
         uninstall_render_process_recovery(failed_browser)
         with suppress(AttributeError, RuntimeError, TypeError):
             failed_browser.stop()
+        # setPage preserves an application-owned prewarm page's QObject parent.
+        if failed_page is not None and not page_owned_by_browser:
+            _dispose_deferred_page(failed_page)
         with suppress(AttributeError, RuntimeError, TypeError):
             window.chart_host_layout.removeWidget(failed_browser)
         with suppress(AttributeError, RuntimeError, TypeError):

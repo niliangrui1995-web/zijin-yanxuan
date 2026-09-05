@@ -2403,18 +2403,118 @@ def _run_smoke_cycles(app, window, args, report: dict, cycles: int) -> None:
         )
 
 
+def _webengine_child_process_roles() -> list[dict]:
+    import psutil
+
+    process_roles = []
+    for process in psutil.Process().children(recursive=True):
+        with suppress(psutil.Error):
+            if "webengine" in process.name().lower():
+                role = next((arg for arg in process.cmdline() if arg.startswith("--type=")), "")
+                process_roles.append({"pid": process.pid, "role": role})
+    return process_roles
+
+
+def _qt_object_identity(obj) -> dict | None:
+    from PyQt6 import sip
+
+    if obj is None or sip.isdeleted(obj):
+        return None
+    return {
+        "object_id": hex(sip.unwrapinstance(obj)),
+        "class_name": obj.metaObject().className(),
+        "object_name": obj.objectName(),
+    }
+
+
+def _webengine_qt_object_diagnostics() -> dict:
+    """Inspect retained wrappers without calling view.page(), which creates pages."""
+    import gc
+
+    from PyQt6 import sip
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+
+    app = QApplication.instance()
+    if app is None:
+        return {"available": False, "pages": [], "views": []}
+
+    pages = {
+        sip.unwrapinstance(obj): obj
+        for obj in [*app.findChildren(QWebEnginePage), *gc.get_objects()]
+        if isinstance(obj, QWebEnginePage) and not sip.isdeleted(obj)
+    }
+    page_rows = []
+    for page in pages.values():
+        with suppress(RuntimeError):
+            page_rows.append({
+                **_qt_object_identity(page),
+                "parent": _qt_object_identity(page.parent()),
+                "view": _qt_object_identity(QWebEngineView.forPage(page)),
+                "render_process_pid": page.renderProcessPid(),
+                "url": page.url().toString()[:300],
+                "visible": page.isVisible(),
+                "lifecycle_state": page.lifecycleState().name,
+            })
+    view_rows = []
+    for widget in app.allWidgets():
+        with suppress(RuntimeError):
+            if "WebEngine" in widget.metaObject().className():
+                view_rows.append({
+                    **_qt_object_identity(widget),
+                    "parent": _qt_object_identity(widget.parent()),
+                    "visible": widget.isVisible(),
+                })
+    return {
+        "available": True,
+        "pages": page_rows,
+        "views": view_rows,
+        "process_roles": _webengine_child_process_roles(),
+    }
+
+
 def _shutdown_smoke_window(app, window, report: dict) -> None:
     try:
         _close_kline_charts(app)
         window.close()
         window.deleteLater()
-        _process_events(app, rounds=10, sleep_ms=20, flush_deferred_deletes=True)
     except RuntimeError:
         pass
+    timeout_ms = max(1, int((report.get("mode") or {}).get("close_timeout_ms", 8000)))
+    started_at = time.perf_counter()
+    deadline = started_at + timeout_ms / 1000.0
+    immediate = _sample("shutdown:immediate_post_close", None)
+    immediate_qt_objects = _webengine_qt_object_diagnostics()
+    samples = [immediate]
+    with suppress(RuntimeError):
+        _process_events(app, rounds=1, sleep_ms=0, flush_deferred_deletes=True)
+    samples.append(_sample("shutdown:after_deferred_delete", None))
+    while _webengine_count(samples[-1]) != 0 and time.perf_counter() < deadline:
+        remaining_ms = max(1, int((deadline - time.perf_counter()) * 1000.0))
+        try:
+            _process_events(
+                app,
+                rounds=1,
+                sleep_ms=min(50, remaining_ms),
+                flush_deferred_deletes=True,
+            )
+        except RuntimeError:
+            break
+        samples.append(_sample("shutdown:settling", None))
     report["shutdown"] = {
-        "post_close": _sample("shutdown:post_close", None),
+        "immediate_post_close": immediate,
+        "immediate_qt_objects": immediate_qt_objects,
+        "post_close": {**samples[-1], "label": "shutdown:post_close"},
+        "settle_samples": samples,
+        "settle_elapsed_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+        "timeout_ms": timeout_ms,
+        "settled": _webengine_count(samples[-1]) == 0,
+        "post_close_qt_objects": _webengine_qt_object_diagnostics(),
         "included_in_lifecycle_resource_growth": False,
     }
+    from ui.components.kline_window_manager import kline_manager
+
+    report["shutdown"]["manager_diagnostics"] = kline_manager.shutdown_diagnostics
 
 
 def _smoke_load_events(cycles: list[dict[str, Any]]) -> list[Any]:

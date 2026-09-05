@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from domains.fund_holdings.compare import (
+from app.services.ui_fund_holdings_service import (
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     SUBJECT_QFII,
 )
@@ -27,7 +27,7 @@ def _resolve_fund_holdings_store():
     thread, even though the first payload read already runs in its lifecycle
     worker.  Delay that import until a store-backed operation actually runs.
     """
-    from domains.fund_holdings.store import fund_holdings_store
+    from app.services.ui_fund_holdings_service import fund_holdings_store
 
     return fund_holdings_store
 

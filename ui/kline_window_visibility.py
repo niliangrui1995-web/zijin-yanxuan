@@ -20,12 +20,10 @@ def _resume_owner_is_current(window, *, browser, browser_epoch: int, visibility_
     )
 
 
-def _resume_runtime(window, snapshot, *, browser, browser_epoch: int, visibility_epoch: int, identity) -> None:
+def _resume_runtime(window, *, browser, browser_epoch: int, visibility_epoch: int, identity) -> None:
     if getattr(window, "_closing", False):
         return
     if not getattr(window, "_runtime_active", False):
-        if snapshot is not None:
-            requeue_snapshot(window, snapshot)
         return
     if not _resume_owner_is_current(
         window,
@@ -34,13 +32,8 @@ def _resume_runtime(window, snapshot, *, browser, browser_epoch: int, visibility
         visibility_epoch=visibility_epoch,
         identity=identity,
     ):
-        if snapshot is not None:
-            requeue_snapshot(window, snapshot)
         return
-    if snapshot is not None:
-        submit_pending_snapshot(window, snapshot)
-    else:
-        submit_pending_snapshot(window)
+    submit_pending_snapshot(window)
     window._start_rt_timer()
     if getattr(window, "_latest_rt_quote", None) is not None:
         from ui.kline_window_runtime import resume_realtime_updates
@@ -48,12 +41,11 @@ def _resume_runtime(window, snapshot, *, browser, browser_epoch: int, visibility
         resume_realtime_updates(window)
 
 
-def _submit_runtime_state(window, *, browser, browser_epoch, visibility_epoch, identity, active, snapshot) -> None:
+def _submit_runtime_state(window, *, browser, browser_epoch, visibility_epoch, identity, active) -> None:
     def _on_ack(_ack) -> None:
         if active:
             _resume_runtime(
                 window,
-                snapshot,
                 browser=browser,
                 browser_epoch=browser_epoch,
                 visibility_epoch=visibility_epoch,
@@ -63,13 +55,16 @@ def _submit_runtime_state(window, *, browser, browser_epoch, visibility_epoch, i
     try:
         browser.page().runJavaScript(build_runtime_active_script(active), _on_ack)
     except (AttributeError, RuntimeError, TypeError):
-        if snapshot is not None:
-            requeue_snapshot(window, snapshot)
+        pass
 
 
 def sync_runtime_visibility(window, *, hidden: bool, minimized: bool) -> bool:
     lifecycle = window._runtime_lifecycle
     resume_snapshot = lifecycle.set_visibility(hidden=hidden, minimized=minimized)
+    if resume_snapshot is not None:
+        # Keep ownership in the latest-only queue while the JS acknowledgement
+        # is pending; a superseded visibility callback must not hold the frame.
+        requeue_snapshot(window, resume_snapshot)
     active = lifecycle.runtime_active
     window._runtime_active = active
     timer = getattr(window, "_rt_timer", None)
@@ -77,8 +72,6 @@ def sync_runtime_visibility(window, *, hidden: bool, minimized: bool) -> bool:
         timer.stop()
     browser = getattr(window, "browser", None)
     if browser is None or not getattr(window, "_shell_loaded", False):
-        if resume_snapshot is not None:
-            requeue_snapshot(window, resume_snapshot)
         return active
     browser_epoch = int(getattr(window, "_browser_epoch", 0) or 0)
     visibility_epoch = int(getattr(window, "_visibility_epoch", 0) or 0) + 1
@@ -92,6 +85,5 @@ def sync_runtime_visibility(window, *, hidden: bool, minimized: bool) -> bool:
         visibility_epoch=visibility_epoch,
         identity=identity,
         active=active,
-        snapshot=resume_snapshot,
     )
     return active

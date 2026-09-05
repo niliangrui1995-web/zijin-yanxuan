@@ -2,6 +2,7 @@ import socket
 import urllib.request
 
 import pytest
+import requests
 
 import infra.http_safety as http_safety
 from infra.http_safety import (
@@ -417,6 +418,7 @@ def test_requests_get_https_does_not_forward_query_or_credentials_across_hosts()
         allowed_hosts={"first.example", "second.example"},
         params={"apikey": "demo-secret", "page": "1"},
         auth=("user", "demo-secret"),
+        cert="fixture-client.pem",
         cookies={"session": "demo-secret"},
         data={"ignored": "demo-secret"},
         json={"ignored": "demo-secret"},
@@ -426,12 +428,123 @@ def test_requests_get_https_does_not_forward_query_or_credentials_across_hosts()
     assert calls[0][1] == {
         "params": {"apikey": "demo-secret", "page": "1"},
         "auth": ("user", "demo-secret"),
+        "cert": "fixture-client.pem",
         "cookies": {"session": "demo-secret"},
         "data": {"ignored": "demo-secret"},
         "json": {"ignored": "demo-secret"},
         "files": {"upload": ("demo.txt", b"demo-secret")},
     }
     assert calls[1] == ("https://second.example/next?server=value", {})
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+@pytest.mark.parametrize("after_redirect", [False, True])
+def test_requests_https_preserves_transport_failure_without_retry(method, after_redirect):
+    error = requests.Timeout("isolated transport timeout")
+    calls = []
+
+    class Session:
+        def get(self, url, **_kwargs):
+            calls.append(url)
+            if after_redirect and len(calls) == 1:
+                response = requests.Response()
+                response.status_code = 302
+                response.headers["Location"] = "/next"
+                response._content = b""
+                return response
+            raise error
+
+        post = get
+
+    requester = requests_get_https if method == "get" else requests_post_https
+    with pytest.raises(requests.Timeout) as raised:
+        requester("https://example.com/data", session=Session())
+
+    assert raised.value is error
+    assert len(calls) == (2 if after_redirect else 1)
+
+
+def test_requests_post_https_does_not_retry_transport_failure_for_tun():
+    error = requests.ConnectionError("isolated transport disconnect")
+    calls = []
+
+    class Session:
+        def post(self, url, **_kwargs):
+            calls.append(url)
+            raise error
+
+    with pytest.raises(requests.ConnectionError) as raised:
+        requests_post_https(
+            "https://fuyao.aicubes.cn/data",
+            session=Session(),
+            allowed_hosts={"fuyao.aicubes.cn"},
+            allow_reserved_tun_for_allowed_hosts=True,
+        )
+
+    assert raised.value is error
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("credential", ["auth", "headers", "cookies", "params", "cert"])
+def test_requests_get_https_rejects_cross_host_session_credentials(monkeypatch, credential):
+    session = requests.Session()
+    session.trust_env = False
+    value = {
+        "auth": ("fixture-user", "fixture-password"),
+        "headers": {"X-API-Key": "fixture-key"},
+        "cookies": requests.cookies.cookiejar_from_dict({"fixture": "fixture-cookie"}),
+        "params": {"apikey": "fixture-key"},
+        "cert": "fixture-client.pem",
+    }[credential]
+    setattr(session, credential, value)
+    sent = []
+
+    def send(prepared_request, **_kwargs):
+        sent.append(prepared_request)
+        response = requests.Response()
+        response.status_code = 302 if len(sent) == 1 else 200
+        response.headers["Location"] = "https://second.example/final"
+        response._content = b""
+        response.request = prepared_request
+        return response
+
+    monkeypatch.setattr(session, "send", send)
+
+    with pytest.raises(ValueError, match="session credentials"):
+        requests_get_https("https://first.example/data", session=session)
+
+    assert len(sent) == 1
+    assert getattr(session, credential) is value
+
+
+@pytest.mark.parametrize("session_client", [False, True])
+def test_requests_get_https_keeps_safe_session_and_module_redirects(monkeypatch, session_client):
+    session = requests.Session()
+    session.trust_env = False
+    sent = []
+
+    def send(prepared_request, **_kwargs):
+        sent.append(prepared_request)
+        response = requests.Response()
+        response.status_code = 302 if len(sent) == 1 else 200
+        response.headers["Location"] = "https://second.example/final"
+        response._content = b""
+        response.request = prepared_request
+        return response
+
+    monkeypatch.setattr(session, "send", send)
+    if not session_client:
+        monkeypatch.setattr(requests, "get", session.get)
+
+    response = requests_get_https(
+        "https://first.example/data",
+        session=session if session_client else requests,
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 200
+    assert [request.url for request in sent] == ["https://first.example/data", "https://second.example/final"]
+    assert all(request.headers["Accept"] == "application/json" for request in sent)
 
 
 def test_requests_post_https_rejects_cross_host_redirect_before_resending_body():

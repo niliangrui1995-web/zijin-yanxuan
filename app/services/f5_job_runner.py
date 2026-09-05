@@ -8,6 +8,7 @@ import time
 from typing import Protocol
 
 from app.services.f5_job_contract import F5JobEvent, F5JobRequest, F5JobResult
+from core.exceptions import CacheIOError, DataFormatError
 from core.f5_activation_gate import f5_snapshot_activation_boundary
 from core.f5_resource_guard import (
     F5_WORKER_START_MIN_COMMIT_HEADROOM_BYTES,
@@ -69,7 +70,7 @@ class ProcessF5JobHandle(_RepositoryEventCursor):
         if payload is not None:
             try:
                 self._result = F5JobResult.from_dict(payload)
-            except Exception as exc:
+            except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as exc:
                 if self.is_running():
                     return None
                 self._result = self._abnormal_exit_result(exc)
@@ -102,7 +103,7 @@ class ProcessF5JobHandle(_RepositoryEventCursor):
                 payload = self.repository.read_result()
                 if payload is not None:
                     return payload, None
-            except Exception as exc:
+            except (CacheIOError, DataFormatError, OSError, TypeError, ValueError) as exc:
                 read_error = exc
             if self._process_returncode() is None:
                 return None, read_error
@@ -152,7 +153,7 @@ class ProcessF5JobHandle(_RepositoryEventCursor):
             return
         try:
             self.repository.write_result(self._result.to_dict())
-        except Exception:
+        except (CacheIOError, OSError, TypeError, ValueError):
             # The controller still receives the in-memory result and can make a
             # second best-effort write after the monitor releases the process.
             return

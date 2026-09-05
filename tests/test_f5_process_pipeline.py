@@ -44,6 +44,7 @@ from infra.market_data.warehouse_manifest import (
     WarehouseManifest,
     WarehouseManifestRecord,
 )
+from infra.storage import json_cache_repository as json_cache_module
 from infra.storage.f5_job_repository import F5JobRepository
 from infra.storage.f5_snapshot_repository import F5SnapshotRepository
 from infra.storage.file_integrity import (
@@ -632,6 +633,71 @@ def test_process_handle_terminalizes_malformed_worker_result(tmp_path):
     assert "unsupported F5 result schema_version: 0" in result.error_message
     persisted = F5JobResult.from_dict(repository.read_result())
     assert persisted.error_code == "worker_result_unreadable"
+
+
+def test_process_handle_terminalizes_invalid_json_from_real_repository(tmp_path, monkeypatch):
+    request = _request(tmp_path)
+    repository = F5JobRepository(request.job_dir)
+    repository.result_path.write_text('{"schema_version":', encoding="utf-8")
+    process = SimpleNamespace(returncode=23, poll=lambda: 23, wait=lambda timeout=None: 23)
+    monkeypatch.setattr(f5_job_runner_module.time, "sleep", lambda _seconds: None)
+
+    result = ProcessF5JobHandle(request, repository, process).result()
+
+    assert result is not None
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "worker_result_unreadable"
+    assert result.worker_exit_code == 23
+    assert "json payload invalid" in result.error_message
+    assert F5JobResult.from_dict(repository.read_result()).error_code == "worker_result_unreadable"
+
+
+def test_process_handle_retries_wrapped_repository_read_error(tmp_path, monkeypatch):
+    request = _request(tmp_path)
+    repository = F5JobRepository(request.job_dir)
+    expected = F5JobResult.failed(request, error_code="worker_failed", error_message="worker failure")
+    repository.write_result(expected.to_dict())
+    process = SimpleNamespace(returncode=1, poll=lambda: 1, wait=lambda timeout=None: 1)
+    real_open = open
+    attempts = []
+
+    def _transient_open(path, mode="r", **kwargs):
+        if str(path) == str(repository.result_path) and mode == "r":
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise PermissionError("temporary sharing violation")
+        return real_open(path, mode, **kwargs)
+
+    monkeypatch.setattr(json_cache_module, "open", _transient_open, raising=False)
+    monkeypatch.setattr(f5_job_runner_module.time, "sleep", lambda _seconds: None)
+
+    result = ProcessF5JobHandle(request, repository, process).result()
+
+    assert result == expected
+    assert len(attempts) == 2
+
+
+def test_process_handle_keeps_terminal_result_when_repository_write_is_wrapped(tmp_path, monkeypatch):
+    request = _request(tmp_path)
+    repository = F5JobRepository(request.job_dir)
+    process = SimpleNamespace(returncode=7, poll=lambda: 7, wait=lambda timeout=None: 7)
+
+    def _deny_replace(_source, _target):
+        raise PermissionError("terminal result path is locked")
+
+    monkeypatch.setattr(json_cache_module.os, "replace", _deny_replace)
+    monkeypatch.setattr(f5_job_runner_module.time, "sleep", lambda _seconds: None)
+    handle = ProcessF5JobHandle(request, repository, process)
+
+    result = handle.result()
+
+    assert result is not None
+    assert result.status is F5JobStatus.FAILED
+    assert result.error_code == "worker_process_exited"
+    assert result.worker_exit_code == 7
+    assert handle.result() is result
+    assert not repository.result_path.exists()
+    assert not list(repository.job_dir.glob("*.tmp"))
 
 
 def test_process_handle_blocks_ready_result_when_worker_exits_nonzero(tmp_path):

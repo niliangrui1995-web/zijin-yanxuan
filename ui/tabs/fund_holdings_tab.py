@@ -20,7 +20,7 @@ from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from domains.fund_holdings.compare import (
+from app.services.ui_fund_holdings_service import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
     QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
@@ -99,7 +99,7 @@ def _get_fund_holdings_store():
     """
     store = globals().get("fund_holdings_store")
     if store is None:
-        from domains.fund_holdings.store import fund_holdings_store as store
+        from app.services.ui_fund_holdings_service import fund_holdings_store as store
 
         globals()["fund_holdings_store"] = store
     return store
@@ -109,7 +109,7 @@ def _get_fund_holdings_sync_service():
     """Resolve the network-capable sync service in its background task."""
     service = globals().get("fund_holdings_sync_service")
     if service is None:
-        from domains.fund_holdings.sync import fund_holdings_sync_service as service
+        from app.services.ui_fund_holdings_service import fund_holdings_sync_service as service
 
         globals()["fund_holdings_sync_service"] = service
     return service

@@ -97,6 +97,16 @@ def _snapshot_matches_current(window, snapshot) -> bool:
     )
 
 
+def _snapshot_matches_latest(window, snapshot) -> bool:
+    if not _snapshot_matches_current(window, snapshot):
+        return False
+    latest = window._runtime_lifecycle.latest_snapshot
+    return bool(
+        latest is None
+        or (_snapshot_matches_current(window, latest) and snapshot.version == latest.version)
+    )
+
+
 def _record_snapshot(window, prepared):
     return window._runtime_lifecycle.record_snapshot_json(
         prepared.payload_json,
@@ -202,7 +212,7 @@ def queue_prepared_render(window, prepared, *, loading: bool) -> bool:
 
 
 def requeue_snapshot(window, snapshot) -> None:
-    if not _snapshot_matches_current(window, snapshot):
+    if not _snapshot_matches_latest(window, snapshot):
         return
     window._runtime_lifecycle.record_snapshot_json(
         snapshot.payload_json,
@@ -312,7 +322,7 @@ def submit_pending_snapshot(window, snapshot=None) -> bool:
     if not _snapshot_submission_ready(window):
         return False
     snapshot = snapshot or window._runtime_lifecycle.take_pending_submission()
-    if not _snapshot_matches_current(window, snapshot):
+    if not _snapshot_matches_latest(window, snapshot):
         return False
     browser = window.browser
     epoch = int(getattr(window, "_browser_epoch", 0) or 0)

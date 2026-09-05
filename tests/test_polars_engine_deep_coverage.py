@@ -73,7 +73,7 @@ def test_numpy_pct_change_and_rank_cover_scipy_and_numpy_fallback(monkeypatch):
         _block_import(scoped, "scipy")
         fallback = engine._numpy_rank_pct_axis1(np.array([[3.0, 1.0, 2.0], [np.nan, 4.0, np.nan]]))
     np.testing.assert_allclose(fallback[0], [1.0, 1 / 3, 2 / 3])
-    assert np.isnan(fallback[1]).all()
+    np.testing.assert_allclose(fallback[1], [np.nan, 1.0, np.nan], equal_nan=True)
 
 
 def test_to_pldf_handles_none_pandas_index_columns_and_unknown_objects():
@@ -185,7 +185,7 @@ def test_build_rps_matrix_returns_cached_and_empty_results(monkeypatch):
     cache = {rps_cache_key({}, "20260101", "20260105"): cached_result}
     assert engine.build_rps_matrix_pl({}, "20260101", "20260105", cache) is cached_result
 
-    monkeypatch.setattr(engine, "_load_prices_matrix", lambda: None)
+    monkeypatch.setattr(engine, "_load_prices_matrix", lambda *_args: None)
     monkeypatch.setattr(
         engine,
         "build_prices_matrix_fast",
@@ -199,7 +199,7 @@ def test_build_rps_matrix_computes_weekend_fallback_and_updates_cache(monkeypatc
     base = np.arange(1, len(dates) + 1, dtype=float)
     matrix = np.column_stack([base, base**1.02, base**1.05])
     saved = []
-    monkeypatch.setattr(engine, "_load_prices_matrix", lambda: None)
+    monkeypatch.setattr(engine, "_load_prices_matrix", lambda *_args: None)
     monkeypatch.setattr(engine, "build_prices_matrix_fast", lambda *_args, **_kwargs: (matrix, ["A", "B", "C"], dates))
     monkeypatch.setattr(engine, "_save_prices_matrix", lambda *args: saved.append(args))
     cache = {}
@@ -225,7 +225,7 @@ def test_build_rps_matrix_reuses_covering_numpy_cache(monkeypatch):
             np.linspace(1.0, 30.0, len(dates)),
         ]
     )
-    monkeypatch.setattr(engine, "_load_prices_matrix", lambda: (matrix, ["A", "B", "C"], dates))
+    monkeypatch.setattr(engine, "_load_prices_matrix", lambda *_args: (matrix, ["A", "B", "C"], dates))
     monkeypatch.setattr(
         engine,
         "build_prices_matrix_fast",

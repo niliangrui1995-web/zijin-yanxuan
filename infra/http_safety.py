@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Collection, Mapping
 from contextlib import suppress
+from types import ModuleType
 from urllib.parse import urljoin, urlsplit
 
 DEFAULT_REQUESTS_USER_AGENT = "vcp-hunter/1.0"
@@ -52,7 +53,7 @@ _DYNAMIC_TUN_ALLOWED_HOSTS = frozenset(
 )
 _SENSITIVE_CROSS_HOST_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization", "referer"})
 _SENSITIVE_HEADER_NAME_TOKENS = ("apikey", "token", "secret")
-_CROSS_HOST_CREDENTIAL_KWARGS = frozenset({"auth", "cookies", "data", "files", "json", "params"})
+_CROSS_HOST_CREDENTIAL_KWARGS = frozenset({"auth", "cert", "cookies", "data", "files", "json", "params"})
 
 
 class BlockedHttpsHostError(ValueError):
@@ -94,6 +95,31 @@ def _headers_without_cross_host_credentials(headers: Mapping[str, str]) -> dict[
 def _request_kwargs_without_cross_host_credentials(request_kwargs: Mapping[str, object]) -> dict[str, object]:
     """Drop caller-supplied credentials and payloads before a cross-host GET."""
     return {key: value for key, value in request_kwargs.items() if key not in _CROSS_HOST_CREDENTIAL_KWARGS}
+
+
+def _session_has_cross_host_credentials(session) -> bool:
+    if session is None or isinstance(session, ModuleType):
+        return False
+    if any(getattr(session, name, None) for name in ("auth", "cert", "cookies", "params")):
+        return True
+    return any(_is_sensitive_cross_host_header(name) for name in (getattr(session, "headers", None) or {}))
+
+
+def _redirect_request_parameters(method_name, session, current_url, redirect_url, request_headers, request_kwargs):
+    if _url_origin(current_url) == _url_origin(redirect_url):
+        return request_headers, request_kwargs
+    if method_name != "get":
+        raise ValueError("cross-host HTTPS redirects are only supported for GET requests")
+    if _session_has_cross_host_credentials(session):
+        # Per-call filtering cannot suppress credentials merged back in by
+        # the caller's session. Do not mutate a potentially shared session.
+        raise ValueError("cross-host HTTPS redirects with session credentials are not allowed")
+    # A redirect Location supplies the next URL and query string. Do not reapply
+    # caller-owned query credentials, cookies, auth, or payloads to another origin.
+    return (
+        _headers_without_cross_host_credentials(request_headers),
+        _request_kwargs_without_cross_host_credentials(request_kwargs),
+    )
 
 
 def _strip_cross_host_request_credentials(request) -> None:
@@ -393,8 +419,9 @@ def _requests_https(
     import requests
 
     requester = getattr(session if session is not None else requests, method_name)
+    retry_transport_once = method_name == "get" and allow_reserved_tun_for_allowed_hosts
     for redirect_count in range(max_redirects + 1):
-        for transport_attempt in range(2 if method_name == "get" and allow_reserved_tun_for_allowed_hosts else 1):
+        for transport_attempt in range(2 if retry_transport_once else 1):
             try:
                 response = requester(
                     current_url,
@@ -405,7 +432,7 @@ def _requests_https(
                 )
                 break
             except (requests.RequestException, OSError):
-                if transport_attempt:
+                if not retry_transport_once or transport_attempt:
                     raise
                 # The supplied session belongs to the caller. Do not close it here:
                 # curl_cffi sessions are not reusable after close(). Revalidate and
@@ -427,16 +454,10 @@ def _requests_https(
             allowed_hosts=allowed_hosts,
             allow_reserved_tun_for_allowed_hosts=allow_reserved_tun_for_allowed_hosts,
         )
-        cross_host_redirect = _url_origin(current_url) != _url_origin(redirect_url)
-        if cross_host_redirect and method_name != "get":
-            raise ValueError("cross-host HTTPS redirects are only supported for GET requests")
+        request_headers, request_kwargs = _redirect_request_parameters(
+            method_name, session, current_url, redirect_url, request_headers, request_kwargs
+        )
         current_url = redirect_url
-        if cross_host_redirect:
-            request_headers = _headers_without_cross_host_credentials(request_headers)
-            # A redirect Location supplies the next URL and query string. Do not
-            # reapply caller-owned query credentials, cookies, auth, or payloads
-            # to a different origin.
-            request_kwargs = _request_kwargs_without_cross_host_credentials(request_kwargs)
     raise ValueError(f"too many HTTPS redirects: {url!r}")
 
 

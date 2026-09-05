@@ -33,9 +33,9 @@ from app.services.foreign_block_market_data_service import (
 from app.services.foreign_block_market_data_service import (
     format_incomplete_message as _format_incomplete_message,
 )
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_task_lifecycle_service import (
     invoke_with_cancellation,
     task_lifecycle_for,

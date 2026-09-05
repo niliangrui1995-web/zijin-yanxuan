@@ -3,29 +3,6 @@ from __future__ import annotations
 from hashlib import blake2b
 
 
-def _tail_value(values):
-    positional = getattr(values, "iloc", None)
-    return positional[-1] if positional is not None else values[-1]
-
-
-def _frame_tail_value(frame, column_name: str):
-    try:
-        raw_columns = getattr(frame, "columns", ())
-        columns = tuple(raw_columns) if raw_columns is not None else ()
-        if column_name in columns:
-            return _tail_value(frame[column_name])
-    except (AttributeError, IndexError, KeyError, TypeError):
-        return ""
-    return ""
-
-
-def _frame_index_tail_value(frame):
-    try:
-        return _tail_value(frame.index)
-    except (AttributeError, IndexError, KeyError, TypeError):
-        return ""
-
-
 def _frame_length(frame) -> int:
     try:
         return len(frame)
@@ -51,30 +28,30 @@ def _frame_snapshot_declared_version(frame):
         return ""
 
 
-def _frame_snapshot_date_value(frame, columns: tuple[str, ...]):
-    for column_name in ("datetime", "date", "trade_date"):
-        if column_name in columns:
-            return _frame_tail_value(frame, column_name)
-    return _frame_index_tail_value(frame)
-
-
-def _frame_snapshot_marker(frame) -> tuple:
-    columns = _frame_columns(frame)
-    return (
-        id(frame),
-        _frame_length(frame),
-        columns,
-        _frame_snapshot_declared_version(frame),
-        _frame_snapshot_date_value(frame, columns),
-        _frame_tail_value(frame, "close"),
-    )
+def _update_vector_digest(digest, values) -> None:
+    array = values.to_numpy() if hasattr(values, "to_numpy") else values
+    dtype = getattr(array, "dtype", None)
+    digest.update(str(dtype).encode("utf-8"))
+    if dtype is not None and not dtype.hasobject:
+        digest.update(array.tobytes())
+    else:
+        items = array.tolist() if hasattr(array, "tolist") else list(array)
+        digest.update(repr(items).encode("utf-8"))
 
 
 def rps_data_snapshot_version(data_dict: dict) -> str:
-    """Return a lightweight identity for the in-memory bars used by an RPS calculation."""
+    """Bind RPS caches to all source dates and closes, including historical corrections."""
     digest = blake2b(digest_size=16)
+    digest.update(b"rps-prices-v2")
     for code in sorted(data_dict, key=str):
-        digest.update(repr((str(code), _frame_snapshot_marker(data_dict[code]))).encode("utf-8"))
+        frame = data_dict[code]
+        digest.update(repr((str(code), _frame_length(frame), _frame_snapshot_declared_version(frame))).encode("utf-8"))
+        columns = _frame_columns(frame)
+        date_column = next((name for name in ("datetime", "date", "trade_date") if name in columns), None)
+        dates = frame[date_column] if date_column is not None else getattr(frame, "index", ())
+        closes = frame["close"] if "close" in columns else ()
+        _update_vector_digest(digest, dates)
+        _update_vector_digest(digest, closes)
     return digest.hexdigest()
 
 

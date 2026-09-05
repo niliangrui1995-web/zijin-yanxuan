@@ -53,7 +53,21 @@ class NADailyReportRepository:
 
     @staticmethod
     def signature_for(paths: Sequence[str | Path]) -> tuple[str, ...]:
-        return tuple(f"{Path(path).name}:{int(Path(path).stat().st_mtime)}" for path in paths)
+        signatures: list[str] = []
+        for path in paths:
+            report_path = Path(path)
+            fingerprints: list[str] = []
+            for candidate in (report_path, report_path.with_suffix(".json")):
+                try:
+                    metadata = candidate.stat()
+                except FileNotFoundError:
+                    if candidate == report_path:
+                        raise
+                    fingerprints.append("missing")
+                else:
+                    fingerprints.append(f"{metadata.st_mtime_ns}:{metadata.st_size}")
+            signatures.append(f"{report_path.resolve()}:{'|'.join(fingerprints)}")
+        return tuple(signatures)
 
     def _report_files(self) -> list[Path]:
         if not self.output_dir.is_dir():

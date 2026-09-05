@@ -855,6 +855,52 @@ def _residual_repaint_acceptance(results: list[dict], *, expected_cycles: int | 
     return {"status": "pass" if not violations else "fail", "violations": violations}
 
 
+def _watchlist_quote_runtime_pending(tab) -> list[str]:
+    if tab is None:
+        return ["watchlist_unavailable"]
+    lifecycle = getattr(tab, "_task_lifecycle", None)
+    pending = [f"task:{name}" for name in getattr(lifecycle, "active_names", ())]
+    timer_names = (
+        "_vcp_calc_timer", "_vcp_apply_timer", "_delayed_special_timer",
+        "_initial_loading_timer", "_quote_refresh_timer", "_debounce_timer",
+    )
+    for name in timer_names:
+        timer = getattr(tab, name, None)
+        if timer is not None and timer.isActive():
+            pending.append(f"timer:{name}")
+    for name in ("_initial_data_loading", "_pending_vcp_calc", "_deferred_vcp_payload", "_pending_vcp_apply_payload"):
+        if getattr(tab, name, None):
+            pending.append(f"pending:{name}")
+    return pending
+
+
+def _wait_for_quote_runtime(controller, started_at=None, quiet_since=None) -> None:
+    if controller._done:
+        return
+    now = time.perf_counter()
+    if started_at is None:
+        started_at = now
+        controller._set_phase("quote_runtime_settle")
+    _, tab, _, _ = controller._watchlist_model_targets()
+    pending = _watchlist_quote_runtime_pending(tab)
+    quiet_since = None if pending else (now if quiet_since is None else quiet_since)
+    elapsed_ms = (now - started_at) * 1000.0
+    quiet_ms = 0.0 if quiet_since is None else (now - quiet_since) * 1000.0
+    report = {"status": "waiting", "elapsed_ms": round(elapsed_ms, 3), "quiet_ms": round(quiet_ms, 3), "pending": pending}
+    controller.report["watchlist"]["quote_runtime_settle"] = report
+    # Observe the real worker and queued apply timers, then allow several Qt
+    # turns to deliver their model notifications before taking metric offsets.
+    if not pending and quiet_ms >= 100.0:
+        report["status"] = "pass"
+        controller._start_quote_cycle()
+        return
+    if elapsed_ms >= max(1000, int(controller.args.load_timeout_ms)):
+        report["status"] = "timeout"
+        controller._fail(f"watchlist quote runtime settle timeout: {','.join(pending) or 'quiet_frames'}")
+        return
+    controller.QTimer.singleShot(25, lambda: _wait_for_quote_runtime(controller, started_at, quiet_since))
+
+
 def _quote_repaint_acceptance(results: list[dict], *, expected_cycles: int | None = None) -> dict:
     expected_count = None if expected_cycles is None else max(0, int(expected_cycles))
     if not results:
@@ -1575,6 +1621,44 @@ class _WatchlistModelSignalProbe:
         return slot
 
 
+def _poll_foreground_watchlist_prewarm_hold(controller, status: dict) -> None:
+    controller._begin_foreground_watchlist_prewarm_hold()
+    if controller._foreground_watchlist_hold_status is None:
+        controller._foreground_watchlist_hold_status = dict(status)
+    hold_elapsed_ms = (
+        time.perf_counter() - controller._foreground_watchlist_hold_started_at
+    ) * 1000.0
+    hold_remaining_ms = _foreground_watchlist_hold_remaining_ms(hold_elapsed_ms)
+    if hold_remaining_ms:
+        controller.QTimer.singleShot(
+            min(50, hold_remaining_ms),
+            controller._poll_background_prewarm_finished,
+        )
+        return
+    if hold_elapsed_ms >= max(1, int(controller.args.prewarm_timeout_ms)):
+        controller.report["background_prewarm"] = {
+            "elapsed_ms": round(hold_elapsed_ms, 3),
+            "status": status,
+            "acceptance": {
+                "status": "fail",
+                "violations": ["foreground_watchlist_hold_not_released"],
+            },
+        }
+        controller._fail("foreground Watchlist hold did not release background prewarm")
+        return
+    release_started_at = time.perf_counter()
+    release_offsets = controller._metric_offsets(BACKGROUND_PREWARM_PROFILE_METRICS)
+    controller._reset_stall_probe()
+    if not controller._release_foreground_watchlist_prewarm_hold():
+        return
+    controller._foreground_watchlist_hold_released_at = release_started_at
+    controller._background_prewarm_started_at = release_started_at
+    controller._background_prewarm_offsets = release_offsets
+    controller._set_phase("background_prewarm")
+    controller.QTimer.singleShot(50, controller._poll_background_prewarm_finished)
+    return
+
+
 class _NativeProfileController:
     def __init__(
         self,
@@ -2057,40 +2141,7 @@ class _NativeProfileController:
             self._background_prewarm_started_at <= 0.0
             and hold_reason == "watchlist_active"
         ):
-            self._begin_foreground_watchlist_prewarm_hold()
-            if self._foreground_watchlist_hold_status is None:
-                self._foreground_watchlist_hold_status = dict(status)
-            hold_elapsed_ms = (
-                time.perf_counter() - self._foreground_watchlist_hold_started_at
-            ) * 1000.0
-            hold_remaining_ms = _foreground_watchlist_hold_remaining_ms(hold_elapsed_ms)
-            if hold_remaining_ms:
-                self.QTimer.singleShot(
-                    min(50, hold_remaining_ms),
-                    self._poll_background_prewarm_finished,
-                )
-                return
-            if hold_elapsed_ms >= max(1, int(self.args.prewarm_timeout_ms)):
-                self.report["background_prewarm"] = {
-                    "elapsed_ms": round(hold_elapsed_ms, 3),
-                    "status": status,
-                    "acceptance": {
-                        "status": "fail",
-                        "violations": ["foreground_watchlist_hold_not_released"],
-                    },
-                }
-                self._fail("foreground Watchlist hold did not release background prewarm")
-                return
-            release_started_at = time.perf_counter()
-            release_offsets = self._metric_offsets(BACKGROUND_PREWARM_PROFILE_METRICS)
-            self._reset_stall_probe()
-            if not self._release_foreground_watchlist_prewarm_hold():
-                return
-            self._foreground_watchlist_hold_released_at = release_started_at
-            self._background_prewarm_started_at = release_started_at
-            self._background_prewarm_offsets = release_offsets
-            self._set_phase("background_prewarm")
-            self.QTimer.singleShot(50, self._poll_background_prewarm_finished)
+            _poll_foreground_watchlist_prewarm_hold(self, status)
             return
         if self._background_prewarm_started_at <= 0.0 and bool(status.get("finished")):
             terminal_at = time.perf_counter()
@@ -2772,7 +2823,7 @@ class _NativeProfileController:
         if max(0, int(self.args.quote_cycles)) <= 0:
             self._prepare_residual_repaint()
             return
-        self._start_quote_cycle()
+        _wait_for_quote_runtime(self)
 
     def _run_question_dialog_probe(self) -> None:
         workspace = getattr(self.window, "_workspace", None)

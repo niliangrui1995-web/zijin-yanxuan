@@ -10,7 +10,6 @@ from typing import Iterator
 from app.services.ui_diagnostics_service import ui_stall_span
 from core.observability import emit_structured_log, record_metric
 
-
 # Transition metadata is diagnostic context, not durable page state.  Keep it
 # long enough to join the immediate queued show/layout work, but never let it
 # label an unrelated native activation minutes later.

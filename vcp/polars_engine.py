@@ -49,11 +49,20 @@ _POLARS_DATA_ERRORS = (
 ) + _POLARS_EXCEPTION_TYPES
 
 
-def _atomic_parquet_write(df: pl.DataFrame, final_path: str, compression: str = "zstd") -> None:
+def _atomic_parquet_write(
+    df: pl.DataFrame,
+    final_path: str,
+    compression: str = "zstd",
+    *,
+    metadata: dict[str, str] | None = None,
+) -> None:
     os.makedirs(os.path.dirname(final_path), exist_ok=True)
     tmp_path = f"{final_path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
     try:
-        df.write_parquet(tmp_path, compression=compression)
+        if metadata is None:
+            df.write_parquet(tmp_path, compression=compression)
+        else:
+            df.write_parquet(tmp_path, compression=compression, metadata=metadata)
         os.replace(tmp_path, final_path)
     finally:
         if os.path.exists(tmp_path):
@@ -100,10 +109,10 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
             row = matrix[i]
             valid_mask = ~np.isnan(row)
             valid_count = valid_mask.sum()
-            if valid_count < 2:
+            if valid_count == 0:
                 continue
             valid_vals = row[valid_mask]
-            ranks = rankdata(valid_vals, method="ordinal")
+            ranks = rankdata(valid_vals, method="average")
             result[i, valid_mask] = ranks / valid_count
     except ImportError:
         # scipy 未安装时退化为原始 numpy 实现
@@ -111,12 +120,16 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
             row = matrix[i]
             valid_mask = ~np.isnan(row)
             valid_count = valid_mask.sum()
-            if valid_count < 2:
+            if valid_count == 0:
                 continue
             valid_vals = row[valid_mask]
-            order = np.argsort(np.argsort(valid_vals))
-            pct_rank = (order + 1.0) / valid_count
-            result[i, valid_mask] = pct_rank
+            order = np.argsort(valid_vals, kind="stable")
+            sorted_values = valid_vals[order]
+            starts = np.r_[0, np.flatnonzero(sorted_values[1:] != sorted_values[:-1]) + 1]
+            ends = np.r_[starts[1:], valid_count]
+            ranks = np.empty(valid_count, dtype=float)
+            ranks[order] = np.repeat((starts + 1.0 + ends) / 2.0, ends - starts)
+            result[i, valid_mask] = ranks / valid_count
 
     return result
 
@@ -136,7 +149,11 @@ def _to_pldf(df) -> pl.DataFrame | None:
     import pandas as pd
 
     if isinstance(df, pd.DataFrame):
-        temp = df.reset_index() if df.index.name == "datetime" else df
+        temp = df
+        if "datetime" not in df.columns and (
+            isinstance(df.index, pd.DatetimeIndex) or df.index.name in ("datetime", "date", "trade_date")
+        ):
+            temp = df.rename_axis("datetime").reset_index()
         return pl.from_pandas(temp)
     return None
 
@@ -219,9 +236,9 @@ def build_prices_matrix_fast(
     # 为什么在这里 del？concat 的 long_df 和 pivot 的 wide 同时存在时峰值翻倍（各约 200MB）
     del long_df
 
-    # 前向填充最多10天（替代 pd.ffill(limit=10)）
+    # 与 pandas 回退路径一致，最多前向填充 5 个交易日。
     stock_cols = [c for c in wide.columns if c != "date"]
-    wide = wide.with_columns([pl.col(c).forward_fill(limit=10) for c in stock_cols])
+    wide = wide.with_columns([pl.col(c).forward_fill(limit=5) for c in stock_cols])
 
     dates_arr = wide["date"].to_numpy()
     matrix = wide.select(stock_cols).to_numpy()
@@ -243,6 +260,7 @@ _PRICES_MATRIX_CACHE = os.environ.get(
     os.path.join(CACHE_DIR, "vcp_prices_matrix.parquet"),
 )
 _PRICES_MATRIX_CACHE_OVERRIDE = contextvars.ContextVar("vcp_prices_matrix_cache", default="")
+_PRICES_MATRIX_SOURCE_METADATA_KEY = "vcp.rps.prices_source_version"
 
 
 def _prices_matrix_cache_path() -> str:
@@ -258,7 +276,9 @@ def prices_matrix_cache_scope(path: str):
         _PRICES_MATRIX_CACHE_OVERRIDE.reset(token)
 
 
-def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarray) -> None:
+def _save_prices_matrix(
+    matrix: np.ndarray, columns: list[str], dates: np.ndarray, source_version: str = ""
+) -> None:
     """将价格矩阵保存为 Parquet（增量 RPS 基底）— 纯 Polars"""
     try:
         # 构造 Polars DataFrame: date列 + 每只股票一列
@@ -268,19 +288,29 @@ def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarra
         save_df = pl.DataFrame(data_dict)
         cache_path = _prices_matrix_cache_path()
         with _PRICES_MATRIX_LOCK:
-            _atomic_parquet_write(save_df, cache_path, compression="zstd")
+            _atomic_parquet_write(
+                save_df,
+                cache_path,
+                compression="zstd",
+                metadata={_PRICES_MATRIX_SOURCE_METADATA_KEY: source_version},
+            )
     except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] 价格矩阵缓存保存失败: {e}")
 
 
-def _load_prices_matrix() -> tuple[np.ndarray, list[str], np.ndarray] | None:
+def _load_prices_matrix(source_version: str | None = None) -> tuple[np.ndarray, list[str], np.ndarray] | None:
     """从 Parquet 加载历史价格矩阵 — 纯 Polars"""
     cache_path = _prices_matrix_cache_path()
     if not os.path.exists(cache_path):
         return None
     try:
-        with _PRICES_MATRIX_LOCK:
-            df = pl.read_parquet(cache_path)
+        with _PRICES_MATRIX_LOCK, open(cache_path, "rb") as handle:
+            if source_version is not None:
+                metadata = pl.read_parquet_metadata(handle)
+                if metadata.get(_PRICES_MATRIX_SOURCE_METADATA_KEY) != source_version:
+                    return None
+                handle.seek(0)
+            df = pl.read_parquet(handle)
         if df.height == 0:
             return None
         dates = df["date"].to_numpy()
@@ -290,6 +320,14 @@ def _load_prices_matrix() -> tuple[np.ndarray, list[str], np.ndarray] | None:
     except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] 价格矩阵缓存加载失败: {e}")
         return None
+
+
+def _cache_computed_rps(data_dict, start_date, end_date, cache_key, rps_cache, result, prices_data) -> None:
+    if rps_cache_key(data_dict, start_date, end_date) != cache_key:
+        return
+    _save_prices_matrix(*prices_data, cache_key[2])
+    if rps_cache is not None:
+        rps_cache[cache_key] = result
 
 
 def build_rps_matrix_pl(
@@ -306,10 +344,11 @@ def build_rps_matrix_pl(
     3. rank: numpy/scipy argsort
     """
     num_stocks = len(data_dict)
+    cache_key = rps_cache_key(data_dict, start_date, end_date)
+    source_version = cache_key[2]
 
     # 缓存检查
     if rps_cache is not None:
-        cache_key = rps_cache_key(data_dict, start_date, end_date)
         if cache_key in rps_cache:
             _log.debug(f"[加速引擎] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
             return rps_cache[cache_key]
@@ -326,7 +365,7 @@ def build_rps_matrix_pl(
     columns = None
     dates_arr = None
 
-    cached = _load_prices_matrix()
+    cached = _load_prices_matrix(source_version)
     if cached is not None:
         c_matrix, c_columns, c_dates = cached
         if len(c_dates) > 0:
@@ -419,19 +458,14 @@ def build_rps_matrix_pl(
     _gc.collect()
 
     # 延迟保存：此时 pct/rank 数组已释放，内存处于低谷
-    if _deferred_save_data is not None:
-        _save_prices_matrix(*_deferred_save_data)
-        del _deferred_save_data
+    _cache_computed_rps(data_dict, start_date, end_date, cache_key, rps_cache, result, _deferred_save_data)
+    del _deferred_save_data
 
     elapsed_total = time.time() - t_total
     _log.info(
         f"[加速引擎] RPS 矩阵构建完成(纯Polars) — 参与标的 {len(columns)} 只 | "
         f"扫描交易日 {len(target_indices)} 个 | 总耗时 {elapsed_total:.2f}s"
     )
-
-    if rps_cache is not None:
-        cache_key = rps_cache_key(data_dict, start_date, end_date)
-        rps_cache[cache_key] = result
 
     return result
 

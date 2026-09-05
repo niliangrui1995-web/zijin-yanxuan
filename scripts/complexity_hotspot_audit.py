@@ -21,7 +21,7 @@ HOTSPOT_BUDGETS = {
         "_parse_args": 13,
     },
     "scripts/native_watchlist_profile.py": {
-        "_NativeProfileController._poll_background_prewarm_finished": 219,
+        "_NativeProfileController._poll_background_prewarm_finished": 204,
     },
     "ui/kline_window_header.py": {
         "apply_qt_theme": 194,

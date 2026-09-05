@@ -59,6 +59,12 @@ _HOLDER_NAME_SHORT_TOKENS = {
 QFII_CAPITAL_ATTRIBUTE_SELF_OWNED = "自有资金"
 QFII_CAPITAL_ATTRIBUTE_CLIENT = "客户资金"
 QFII_CAPITAL_ATTRIBUTE_UNMARKED = "未标注"
+_QFII_VERIFIED_LEGACY_CODES = {
+    # https://static.cninfo.com.cn/finalpage/2025-06-16/1223886701.PDF
+    "831243.NQ": "300967",
+    # https://static.cninfo.com.cn/finalpage/2024-04-03/1219502527.PDF
+    "872731.NQ": "301158",
+}
 
 
 def is_mainland_security_code(value) -> bool:
@@ -258,8 +264,11 @@ def _qfii_row_preference(raw: dict) -> tuple[int, float, str]:
 
 
 def _qfii_row_signature(raw: dict) -> tuple[object, ...]:
+    stock_code = _first_text(raw, "SECURITY_CODE", "stock_code")
+    security_key = _QFII_VERIFIED_LEGACY_CODES.get(f"{stock_code}.{_qfii_row_market(raw)}", stock_code)
     return (
         _first_text(raw, "quarter_key"),
+        security_key,
         holder_name_match_key(_first_text(raw, "HOLDER_NAME", "holder_name")),
         int(round(_first_number(raw, "HOLDER_RANK", "holder_rank"))),
         round(_first_number(raw, "HOLD_NUM", "hold_num_shares"), 6),

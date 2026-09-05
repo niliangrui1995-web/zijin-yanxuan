@@ -10,8 +10,13 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
 from domains.fund_holdings.compare import *  # noqa: F401,F403
+
+if TYPE_CHECKING:
+    from domains.fund_holdings.store import FundHoldingsStore, fund_holdings_store
+    from domains.fund_holdings.sync import FundHoldingsSyncService, fund_holdings_sync_service
 
 __all__ = [
     "FundHoldingsStore",

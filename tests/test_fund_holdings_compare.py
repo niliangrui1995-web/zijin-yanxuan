@@ -1,14 +1,58 @@
 # -*- coding: utf-8 -*-
+import pytest
+
 from core.fund_holdings_compare import (
     SUBJECT_QFII,
     SUBJECT_RUIYUAN,
     build_change_rows,
     build_qfii_holder_change_rows,
     build_qfii_snapshots,
+    dedupe_qfii_raw_rows,
     get_compare_quarter_key,
     normalize_holder_name,
     normalize_quarter_key,
 )
+
+
+@pytest.mark.parametrize("names", [("平安银行", "万科A"), ("同名标的", "同名标的"), ("", "")])
+def test_qfii_dedupe_preserves_distinct_securities_with_identical_holdings(names):
+    rows = [
+        {
+            "quarter_key": "2026Q2",
+            "SECUCODE": f"{code}.SZ",
+            "SECURITY_CODE": code,
+            "SECURITY_NAME_ABBR": name,
+            "HOLDER_NAME": "BARCLAYS BANK PLC",
+            "HOLDER_RANK": 1,
+            "HOLD_NUM": 1_000_000,
+            "HOLDER_MARKET_CAP": 10_000_000,
+            "HOLD_RATIO": 0.1,
+            "FREE_HOLDNUM_RATIO": 0.2,
+        }
+        for code, name in zip(("000001", "000002"), names, strict=True)
+    ]
+
+    result = dedupe_qfii_raw_rows(rows)
+
+    assert {row["SECURITY_CODE"] for row in result} == {"000001", "000002"}
+
+
+def test_qfii_dedupe_does_not_infer_unverified_nq_alias_from_identical_holdings():
+    rows = [
+        {
+            "quarter_key": "2026Q2",
+            "SECUCODE": secucode,
+            "SECURITY_CODE": secucode.split(".")[0],
+            "SECURITY_NAME_ABBR": "同名标的",
+            "HOLDER_NAME": "BARCLAYS BANK PLC",
+            "HOLD_NUM": 1_000_000,
+            "HOLD_RATIO": 0.1,
+            "FREE_HOLDNUM_RATIO": 0.2,
+        }
+        for secucode in ("831999.NQ", "301999.SZ")
+    ]
+
+    assert len(dedupe_qfii_raw_rows(rows)) == 2
 
 
 def test_normalize_quarter_key_supports_multiple_formats():

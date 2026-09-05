@@ -2,6 +2,10 @@
 import json
 import os
 
+import pytest
+
+from app.services import na_daily_service as service_module
+from infra.storage.na_daily_repository import NADailyReportRepository
 from ui.services.na_daily_service import (
     build_na_daily_history_payload,
     build_na_daily_refresh_payload,
@@ -87,7 +91,8 @@ def test_build_na_daily_rows_uses_service_file_parsing_and_signature(tmp_path):
     rows, report_files, signature = build_na_daily_rows([str(report_file)])
 
     assert report_files == [str(report_file)]
-    assert signature == (f"{report_file.name}:{int(os.path.getmtime(report_file))}",)
+    assert len(signature) == 1
+    assert str(report_file.resolve()) in signature[0]
     assert rows == [
         {
             "代码": "002415",
@@ -117,6 +122,65 @@ def test_parse_report_identity_falls_back_to_mtime_for_date_only_name(tmp_path):
     assert report_date == "20260415"
     assert str(report_ts).startswith("20260415")
     assert basename == report_file.name
+
+
+@pytest.mark.parametrize("change", ["update", "create", "delete"])
+def test_na_daily_incremental_refresh_detects_json_sidecar_changes(tmp_path, monkeypatch, change):
+    report_file = tmp_path / "战报_20260905083000.md"
+    report_file.write_text(
+        "## 二、标的狙击表\n### 测试赛道\n"
+        "| 标的 | 代码 | 催化剂 |\n| --- | --- | --- |\n| 文本标的 | 000001 | 文本内容 |\n",
+        encoding="utf-8",
+    )
+    sidecar = report_file.with_suffix(".json")
+
+    def write_sidecar(name):
+        sidecar.write_text(
+            json.dumps({"sniper_tables": [{"track_name": "测试赛道", "targets": [{"name": name, "code": "000001"}]}]}),
+            encoding="utf-8",
+        )
+
+    if change != "create":
+        write_sidecar("旧版标的")
+    monkeypatch.setattr(service_module, "load_json_file", lambda _path: {})
+    monkeypatch.setattr(service_module, "save_json_file", lambda *_args, **_kwargs: None)
+    service = service_module.NADailyRefreshService()
+    monkeypatch.setattr(service, "_get_na_daily_output_dir", lambda: str(tmp_path))
+    service.refresh_full(emit_event=False)
+    if change == "delete":
+        sidecar.unlink()
+    else:
+        write_sidecar("新版标的")
+
+    result = service.refresh_incremental(emit_event=False)
+
+    assert result["message"] == "updated"
+    assert service.rows[0]["名称"] == ("文本标的" if change == "delete" else "新版标的")
+
+
+def test_na_daily_signature_detects_same_second_markdown_update(tmp_path):
+    report_file = tmp_path / "战报_20260905083000.md"
+    report_file.write_text("old", encoding="utf-8")
+    timestamp_ns = 1_788_568_200_100_000_000
+    os.utime(report_file, ns=(timestamp_ns, timestamp_ns))
+    before = NADailyReportRepository.signature_for([report_file])
+    report_file.write_text("new", encoding="utf-8")
+    os.utime(report_file, ns=(timestamp_ns, timestamp_ns + 100_000_000))
+
+    assert NADailyReportRepository.signature_for([report_file]) != before
+
+
+def test_na_daily_signature_distinguishes_same_name_files_in_different_directories(tmp_path):
+    paths = []
+    for directory in ("first", "second"):
+        report_dir = tmp_path / directory
+        report_dir.mkdir()
+        report_file = report_dir / "战报_20260905083000.md"
+        report_file.write_text(directory, encoding="utf-8")
+        os.utime(report_file, (1_788_568_200, 1_788_568_200))
+        paths.append(report_file)
+
+    assert NADailyReportRepository.signature_for(paths[:1]) != NADailyReportRepository.signature_for(paths[1:])
 
 
 def test_na_daily_history_payload_loads_requested_date_without_cross_day_overwrite(tmp_path):

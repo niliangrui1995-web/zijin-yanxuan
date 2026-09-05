@@ -38,6 +38,13 @@ BROAD_EXCEPTION_ALLOWED_HANDLERS = {
     "app/services/ui_earnings_service.py:run_startup_gap_fill",
     "app/services/ui_earnings_service.py:run_gap_fill",
     "app/services/ui_earnings_service.py:run_routine_scan",
+    # The isolated F5 process must persist a terminal receipt even for SystemExit,
+    # KeyboardInterrupt and MemoryError; cleanup must preserve that outcome.
+    # Covered by test_f5_worker_main_coverage.py terminalization/cleanup tests.
+    "app/workers/f5_worker_main.py:execute_request",
+    "app/workers/f5_worker_main.py:main",
+    "app/workers/f5_worker_main.py:_persist_terminal_result",
+    "app/workers/f5_worker_main.py:_discard_failed_generation",
     "domains/earnings/refresh_cache.py:main",
     "domains/global_earnings_calendar/refresh_cache.py:main",
     "domains/global_earnings_calendar/http_utils.py:_sanitized_exception",

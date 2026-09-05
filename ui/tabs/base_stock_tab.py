@@ -33,8 +33,8 @@ from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_navigation_service import ExternalTerminalNavigator
 from app.services.ui_quote_service import read_provider_health
 from app.services.ui_task_lifecycle_service import shutdown_task_lifecycle_for_owner
-from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.components.frame_task_scheduler import FrameTaskScheduler
+from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.tabs.base_stock_refresh import (
     _latest_quote_snapshot as latest_quote_snapshot,
 )

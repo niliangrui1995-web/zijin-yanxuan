@@ -5,7 +5,7 @@ import polars as pl
 
 from core import cache_manager as cache_manager_module
 from core.cache_manager import CacheManager
-from core.rps_cache_identity import _frame_snapshot_marker
+from core.rps_cache_identity import rps_data_snapshot_version
 
 
 class DummyEngine:
@@ -127,7 +127,7 @@ def test_infer_latest_rps_trade_date_supports_polars_datetime_column():
     assert CacheManager._infer_latest_rps_trade_date({"600000": frame}) == "20260417"
 
 
-def test_rps_snapshot_marker_tracks_latest_bar_and_declared_version():
+def test_rps_snapshot_version_tracks_latest_bar_and_declared_version():
     frame = pd.DataFrame(
         {
             "datetime": ["2026-04-16", "2026-04-17"],
@@ -136,8 +136,11 @@ def test_rps_snapshot_marker_tracks_latest_bar_and_declared_version():
     )
     frame.attrs["snapshot_version"] = "provider-1"
 
-    marker = _frame_snapshot_marker(frame)
+    data = {"600000": frame}
+    version = rps_data_snapshot_version(data)
 
-    assert marker[1:] == (2, ("datetime", "close"), "provider-1", "2026-04-17", 10.5)
+    frame.attrs["snapshot_version"] = "provider-2"
+    assert rps_data_snapshot_version(data) != version
+    version = rps_data_snapshot_version(data)
     frame.loc[1, "close"] = 11.0
-    assert _frame_snapshot_marker(frame) != marker
+    assert rps_data_snapshot_version(data) != version

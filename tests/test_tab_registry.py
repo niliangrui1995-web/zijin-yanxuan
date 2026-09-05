@@ -23,9 +23,9 @@ from ui.workspaces.tab_registry import (
     TAB_PRELOAD_DEPENDENCIES,
     TabConstructorProfile,
     TabF5SnapshotPolicy,
+    TabLoadReason,
     TabPostF5Policy,
     TabQuotePolicy,
-    TabLoadReason,
     TabRuntimeDelayPolicy,
     TabWarmPolicy,
     create_tab_lineage_service,
@@ -528,7 +528,6 @@ def test_fund_holdings_shell_import_defers_store_and_sync_singletons():
         "import ui.tabs.fund_holdings_tab as module\n"
         "assert module.FundHoldingsTab.__name__ == 'FundHoldingsTab'\n"
         "blocked = (\n"
-        "    'app.services.ui_fund_holdings_service',\n"
         "    'domains.fund_holdings.store',\n"
         "    'domains.fund_holdings.sync',\n"
         ")\n"

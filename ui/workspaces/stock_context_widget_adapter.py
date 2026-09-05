@@ -15,8 +15,8 @@ from app.services.stock_context_model_service import (
     StockSignal,
     coerce_stock_signal,
 )
+from app.services.stock_context_model_service import freeze_stock_context_value as _freeze_plain
 from app.services.stock_context_query_service import GENERAL_STOCK_CONTEXT_SOURCE_KEYS
-from domains.stock_context.models import _freeze_plain
 from ui.workspaces.tab_capabilities import (
     DataLineageCapability,
     ForeignKeywordCapability,

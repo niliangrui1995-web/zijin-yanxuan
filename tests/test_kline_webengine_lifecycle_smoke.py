@@ -85,6 +85,71 @@ def test_kline_lifecycle_evaluation_accepts_reclaimed_webengine_child():
     assert summary["webengine_child_reclaimed"] is True
 
 
+def _shutdown_probe_clock(monkeypatch, *, children_until_ms):
+    clock = [0.0]
+    flushes = []
+    monkeypatch.setattr(lifecycle_smoke.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(lifecycle_smoke, "_close_kline_charts", lambda _app: 0)
+
+    def _events(_app, *, rounds, sleep_ms, flush_deferred_deletes):
+        flushes.append(flush_deferred_deletes)
+        clock[0] += rounds * sleep_ms / 1000.0
+
+    def _shutdown_sample(label, _window):
+        children = int(clock[0] * 1000.0 < children_until_ms)
+        return {**_sample(label, children), "webengine_processes": [{"pid": 1156}] if children else []}
+
+    monkeypatch.setattr(lifecycle_smoke, "_process_events", _events)
+    monkeypatch.setattr(lifecycle_smoke, "_sample", _shutdown_sample)
+    return clock, flushes
+
+
+def test_shutdown_waits_for_owned_webengine_child_and_preserves_immediate_sample(monkeypatch):
+    _clock, flushes = _shutdown_probe_clock(monkeypatch, children_until_ms=350)
+    window = SimpleNamespace(close=lambda: True, deleteLater=lambda: None)
+    report = {"mode": {"close_timeout_ms": 8000}}
+
+    lifecycle_smoke._shutdown_smoke_window(object(), window, report)
+
+    shutdown = report["shutdown"]
+    assert shutdown["post_close"]["webengine_child_count"] == 0
+    assert shutdown["immediate_post_close"]["webengine_child_count"] == 1
+    assert shutdown["immediate_post_close"]["webengine_processes"] == [{"pid": 1156}]
+    assert shutdown["settled"] is True
+    assert shutdown["settle_elapsed_ms"] >= 350
+    assert shutdown["timeout_ms"] == 8000
+    assert shutdown["post_close"]["label"] == "shutdown:post_close"
+    assert flushes and all(flushes)
+
+
+def test_shutdown_deadline_keeps_surviving_child_as_failure(monkeypatch):
+    clock, _flushes = _shutdown_probe_clock(monkeypatch, children_until_ms=1000)
+    window = SimpleNamespace(close=lambda: True, deleteLater=lambda: None)
+    report = {"mode": {"close_timeout_ms": 300}}
+
+    lifecycle_smoke._shutdown_smoke_window(object(), window, report)
+
+    shutdown = report["shutdown"]
+    assert shutdown["post_close"]["webengine_child_count"] == 1
+    assert shutdown["settled"] is False
+    assert shutdown["timeout_ms"] == 300
+    assert 0.3 <= clock[0] < 0.351
+    assert lifecycle_smoke._shutdown_webengine_children(report) == 1
+
+
+def test_shutdown_returns_without_waiting_when_children_are_already_gone(monkeypatch):
+    clock, flushes = _shutdown_probe_clock(monkeypatch, children_until_ms=0)
+    window = SimpleNamespace(close=lambda: True, deleteLater=lambda: None)
+    report = {"mode": {"close_timeout_ms": 8000}}
+
+    lifecycle_smoke._shutdown_smoke_window(object(), window, report)
+
+    assert clock[0] == 0
+    assert flushes == [True]
+    assert report["shutdown"]["settled"] is True
+    assert report["shutdown"]["post_close"]["webengine_child_count"] == 0
+
+
 def test_open_cycle_waits_for_pending_keeper_request_to_resume(monkeypatch):
     chart = SimpleNamespace(code="000001", _closing=False)
     manager = SimpleNamespace(_charts=[])

@@ -143,6 +143,32 @@ def test_data_can_finish_before_shell_and_applies_only_after_js_is_ready():
     assert callback is not None
 
 
+def test_requeue_cannot_overwrite_newer_pending_snapshot():
+    window = _window(shell_loaded=False)
+    queue_prepared_render(window, _prepared(version=1), loading=False)
+    stale = window._runtime_lifecycle.latest_snapshot
+    queue_prepared_render(window, _prepared(version=2), loading=False)
+    latest = window._runtime_lifecycle.latest_snapshot
+
+    rendering.requeue_snapshot(window, stale)
+
+    assert window._runtime_lifecycle.latest_snapshot == latest
+    assert window._runtime_lifecycle.take_pending_submission() == latest
+
+
+def test_explicit_stale_snapshot_cannot_be_submitted_over_newer_pending_snapshot():
+    window = _window(shell_loaded=False)
+    queue_prepared_render(window, _prepared(version=1), loading=False)
+    stale = window._runtime_lifecycle.latest_snapshot
+    queue_prepared_render(window, _prepared(version=2), loading=False)
+    latest = window._runtime_lifecycle.latest_snapshot
+    window._shell_loaded = True
+
+    assert submit_pending_snapshot(window, stale) is False
+    assert window._page.calls == []
+    assert window._runtime_lifecycle.take_pending_submission() == latest
+
+
 def test_static_shell_is_built_once_and_reused_for_recovery_reload():
     browser = _ShellBrowser()
     built = []

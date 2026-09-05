@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import Qt
 
 from ui.kline_load_controller import KLINE_OPEN_STAGE_ORDER
@@ -1254,6 +1255,79 @@ def test_page_handoff_attach_failure_rolls_back_browser_and_disposes_unowned_pag
     assert browser.deleted is True
     coordinator.stop()
     window.close()
+
+
+@pytest.mark.parametrize("page_owner", ("application", "browser"))
+@pytest.mark.parametrize("pending_kind", ("none", "failed", "distinct"))
+def test_recovery_releases_failed_page_with_exact_qobject_ownership(
+    qt_application, monkeypatch, page_owner, pending_kind
+):
+    from PyQt6 import sip
+    from PyQt6.QtCore import QCoreApplication, QEvent, QObject
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+
+    from ui.components.kline_window_manager import kline_manager
+
+    class _Page(QObject):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.delete_requests = 0
+
+        def stop(self):
+            return None
+
+        def deleteLater(self):
+            self.delete_requests += 1
+            super().deleteLater()
+
+    class _Browser(QWidget):
+        def page(self):
+            return failed_page
+
+        def stop(self):
+            return None
+
+    window = QWidget()
+    window._closing = False
+    window.code = "000001"
+    window.chart_host = QWidget(window)
+    window.chart_host_layout = QVBoxLayout(window.chart_host)
+    window._load_and_draw = lambda: None
+    failed_browser = _Browser(window.chart_host)
+    failed_page = _Page(qt_application if page_owner == "application" else failed_browser)
+    failed_page.setObjectName("klinePrewarmPage")
+    other_page = _Page(qt_application)
+    other_page.setProperty("klineShellReady", True)
+    coordinator = KLineOpenStageCoordinator(
+        window,
+        open_started_at=None,
+        browser_factory=QWidget,
+        record_metric=lambda *_args, **_kwargs: None,
+        emit_structured_log=lambda *_args, **_kwargs: None,
+        browser_delay_ms=0,
+        initial_load_delay_ms=0,
+    )
+    window.browser = failed_browser
+    coordinator.pending_page = {"none": None, "failed": failed_page, "distinct": other_page}[pending_kind]
+    returned_pages = []
+    monkeypatch.setattr(kline_manager, "release_page", lambda page, **_kwargs: returned_pages.append(page) or True)
+    monkeypatch.setattr(coordinator, "initialize_browser", lambda **_kwargs: True)
+    try:
+        assert coordinator.recover_browser(failed_browser) is True
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+        assert sip.isdeleted(failed_browser)
+        assert sip.isdeleted(failed_page)
+        assert failed_page.delete_requests == int(page_owner == "application")
+        assert returned_pages == ([other_page] if pending_kind == "distinct" else [])
+        assert not sip.isdeleted(other_page)
+        assert window.browser is None
+    finally:
+        coordinator.stop()
+        for owned in (failed_page, other_page, window):
+            if not sip.isdeleted(owned):
+                owned.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_recovery_attach_failure_disposes_new_browser_and_clears_window_reference(
